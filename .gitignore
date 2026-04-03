@@ -1,0 +1,24 @@
+# Build
+.build/
+dist/
+
+# macOS
+.DS_Store
+*.dmg
+
+# IDE
+.swiftpm/
+*.xcodeproj/
+*.xcworkspace/
+
+# Private
+.claude/
+.mcp.json
+api/
+website/
+
+# Secrets
+.env
+*.key
+*.pem
+.secrets
