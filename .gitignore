@@ -22,5 +22,3 @@ website/
 *.key
 *.pem
 .secrets
-BRIEF.md
-PRD.md
