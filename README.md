@@ -1,8 +1,8 @@
 # MetaWhisp
 
-**On-device voice-to-text for macOS. Press a key, speak, text appears at your cursor.**
+**Open-source on-device voice-to-text for macOS. Press a key, speak, text appears at your cursor.**
 
-MetaWhisp is a native macOS menu bar app that transcribes speech locally on Apple Silicon using [WhisperKit](https://github.com/argmaxinc/WhisperKit) (OpenAI's Whisper). No cloud, no latency, no data leaves your Mac.
+MetaWhisp is a free, open-source native macOS menu bar app that transcribes speech locally on Apple Silicon using [WhisperKit](https://github.com/argmaxinc/WhisperKit) (OpenAI's Whisper). No cloud, no latency, no data leaves your Mac.
 
 ![macOS 14+](https://img.shields.io/badge/macOS-14%2B-black) ![Apple Silicon](https://img.shields.io/badge/Apple%20Silicon-M1%2B-black) ![Swift 6](https://img.shields.io/badge/Swift-6-orange) ![License: MIT](https://img.shields.io/badge/License-MIT-blue)
 
