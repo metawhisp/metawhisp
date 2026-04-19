@@ -2,13 +2,11 @@ import Foundation
 import SwiftData
 
 /// Aggregation root for transcripts and linked entities (memories, tasks, screen contexts).
-/// Mirrors Omi's `Conversation` (`backend/models/conversation.py`) — the core entity around which
+/// Mirrors `Conversation` (`backend/models/conversation.py`) — the core entity around which
 /// everything downstream is organized.
-///
 /// C1.1 writes: id, startedAt, finishedAt, source, status, discarded, timestamps.
 /// C1.2 writes: title, overview, category (via LLM on close).
 /// C1.4 writes: starred (user action in UI).
-///
 /// Fields are added upfront (all optional/defaulted) to avoid multiple SwiftData migrations.
 /// spec://BACKLOG#C1.1
 @Model
@@ -18,15 +16,15 @@ final class Conversation {
     var startedAt: Date
     /// When the conversation closed (silence gap > threshold or explicit close). nil while active.
     var finishedAt: Date?
-    /// Source type. Trimmed from Omi's `ConversationSource`:
+    /// Source type. Trimmed 's `ConversationSource`:
     /// - "dictation" — grouped Right ⌘ voice inputs
     /// - "meeting"   — MeetingRecorder (mic + system audio) session
     var source: String
-    /// Status. Mirrors Omi's `ConversationStatus`:
+    /// Status. Mirrors `ConversationStatus`:
     /// - "inProgress" — still accepting new transcripts
     /// - "completed"  — closed, ready for post-processing
     var status: String
-    /// Soft delete / merge marker (Omi has `discarded: bool`).
+    /// Soft delete / merge marker.
     var discarded: Bool
 
     // C1.2 fields — populated by StructuredGenerator on conversation close.
@@ -34,10 +32,10 @@ final class Conversation {
     var title: String?
     /// LLM-generated 1-2 sentence summary. nil until complete.
     var overview: String?
-    /// One of Omi's `CategoryEnum` values (personal, work, business, health, etc.). nil until complete.
+    /// One of `CategoryEnum` values (personal, work, business, health, etc.). nil until complete.
     var category: String?
     /// SF Symbol name reflecting core subject/mood (monochrome — matches app design).
-    /// We diverge from Omi here (they generate color Unicode emoji) — our desktop app is minimal/monochrome.
+    /// We diverge here (they generate color Unicode emoji) — our desktop app is minimal/monochrome.
     /// Stored in `emoji` field name for backward schema compat; value is SF Symbol string like "lightbulb" / "chart.bar".
     var emoji: String?
 

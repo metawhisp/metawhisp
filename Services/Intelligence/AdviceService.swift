@@ -73,9 +73,9 @@ final class AdviceService: ObservableObject {
         lastError = nil
         defer { isGenerating = false }
 
-        // Build Omi-style context: screen activity + transcripts + memories + previous advice
+        // Build context: screen activity + transcripts + memories + previous advice
         // spec://iterations/ITER-001#architecture.advice-prompt
-        let contextBlock = buildOmiStyleUserContext(
+        let contextBlock = buildAdviceUserContext(
             contexts: contexts,
             extraContext: extraContext
         )
@@ -132,9 +132,9 @@ final class AdviceService: ObservableObject {
         }
     }
 
-    // MARK: - Omi-style prompt
+    // MARK: - System prompt
 
-    /// Omi-style system prompt: hard cap, bad examples, no_advice escape.
+    /// System prompt: hard cap, bad examples, no_advice escape.
     /// spec://iterations/ITER-001#architecture.advice-prompt
     static let systemPrompt = """
     You find ONE specific, high-value insight the user would NOT figure out on their own. The goal is to IMPRESS the user.
@@ -186,7 +186,7 @@ final class AdviceService: ObservableObject {
 
     /// Build user-content block: screen activity + transcripts + memories + previous advice.
     /// spec://iterations/ITER-001#architecture.advice-prompt
-    private func buildOmiStyleUserContext(
+    private func buildAdviceUserContext(
         contexts: [ScreenContextService.ScreenContextSnapshot],
         extraContext: String?
     ) -> String {
@@ -213,7 +213,7 @@ final class AdviceService: ObservableObject {
         }
 
         // CURRENT SCREEN — last 5 contexts with richer OCR (backend cap raised to 32KB).
-        // More OCR = better context for LLM to find specific insights like Omi does.
+        // More OCR = better context for LLM to find specific insights .
         let recentContexts = contexts.suffix(5)
         parts.append("CURRENT SCREEN (last \(recentContexts.count) contexts):")
         for ctx in recentContexts {
@@ -372,8 +372,8 @@ final class AdviceService: ObservableObject {
 
         guard let data = cleaned.data(using: .utf8) else { return nil }
 
-        // New Omi-style shape: {"type": "advice", "content", "category", "confidence"}
-        struct OmiAdviceJSON: Decodable {
+        // New shape: {"type": "advice", "content", "category", "confidence"}
+        struct AdviceJSON: Decodable {
             let type: String?
             let content: String
             let category: String
@@ -381,7 +381,7 @@ final class AdviceService: ObservableObject {
             let confidence: Double?
         }
 
-        guard let parsed = try? JSONDecoder().decode(OmiAdviceJSON.self, from: data) else {
+        guard let parsed = try? JSONDecoder().decode(AdviceJSON.self, from: data) else {
             return nil
         }
 

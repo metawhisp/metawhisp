@@ -97,7 +97,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         let corrections = CorrectionDictionary.shared
         coordinator.correctionDictionary = corrections
         coordinator.correctionMonitor = CorrectionMonitor(dictionary: corrections)
-        // Memory + task triggers on transcription (Omi-aligned).
+        // Memory + task triggers on transcription.
         // AdviceService reference kept for backward compat (existing AdviceItem records shown in UI),
         // but periodic advice generation is disabled — replaced by TaskExtractor (spec://BACKLOG#B1).
         coordinator.adviceService = adviceService
@@ -309,7 +309,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         }
 
         // 9a. Configure MemoryExtractor + TaskExtractor — both trigger-based on voice transcription.
-        // Omi-aligned: voice transcript input, not periodic screen OCR polling.
+        // : voice transcript input, not periodic screen OCR polling.
         // spec://iterations/ITER-001#architecture.extractor + spec://BACKLOG#B1
         memoryExtractor.configure(screenContext: screenContext, modelContainer: historyService.modelContainer)
         taskExtractor.configure(screenContext: screenContext, modelContainer: historyService.modelContainer)
@@ -349,7 +349,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         }
 
         // 9b. Configure AdviceService (kept for legacy AdviceItem display in UI only).
-        // Periodic advice generation disabled — replaced by TaskExtractor (Omi pattern).
+        // Periodic advice generation disabled — replaced by TaskExtractor.
         // spec://BACKLOG#B1
         adviceService.configure(screenContext: screenContext, modelContainer: historyService.modelContainer)
 
@@ -403,7 +403,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
 
                 if newAdvice != lastAdvice {
                     lastAdvice = newAdvice
-                    // Periodic advice generation retired — TaskExtractor replaces it (Omi pattern).
+                    // Periodic advice generation retired — TaskExtractor replaces it.
                     // Toggle now only affects visibility of legacy AdviceItem records in UI.
                     NSLog("[MetaWhisp] AI advice toggle: %@ (periodic disabled — see spec://BACKLOG#B1)", newAdvice ? "ON" : "OFF")
                 }

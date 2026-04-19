@@ -2,11 +2,8 @@ import Foundation
 import SwiftData
 
 /// Reads Apple Notes via AppleScript, extracts memories via LLM, persists with sourceFile FK.
-///
-/// Omi reference: `desktop/Desktop/Sources/AppleNotesReaderService.swift` reads NoteStore.sqlite
 /// directly via GRDB. We use AppleScript bridge instead — no new dependencies, Apple Automation
 /// permission flow (not Full Disk Access), full body access.
-///
 /// spec://BACKLOG#Phase3.E2
 @MainActor
 final class AppleNotesReaderService: ObservableObject {
@@ -244,7 +241,7 @@ final class AppleNotesReaderService: ObservableObject {
     static let systemPrompt = """
     You are an expert memory curator. Extract high-value durable facts about the user from a single Apple Note they wrote or pasted.
 
-    Apply Omi-strict rules (same as voice/file memory extraction):
+    Apply strict rules (same as voice/file memory extraction):
     - Each memory ≤ 15 words. Start SYSTEM memories with "User".
     - Two categories: "system" (facts about user) / "interesting" (external wisdom with attribution).
     - DEFAULT TO EMPTY LIST. Max 3 memories per note.

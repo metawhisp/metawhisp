@@ -4,11 +4,8 @@ import SwiftUI
 /// Rewind tab — screen activity timeline. Shows ScreenObservation rows grouped by date,
 /// with search over OCR / contextSummary, app / category filters.
 /// Click a row to expand and see source OCR + linked memories + linked tasks.
-///
-/// Omi reference: `desktop/Desktop/Sources/MainWindow/RewindOnlyView.swift` and Rewind timeline UI
 /// on their desktop screenshots. Ours is leaner: no video chunk preview (we're OCR-only),
 /// no draggable scrubber yet — list + expand instead.
-///
 /// spec://BACKLOG#Phase2.R3
 struct RewindView: View {
     @Query(

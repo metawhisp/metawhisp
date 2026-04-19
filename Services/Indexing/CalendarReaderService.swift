@@ -5,10 +5,7 @@ import SwiftData
 /// Reads user's calendar events via EventKit, creates TaskItems for upcoming events,
 /// extracts memories for recurring patterns.
 ///
-/// Omi reference: `desktop/Desktop/Sources/CalendarReaderService.swift` — reads Google Calendar
-/// via browser-cookie scraping + Python SAPISID auth (fragile, cross-platform).
-/// We diverge to EventKit (Apple-native, covers iCloud/Google/Exchange, no browser dependency).
-///
+/// EventKit (Apple-native) covers iCloud/Google/Exchange, no browser dependency.
 /// spec://BACKLOG#Phase3.E3
 @MainActor
 final class CalendarReaderService: ObservableObject {
@@ -196,12 +193,12 @@ final class CalendarReaderService: ObservableObject {
 
     // MARK: - Prompt
 
-    /// Focuses on patterns, not one-off events (Omi's insight applies here too).
+    /// Focuses on patterns, not one-off events (insight applies here too).
     static let memorySystemPrompt = """
     You are an expert memory curator. You receive a user's recent and upcoming calendar events.
     Extract durable facts about the user's life based on PATTERNS (not one-off meetings).
 
-    Omi-strict rules:
+    strict rules:
     - Each memory ≤ 15 words, start with "User".
     - Two categories: "system" / "interesting" (external wisdom — very rare from calendar).
     - DEFAULT TO EMPTY. Max 5 memories.

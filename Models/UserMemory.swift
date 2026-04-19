@@ -2,8 +2,7 @@ import Foundation
 import SwiftData
 
 /// Structured fact about the user, extracted from screen activity + transcripts.
-/// Ported from Omi's MemoryExtraction architecture — key to personalized Insights.
-///
+/// Ported 's MemoryExtraction architecture — key to personalized Insights.
 /// spec://iterations/ITER-001#architecture.model
 @Model
 final class UserMemory {
@@ -28,7 +27,7 @@ final class UserMemory {
     /// spec://BACKLOG#C1.3
     var conversationId: UUID?
     /// Foreign key to `ScreenContext.id` when memory was extracted from screen, not voice.
-    /// Omi's counterpart: `MemoryRecord.screenshotId`. Nullable — voice-extracted memories have nil.
+    /// counterpart: `MemoryRecord.screenshotId`. Nullable — voice-extracted memories have nil.
     /// spec://BACKLOG#Phase2.R2
     var screenContextId: UUID?
     /// Absolute file path when memory was extracted from a file (Obsidian note, .md/.txt).

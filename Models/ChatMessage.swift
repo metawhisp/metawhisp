@@ -2,8 +2,7 @@ import Foundation
 import SwiftData
 
 /// A single message in the Chat thread.
-/// Mirrors Omi's `Message` (`backend/models/chat.py`) with minimal fields — no files/voice/sharing in MVP.
-///
+/// Mirrors `Message` (`backend/models/chat.py`) with minimal fields — no files/voice/sharing in MVP.
 /// spec://BACKLOG#B2
 @Model
 final class ChatMessage {

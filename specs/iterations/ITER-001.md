@@ -1,4 +1,4 @@
-# Iteration 1: Memory System + Omi-style Insights {#root}
+# Iteration 1: Memory System + Insights {#root}
 
 **Status:** Draft, awaiting user approval.
 **Karpathy principles applied:** Think Before Coding (success criteria upfront), Simplicity First (minimum code), Surgical Changes (touch only AdviceService + add UserMemory), Goal-Driven (every criterion measurable).
@@ -9,10 +9,10 @@
 
 ### Что делаем
 1. **`UserMemory`** SwiftData модель — структурированные факты о пользователе (категории **system** И **interesting**)
-2. **`MemoryExtractor`** — сервис, **триггерится на каждой voice transcription ≥20 chars** (не periodic). Input: voice transcript only. Screen OCR не используется для memories — Omi reference pattern (см. `backend/utils/prompts.py:12` в BasedHardware/omi). Cap: max 2 per extraction.
+2. **`MemoryExtractor`** — сервис, **триггерится на каждой voice transcription ≥20 chars** (не periodic). Input: voice transcript only. Screen OCR не используется для memories — reference pattern (см. `backend/utils/prompts.py:12` в Cap: max 2 per extraction.
 3. **Memories — ОТДЕЛЬНАЯ вкладка** в sidebar главного окна (не подвкладка Insights). Независимая от AI Advice.
 4. **Отдельный toggle `memoriesEnabled`** в Settings → позволяет включить memories БЕЗ включения AI Advice и наоборот
-5. **Insights промпт → Omi-style** — жёсткий cap, bad examples, no_advice escape
+5. **Insights промпт** — жёсткий cap, bad examples, no_advice escape
 6. **Memory injection** в Insights промпт — чтобы советы ссылались на факты
 7. **Previous advice window = 20** (промежуточное между 5 и 50)
 
@@ -38,7 +38,7 @@
 ### C2: Memory записи имеют правильный формат {#criteria.c2}
 **Как проверять:** automated
 Все UserMemory записи удовлетворяют:
-- `content.split(" ").count ≤ 15` (max 15 words per Omi spec)
+- `content.split(" ").count ≤ 15` (max 15 words spec)
 - `category` ∈ {`"system"`, `"interesting"`}
 - `confidence` ∈ [0.0, 1.0]
 - `sourceApp` не пустой
@@ -46,7 +46,7 @@
 
 ### C3: Insights стали короткими {#criteria.c3}
 **Как проверять:** automated + log-based
-10 последовательных advice generation → 100% имеют `content.count ≤ 120` (buffer над Omi's 100).
+10 последовательных advice generation → 100% имеют `content.count ≤ 120` (buffer над 100).
 **Тест:** trigger скрипт 10 раз → читает SwiftData → assert length.
 
 ### C4: Insights персональные {#criteria.c4}
@@ -140,7 +140,7 @@ final class MemoryExtractor: ObservableObject {
 
 **Файл:** `Services/Intelligence/MemoryExtractor.swift`
 
-**Prompt template (Omi-style):**
+**Prompt template:**
 
 ```
 You extract high-value facts about the user from screen activity and conversations.
@@ -180,7 +180,7 @@ RECENT CONVERSATIONS:
 {recent_transcripts}
 ```
 
-### 3.3. Обновлённый AdviceService prompt (Omi-style) {#architecture.advice-prompt}
+### 3.3. Обновлённый AdviceService prompt {#architecture.advice-prompt}
 
 Заменяем текущий prompt в `AdviceService.swift`:
 
@@ -348,7 +348,7 @@ grep "memories_used:" ~/Library/Logs/MetaWhisp.log | head -1
 2. **Create MemoryExtractor service** → с prompt, без запуска
 3. **Wire up timer** → запускать каждые 10 минут, logging
 4. **Memory injection** → передавать существующие memories в AdviceService prompt
-5. **New AdviceService prompt (Omi-style)** → заменить system prompt
+5. **New AdviceService prompt** → заменить system prompt
 6. **no_advice parsing** → добавить case в response parser
 7. **Memories tab UI** → list + edit sheet + delete
 8. **Run automated tests** → fix if fail
@@ -362,7 +362,7 @@ grep "memories_used:" ~/Library/Logs/MetaWhisp.log | head -1
 **Митигация:** confidence threshold 0.7 + existing_memories dedup + prompt "default to empty".
 
 ### Risk 2: Advice всё равно generic
-Даже с Omi-style prompt — Groq Llama может игнорировать constraints на низком temperature.
+Даже с prompt — Groq Llama может игнорировать constraints на низком temperature.
 **Митигация:** automated test на bad patterns. Если FAIL — tune prompt ещё (например добавить explicit примеры с именами приложений).
 
 ### Risk 3: Backend endpoint `/api/pro/advice` не поддерживает новый JSON формат

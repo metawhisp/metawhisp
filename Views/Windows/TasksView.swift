@@ -1,9 +1,8 @@
 import SwiftData
 import SwiftUI
 
-/// Tasks — standalone top-level tab (Omi-aligned). Promoted from Insights → Tasks section.
+/// Tasks — standalone top-level tab. Promoted from Insights → Tasks section.
 /// Shows all non-dismissed TaskItem records with checkbox + due badge + dismiss button.
-///
 /// spec://BACKLOG#sidebar-reorg + B1
 struct TasksView: View {
     @Query(
