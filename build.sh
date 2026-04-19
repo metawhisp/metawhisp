@@ -67,19 +67,66 @@ fi
 
 echo "==> Bundle created: $APP_DIR"
 
-# Code sign with persistent certificate + entitlements + loose designated requirement
-# Entitlements grant hardened-runtime apps the right to request microphone access
-# The loose requirement (identifier only) means TCC permissions survive rebuilds
-codesign --force --sign "TranscribeAI Developer" \
+# Clear extended attributes — Finder resource forks, xattr from curl downloads,
+# SPM build outputs. Without this cleanup codesign silently fails with
+# "resource fork detritus not allowed" and keeps the linker-signed adhoc signature,
+# which has Identifier="MetaWhisp" (product name) instead of "com.metawhisp.app".
+# Wrong identifier breaks macOS notifications (UNErrorDomain error 1).
+xattr -cr "$APP_DIR" 2>/dev/null || true
+
+# Stable Developer ID signing. Ad-hoc signatures change every rebuild — macOS treats
+# each rebuild as a new app and resets TCC permissions (Screen Recording, Microphone,
+# Accessibility). Developer ID keeps the same Team ID across rebuilds, so TCC sticks.
+# If the cert is missing (CI, another machine) fall back to ad-hoc so build still works.
+SIGN_IDENTITY="Developer ID Application: Andrey Dyuzhov (6D6948Z4MW)"
+if ! security find-identity -v -p codesigning | grep -q "$SIGN_IDENTITY"; then
+    echo "==> ⚠️  Developer ID cert not found, falling back to ad-hoc (TCC will reset each rebuild)"
+    SIGN_IDENTITY="-"
+fi
+
+# Sign nested Sparkle components bottom-up. --preserve-metadata keeps each nested bundle's
+# original identifier (org.sparkle-project.*) and entitlements — dyld refuses to load
+# Sparkle if its identifier changes, and XPC services need their own entitlements.
+SPARKLE="$MACOS/Sparkle.framework"
+if [ -d "$SPARKLE" ]; then
+    for target in \
+        "$SPARKLE/Versions/B/XPCServices/Downloader.xpc" \
+        "$SPARKLE/Versions/B/XPCServices/Installer.xpc" \
+        "$SPARKLE/Versions/B/Updater.app" \
+        "$SPARKLE/Versions/B/Autoupdate" \
+        "$SPARKLE/Versions/B/Sparkle" \
+        "$SPARKLE"
+    do
+        codesign --force --sign "$SIGN_IDENTITY" \
+            --options runtime \
+            --preserve-metadata=identifier,entitlements,flags \
+            "$target" 2>&1
+    done
+fi
+
+# Sign outer bundle with our app identifier — macOS uses Identifier as app identity
+# for notifications, TCC, and URL scheme registration.
+codesign --force --sign "$SIGN_IDENTITY" \
+    --options runtime \
     --identifier "com.metawhisp.app" \
-    -o runtime \
     --entitlements "Resources/MetaWhisp.entitlements" \
-    --requirements '=designated => identifier "com.metawhisp.app"' \
-    --deep "$APP_DIR" 2>&1 || \
-codesign --force --sign - --identifier "com.metawhisp.app" \
-    --entitlements "Resources/MetaWhisp.entitlements" \
-    --deep "$APP_DIR" 2>/dev/null || true
-echo "==> Code signed (with entitlements)"
+    "$APP_DIR" 2>&1
+
+# Verify: outer bundle identifier must match CFBundleIdentifier — without this
+# macOS notifications return UNErrorDomain error 1.
+SIGNED_ID=$(codesign -dvv "$APP_DIR" 2>&1 | grep -E "^Identifier=" | cut -d= -f2)
+if [ "$SIGNED_ID" = "com.metawhisp.app" ]; then
+    echo "==> Code signed (identifier: $SIGNED_ID) ✓"
+else
+    echo "==> ⚠️  Signature identifier is '$SIGNED_ID', expected 'com.metawhisp.app'"
+    echo "==> Notifications may not work. Try deleting $APP_DIR and rebuilding."
+fi
+
+# Verify Sparkle.framework kept its original identifier
+SPARKLE_ID=$(codesign -dvv "$MACOS/Sparkle.framework" 2>&1 | grep -E "^Identifier=" | cut -d= -f2)
+if [ "$SPARKLE_ID" != "org.sparkle-project.Sparkle" ]; then
+    echo "==> ⚠️  Sparkle identifier changed to '$SPARKLE_ID' — dyld will refuse to load it"
+fi
 
 # Install to ~/Applications for stable permissions
 INSTALL_DIR="$HOME/Applications"

@@ -65,7 +65,7 @@ macOS menu bar app for voice-to-text. Press a key, speak, text appears at your c
 - **Database**: Cloudflare D1 (SQLite)
 - **Payments**: Stripe (Express Checkout Element + Payment Element)
 - **Email**: Resend (magic links)
-- **AI**: Cerebras (Qwen-3, text processing), Groq (Whisper, cloud transcription)
+- **AI**: Groq (llama-3.3-70b, text processing + Whisper, cloud transcription fallback), Deepgram Nova-3 via Cloudflare Workers AI (primary cloud transcription)
 
 ### Website
 - **Generator**: Eleventy (11ty)

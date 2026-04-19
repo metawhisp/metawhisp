@@ -19,7 +19,7 @@ final class TranscriptionCoordinator: ObservableObject {
     /// Per-recording flag: translate this recording (set by Right ⌥ shortcut).
     @Published var translateNext = false
 
-    private let recorder: AudioRecordingService
+    private let recorder: any AudioSource
     var whisperEngine: WhisperKitEngine?
     private let cloudEngine = CloudWhisperEngine()
     private let textInserter: TextInsertionService
@@ -29,9 +29,31 @@ final class TranscriptionCoordinator: ObservableObject {
     var textProcessor: TextProcessor?
     var correctionDictionary: CorrectionDictionary?
     var correctionMonitor: CorrectionMonitor?
+    /// Optional. If set and AI Advice is enabled, each successful transcription
+    /// fires a trigger that may generate a contextual advice.
+    /// spec://intelligence/FEAT-0003#triggers.transcription
+    weak var adviceService: AdviceService?
+
+    /// Optional. If set and memory collection is enabled, each successful transcription
+    /// fires a trigger that may extract up to 2 memories (Omi-aligned).
+    /// spec://iterations/ITER-001#architecture.extractor
+    weak var memoryExtractor: MemoryExtractor?
+
+    /// Optional. If set and tasks enabled, each successful transcription fires a trigger
+    /// that may extract action items (Omi-aligned, dedup over 2 days).
+    /// spec://BACKLOG#B1
+    weak var taskExtractor: TaskExtractor?
+
+    /// Optional. Groups consecutive transcripts into Conversations (Omi-aligned aggregation root).
+    /// spec://BACKLOG#C1.1
+    weak var conversationGrouper: ConversationGrouper?
+
+    /// Source label for history items (set when switching audio source).
+    var audioSourceLabel: String = "microphone"
 
     /// Returns the active transcription engine based on settings.
-    private var activeEngine: (any TranscriptionEngine)? {
+    /// Internal so meeting recording can reuse the same engine without duplicating logic.
+    var activeEngine: (any TranscriptionEngine)? {
         settings.transcriptionEngine == "cloud" ? cloudEngine : whisperEngine
     }
 
@@ -39,7 +61,7 @@ final class TranscriptionCoordinator: ObservableObject {
     private var lastToggleTime: Date = .distantPast
 
     init(
-        recorder: AudioRecordingService,
+        recorder: any AudioSource,
         whisperEngine: WhisperKitEngine?,
         textInserter: TextInsertionService,
         soundService: SoundService,
@@ -222,12 +244,22 @@ final class TranscriptionCoordinator: ObservableObject {
                 }
             }
 
-            // Save to history (with processed text if available)
+            // Save to history (with processed text if available).
+            // Keep the saved item reference so downstream triggers can link back via transcriptId + conversationId.
+            var savedItemId: UUID? = nil
+            var savedConvId: UUID? = nil
             if let hs = historyService {
                 let item = hs.save(result)
                 item?.processedText = processedText
                 item?.translatedTo = shouldTranslate ? settings.translateTo : nil
                 item?.modelName = settings.selectedModel
+                item?.source = audioSourceLabel
+                savedItemId = item?.id
+                // Assign to Conversation (C1.1) — sets conversationId on the item.
+                if let item {
+                    conversationGrouper?.assign(historyItem: item)
+                    savedConvId = item.conversationId
+                }
             }
 
             // Apply learned corrections (before paste, after all processing)
@@ -249,6 +281,13 @@ final class TranscriptionCoordinator: ObservableObject {
                 if autoPasted { correctionMonitor?.startMonitoring(pastedText: finalText) }
             }
 
+            // Fire memory + task triggers on meaningful transcripts (≥20 chars).
+            // Both now carry conversationId FK so downstream records link back to the Conversation (C1.3).
+            if finalText.count >= 20 {
+                memoryExtractor?.triggerOnTranscription(text: finalText, source: audioSourceLabel, conversationId: savedConvId)
+                taskExtractor?.triggerOnTranscription(text: finalText, source: audioSourceLabel, transcriptId: savedItemId, conversationId: savedConvId)
+            }
+
             soundService.playSuccess()
             stage = .idle
 
@@ -263,7 +302,7 @@ final class TranscriptionCoordinator: ObservableObject {
     // MARK: - Audio Analysis
 
     /// Calculate RMS energy of audio samples.
-    private static func calculateRMS(_ samples: [Float]) -> Float {
+    static func calculateRMS(_ samples: [Float]) -> Float {
         guard !samples.isEmpty else { return 0 }
         var sumSq: Float = 0
         for s in samples { sumSq += s * s }
@@ -274,7 +313,8 @@ final class TranscriptionCoordinator: ObservableObject {
 
     /// Tokens that are ALWAYS hallucinations — filter regardless of audio energy.
     /// These are YouTube artifacts that Whisper never produces from real speech.
-    private static func isAlwaysHallucination(_ text: String) -> Bool {
+    /// Exposed internally so meeting recording can reuse the same filter.
+    static func isAlwaysHallucination(_ text: String) -> Bool {
         let lower = text.lowercased()
         let toxicTokens = [
             "♪", "♫", "торзок", "torzok", "dimatorzok", "dima torzok",
@@ -326,7 +366,8 @@ final class TranscriptionCoordinator: ObservableObject {
     /// IMPORTANT: Only called on near-silence audio (RMS < 0.008).
     /// Uses strict matching — short texts must be primarily a hallucination phrase,
     /// not just contain a keyword (the user might actually say "music" or "subscribe").
-    private static func isHallucination(_ text: String) -> Bool {
+    /// Exposed internally so meeting recording can reuse the same filter.
+    static func isHallucination(_ text: String) -> Bool {
         let lower = text.lowercased()
             .trimmingCharacters(in: .whitespacesAndNewlines)
             .trimmingCharacters(in: .punctuationCharacters)

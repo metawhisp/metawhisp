@@ -3,13 +3,18 @@ import SwiftUI
 struct MenuBarView: View {
     @ObservedObject var coordinator: TranscriptionCoordinator
     @ObservedObject var recorder: AudioRecordingService
+    @ObservedObject var meetingRecorder: MeetingRecorder
+    @ObservedObject var screenContext: ScreenContextService
     @ObservedObject private var settings = AppSettings.shared
     var closePopover: () -> Void = {}
     var openMainWindow: () -> Void = {}
+    var onMeetingToggle: () -> Void = {}
 
     var body: some View {
         VStack(spacing: 0) {
             statusStrip
+            meetingStrip
+            screenContextStrip
             stageContent
             lastOutput
             errorView
@@ -90,6 +95,135 @@ struct MenuBarView: View {
             } else {
                 Text("AI").font(MW.monoSm).foregroundStyle(MW.textSecondary)
             }
+        }
+    }
+
+    // MARK: - Meeting Strip
+
+    @ViewBuilder
+    private var meetingStrip: some View {
+        if settings.meetingRecordingEnabled {
+            VStack(spacing: 0) {
+                HStack(spacing: 6) {
+                    if meetingRecorder.isRecording {
+                        Circle().fill(MW.live).frame(width: 5, height: 5)
+                            .shadow(color: .red.opacity(0.5), radius: 3)
+                        Text("MEETING RECORDING").font(MW.label).tracking(1).foregroundStyle(.white)
+                        Spacer()
+                        MeetingTimer()
+                        Button {
+                            onMeetingToggle()
+                        } label: {
+                            Text("STOP")
+                                .font(MW.label).tracking(0.5)
+                                .foregroundStyle(.white)
+                                .padding(.horizontal, 6).padding(.vertical, 2)
+                                .overlay(Rectangle().stroke(Color.white.opacity(0.3), lineWidth: MW.hairline))
+                        }
+                        .buttonStyle(.plain)
+                    } else if meetingRecorder.isStarting {
+                        ProgressView().controlSize(.mini)
+                        Text("STARTING...").font(MW.label).tracking(1).foregroundStyle(MW.textSecondary)
+                        Spacer()
+                    } else {
+                        Image(systemName: "video").font(.system(size: 9)).foregroundStyle(MW.textMuted)
+                        if let app = SystemAudioCaptureService.detectActiveMeetingApp() {
+                            Text("\(app.uppercased()) DETECTED").font(MW.label).tracking(1).foregroundStyle(MW.textSecondary)
+                        } else {
+                            Text("NO MEETING").font(MW.label).tracking(1).foregroundStyle(MW.textMuted)
+                        }
+                        Spacer()
+                        Button {
+                            onMeetingToggle()
+                        } label: {
+                            Text("RECORD")
+                                .font(MW.label).tracking(0.5)
+                                .foregroundStyle(MW.textPrimary)
+                                .padding(.horizontal, 6).padding(.vertical, 2)
+                                .overlay(Rectangle().stroke(MW.borderLight, lineWidth: MW.hairline))
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+                .padding(.horizontal, MW.sp16)
+                .padding(.vertical, 6)
+                .background(meetingRecorder.isRecording ? Color.red.opacity(0.08) : .clear)
+
+                // Live waveform during active recording — shows mic+system audio level
+                // (FEAT-0001§ui-contract.waveform)
+                if meetingRecorder.isRecording {
+                    MeetingWaveform(bars: meetingRecorder.audioBars)
+                }
+
+                // Surface permission / setup errors so user knows why recording didn't start.
+                // Clickable — opens System Settings when error is about permissions.
+                if let err = meetingRecorder.lastError {
+                    Button {
+                        // If the error is about screen recording, open that pane directly.
+                        // Keyword match is crude but works for our known error strings.
+                        if err.lowercased().contains("screen recording") || err.contains("🎥") {
+                            PermissionsService.shared.openScreenRecordingSettings()
+                        } else if err.lowercased().contains("microphone") || err.contains("🎤") {
+                            PermissionsService.shared.openMicrophoneSettings()
+                        }
+                    } label: {
+                        HStack(spacing: 4) {
+                            Text(err)
+                                .font(MW.monoSm).foregroundStyle(.red)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                            Image(systemName: "arrow.up.right.square")
+                                .font(.system(size: 9))
+                                .foregroundStyle(.red.opacity(0.7))
+                        }
+                        .padding(.horizontal, MW.sp16).padding(.vertical, 4)
+                        .background(Color.red.opacity(0.08))
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                }
+
+                // Warn if mic didn't join (user's voice won't be captured)
+                if meetingRecorder.isRecording && meetingRecorder.micOnlyMode {
+                    Text("⚠️ Mic unavailable — only other participants will be captured")
+                        .font(MW.monoSm).foregroundStyle(.orange)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.horizontal, MW.sp16).padding(.vertical, 4)
+                        .background(Color.orange.opacity(0.08))
+                }
+            }
+            .overlay(Rectangle().fill(MW.border).frame(height: MW.hairline), alignment: .bottom)
+        }
+    }
+
+    // MARK: - Screen Context Strip
+
+    /// Shows that Screen Context monitoring is active + last captured app/window.
+    /// (spec://intelligence/FEAT-0002#ui-indicator)
+    @ViewBuilder
+    private var screenContextStrip: some View {
+        if settings.screenContextEnabled && screenContext.isActive {
+            HStack(spacing: 6) {
+                Image(systemName: "eye")
+                    .font(.system(size: 9))
+                    .foregroundStyle(MW.textMuted)
+                Text("SCREEN CONTEXT")
+                    .font(MW.label).tracking(1)
+                    .foregroundStyle(MW.textMuted)
+                Spacer()
+                if let ctx = screenContext.lastContext {
+                    Text(ctx.appName.uppercased())
+                        .font(MW.monoSm).foregroundStyle(MW.textSecondary)
+                        .lineLimit(1)
+                } else {
+                    Text("WATCHING...")
+                        .font(MW.monoSm).foregroundStyle(MW.textMuted)
+                }
+                // Small pulsing indicator so user sees "alive"
+                Circle().fill(MW.idle).frame(width: 5, height: 5)
+            }
+            .padding(.horizontal, MW.sp16)
+            .padding(.vertical, 5)
+            .overlay(Rectangle().fill(MW.border).frame(height: MW.hairline), alignment: .bottom)
         }
     }
 
@@ -428,6 +562,74 @@ private struct ScanLine: View {
         .onAppear {
             withAnimation(.linear(duration: 1.8).repeatForever(autoreverses: false)) { pos = 1 }
         }
+    }
+}
+
+// MARK: - Meeting Timer
+
+/// Timer based on a fixed start date + TimelineView for tick updates.
+/// Using a start date + TimelineView survives frequent parent re-renders
+/// (the meeting strip rebuilds on every audio sample — Timer.publish inside
+/// a @State-based view gets its subscription torn down each render).
+private struct MeetingTimer: View {
+    @State private var startDate = Date()
+
+    var body: some View {
+        TimelineView(.periodic(from: .now, by: 1)) { context in
+            Text(formatted(context.date.timeIntervalSince(startDate)))
+                .font(MW.mono).foregroundStyle(MW.live)
+        }
+    }
+
+    private func formatted(_ elapsed: TimeInterval) -> String {
+        let total = max(0, Int(elapsed))
+        let m = total / 60
+        let s = total % 60
+        return String(format: "%02d:%02d", m, s)
+    }
+}
+
+// MARK: - Meeting Waveform (compact, red-tinted for recording context)
+
+/// Compact waveform strip shown under the meeting recording indicator.
+/// Distinct from AudioLevelWave: shorter (32pt), red tint, mirrored bars
+/// reflecting max(mic, system) level from MeetingRecorder.
+private struct MeetingWaveform: View {
+    let bars: [Float]
+
+    var body: some View {
+        Canvas { context, size in
+            let w = size.width
+            let h = size.height
+            let midY = h / 2
+            let count = bars.count
+            guard count > 0 else { return }
+
+            let gap: CGFloat = 2
+            let barW: CGFloat = max(2, (w - CGFloat(count - 1) * gap) / CGFloat(count))
+            let maxBarH = h * 0.42
+
+            for i in 0..<count {
+                let val = CGFloat(bars[i])
+                let barH = max(1.5, val * maxBarH)
+                let x = CGFloat(i) * (barW + gap)
+
+                // Top bar — full opacity red
+                let topRect = CGRect(x: x, y: midY - barH, width: barW, height: barH)
+                let alpha = 0.4 + val * 0.6
+                context.fill(Path(roundedRect: topRect, cornerRadius: barW / 2),
+                             with: .color(Color.red.opacity(alpha)))
+
+                // Mirror bottom — dimmer
+                let downH = barH * 0.55
+                let downRect = CGRect(x: x, y: midY, width: barW, height: downH)
+                context.fill(Path(roundedRect: downRect, cornerRadius: barW / 2),
+                             with: .color(Color.red.opacity(alpha * 0.35)))
+            }
+        }
+        .animation(.easeOut(duration: 0.06), value: bars)
+        .frame(height: 32)
+        .background(Color.red.opacity(0.04))
     }
 }
 

@@ -1,6 +1,10 @@
 import AppKit
 import SwiftUI
 
+extension Notification.Name {
+    static let switchMainTab = Notification.Name("MetaWhisp.switchMainTab")
+}
+
 /// Manages the main application window (singleton — only one instance).
 @MainActor
 final class MainWindowController {
@@ -10,10 +14,14 @@ final class MainWindowController {
         coordinator: TranscriptionCoordinator,
         modelManager: ModelManagerService,
         recorder: AudioRecordingService,
-        historyService: HistoryService
+        historyService: HistoryService,
+        initialTab: MainWindowView.SidebarTab? = nil
     ) {
-        // If window already exists, bring it to front
+        // If window already exists, bring it to front (and switch tab if requested)
         if let window, window.isVisible {
+            if let tab = initialTab {
+                NotificationCenter.default.post(name: .switchMainTab, object: tab)
+            }
             NSApp.activate(ignoringOtherApps: true)
             window.makeKeyAndOrderFront(nil)
             window.orderFrontRegardless()
@@ -24,7 +32,8 @@ final class MainWindowController {
             coordinator: coordinator,
             modelManager: modelManager,
             recorder: recorder,
-            historyService: historyService
+            historyService: historyService,
+            initialTab: initialTab ?? .dashboard
         )
 
         let window = NSWindow(

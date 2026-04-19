@@ -7,11 +7,27 @@ struct MainWindowView: View {
     @ObservedObject var recorder: AudioRecordingService
     var historyService: HistoryService
 
-    @State private var selectedTab: SidebarTab = .dashboard
+    @State var selectedTab: SidebarTab
+
+    init(
+        coordinator: TranscriptionCoordinator,
+        modelManager: ModelManagerService,
+        recorder: AudioRecordingService,
+        historyService: HistoryService,
+        initialTab: SidebarTab = .dashboard
+    ) {
+        self.coordinator = coordinator
+        self.modelManager = modelManager
+        self.recorder = recorder
+        self.historyService = historyService
+        _selectedTab = State(initialValue: initialTab)
+    }
 
     enum SidebarTab: String, CaseIterable, Identifiable {
         case dashboard = "Dashboard"
-        case history = "History"
+        case library = "Library"
+        case tasks = "Tasks"
+        case chat = "MetaChat"
         case dictionary = "Dictionary"
         case settings = "Settings"
 
@@ -20,7 +36,9 @@ struct MainWindowView: View {
         var icon: String {
             switch self {
             case .dashboard: "gauge.with.dots.needle.33percent"
-            case .history: "clock.arrow.circlepath"
+            case .library: "books.vertical"
+            case .tasks: "checklist"
+            case .chat: "message"
             case .dictionary: "character.book.closed"
             case .settings: "gearshape"
             }
@@ -39,6 +57,11 @@ struct MainWindowView: View {
         }
         .background(MW.bg)
         .modelContainer(historyService.modelContainer)
+        .onReceive(NotificationCenter.default.publisher(for: .switchMainTab)) { notification in
+            if let tab = notification.object as? SidebarTab {
+                selectedTab = tab
+            }
+        }
     }
 
     // MARK: - Custom Sidebar
@@ -109,8 +132,12 @@ struct MainWindowView: View {
         switch selectedTab {
         case .dashboard:
             DashboardView(coordinator: coordinator)
-        case .history:
-            HistoryView()
+        case .library:
+            LibraryView()
+        case .tasks:
+            TasksView()
+        case .chat:
+            ChatView()
         case .dictionary:
             DictionaryView()
         case .settings:

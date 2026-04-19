@@ -25,6 +25,65 @@ final class AppSettings: ObservableObject {
     @AppStorage("textStyle_noPeriod") var textStyleNoPeriod: Bool = false
     @AppStorage("textStyle_noCapitalization") var textStyleNoCapitalization: Bool = false
 
+    // Meeting recording
+    @AppStorage("meetingRecordingEnabled") var meetingRecordingEnabled: Bool = false
+    @AppStorage("autoDetectCalls") var autoDetectCalls: Bool = false
+
+    // Screen context
+    @AppStorage("screenContextEnabled") var screenContextEnabled: Bool = false
+    @AppStorage("screenContextInterval") var screenContextInterval: Double = 30
+    @AppStorage("screenContextMode") var screenContextMode: String = "blacklist" // blacklist, whitelist
+    @AppStorage("screenContextAppList") var screenContextAppList: String = "" // comma-separated
+
+    // AI Advice
+    @AppStorage("adviceEnabled") var adviceEnabled: Bool = false
+    @AppStorage("adviceInterval") var adviceInterval: Double = 900 // seconds (15 min)
+
+    // Memories — independent from advice (spec://iterations/ITER-001#architecture.settings)
+    @AppStorage("memoriesEnabled") var memoriesEnabled: Bool = false
+    @AppStorage("memoriesInterval") var memoriesInterval: Double = 600 // seconds (10 min)
+
+    // Tasks — Omi-style action item extraction from voice transcripts (spec://BACKLOG#B1)
+    @AppStorage("tasksEnabled") var tasksEnabled: Bool = true
+
+    // Screen extraction — hourly batch analysis of ScreenContext → ScreenObservation (spec://BACKLOG#Phase2.R1)
+    @AppStorage("screenExtractionEnabled") var screenExtractionEnabled: Bool = true
+    @AppStorage("screenExtractionInterval") var screenExtractionInterval: Double = 3600  // seconds (1 hour)
+
+    // File Indexing — scan user-picked folders + extract memories from text files (spec://BACKLOG#Phase3.E1)
+    @AppStorage("fileIndexingEnabled") var fileIndexingEnabled: Bool = false
+    /// Comma-separated absolute folder paths (e.g. "/Users/alice/Obsidian,/Users/alice/Documents/notes").
+    @AppStorage("indexedFoldersCSV") var indexedFoldersCSV: String = ""
+    @AppStorage("fileIndexingInterval") var fileIndexingInterval: Double = 21600  // seconds (6 hours)
+
+    // Apple Notes reader — scan Notes.app via AppleScript, extract memories (spec://BACKLOG#Phase3.E2)
+    @AppStorage("appleNotesEnabled") var appleNotesEnabled: Bool = false
+    @AppStorage("appleNotesInterval") var appleNotesInterval: Double = 43200  // seconds (12 hours)
+
+    // Calendar reader — EventKit → tasks for upcoming events + memories for recurring patterns (spec://BACKLOG#Phase3.E3)
+    @AppStorage("calendarReaderEnabled") var calendarReaderEnabled: Bool = false
+    @AppStorage("calendarReaderInterval") var calendarReaderInterval: Double = 21600  // seconds (6 hours)
+
+    /// Parsed list of scanned folder paths.
+    var indexedFolders: [String] {
+        indexedFoldersCSV
+            .split(separator: ",")
+            .map { String($0).trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty }
+    }
+
+    func addIndexedFolder(_ path: String) {
+        var list = indexedFolders
+        guard !list.contains(path) else { return }
+        list.append(path)
+        indexedFoldersCSV = list.joined(separator: ",")
+    }
+
+    func removeIndexedFolder(_ path: String) {
+        let list = indexedFolders.filter { $0 != path }
+        indexedFoldersCSV = list.joined(separator: ",")
+    }
+
     // Sound preset: "default" (system sounds), "bass", "signature", or "custom"
     @AppStorage("soundPreset") var soundPreset: String = "default"
 

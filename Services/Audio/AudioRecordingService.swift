@@ -5,7 +5,7 @@ import Foundation
 /// Records audio from the microphone using AVAudioEngine.
 /// Outputs 16kHz mono Float32 PCM suitable for WhisperKit.
 @MainActor
-final class AudioRecordingService: ObservableObject {
+final class AudioRecordingService: ObservableObject, AudioSource {
     @Published var isRecording = false
     @Published var audioLevel: Float = 0
     @Published var audioBars: [Float] = Array(repeating: 0, count: 24)
@@ -16,6 +16,7 @@ final class AudioRecordingService: ObservableObject {
     private var converter: AVAudioConverter?
     private var barPhase: Double = 0
     private var engineWarmed = false
+    private var configObserver: Any?
 
     /// Request microphone permission using multiple strategies.
     func requestPermission() async -> Bool {
@@ -81,7 +82,43 @@ final class AudioRecordingService: ObservableObject {
         eng.prepare()
         self.engine = eng
         engineWarmed = true
+        observeDeviceChanges()
         NSLog("[AudioRecording] Engine pre-warmed")
+    }
+
+    /// Listen for audio device changes (AirPods connect/disconnect, etc.)
+    /// Observer is added only once — subsequent calls are no-ops.
+    /// Without this guard, each `warmUp()` adds another observer,
+    /// and each observer triggers warmUp again → cascading infinite loop
+    /// when the OS fires configuration-change notifications back-to-back.
+    private func observeDeviceChanges() {
+        guard configObserver == nil else { return }
+
+        configObserver = NotificationCenter.default.addObserver(
+            forName: .AVAudioEngineConfigurationChange,
+            object: nil, queue: .main
+        ) { [weak self] notification in
+            guard let self else { return }
+            NSLog("[AudioRecording] 🔄 Audio device changed — resetting engine")
+            Task { @MainActor in
+                let wasRecording = self.isRecording
+                if wasRecording {
+                    // Stop current recording — engine is invalid
+                    self.engine?.inputNode.removeTap(onBus: 0)
+                    self.engine?.stop()
+                    self.isRecording = false
+                    NSLog("[AudioRecording] Recording interrupted by device change")
+                }
+                // Force new engine on next start — but DON'T call warmUp()
+                // here. Lazy-init happens in `start()`. Re-warming from inside
+                // the observer callback can itself trigger another config-change
+                // notification (inputNode lazy init probes the device again),
+                // which re-enters the observer → loop.
+                self.engine = nil
+                self.converter = nil
+                self.engineWarmed = false
+            }
+        }
     }
 
     /// Start recording from the default input device.
