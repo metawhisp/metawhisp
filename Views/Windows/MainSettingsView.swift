@@ -1079,15 +1079,46 @@ struct MainSettingsView: View {
             toggleRow("SPEAK ANSWERS TO TYPED QUESTIONS", isOn: $settings.ttsTypedQuestions)
 
             if settings.ttsVoiceQuestions || settings.ttsTypedQuestions {
+                cloudVoiceSection
                 voicePicker
                 speedPicker
             }
         }
     }
 
+    private var cloudVoiceSection: some View {
+        let isPro = LicenseService.shared.isPro
+        return VStack(alignment: .leading, spacing: MW.sp4) {
+            HStack {
+                Text("CLOUD VOICE (PRO)").font(MW.monoSm).foregroundStyle(MW.textMuted)
+                Spacer()
+                Toggle("", isOn: $settings.ttsCloudEnabled)
+                    .labelsHidden()
+                    .toggleStyle(.switch)
+                    .controlSize(.small)
+                    .disabled(!isPro)
+            }
+            if !isPro {
+                Text("Pro required — natural voices via OpenAI TTS. System voices below stay free.")
+                    .font(MW.monoSm).foregroundStyle(MW.textMuted).italic()
+            } else if settings.ttsCloudEnabled {
+                Picker("", selection: $settings.ttsCloudVoice) {
+                    ForEach(TTSService.cloudVoices, id: \.self) { v in
+                        Text(v.capitalized).tag(v)
+                    }
+                }
+                .labelsHidden()
+                .font(MW.mono)
+            }
+        }
+    }
+
     private var voicePicker: some View {
         VStack(alignment: .leading, spacing: MW.sp4) {
-            Text("VOICE").font(MW.monoSm).foregroundStyle(MW.textMuted)
+            Text(settings.ttsCloudEnabled && LicenseService.shared.isPro
+                 ? "SYSTEM VOICE (FALLBACK)"
+                 : "VOICE")
+                .font(MW.monoSm).foregroundStyle(MW.textMuted)
             Picker("", selection: $settings.ttsVoice) {
                 Text("System default").tag("")
                 ForEach(TTSService.availableVoices(), id: \.identifier) { v in

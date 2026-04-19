@@ -4,7 +4,11 @@
 
 **Session handoff:** `specs/HANDOFF.md` — обязательно прочитать при старте новой сессии (после BOOT/KARPATHY/BACKLOG).
 
-**Shipped in session 2026-04-19 (summary):** Phases 0-3 end-to-end (Conversations, Screen pipeline, Readers), sidebar reorg 9→6 tabs, MetaChat brand + RAG + typing animation, Phase 6 voice questions (long-press Right ⌘ → TTS answer) with redesigned floating UI + STOP/Space/Esc controls. Phase 4/5/7/8 planned in BACKLOG. E4 Gmail + E5 unified runner deferred. Premium cloud TTS deferred to Phase 6+.
+**Shipped in session 2026-04-19 (summary):** Phases 0-3 end-to-end (Conversations, Screen pipeline, Readers), sidebar reorg 9→6 tabs, MetaChat brand + RAG + typing animation, Phase 6 voice questions (long-press Right ⌘ → TTS answer) with redesigned floating UI + STOP/Space/Esc controls. Phase 4/5/7/8 planned in BACKLOG. E4 Gmail + E5 unified runner deferred.
+
+**Shipped in session 2026-04-20 (summary so far):**
+- Cleanup: rewrote 2 pushed commits to scrub external-reference name from titles + bodies, renamed branch `omi-architecture-phase-1-3` → `architecture-phase-1-3` (force-push), scrub commit `96bd8e2` across 37 repo files (165+/215−).
+- Phase 6+ Premium TTS shipped: backend `/api/pro/tts` endpoint (OpenAI tts-1 proxy, 6 voices) + frontend dual-provider routing (cloud if Pro+enabled, else AVSpeech) + Settings Cloud Voice toggle gated on Pro. Awaiting user deploy of `api/` + `wrangler secret put OPENAI_API_KEY` before live test.
 
 ## Current Phase
 **Iteration 2: File Indexing** — подгрузка папок пользователя → извлечение фактов → обогащение UserMemory → персональные советы. Планируется. Ждёт 3 scope-решений от пользователя (Q1/Q2/Q3 в sessions/2026-04-18-project-state.md §5).
