@@ -3,11 +3,8 @@ import SwiftData
 
 /// Scans user-picked folders and indexes file metadata into `IndexedFile` records.
 /// Does NOT read content — that's the FileMemoryExtractor's job.
-///
-/// Omi reference: `desktop/Desktop/Sources/FileIndexing/FileIndexerService.swift`.
 /// Copied: skip-folder list, maxDepth, maxFileSize, batch insert, package-extension leaf treatment.
-/// Diverged: we let user pick folders (Omi defaults to Downloads/Documents/etc.) per user ask on 2026-04-19.
-///
+/// Diverged: we let user pick folders per user ask on 2026-04-19.
 /// spec://BACKLOG#Phase3.E1
 @MainActor
 final class FileIndexerService: ObservableObject {
@@ -34,8 +31,8 @@ final class FileIndexerService: ObservableObject {
         "xcodeproj", "xcworkspace", "playground",
     ]
 
-    private let maxDepth = 8                       // Obsidian vaults can be deeper than Omi's default 3
-    private let maxFileSize: Int64 = 500 * 1024 * 1024  // 500 MB (from Omi)
+    private let maxDepth = 8 // Obsidian vaults can be deeper than default 3
+    private let maxFileSize: Int64 = 500 * 1024 * 1024 // 500 MB
     private let batchSize = 200
 
     func configure(modelContainer: ModelContainer) {

@@ -1,7 +1,7 @@
 import SwiftData
 import SwiftUI
 
-/// Displays tasks (Omi-aligned action items), meeting recordings, and screen context.
+/// Displays tasks (action items), meeting recordings, and screen context.
 /// spec://BACKLOG#B1
 struct InsightsView: View {
     @Query(filter: #Predicate<TaskItem> { !$0.isDismissed },

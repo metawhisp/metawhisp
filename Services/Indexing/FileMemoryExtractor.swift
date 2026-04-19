@@ -3,10 +3,8 @@ import SwiftData
 
 /// Reads text content from indexed .md/.txt files, sends to LLM, saves UserMemory rows with sourceFile FK.
 /// Runs as a second pass after FileIndexerService populates IndexedFile records.
-///
-/// Prompt adapted from Omi's memory extraction (`backend/utils/prompts.py:12`) — same strict
+/// Prompt adapted from memory extraction (`backend/utils/prompts.py:12`) — same strict
 /// accept/reject rules, but input is a single file's content instead of voice transcript.
-///
 /// spec://BACKLOG#Phase3.E1
 @MainActor
 final class FileMemoryExtractor: ObservableObject {
@@ -123,12 +121,12 @@ final class FileMemoryExtractor: ObservableObject {
         NSLog("[FileMemoryExtractor] ✅ %@", lastSummary ?? "")
     }
 
-    // MARK: - System prompt (adapted from Omi memory extraction)
+    // MARK: - System prompt
 
     static let systemPrompt = """
     You are an expert memory curator. Extract high-value durable facts about the user from the content of a file they have stored on their Mac (likely a personal note, Obsidian vault page, draft, etc.).
 
-    Apply Omi-strict rules:
+    Apply strict rules:
     - Each memory ≤ 15 words, start SYSTEM memories with "User".
     - Two categories: "system" (facts about the user) / "interesting" (external wisdom WITH attribution: "Source: insight").
     - DEFAULT TO EMPTY LIST. Max 3 memories per file.

@@ -2,8 +2,7 @@ import Foundation
 import SwiftData
 
 /// Index record for a file discovered during folder scan.
-/// Mirrors Omi's `IndexedFileRecord` (`desktop/Desktop/Sources/FileIndexing/IndexedFileRecord.swift`).
-///
+/// Mirrors `IndexedFileRecord` (`desktop/Desktop/Sources/FileIndexing/IndexedFileRecord.swift`).
 /// spec://BACKLOG#Phase3.E1
 @Model
 final class IndexedFile {
@@ -50,7 +49,7 @@ final class IndexedFile {
         self.contentExtractedAt = nil
     }
 
-    /// Categorize by extension — mirrors Omi's FileTypeCategory enum.
+    /// Categorize by extension — mirrors FileTypeCategory enum.
     static func category(for fileExtension: String?) -> String {
         guard let ext = fileExtension?.lowercased() else { return "other" }
         switch ext {

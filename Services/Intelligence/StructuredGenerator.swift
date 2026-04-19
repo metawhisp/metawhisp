@@ -2,16 +2,13 @@ import Foundation
 import SwiftData
 
 /// Generates Structured (title/overview/category/emoji) for a closed Conversation.
-/// Mirrors Omi's `get_transcript_structure` (`backend/utils/llm/conversation_processing.py:588`).
-///
+/// Mirrors `get_transcript_structure` (`backend/utils/llm/conversation_processing.py:588`).
 /// Fired by ConversationGrouper.close(). Fire-and-forget async.
-///
-/// Adaptations (from Omi copy):
+/// Adaptations:
 /// - Removed speaker/CalendarMeetingContext handling (single-user desktop).
 /// - Removed photos parameter (no wearable camera).
 /// - Removed Calendar Events extraction (belongs to Phase 7 calendar integration).
-/// - Kept: title (Title Case ≤10 words), overview, emoji (specific vivid), category (33 Omi values).
-///
+/// - Kept: title (Title Case ≤10 words), overview, emoji (specific vivid), category (33 values).
 /// spec://BACKLOG#C1.2
 @MainActor
 final class StructuredGenerator: ObservableObject {
@@ -119,9 +116,8 @@ final class StructuredGenerator: ObservableObject {
         }
     }
 
-    // MARK: - Prompt (copied from Omi, single-user simplification)
+    // MARK: - Prompt
 
-    /// Source: `BasedHardware/omi/backend/utils/llm/conversation_processing.py:605-647`.
     static let systemPrompt = """
     You are an expert content analyzer. Your task is to analyze the provided voice transcript and provide structure and clarity.
 

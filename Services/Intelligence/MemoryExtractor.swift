@@ -1,10 +1,9 @@
 import Foundation
 import SwiftData
 
-/// Extracts structured facts about the user from voice transcripts (Omi-aligned).
+/// Extracts structured facts about the user from voice transcripts.
 /// Triggered on each completed voice transcription (≥20 chars) — same pattern as AdviceService.
-/// Screen context is NOT input — Omi reference uses voice conversations, not screen OCR (garbage in → garbage out).
-///
+/// Screen context is NOT input — reference pattern uses voice conversations, not screen OCR (garbage in → garbage out).
 /// spec://iterations/ITER-001#architecture.extractor
 @MainActor
 final class MemoryExtractor: ObservableObject {
@@ -17,10 +16,10 @@ final class MemoryExtractor: ObservableObject {
     private weak var screenContext: ScreenContextService?
     private var modelContainer: ModelContainer?
 
-    /// Min confidence for accepting a memory (Omi default 0.7).
+    /// Min confidence for accepting a memory.
     private let minConfidence: Double = 0.7
 
-    /// Max memories to insert per extraction (Omi caps at 2 per conversation).
+    /// Max memories to insert per extraction.
     private let maxPerExtraction: Int = 2
 
     func configure(screenContext: ScreenContextService, modelContainer: ModelContainer) {
@@ -94,7 +93,7 @@ final class MemoryExtractor: ObservableObject {
                 return
             }
 
-            // Persist only high-confidence, cap at maxPerExtraction (Omi caps at 2).
+            // Persist only high-confidence, cap at maxPerExtraction.
             if let container = modelContainer {
                 let ctx = ModelContext(container)
                 var insertedCount = 0
@@ -114,7 +113,7 @@ final class MemoryExtractor: ObservableObject {
 
     // MARK: - Prompt
 
-    /// Omi-aligned memory extraction prompt. Adapted from BasedHardware/omi backend/utils/prompts.py:12.
+    /// memory extraction prompt. Adapted from backend/utils/prompts.py:12.
     /// Input is a voice transcript (not screen OCR). Max 2 memories per extraction. 15 words each.
     /// spec://iterations/ITER-001#architecture.extractor
     static let systemPrompt = """
@@ -140,7 +139,7 @@ final class MemoryExtractor: ObservableObject {
     - User's preferences with reasoning ("User prefers Swift strict concurrency over legacy patterns")
     - Named projects/products User builds ("User builds MetaWhisp, a macOS voice-to-text app")
     - Named people in User's network with relationship ("User's cofounder Araf handles backend")
-    - Concrete plans, decisions, commitments ("User decided to integrate Omi open-source API")
+    - Concrete plans, decisions, commitments ("User decided to integrate Stripe billing")
     - Domain expertise or role ("User is CTO at Acme")
 
     INCLUDE (INTERESTING) — only with attribution:
@@ -198,7 +197,7 @@ final class MemoryExtractor: ObservableObject {
     private func buildPrompt(transcript: String, existing: [UserMemory]) -> String {
         var parts: [String] = []
 
-        // Existing memories passed ALL (not windowed) — Omi passes up to 1000 for robust dedup.
+        // Existing memories passed ALL (not windowed) — up to 1000 for robust dedup.
         // UserMemory corpus is small (< 100 typical), no budget concern.
         if !existing.isEmpty {
             parts.append("Existing memories you already know about User (DO NOT repeat or duplicate):")
@@ -220,7 +219,7 @@ final class MemoryExtractor: ObservableObject {
 
     // MARK: - Fetch helpers
 
-    /// All non-dismissed memories (Omi passes the full corpus up to 1000 for robust semantic dedup).
+    /// All non-dismissed memories.
     private func fetchExistingMemories(limit: Int = 1000) -> [UserMemory] {
         guard let container = modelContainer else { return [] }
         let ctx = ModelContext(container)

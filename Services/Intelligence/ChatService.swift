@@ -2,9 +2,8 @@ import Foundation
 import SwiftData
 
 /// Chat with RAG over user's memories + recent transcripts + tasks.
-/// System prompt adapted from Omi `_get_qa_rag_prompt` (`backend/utils/llm/chat.py:303`).
+/// System prompt adapted `_get_qa_rag_prompt` (`backend/utils/llm/chat.py:303`).
 /// MVP: no streaming, no files, no voice — just text in / text out.
-///
 /// spec://BACKLOG#B2
 @MainActor
 final class ChatService: ObservableObject {
@@ -128,9 +127,8 @@ final class ChatService: ObservableObject {
         try? ctx.save()
     }
 
-    // MARK: - System prompt (adapted from Omi _get_qa_rag_prompt)
+    // MARK: - System prompt
 
-    /// Source: `BasedHardware/omi/backend/utils/llm/chat.py:303`.
     /// Adaptations:
     /// - Removed plugin/app personality injection (single assistant).
     /// - Removed citation blocks (no vector search, no ranked retrieval).

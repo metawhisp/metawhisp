@@ -2,8 +2,7 @@ import Foundation
 import SwiftData
 
 /// Action item extracted from a voice transcription.
-/// Mirrors Omi's `ActionItem` in `backend/models/structured.py`.
-///
+/// Mirrors `ActionItem` in `backend/models/structured.py`.
 /// spec://BACKLOG#B1
 @Model
 final class TaskItem {
@@ -19,7 +18,7 @@ final class TaskItem {
     /// spec://BACKLOG#C1.3
     var conversationId: UUID?
     /// Foreign key to `ScreenContext.id` when task was extracted from screen.
-    /// Omi's `ActionItemRecord.screenshotId`. Nullable.
+    /// `ActionItemRecord.screenshotId`. Nullable.
     /// spec://BACKLOG#Phase2.R2
     var screenContextId: UUID?
     /// App where user was when the transcription happened.

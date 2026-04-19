@@ -2,17 +2,15 @@ import Foundation
 import SwiftData
 
 /// Observation record for a screen activity window.
-/// Mirrors Omi's `ObservationRecord` (`desktop/Desktop/Sources/Rewind/Core/ObservationRecord.swift`):
+/// Mirrors `ObservationRecord` (`desktop/Desktop/Sources/Rewind/Core/ObservationRecord.swift`):
 /// "Every screenshot analysis produces an observation — whether or not a task was found."
-///
-/// We diverge from Omi per-snapshot and instead batch per-visit (consecutive same-app window as one observation)
+/// We diverge per-snapshot and instead batch per-visit (consecutive same-app window as one observation)
 /// to keep Pro-proxy cost reasonable (~20 observations/hour vs 120 raw snapshots).
-///
 /// spec://BACKLOG#Phase2.R1
 @Model
 final class ScreenObservation {
     var id: UUID
-    /// FK to the last ScreenContext in the visit window (Omi uses screenshotId — we use UUID of ScreenContext).
+    /// FK to the last ScreenContext in the visit window.
     var screenContextId: UUID?
     /// App frontmost during this observation window.
     var appName: String
@@ -28,9 +26,9 @@ final class ScreenObservation {
     var hasTask: Bool
     /// Optional preview of the task (full TaskItem stored separately by R2).
     var taskTitle: String?
-    /// Omi's CategoryEnum value (work / personal / technology / ...). Nil if LLM couldn't classify.
+    /// CategoryEnum value (work / personal / technology / ...). Nil if LLM couldn't classify.
     var sourceCategory: String?
-    /// Focus status from Omi: "focused" | "distracted" | nil. Heuristic — if user is switching apps fast, distracted.
+    /// Focus status : "focused" | "distracted" | nil. Heuristic — if user is switching apps fast, distracted.
     var focusStatus: String?
     /// Start of the observation window.
     var startedAt: Date

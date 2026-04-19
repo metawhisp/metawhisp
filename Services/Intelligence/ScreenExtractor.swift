@@ -2,11 +2,10 @@ import Foundation
 import SwiftData
 
 /// Hourly batch analyzer of ScreenContext → ScreenObservation + UserMemory + TaskItem records.
-/// Omi's counterpart: `Rewind/Core/ObservationRecord` + `ProactiveExtractionRecord` (memory/task/insight from screenshots).
+/// counterpart: `Rewind/Core/ObservationRecord` + `ProactiveExtractionRecord` (memory/task/insight from screenshots).
 /// We batch by "visits" (consecutive same-app window) to fit Pro-proxy cost profile —
 /// 60 min × 2 snapshots/min = 120 raw records → collapse to ~15 visits → 1 LLM call that produces
 /// observations + memories + tasks in one shot.
-///
 /// spec://BACKLOG#Phase2.R1 + R2
 @MainActor
 final class ScreenExtractor: ObservableObject {
@@ -267,7 +266,7 @@ final class ScreenExtractor: ObservableObject {
 
     // MARK: - Prompt
 
-    /// Inspired by Omi's observation + proactive extraction flow.
+    /// Inspired by observation + proactive extraction flow.
     /// Every visit produces an observation. Additionally, across all visits, extract durable facts
     /// (memories) and actionable tasks — linked back to the visit by index.
     static let systemPrompt = """
@@ -289,7 +288,7 @@ final class ScreenExtractor: ObservableObject {
     - Named projects user works on ("User builds Overchat, an AI ChatGPT wrapper product").
     - Named people in network with role ("User's colleague Ivan Skladchikov handles Telegram bot MeetRecorder").
     - Specific preferences with reasoning ("User prefers PARA method for Obsidian vault organization").
-    - Concrete commitments ("User plans to integrate Omi open-source API into MetaWhisp").
+    - Concrete commitments ("User plans to integrate Stripe billing into MetaWhisp").
     - NO generic "User was in X app". NO "User is working on something" (vague).
     - Each memory ≤15 words, starts with "User" (or attribution for external wisdom).
     - Each memory includes visitIndex (0-based) pointing to most relevant visit.

@@ -35,16 +35,16 @@ final class TranscriptionCoordinator: ObservableObject {
     weak var adviceService: AdviceService?
 
     /// Optional. If set and memory collection is enabled, each successful transcription
-    /// fires a trigger that may extract up to 2 memories (Omi-aligned).
+    /// fires a trigger that may extract up to 2 memories.
     /// spec://iterations/ITER-001#architecture.extractor
     weak var memoryExtractor: MemoryExtractor?
 
     /// Optional. If set and tasks enabled, each successful transcription fires a trigger
-    /// that may extract action items (Omi-aligned, dedup over 2 days).
+    /// that may extract action items (dedup over 2 days).
     /// spec://BACKLOG#B1
     weak var taskExtractor: TaskExtractor?
 
-    /// Optional. Groups consecutive transcripts into Conversations (Omi-aligned aggregation root).
+    /// Optional. Groups consecutive transcripts into Conversations (aggregation root).
     /// spec://BACKLOG#C1.1
     weak var conversationGrouper: ConversationGrouper?
 

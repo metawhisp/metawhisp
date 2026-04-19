@@ -1,14 +1,11 @@
 import Foundation
 import SwiftData
 
-/// Groups transcripts into Conversations (Omi-aligned aggregation root).
+/// Groups transcripts into Conversations (aggregation root).
 /// Rule: consecutive dictations within 10 min silence belong to one Conversation.
 /// Meetings always get their own Conversation (source="meeting").
-///
-/// Omi reference: `backend/models/conversation.py` (ConversationSource + ConversationStatus).
-/// The 10-min gap is a desktop-adapted analog of Omi's 2-min wearable silence split —
+/// The 10-min gap is a desktop-adapted analog of 2-min wearable silence split —
 /// keyboard/dictation rhythm on desktop is slower than continuous wearable audio.
-///
 /// spec://BACKLOG#C1.1
 @MainActor
 final class ConversationGrouper {

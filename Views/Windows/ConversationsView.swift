@@ -1,16 +1,13 @@
 import SwiftData
 import SwiftUI
 
-/// Conversations tab — the Omi-style root view onto aggregated dictation sessions and meetings.
+/// Conversations tab — the root view onto aggregated dictation sessions and meetings.
 /// Each row shows LLM-generated title + overview + SF Symbol icon + category chip.
 /// Click to expand and see linked memories / tasks / transcripts.
-///
-/// Omi reference: mobile/desktop Conversations tab (screenshot 2026-04-19).
 /// Adaptations for our minimal monochrome desktop design:
 /// - SF Symbols instead of Unicode emoji
 /// - Grouped by relative date (Today / Yesterday / specific date)
-/// - Two filter chips only (ALL / STARRED) — 33 Omi categories too many for top filter bar
-///
+/// - Two filter chips only (ALL / STARRED) — 33 categories too many for top filter bar
 /// spec://BACKLOG#C1.4
 struct ConversationsView: View {
     @Query(

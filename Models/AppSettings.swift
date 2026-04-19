@@ -43,7 +43,7 @@ final class AppSettings: ObservableObject {
     @AppStorage("memoriesEnabled") var memoriesEnabled: Bool = false
     @AppStorage("memoriesInterval") var memoriesInterval: Double = 600 // seconds (10 min)
 
-    // Tasks — Omi-style action item extraction from voice transcripts (spec://BACKLOG#B1)
+    // Tasks
     @AppStorage("tasksEnabled") var tasksEnabled: Bool = true
 
     // Screen extraction — hourly batch analysis of ScreenContext → ScreenObservation (spec://BACKLOG#Phase2.R1)

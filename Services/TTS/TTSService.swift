@@ -2,8 +2,7 @@ import AVFoundation
 import Foundation
 
 /// Text-to-speech service. MVP uses AVSpeechSynthesizer (Apple-native, offline, free).
-/// Premium TTS (OpenAI / ElevenLabs — Omi's "Sloane") deferred — see BACKLOG#Phase6+.
-///
+/// Premium TTS (OpenAI / ElevenLabs — "Sloane") deferred — see BACKLOG#Phase6+.
 /// spec://BACKLOG#Phase6
 @MainActor
 final class TTSService: ObservableObject {

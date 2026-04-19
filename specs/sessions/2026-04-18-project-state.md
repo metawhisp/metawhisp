@@ -9,7 +9,7 @@
 **MetaWhisp** — macOS menu bar app для voice-to-text.
 Основной flow: Right ⌘ → голос → WhisperKit транскрипция → текст в активный инпут.
 
-**Расширяется до** ассистента (как Omi desktop, но privacy-first, локально):
+**Расширяется до** ассистента (privacy-first, локально):
 - Memory system (знает тебя)
 - Insights (персональные советы)
 - Meeting Recording (запись созвонов с mic+system audio mix)
@@ -27,15 +27,15 @@
 - **Voice-to-text core** — Right ⌘ → WhisperKit (on-device OR cloud Pro) → Cmd+V в инпут
 - **Meeting Recording** — mic + system audio mix через SCStream, waveform, автодетект Zoom/Teams/Meet
 - **Screen Context** — ScreenCaptureKit + Apple Vision OCR, blacklist (банки, password managers), whitelist mode
-- **AI Advice** — Omi-style prompt (< 100 chars, no_advice escape, bad examples в промпте), через Pro proxy
-- **Memory system** — UserMemory SwiftData + MemoryExtractor (Omi-style, strict accept/reject)
+- **AI Advice** — no_advice escape, bad examples в промпте, через Pro proxy
+- **Memory system** — UserMemory SwiftData + MemoryExtractor (strict accept/reject)
 - **Permissions** — активный TCC триггер (CGRequestScreenCaptureAccess + SCShareableContent)
 - **Insights UI** — таб с секциями Advice / Meetings / Screen Context, dismiss, mark-read
 - **Memories UI** — отдельный таб в sidebar с filter (System / Interesting / All), edit, delete
 - **Notifications** — macOS system notifications при advice generation (click → Insights tab)
 
 ### В процессе / требует live-теста ⏳
-- **Iteration 1 end-to-end тест** — Memories extraction + Omi-style advice. Код deployed, user тестирует как использует app
+- **Iteration 1 end-to-end тест** — Memories extraction + advice. Код deployed, user тестирует как использует app
 - **GENERATE NOW / EXTRACT NOW кнопки** — для instant-теста (bug fixed с @MainActor in)
 
 ### Планируется ❌
@@ -79,7 +79,7 @@ api/                  Cloudflare Worker (api.metawhisp.com)
 ### Backend endpoints (api.metawhisp.com)
 - `POST /api/pro/transcribe` — Pro transcription via Deepgram
 - `POST /api/pro/process` — text processing / translate
-- `POST /api/pro/advice` — Omi-style advice generation via Groq Llama 3.3
+- `POST /api/pro/advice`.3
 - `GET /api/usage` — balance / history
 
 ### Pro subscription limits (just fixed)
@@ -93,9 +93,9 @@ api/                  Cloudflare Worker (api.metawhisp.com)
 
 ### Реализовано (Iteration 1)
 1. **UserMemory SwiftData model** — categories system + interesting, soft delete
-2. **MemoryExtractor** — Omi-style prompt, strict accept/reject lists, 10-min timer, dedup 20 recent
+2. **MemoryExtractor**, strict accept/reject lists, 10-min timer, dedup 20 recent
 3. **MemoriesView** — отдельный таб в sidebar, toggle `memoriesEnabled` независимый
-4. **AdviceService rewrite** — Omi-style prompt (< 100 chars, bad examples, no_advice escape)
+4. **AdviceService rewrite**, bad examples, no_advice escape)
 5. **Memory injection** в advice prompt (личные факты → персональные советы)
 6. **Previous advice window** 5 → 20 (anti-repetition)
 7. **Backend `/api/pro/advice`** — новый endpoint, deployed

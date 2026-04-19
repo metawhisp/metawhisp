@@ -1,14 +1,11 @@
 import Foundation
 import SwiftData
 
-/// Extracts action items from voice transcripts (Omi-aligned).
+/// Extracts action items from voice transcripts.
 /// Mirrors `MemoryExtractor` pattern — triggered on each voice transcription ≥20 chars.
-///
-/// Omi reference: `backend/utils/llm/conversation_processing.py:301` (`extract_action_items`).
-/// Prompt adapted from Omi's `instructions_text` (lines 345-540):
+/// Prompt adapted from `instructions_text` (lines 345-540):
 /// - Speaker/CalendarMeetingContext sections removed (we have single user, no calendar integration yet).
 /// - All filtering rules, explicit patterns, dedup logic, due_at resolution copied verbatim.
-///
 /// spec://BACKLOG#B1
 @MainActor
 final class TaskExtractor: ObservableObject {
@@ -21,7 +18,7 @@ final class TaskExtractor: ObservableObject {
     private weak var screenContext: ScreenContextService?
     private var modelContainer: ModelContainer?
 
-    /// Omi uses 2-day dedup window for action items.
+    /// 2-day dedup window for action items.
     private let dedupWindowDays: Int = 2
 
     func configure(screenContext: ScreenContextService, modelContainer: ModelContainer) {
@@ -113,10 +110,9 @@ final class TaskExtractor: ObservableObject {
         }
     }
 
-    // MARK: - Prompt (copied verbatim from Omi, single-user adaptation)
+    // MARK: - Prompt (copied verbatim , single-user adaptation)
 
     /// Action item extraction prompt.
-    /// Source: `BasedHardware/omi/backend/utils/llm/conversation_processing.py:345-540`.
     /// Adaptations:
     /// - Removed speaker resolution rules (single user dictation).
     /// - Removed CalendarMeetingContext handling (no calendar integration yet).

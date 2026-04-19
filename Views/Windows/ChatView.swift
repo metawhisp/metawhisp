@@ -2,8 +2,7 @@ import SwiftData
 import SwiftUI
 
 /// Chat with your own memories + transcripts + tasks.
-/// Mirrors Omi Chat tab (minimal MVP — text only, no voice/files/sharing).
-///
+/// Mirrors Chat tab (minimal MVP — text only, no voice/files/sharing).
 /// spec://BACKLOG#B2
 struct ChatView: View {
     @Query(sort: \ChatMessage.createdAt, order: .forward) private var messages: [ChatMessage]

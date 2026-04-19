@@ -9,7 +9,7 @@
 ## Current Phase
 **Iteration 2: File Indexing** — подгрузка папок пользователя → извлечение фактов → обогащение UserMemory → персональные советы. Планируется. Ждёт 3 scope-решений от пользователя (Q1/Q2/Q3 в sessions/2026-04-18-project-state.md §5).
 
-**Предыдущая (Iteration 1):** Memory system + Omi-style Insights — имплементировано, ждёт live-теста.
+**Предыдущая (Iteration 1):** Memory system + Insights — имплементировано, ждёт live-теста.
 
 ## Completed
 - [voice-to-text core]: работает стабильно, не трогать — mic → WhisperKit → clipboard
@@ -26,8 +26,8 @@
 - [permission-ux-fix]: убрал авто-открытие System Settings при permission denial — steals focus и закрывает popover. Теперь error banner кликабельный → пользователь сам открывает Settings. Логи: `[SystemAudio] No Screen Recording permission — requesting...` → `[Permissions] ScreenCaptureKit: The user declined TCCs...` → раньше popover закрывался молча. Теперь остаётся открытым с красным бэннером.
 - [appdelegate-shared-fix]: EXTRACT NOW / GENERATE NOW падали с "SwiftUI context issue" — `NSApp.delegate as? AppDelegate` runtime-cast failed (SwiftUI @NSApplicationDelegateAdaptor бриджит через Obj-C protocol, dynamic cast не проходит). Fix: `AppDelegate.shared` weak static, устанавливается в `applicationDidFinishLaunching`. MemoriesView + InsightsView теперь берут ссылку через него. Лог подтверждения в `~/Library/Logs/MetaWhisp.log`: `[InsightsView] ❌ AppDelegate cast failed. NSApp.delegate class = Optional<NSApplicationDelegate>` (до fix).
 - [developer-id-signing]: `build.sh` теперь подписывает всё под `Developer ID Application: Andrey Dyuzhov (6D6948Z4MW)` вместо ad-hoc. Sparkle nested binaries (XPCServices, Autoupdate, Updater.app, Sparkle) подписываются снизу вверх с `--preserve-metadata=identifier,entitlements,flags` чтобы сохранить `org.sparkle-project.*` identifier. Hardened runtime (`--options runtime`) включён. Fallback на ad-hoc если cert отсутствует (CI). **Эффект:** TeamIdentifier стабилен (6D6948Z4MW) между rebuild'ами → TCC больше не сбрасывается, weekly-reprompt больше не триггерится. **Одноразовая боль:** при переходе с ad-hoc на Developer ID system-wide TCC помнит старый "deny" для Screen Recording → dialog не появляется. Решение один раз: System Settings → Privacy → Screen Recording → добавить через `+`. После этого grant прилип к Developer ID sig, rebuild не сбрасывает.
-- [b1-tasks-omi-parity]: Advice→Tasks implemented Omi-aligned. Новый `TaskItem` model + `TaskExtractor` service копирует Omi's `extract_action_items` (`backend/utils/llm/conversation_processing.py:301`). Trigger: voice transcription ≥20 chars (mirror memory trigger). Prompt: copied verbatim from Omi 345-540, удалены sections про Speaker 0/1/2 и CalendarMeetingContext (single-user adaptation). 2-day dedup window, future-only due_at parsing. UI: Insights → Tasks section с checkbox + due badges (TODAY/TOMORROW/OVERDUE). `AdviceService.startPeriodicAdvice` полностью отключён. `AdviceItem` records остаются в БД (138 шт) но скрыты от UI. Build green. Awaiting user verification scenarios (see BACKLOG#B1).
-- [memory-extractor-omi-align]: MemoryExtractor переписан под Omi-реальный pattern. **Trigger:** fires on each voice transcription ≥20 chars (mirror `AdviceService.triggerOnTranscription`), НЕ periodic timer каждые 10 мин. **Input:** voice transcript (как у Omi), screen OCR больше не input для memories (garbage in → garbage out, prompt отвергал UI junk типа "0 clawd / SEO SKILL ~ 口、"). **Prompt:** adapted из `BasedHardware/omi/backend/utils/prompts.py:12` — categorization test Q1→Q2, temporal ban ("Thursday"/"next week"), transient verb ban ("is working on"/"is building"), hedging ban, strict dedup with "contradiction is EXCEPTION → extract", mandatory double-check. **Cap:** max 2 memories per extraction (Omi `max_items=2`). **Dedup window:** все non-dismissed memories (было 20, Omi 1000). **Verify:** diagnostic script `/tmp/mw_test_extractor.py` — на idealfactual transcript ("Я CTO Overchat, использую Swift strict concurrency") вернул 2 memories с confidence=1.0. На non-factual ("я думаю", "покажи html") вернул [] — корректно. **Files:** `Services/Intelligence/MemoryExtractor.swift`, `Services/System/TranscriptionCoordinator.swift:37-41`, `App/AppDelegate.swift:90-93, 286-289, 382-388`. EXTRACT NOW кнопка теперь extract'ит из последнего transcript в History.
+- [b1-tasks-parity]: Advice→Tasks implemented . Новый `TaskItem` model + `TaskExtractor` service копирует `extract_action_items` (`backend/utils/llm/conversation_processing.py:301`). Trigger: voice transcription ≥20 chars (mirror memory trigger). Prompt: copied verbatim 345-540, удалены sections про Speaker 0/1/2 и CalendarMeetingContext (single-user adaptation). 2-day dedup window, future-only due_at parsing. UI: Insights → Tasks section с checkbox + due badges (TODAY/TOMORROW/OVERDUE). `AdviceService.startPeriodicAdvice` полностью отключён. `AdviceItem` records остаются в БД (138 шт) но скрыты от UI. Build green. Awaiting user verification scenarios (see BACKLOG#B1).
+- [memory-extractor-align]: MemoryExtractor переписан под проверенный pattern. **Trigger:** fires on each voice transcription ≥20 chars (mirror `AdviceService.triggerOnTranscription`), НЕ periodic timer каждые 10 мин. **Input:** voice transcript, screen OCR больше не input для memories (garbage in → garbage out, prompt отвергал UI junk типа "0 clawd / SEO SKILL ~ 口、"). **Prompt:** adapted из — categorization test Q1→Q2, temporal ban ("Thursday"/"next week"), transient verb ban ("is working on"/"is building"), hedging ban, strict dedup with "contradiction is EXCEPTION → extract", mandatory double-check. **Cap:** max 2 memories per extraction. **Dedup window:** все non-dismissed memories (было 20, 1000). **Verify:** diagnostic script `/tmp/mw_test_extractor.py` — на idealfactual transcript ("Я CTO Overchat, использую Swift strict concurrency") вернул 2 memories с confidence=1.0. На non-factual ("я думаю", "покажи html") вернул [] — корректно. **Files:** `Services/Intelligence/MemoryExtractor.swift`, `Services/System/TranscriptionCoordinator.swift:37-41`, `App/AppDelegate.swift:90-93, 286-289, 382-388`. EXTRACT NOW кнопка теперь extract'ит из последнего transcript в History.
 
 ## In Progress
 - [FEAT-0001§meeting-recording] (UX polish):
@@ -71,16 +71,16 @@
    Affects: `Services/Audio/AudioRecordingService.swift:117`
 
 ## Decisions Pending
-- spec://audio/FEAT-0001#continuous-mode: включать ли непрерывный meeting mode с авто-сегментацией по VAD (как у Omi)?
+- spec://audio/FEAT-0001#continuous-mode: включать ли непрерывный meeting mode с авто-сегментацией по VAD?
 - spec://intelligence/FEAT-0003#local-llm: интегрировать Apple Foundation Models (требует macOS 26) для local advice без API ключей?
-- spec://audio/PROP-0001#ble-omi: делать ли BLE интеграцию с Omi wearable как третий AudioSource?
+- spec://audio/PROP-0001#ble-wearable: делать ли BLE интеграцию с wearable reference как третий AudioSource?
 
-## Iteration 1 (Omi-style Memory + Insights) — implemented, ждёт user-теста
+## Iteration 1 (Memory + Insights) — implemented, ждёт user-теста
 
 Реализовано всё по `specs/iterations/ITER-001.md`:
-- `UserMemory` model + `MemoryExtractor` (Omi-style prompt, strict accept/reject lists, 10-min timer)
+- `UserMemory` model + `MemoryExtractor` (prompt, strict accept/reject lists, 10-min timer)
 - `MemoriesView` отдельным табом в sidebar + toggle `memoriesEnabled` (независимый от advice)
-- `AdviceService` переписан Omi-style: <100 chars, BAD EXAMPLES, `no_advice` escape, memory injection, окно previous advice = 20
+- `AdviceService` переписан : <100 chars, BAD EXAMPLES, `no_advice` escape, memory injection, окно previous advice = 20
 - `EXTRACT NOW` / `GENERATE NOW` кнопки для instant-теста
 - Backend `/api/pro/advice` — `MAX_PROMPT_LEN` 8000→32000, `maxBalance` 600→1800
 - Auto-restart ScreenContext когда permission grant'ится в runtime (applicationDidBecomeActive)
@@ -88,7 +88,7 @@
 ## Что на столе — 3 опции для следующей сессии
 
 1. **Self-signed cert в Keychain** — стабильная подпись между rebuild'ами, TCC permissions больше не сбрасываются (самая большая боль недавней сессии). Пользователь создаёт cert в Keychain Access, build.sh подписывает им.
-2. **Live тест GENERATE NOW / EXTRACT NOW** — проверить что Omi-style советы короткие/конкретные, memories не тривиальные, no_advice срабатывает
+2. **Live тест GENERATE NOW / EXTRACT NOW** — проверить что советы короткие/конкретные, memories не тривиальные, no_advice срабатывает
 3. **Iteration 2: File Indexing** — user picks папки → extract text → write в UserMemory (обогащение personalization)
 
 User предпочитает продуктовые фичи > infrastructure polish, но self-signed cert сэкономит часы в следующих итерациях.
