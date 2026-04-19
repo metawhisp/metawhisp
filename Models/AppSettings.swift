@@ -64,6 +64,16 @@ final class AppSettings: ObservableObject {
     @AppStorage("calendarReaderEnabled") var calendarReaderEnabled: Bool = false
     @AppStorage("calendarReaderInterval") var calendarReaderInterval: Double = 21600  // seconds (6 hours)
 
+    // Voice questions via long-press Right ⌘ + TTS answers (spec://BACKLOG#Phase6)
+    @AppStorage("ttsVoiceQuestions") var ttsVoiceQuestions: Bool = true
+    @AppStorage("ttsTypedQuestions") var ttsTypedQuestions: Bool = false
+    /// Long-press hold threshold for voice-question trigger (ms).
+    @AppStorage("voiceQuestionHoldMs") var voiceQuestionHoldMs: Double = 500
+    /// AVSpeechSynthesisVoice identifier — defaults to system's preferred voice.
+    @AppStorage("ttsVoice") var ttsVoice: String = ""
+    /// Speech rate multiplier (AVSpeechUtteranceDefaultSpeechRate = 0.5, range 0.5-2.0x).
+    @AppStorage("ttsSpeed") var ttsSpeed: Double = 1.0
+
     /// Parsed list of scanned folder paths.
     var indexedFolders: [String] {
         indexedFoldersCSV

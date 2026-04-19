@@ -48,6 +48,15 @@ final class TranscriptionCoordinator: ObservableObject {
     /// spec://BACKLOG#C1.1
     weak var conversationGrouper: ConversationGrouper?
 
+    /// Optional. When voiceQuestionMode is active, the transcript is routed to ChatService
+    /// (as a voice question) instead of the clipboard.
+    /// spec://BACKLOG#Phase6
+    weak var chatService: ChatService?
+
+    /// True while user is holding Right ⌘ (long-press). Set by `startVoiceQuestion()` /
+    /// cleared by `stopVoiceQuestion()` handler after the transcript is sent.
+    var voiceQuestionMode: Bool = false
+
     /// Source label for history items (set when switching audio source).
     var audioSourceLabel: String = "microphone"
 
@@ -119,6 +128,32 @@ final class TranscriptionCoordinator: ObservableObject {
         case .processing, .postProcessing:
             NSLog("[Coordinator] Ignoring toggle: processing in progress")
         }
+    }
+
+    /// Right ⌘ long-press → start voice question recording. Routed to MetaChat on release.
+    /// spec://BACKLOG#Phase6
+    func startVoiceQuestion() {
+        guard stage == .idle else {
+            NSLog("[Coordinator] Voice question: busy (stage=\(stage)) — skipping")
+            return
+        }
+        voiceQuestionMode = true
+        VoiceQuestionState.shared.startListening()
+        NSLog("[Coordinator] 🎤 Voice question mode ON")
+        startRecording()
+    }
+
+    /// Right ⌘ release after long-press → stop + transcribe + send to ChatService.
+    func stopVoiceQuestion() {
+        guard stage == .recording, voiceQuestionMode else {
+            NSLog("[Coordinator] Voice question stop called but not in voice question recording state")
+            voiceQuestionMode = false
+            return
+        }
+        NSLog("[Coordinator] 🎤 Voice question mode STOPPING")
+        VoiceQuestionState.shared.transcribing()
+        stopAndTranscribe()
+        // voiceQuestionMode flag reset inside the transcription completion path.
     }
 
     private func startRecording() {
@@ -271,8 +306,19 @@ final class TranscriptionCoordinator: ObservableObject {
                 }
             }
 
-            // Copy to clipboard (+ auto-paste if accessibility granted)
-            if settings.autoSubmit {
+            // Voice question mode (Phase 6) — route to MetaChat instead of clipboard paste.
+            if voiceQuestionMode {
+                voiceQuestionMode = false
+                NSLog("[Coordinator] 🎤 Voice question transcript → MetaChat: %@", String(finalText.prefix(80)))
+                VoiceQuestionState.shared.thinking(transcript: finalText)
+                if let chat = chatService {
+                    Task { await chat.send(finalText, source: .voice) }
+                } else {
+                    NSLog("[Coordinator] ⚠️ chatService nil — voice question dropped")
+                    VoiceQuestionState.shared.failed("Chat not available")
+                }
+                // Skip clipboard / paste for voice questions.
+            } else if settings.autoSubmit {
                 let autoPasted = textInserter.insert(text: finalText)
                 if !autoPasted {
                     lastError = "Copied to clipboard — press ⌘V to paste"
