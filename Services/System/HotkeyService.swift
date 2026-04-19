@@ -17,6 +17,14 @@ final class HotkeyService: ObservableObject {
     private var onPTTStop: (() -> Void)?
     private var onTranslateToggle: (() -> Void)?
     private var onTranslateLongPress: (() -> Void)?
+    /// Right ⌘ long-press (≥ `voiceQuestionHoldMs`) — voice question mode (starts recording).
+    private var onVoiceQuestionStart: (() -> Void)?
+    /// Right ⌘ release after long-press → stop recording + send to MetaChat.
+    private var onVoiceQuestionStop: (() -> Void)?
+
+    /// Right Cmd long-press state.
+    private var rightCmdLongPressTimer: DispatchWorkItem?
+    private var rightCmdLongPressFired = false
     private var flagsMonitor: Any?
     private var localFlagsMonitor: Any?
     private var keyMonitor: Any?
@@ -42,13 +50,17 @@ final class HotkeyService: ObservableObject {
         onPTTStart: @escaping () -> Void,
         onPTTStop: @escaping () -> Void,
         onTranslateToggle: @escaping () -> Void,
-        onTranslateLongPress: @escaping () -> Void
+        onTranslateLongPress: @escaping () -> Void,
+        onVoiceQuestionStart: @escaping () -> Void,
+        onVoiceQuestionStop: @escaping () -> Void
     ) {
         self.onToggle = onToggle
         self.onPTTStart = onPTTStart
         self.onPTTStop = onPTTStop
         self.onTranslateToggle = onTranslateToggle
         self.onTranslateLongPress = onTranslateLongPress
+        self.onVoiceQuestionStart = onVoiceQuestionStart
+        self.onVoiceQuestionStop = onVoiceQuestionStop
 
         // Global monitors — events going to OTHER apps
         flagsMonitor = NSEvent.addGlobalMonitorForEvents(matching: .flagsChanged) { [weak self] event in
@@ -111,12 +123,47 @@ final class HotkeyService: ObservableObject {
                 }
             }
         } else {
-            // Toggle mode: tap < 0.4s = toggle
-            handleKey(
-                isDown: isDown,
-                wasDown: &rightCmdDown, downTime: &rightCmdDownTime,
-                otherKeys: &otherKeysDuringRightCmd, name: "Right ⌘", action: onToggle
-            )
+            // Toggle mode: tap < 0.4s = dictation toggle, long-press ≥ voiceQuestionHoldMs = voice question.
+            handleRightCmdToggleMode(isDown: isDown)
+        }
+    }
+
+    /// Right ⌘ in Toggle mode: distinguishes tap (dictation) from long-press (voice question to MetaChat).
+    /// spec://BACKLOG#Phase6
+    private func handleRightCmdToggleMode(isDown: Bool) {
+        if isDown && !rightCmdDown {
+            rightCmdDown = true
+            rightCmdDownTime = Date()
+            otherKeysDuringRightCmd = false
+            rightCmdLongPressFired = false
+
+            // Arm long-press timer.
+            let holdSec = AppSettings.shared.voiceQuestionHoldMs / 1000.0
+            let work = DispatchWorkItem { [weak self] in
+                guard let self else { return }
+                guard self.rightCmdDown else { return }
+                guard !self.otherKeysDuringRightCmd else { return }
+                self.rightCmdLongPressFired = true
+                NSLog("[HotkeyService] Right ⌘ long-press → voice question START")
+                Task { @MainActor in self.onVoiceQuestionStart?() }
+            }
+            rightCmdLongPressTimer = work
+            DispatchQueue.main.asyncAfter(deadline: .now() + holdSec, execute: work)
+
+        } else if !isDown && rightCmdDown {
+            rightCmdDown = false
+            rightCmdLongPressTimer?.cancel()
+            rightCmdLongPressTimer = nil
+
+            if rightCmdLongPressFired {
+                NSLog("[HotkeyService] Right ⌘ release after long-press → voice question STOP")
+                Task { @MainActor in onVoiceQuestionStop?() }
+            } else if let t = rightCmdDownTime,
+                      Date().timeIntervalSince(t) < maxTapDuration,
+                      !otherKeysDuringRightCmd {
+                NSLog("[HotkeyService] Right ⌘ tap")
+                Task { @MainActor in onToggle?() }
+            }
         }
     }
 
@@ -176,6 +223,8 @@ final class HotkeyService: ObservableObject {
     func unregister() {
         longPressTimer?.cancel()
         longPressTimer = nil
+        rightCmdLongPressTimer?.cancel()
+        rightCmdLongPressTimer = nil
         if let m = flagsMonitor { NSEvent.removeMonitor(m) }
         if let m = localFlagsMonitor { NSEvent.removeMonitor(m) }
         if let m = keyMonitor { NSEvent.removeMonitor(m) }
@@ -184,5 +233,6 @@ final class HotkeyService: ObservableObject {
         keyMonitor = nil; localKeyMonitor = nil
         onToggle = nil; onPTTStart = nil; onPTTStop = nil
         onTranslateToggle = nil; onTranslateLongPress = nil
+        onVoiceQuestionStart = nil; onVoiceQuestionStop = nil
     }
 }

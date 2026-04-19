@@ -43,6 +43,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     let fileMemoryExtractor = FileMemoryExtractor()
     let appleNotesReader = AppleNotesReaderService()
     let calendarReader = CalendarReaderService()
+    let ttsService = TTSService()
+    let floatingVoiceWindow = FloatingVoiceWindowController()
     var coordinator: TranscriptionCoordinator!
     let overlay = RecordingOverlayController()
     let mainWindow = MainWindowController()
@@ -102,6 +104,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         coordinator.memoryExtractor = memoryExtractor
         coordinator.taskExtractor = taskExtractor
         coordinator.conversationGrouper = conversationGrouper
+        coordinator.chatService = chatService
+        chatService.ttsService = ttsService
         selectionTranslator = SelectionTranslator(
             textProcessor: coordinator.textProcessor!,
             textInserter: textInserter,
@@ -250,7 +254,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             onPTTStart: { [weak self] in self?.coordinator.startPTT() },
             onPTTStop: { [weak self] in self?.coordinator.stopPTT() },
             onTranslateToggle: { [weak self] in self?.coordinator.toggleWithTranslation() },
-            onTranslateLongPress: { [weak self] in self?.selectionTranslator.translateSelection() }
+            onTranslateLongPress: { [weak self] in self?.selectionTranslator.translateSelection() },
+            onVoiceQuestionStart: { [weak self] in self?.coordinator.startVoiceQuestion() },
+            onVoiceQuestionStop: { [weak self] in self?.coordinator.stopVoiceQuestion() }
         )
 
         // 4. Find downloaded models

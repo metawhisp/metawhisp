@@ -1052,8 +1052,70 @@ struct MainSettingsView: View {
                 .buttonStyle(.plain)
                 .padding(.top, 4)
             }
+
+            Rectangle().fill(MW.border).frame(height: MW.hairline)
+                .padding(.vertical, MW.sp4)
+
+            // Voice questions + TTS (spec://BACKLOG#Phase6)
+            voiceQuestionSection
         }
         .padding(MW.sp16)
+    }
+
+    // MARK: - Voice questions section (Phase 6)
+
+    private var voiceQuestionSection: some View {
+        VStack(alignment: .leading, spacing: MW.sp8) {
+            Text("VOICE")
+                .font(MW.monoLg).foregroundStyle(MW.textPrimary).tracking(2)
+
+            HStack(spacing: MW.sp8) {
+                Image(systemName: "info.circle").font(.system(size: 11)).foregroundStyle(MW.textMuted)
+                Text("Hold Right ⌘ to ask MetaChat aloud. Short tap still starts dictation as before.")
+                    .font(MW.monoSm).foregroundStyle(MW.textMuted)
+            }
+
+            toggleRow("SPEAK ANSWERS TO VOICE QUESTIONS", isOn: $settings.ttsVoiceQuestions)
+            toggleRow("SPEAK ANSWERS TO TYPED QUESTIONS", isOn: $settings.ttsTypedQuestions)
+
+            if settings.ttsVoiceQuestions || settings.ttsTypedQuestions {
+                voicePicker
+                speedPicker
+            }
+        }
+    }
+
+    private var voicePicker: some View {
+        VStack(alignment: .leading, spacing: MW.sp4) {
+            Text("VOICE").font(MW.monoSm).foregroundStyle(MW.textMuted)
+            Picker("", selection: $settings.ttsVoice) {
+                Text("System default").tag("")
+                ForEach(TTSService.availableVoices(), id: \.identifier) { v in
+                    Text("\(v.name) · \(v.language)").tag(v.identifier)
+                }
+            }
+            .labelsHidden()
+            .font(MW.mono)
+            HStack(spacing: MW.sp8) {
+                Button("Preview") {
+                    Task { @MainActor in
+                        AppDelegate.shared?.ttsService.speak("This is how your assistant will sound.")
+                    }
+                }
+                .font(MW.monoSm)
+            }
+        }
+    }
+
+    private var speedPicker: some View {
+        VStack(alignment: .leading, spacing: MW.sp4) {
+            HStack {
+                Text("SPEED").font(MW.monoSm).foregroundStyle(MW.textMuted)
+                Spacer()
+                Text(String(format: "%.1fx", settings.ttsSpeed)).font(MW.monoSm).foregroundStyle(MW.textSecondary)
+            }
+            Slider(value: $settings.ttsSpeed, in: 0.5...2.0, step: 0.1)
+        }
     }
 
     // MARK: - File Indexing folder list

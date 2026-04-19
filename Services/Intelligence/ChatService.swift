@@ -11,16 +11,26 @@ final class ChatService: ObservableObject {
     @Published var isSending = false
     @Published var lastError: String?
 
+    /// Where the user's message came from. Drives TTS on the AI reply.
+    enum Source {
+        case typed
+        case voice
+    }
+
     private let llm = OpenAIService()
     private let settings = AppSettings.shared
     private var modelContainer: ModelContainer?
+    /// Optional. When set, AI replies are spoken aloud per settings toggles.
+    /// spec://BACKLOG#Phase6
+    weak var ttsService: TTSService?
 
     func configure(modelContainer: ModelContainer) {
         self.modelContainer = modelContainer
     }
 
     /// Send a user message, call LLM, persist both messages.
-    func send(_ userText: String) async {
+    /// `source` determines whether the AI reply is spoken aloud (respecting settings).
+    func send(_ userText: String, source: Source = .typed) async {
         guard !isSending else { return }
         guard hasLLMAccess else {
             lastError = "Нет доступа к LLM (нужен Pro или API key)"
@@ -83,6 +93,18 @@ final class ChatService: ObservableObject {
                 try? ctx.save()
             }
             NSLog("[ChatService] ✅ Got response (%d chars)", aiText.count)
+
+            // For voice-source replies, surface the answer in the floating voice window.
+            if source == .voice {
+                VoiceQuestionState.shared.answered(aiText)
+            }
+
+            // TTS: speak the reply aloud if the relevant toggle is enabled.
+            let shouldSpeak = (source == .voice && settings.ttsVoiceQuestions)
+                           || (source == .typed && settings.ttsTypedQuestions)
+            if shouldSpeak, !aiText.isEmpty {
+                ttsService?.speak(aiText)
+            }
         } catch {
             lastError = error.localizedDescription
             NSLog("[ChatService] ❌ Failed: %@", error.localizedDescription)
@@ -91,6 +113,9 @@ final class ChatService: ObservableObject {
                 let ctx = ModelContext(container)
                 ctx.insert(errMsg)
                 try? ctx.save()
+            }
+            if source == .voice {
+                VoiceQuestionState.shared.failed(error.localizedDescription)
             }
         }
     }

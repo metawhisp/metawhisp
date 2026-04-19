@@ -369,7 +369,28 @@ Omi readers — самый близкий аналог "auto-подтягива�
 - **T2** Today / No Deadline / Overdue grouping
 - **T3** AI dedup — detect semantic duplicates, auto-dismiss
 
-### Phase 6: Proactive + Floating Bar
+### Phase 6+ — Voice communication roadmap (deferred, tracked)
+
+User explicit ask 2026-04-19: premium TTS + more Omi voice features revisited after Phase 6 MVP ships.
+- **Premium TTS (OpenAI / ElevenLabs)** — Omi's "Sloane" voice is cloud TTS, not AVSpeechSynthesizer. Options: (a) direct OpenAI API with user's key, (b) new Pro-proxy endpoint `/api/pro/tts`. Revisit after AVSpeechSynthesizer MVP ships.
+- **Research Omi voice-communication features** — user flagged "у Omi есть много функций про голосовые коммуникации". Deeper read of Omi's FloatingControlBar + ACPBridge needed. Candidates: streaming transcription, voice selector with cloud voices, wake-word, voice commands / macros, multi-speaker diarization, voice-to-action.
+
+### Phase 6: Voice questions + TTS ⏸️ TESTING PENDING
+
+**Shipped 2026-04-19.** MVP scope only: long-press Right ⌘ → voice question → TTS reply via AVSpeechSynthesizer.
+**Deferred to Phase 6+:** premium cloud TTS (OpenAI / ElevenLabs for Omi-level "Sloane" voice), floating bar UI, streaming transcription, wake-word, voice commands.
+
+- `Services/TTS/TTSService.swift` — NEW. AVSpeechSynthesizer wrapper. Picks voice by user setting or heuristic (Cyrillic text → ru-RU, else system locale). Rate mapping 0.5x–2.0x → AVSpeechUtterance rate range. Exposes `availableVoices()` filtered to en + ru families for Settings picker.
+- `Services/System/HotkeyService.swift` — extended. Right ⌘ Toggle mode now distinguishes tap (`< 0.4s` → dictation toggle as before) from long-press (≥ `voiceQuestionHoldMs` default 500ms → voice question). Two new callbacks `onVoiceQuestionStart` / `onVoiceQuestionStop`. Timer cancelled if any other key arrives during hold.
+- `Services/System/TranscriptionCoordinator.swift` — added `voiceQuestionMode: Bool` flag + `startVoiceQuestion()` / `stopVoiceQuestion()` methods. When flag set, transcription path routes finalText to `chatService.send(..., source: .voice)` instead of clipboard paste. Also added `weak var chatService: ChatService?`.
+- `Services/Intelligence/ChatService.swift` — `send(_:source:)` now takes `Source` enum (.typed / .voice). After AI reply saved, speaks aloud via `ttsService` if `ttsVoiceQuestions` (source=voice) or `ttsTypedQuestions` (source=typed) toggle is on.
+- `Models/AppSettings.swift` — `ttsVoiceQuestions: Bool = true`, `ttsTypedQuestions: Bool = false`, `voiceQuestionHoldMs: Double = 500`, `ttsVoice: String = ""` (empty = system default), `ttsSpeed: Double = 1.0`.
+- `Views/Windows/MainSettingsView.swift` — new VOICE section with the two SPEAK-answers toggles, voice picker (system default + TTSService.availableVoices filtered to en/ru), preview button, speed slider.
+- `App/AppDelegate.swift` — creates `ttsService`, wires `coordinator.chatService = chatService`, `chatService.ttsService = ttsService`, passes `onVoiceQuestionStart/Stop` to `hotkeyService.register`.
+- **UX notes:** Right ⌘ short tap (existing dictation flow) now has a 500ms observation window — tap must be <0.4s to fire. Between 0.4s and 0.5s → neither fires (safety gap). Long-press mode triggers at 500ms if still held with no other keys.
+- **Verify:** toggle VOICE ON → hold Right ⌘ 500ms+ → speak "what do I know about ProjectAlpha" → release → answer appears in MetaChat AND speaks aloud. Short tap Right ⌘ → normal dictation. Left ⌘ untouched.
+
+### Phase 6+: Proactive + Floating Bar (deferred)
 
 - **P1** Floating Bar (borderless floating window with push-to-talk + text input) — addresses user's "hotkey from anywhere" ask (P5 previous)
 - **P2** TTS (speak AI answers aloud) with voice selector
