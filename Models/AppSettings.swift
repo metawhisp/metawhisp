@@ -73,6 +73,11 @@ final class AppSettings: ObservableObject {
     @AppStorage("ttsVoice") var ttsVoice: String = ""
     /// Speech rate multiplier (AVSpeechUtteranceDefaultSpeechRate = 0.5, range 0.5-2.0x).
     @AppStorage("ttsSpeed") var ttsSpeed: Double = 1.0
+    /// Pro-only: route TTS through cloud (OpenAI via /api/pro/tts) for natural voices.
+    /// Falls back to local AVSpeech if disabled, non-Pro, or cloud fails.
+    @AppStorage("ttsCloudEnabled") var ttsCloudEnabled: Bool = false
+    /// Cloud voice id (alloy / echo / fable / onyx / nova / shimmer). Default "nova" (warm female).
+    @AppStorage("ttsCloudVoice") var ttsCloudVoice: String = "nova"
 
     /// Parsed list of scanned folder paths.
     var indexedFolders: [String] {
