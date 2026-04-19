@@ -5,6 +5,10 @@ struct MainSettingsView: View {
     @ObservedObject private var settings = AppSettings.shared
     @ObservedObject private var license = LicenseService.shared
 
+    // Screen Context app picker sheet
+    @State private var showAppPicker = false
+    @State private var appCache: [String: AppInfo] = [:]  // bundleID → AppInfo for rendering
+
     var body: some View {
         ScrollView {
             VStack(spacing: 0) {
@@ -40,6 +44,8 @@ struct MainSettingsView: View {
                         overlaySection
                         divider
                         cloudSection
+                        divider
+                        intelligenceSection
                         Spacer(minLength: 0)
                     }
                     .frame(minWidth: 320)
@@ -900,6 +906,354 @@ struct MainSettingsView: View {
         return needsKey
             ? "Required for Structured mode and translation (Right \u{2325})."
             : "\(prov) key needed for Structured mode and translation. Raw/Clean work offline."
+    }
+
+    // MARK: - Intelligence (Meeting Recording, Screen Context, AI Advice)
+
+    private var intelligenceSection: some View {
+        VStack(alignment: .leading, spacing: MW.sp8) {
+            Text("INTELLIGENCE").blocksLabel()
+
+            // Meeting Recording
+            toggleRow("MEETING RECORDING", isOn: $settings.meetingRecordingEnabled)
+            if settings.meetingRecordingEnabled {
+                toggleRow("AUTO-DETECT CALLS", isOn: $settings.autoDetectCalls)
+                Text("Records system audio from Zoom, Meet, Teams. Transcribed locally via WhisperKit.")
+                    .font(MW.monoSm).foregroundStyle(MW.textMuted)
+            }
+
+            Rectangle().fill(MW.border).frame(height: MW.hairline)
+                .padding(.vertical, MW.sp4)
+
+            // Screen Context
+            toggleRow("SCREEN CONTEXT", isOn: $settings.screenContextEnabled)
+            if settings.screenContextEnabled {
+                HStack {
+                    Text("MODE").font(MW.mono).foregroundStyle(MW.textSecondary)
+                    Spacer()
+                    HStack(spacing: 0) {
+                        contextModeButton("BLACKLIST", value: "blacklist")
+                        contextModeButton("WHITELIST", value: "whitelist")
+                    }
+                }
+
+                // App list with picker — implements spec://intelligence/FEAT-0002#app-picker
+                screenContextAppList
+
+                Text("OCR via Apple Vision — fully on-device. Screenshots are never saved.")
+                    .font(MW.monoSm).foregroundStyle(MW.textMuted)
+            }
+
+            Rectangle().fill(MW.border).frame(height: MW.hairline)
+                .padding(.vertical, MW.sp4)
+
+            // Memories — independent from AI Advice
+            // spec://iterations/ITER-001#architecture.settings
+            toggleRow("MEMORIES", isOn: $settings.memoriesEnabled)
+            if settings.memoriesEnabled {
+                Text("Automatically extracts facts about you from screen activity + transcriptions. Used to personalize AI Advice.")
+                    .font(MW.monoSm).foregroundStyle(MW.textMuted)
+            }
+
+            Rectangle().fill(MW.border).frame(height: MW.hairline)
+                .padding(.vertical, MW.sp4)
+
+            // AI Advice
+            toggleRow("AI ADVICE", isOn: $settings.adviceEnabled)
+            if settings.adviceEnabled {
+                if license.isPro {
+                    // Pro covers advice via /api/pro/advice server proxy — no key needed
+                    HStack(spacing: MW.sp4) {
+                        Circle().fill(MW.idle).frame(width: 6, height: 6)
+                        Text("Included with Pro — no API key required")
+                            .font(MW.monoSm).foregroundStyle(MW.textMuted)
+                    }
+                    Text("Contextual suggestions from screen activity + transcriptions, delivered via macOS notifications.")
+                        .font(MW.monoSm).foregroundStyle(MW.textMuted)
+                } else {
+                    Text("Contextual suggestions based on screen activity and transcriptions. Uses your LLM provider (set above).")
+                        .font(MW.monoSm).foregroundStyle(MW.textMuted)
+
+                    if settings.activeAPIKey.isEmpty {
+                        HStack(spacing: MW.sp4) {
+                            Circle().fill(MW.recording).frame(width: 6, height: 6)
+                            Text("Add an \(activeProviderName) API key in LLM Provider above")
+                                .font(MW.monoSm).foregroundStyle(MW.recording)
+                        }
+                    }
+                }
+                if !settings.memoriesEnabled {
+                    HStack(spacing: MW.sp4) {
+                        Circle().fill(MW.processing).frame(width: 6, height: 6)
+                        Text("Enable MEMORIES above for personalized advice (recommended)")
+                            .font(MW.monoSm).foregroundStyle(MW.textMuted)
+                    }
+                }
+            }
+
+            Rectangle().fill(MW.border).frame(height: MW.hairline)
+                .padding(.vertical, MW.sp4)
+
+            // File Indexing — scan user-picked folders, extract memories from .md/.txt files.
+            // spec://BACKLOG#Phase3.E1
+            toggleRow("FILE INDEXING", isOn: $settings.fileIndexingEnabled)
+            if settings.fileIndexingEnabled {
+                Text("Scan local folders (e.g. your Obsidian vault) for .md/.txt files. MetaWhisp extracts durable facts about you and your projects into Memories.")
+                    .font(MW.monoSm).foregroundStyle(MW.textMuted)
+                fileIndexingFolderList
+            }
+
+            Rectangle().fill(MW.border).frame(height: MW.hairline)
+                .padding(.vertical, MW.sp4)
+
+            // Apple Notes reader (spec://BACKLOG#Phase3.E2)
+            toggleRow("APPLE NOTES", isOn: $settings.appleNotesEnabled)
+            if settings.appleNotesEnabled {
+                Text("Reads recent Apple Notes via AppleScript. First run will prompt for Automation permission. Extracts memories into Memories.")
+                    .font(MW.monoSm).foregroundStyle(MW.textMuted)
+                Button {
+                    Task { @MainActor in
+                        await AppDelegate.shared?.appleNotesReader.scanNow()
+                    }
+                } label: {
+                    HStack(spacing: 4) {
+                        Image(systemName: "arrow.clockwise").font(.system(size: 10))
+                        Text("SCAN NOW").font(MW.label).tracking(0.6)
+                    }
+                    .foregroundStyle(MW.textSecondary)
+                    .padding(.horizontal, 8).padding(.vertical, 4)
+                    .overlay(Rectangle().stroke(MW.border, lineWidth: MW.hairline))
+                }
+                .buttonStyle(.plain)
+                .padding(.top, 4)
+            }
+
+            Rectangle().fill(MW.border).frame(height: MW.hairline)
+                .padding(.vertical, MW.sp4)
+
+            // Calendar reader (spec://BACKLOG#Phase3.E3)
+            toggleRow("CALENDAR", isOn: $settings.calendarReaderEnabled)
+            if settings.calendarReaderEnabled {
+                Text("Reads your Apple Calendar (iCloud/Google/Exchange). Creates Tasks for upcoming events and extracts routine patterns into Memories.")
+                    .font(MW.monoSm).foregroundStyle(MW.textMuted)
+                Button {
+                    Task { @MainActor in
+                        await AppDelegate.shared?.calendarReader.scanNow()
+                    }
+                } label: {
+                    HStack(spacing: 4) {
+                        Image(systemName: "arrow.clockwise").font(.system(size: 10))
+                        Text("SCAN NOW").font(MW.label).tracking(0.6)
+                    }
+                    .foregroundStyle(MW.textSecondary)
+                    .padding(.horizontal, 8).padding(.vertical, 4)
+                    .overlay(Rectangle().stroke(MW.border, lineWidth: MW.hairline))
+                }
+                .buttonStyle(.plain)
+                .padding(.top, 4)
+            }
+        }
+        .padding(MW.sp16)
+    }
+
+    // MARK: - File Indexing folder list
+
+    private var fileIndexingFolderList: some View {
+        VStack(alignment: .leading, spacing: MW.sp4) {
+            Text("SCANNED FOLDERS")
+                .font(MW.monoSm).foregroundStyle(MW.textMuted)
+
+            let folders = settings.indexedFolders
+            if folders.isEmpty {
+                Text("No folders yet. Click ADD FOLDER and pick your Obsidian vault or notes directory.")
+                    .font(MW.monoSm).foregroundStyle(MW.textMuted).italic()
+                    .padding(.vertical, MW.sp4)
+            } else {
+                VStack(spacing: 2) {
+                    ForEach(folders, id: \.self) { path in
+                        HStack(spacing: MW.sp8) {
+                            Image(systemName: "folder")
+                                .font(.system(size: 10)).foregroundStyle(MW.textMuted)
+                            Text((path as NSString).abbreviatingWithTildeInPath)
+                                .font(MW.monoSm).foregroundStyle(MW.textPrimary)
+                                .lineLimit(1)
+                            Spacer()
+                            Button {
+                                settings.removeIndexedFolder(path)
+                            } label: {
+                                Image(systemName: "minus.circle")
+                                    .font(.system(size: 11)).foregroundStyle(MW.textMuted)
+                            }
+                            .buttonStyle(.plain)
+                        }
+                        .padding(.vertical, 4).padding(.horizontal, 8)
+                        .overlay(Rectangle().stroke(MW.border, lineWidth: MW.hairline))
+                    }
+                }
+            }
+
+            HStack(spacing: MW.sp8) {
+                Button(action: pickFolder) {
+                    HStack(spacing: 4) {
+                        Image(systemName: "plus").font(.system(size: 10))
+                        Text("ADD FOLDER").font(MW.label).tracking(0.6)
+                    }
+                    .foregroundStyle(MW.textSecondary)
+                    .padding(.horizontal, 8).padding(.vertical, 4)
+                    .overlay(Rectangle().stroke(MW.border, lineWidth: MW.hairline))
+                }
+                .buttonStyle(.plain)
+
+                if !settings.indexedFolders.isEmpty {
+                    Button {
+                        Task { @MainActor in
+                            await AppDelegate.shared?.fileIndexer.scanAll()
+                            await AppDelegate.shared?.fileMemoryExtractor.runPass()
+                        }
+                    } label: {
+                        HStack(spacing: 4) {
+                            Image(systemName: "arrow.clockwise").font(.system(size: 10))
+                            Text("SCAN NOW").font(MW.label).tracking(0.6)
+                        }
+                        .foregroundStyle(MW.textSecondary)
+                        .padding(.horizontal, 8).padding(.vertical, 4)
+                        .overlay(Rectangle().stroke(MW.border, lineWidth: MW.hairline))
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+        }
+    }
+
+    private func pickFolder() {
+        let panel = NSOpenPanel()
+        panel.title = "Pick a folder to index"
+        panel.canChooseFiles = false
+        panel.canChooseDirectories = true
+        panel.allowsMultipleSelection = false
+        panel.canCreateDirectories = false
+        if panel.runModal() == .OK, let url = panel.url {
+            settings.addIndexedFolder(url.path)
+        }
+    }
+
+    // MARK: - Screen Context App List
+
+    /// Bundle IDs parsed from comma-separated settings.
+    private var selectedBundleIDs: [String] {
+        settings.screenContextAppList
+            .split(separator: ",")
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty }
+    }
+
+    private var screenContextAppList: some View {
+        VStack(alignment: .leading, spacing: MW.sp4) {
+            // Label changes based on mode
+            Text(settings.screenContextMode == "whitelist" ? "INCLUDED APPS" : "EXCLUDED APPS")
+                .font(MW.monoSm).foregroundStyle(MW.textMuted)
+
+            // Selected apps as rows
+            if selectedBundleIDs.isEmpty {
+                Text(settings.screenContextMode == "whitelist"
+                     ? "Add apps to capture only their windows"
+                     : "Add apps to skip (password managers, banks, etc.)")
+                    .font(MW.monoSm)
+                    .foregroundStyle(MW.textMuted)
+                    .italic()
+                    .padding(.vertical, MW.sp4)
+            } else {
+                VStack(spacing: 2) {
+                    ForEach(selectedBundleIDs, id: \.self) { bundleID in
+                        selectedAppRow(bundleID: bundleID)
+                    }
+                }
+            }
+
+            // Add button
+            Button {
+                showAppPicker = true
+            } label: {
+                HStack(spacing: 4) {
+                    Image(systemName: "plus").font(.system(size: 9))
+                    Text("ADD APP").font(MW.label).tracking(0.5)
+                }
+                .foregroundStyle(MW.textSecondary)
+                .padding(.horizontal, MW.sp8).padding(.vertical, MW.sp4)
+                .overlay(Rectangle().stroke(MW.border, lineWidth: MW.hairline))
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+        }
+        .sheet(isPresented: $showAppPicker) {
+            AppPickerView(
+                excludedBundleIDs: Set(selectedBundleIDs),
+                onSelect: { app in
+                    addApp(app)
+                    showAppPicker = false
+                },
+                onClose: { showAppPicker = false }
+            )
+        }
+    }
+
+    private func selectedAppRow(bundleID: String) -> some View {
+        let info = appCache[bundleID] ?? lookupAppInfo(bundleID: bundleID)
+        return HStack(spacing: 8) {
+            if let icon = info?.icon {
+                Image(nsImage: icon).resizable().frame(width: 16, height: 16)
+            } else {
+                Image(systemName: "app").font(.system(size: 14)).foregroundStyle(MW.textMuted)
+            }
+            VStack(alignment: .leading, spacing: 0) {
+                Text(info?.name ?? bundleID).font(MW.monoSm).foregroundStyle(MW.textPrimary)
+                if info != nil {
+                    Text(bundleID).font(.system(size: 8, design: .monospaced)).foregroundStyle(MW.textMuted)
+                }
+            }
+            Spacer()
+            Button {
+                removeApp(bundleID: bundleID)
+            } label: {
+                Image(systemName: "xmark").font(.system(size: 9)).foregroundStyle(MW.textMuted)
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(.horizontal, MW.sp4).padding(.vertical, 3)
+        .background(MW.elevated.opacity(0.4))
+        .overlay(Rectangle().stroke(MW.border, lineWidth: MW.hairline))
+    }
+
+    private func lookupAppInfo(bundleID: String) -> AppInfo? {
+        // Lazy lookup — only scans once when requested, caches in @State
+        let info = InstalledApps.list().first { $0.bundleID == bundleID }
+        if let info { appCache[bundleID] = info }
+        return info
+    }
+
+    private func addApp(_ app: AppInfo) {
+        appCache[app.bundleID] = app
+        var ids = selectedBundleIDs
+        guard !ids.contains(app.bundleID) else { return }
+        ids.append(app.bundleID)
+        settings.screenContextAppList = ids.joined(separator: ",")
+    }
+
+    private func removeApp(bundleID: String) {
+        let ids = selectedBundleIDs.filter { $0 != bundleID }
+        settings.screenContextAppList = ids.joined(separator: ",")
+    }
+
+    private func contextModeButton(_ label: String, value: String) -> some View {
+        let isSelected = settings.screenContextMode == value
+        return Text(label)
+            .font(MW.monoSm)
+            .foregroundStyle(isSelected ? MW.textPrimary : MW.textMuted)
+            .padding(.horizontal, MW.sp8)
+            .padding(.vertical, 2)
+            .background(isSelected ? MW.elevated : .clear)
+            .overlay(Rectangle().stroke(MW.border, lineWidth: MW.hairline))
+            .onTapGesture { settings.screenContextMode = value }
     }
 }
 

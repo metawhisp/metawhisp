@@ -51,6 +51,14 @@
 	<string>Copyright © 2026 MetaWhisp. All rights reserved.</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>MetaWhisp needs microphone access to record and transcribe your voice.</string>
+	<key>NSScreenCaptureUsageDescription</key>
+	<string>MetaWhisp uses screen context to provide AI-powered suggestions. Screenshots are processed locally and never sent to the cloud.</string>
+	<key>NSAudioCaptureUsageDescription</key>
+	<string>MetaWhisp needs system audio access to record and transcribe meetings locally.</string>
+	<key>NSCalendarsFullAccessUsageDescription</key>
+	<string>MetaWhisp reads your calendar to create tasks for upcoming events and extract routine patterns into personal memories.</string>
+	<key>NSCalendarsUsageDescription</key>
+	<string>MetaWhisp reads your calendar to create tasks for upcoming events and extract routine patterns.</string>
 	<key>NSPrincipalClass</key>
 	<string>NSApplication</string>
 	<key>SUEnableAutomaticChecks</key>

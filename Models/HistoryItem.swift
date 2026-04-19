@@ -14,6 +14,12 @@ final class HistoryItem {
     var wordCount: Int
     var createdAt: Date
     var modelName: String?
+    /// Audio source: "microphone", "system_audio", "meeting"
+    var source: String?
+    /// Foreign key to `Conversation.id`. Assigned by `ConversationGrouper` after save.
+    /// Nullable for legacy rows that predate C1.1.
+    /// spec://BACKLOG#C1.1
+    var conversationId: UUID?
 
     /// The best available text: processed if available, otherwise raw.
     var displayText: String { processedText ?? text }
