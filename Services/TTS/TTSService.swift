@@ -45,6 +45,12 @@ final class TTSService: ObservableObject {
         stop()
 
         if shouldUseCloud {
+            // Set isSpeaking=true IMMEDIATELY so the floating UI's 6s auto-dismiss
+            // timer extends while the mp3 is still downloading (download + playback
+            // can easily exceed 6s on slow networks). Without this, stop() fires
+            // from the auto-dismiss path and cancels the in-flight download.
+            isSpeaking = true
+            VoiceQuestionState.shared.isSpeaking = true
             currentDownload = Task { [weak self] in
                 await self?.speakCloud(trimmed)
             }
@@ -108,12 +114,32 @@ final class TTSService: ObservableObject {
     private func speakCloud(_ text: String) async {
         do {
             let mp3 = try await fetchCloudTTS(text: text)
+            try Task.checkCancellation()
             try await MainActor.run {
                 try playCloudAudio(data: mp3)
             }
+        } catch is CancellationError {
+            // stop() was called (user dismissed / new speak started) — don't play anything
+            await MainActor.run {
+                self.isSpeaking = false
+                VoiceQuestionState.shared.isSpeaking = false
+            }
+            NSLog("[TTS] Cloud cancelled, no fallback")
+        } catch let error as URLError where error.code == .cancelled {
+            // URLSession-level cancellation surfaces as URLError not CancellationError
+            await MainActor.run {
+                self.isSpeaking = false
+                VoiceQuestionState.shared.isSpeaking = false
+            }
+            NSLog("[TTS] Cloud URLSession cancelled, no fallback")
         } catch {
             NSLog("[TTS] Cloud failed (%@), falling back to local", error.localizedDescription)
-            await MainActor.run { speakLocal(text) }
+            await MainActor.run {
+                // Reset before local path so synth didStart will set it again cleanly
+                self.isSpeaking = false
+                VoiceQuestionState.shared.isSpeaking = false
+                self.speakLocal(text)
+            }
         }
     }
 
