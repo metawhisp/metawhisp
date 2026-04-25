@@ -99,8 +99,7 @@ struct OnboardingWelcomePage: View {
                 .tracking(0.8)
         }
         .frame(width: 80, height: 64)
-        .background(MW.surface)
-        .overlay(Rectangle().stroke(MW.border, lineWidth: MW.hairline))
+        .mwCard(radius: MW.rSmall, elevation: .flat)
     }
 
     private func startSequence() {

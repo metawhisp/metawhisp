@@ -110,7 +110,7 @@ struct MenuBarView: View {
                             .shadow(color: .red.opacity(0.5), radius: 3)
                         Text("MEETING RECORDING").font(MW.label).tracking(1).foregroundStyle(.white)
                         Spacer()
-                        MeetingTimer()
+                        MeetingTimer(startDate: meetingRecorder.recordingStartedAt)
                         Button {
                             onMeetingToggle()
                         } label: {
@@ -499,7 +499,7 @@ private struct AudioLevelWave: View {
         }
         .animation(.easeOut(duration: 0.06), value: bars)
         .frame(height: 50)
-        .background(MW.surface)
+        .mwCard(radius: MW.rSmall, elevation: .flat)
         .overlay(
             RoundedRectangle(cornerRadius: 0)
                 .stroke(MW.border, lineWidth: MW.hairline)
@@ -567,25 +567,29 @@ private struct ScanLine: View {
 
 // MARK: - Meeting Timer
 
-/// Timer based on a fixed start date + TimelineView for tick updates.
-/// Using a start date + TimelineView survives frequent parent re-renders
-/// (the meeting strip rebuilds on every audio sample — Timer.publish inside
-/// a @State-based view gets its subscription torn down each render).
+/// Timer based on the meeting's actual start date + TimelineView for tick updates.
+/// The start date is sourced from `MeetingRecorder.recordingStartedAt` so the
+/// elapsed counter is correct no matter when the user opens the popover. If the
+/// start date is nil (recording not yet active), shows 00:00.
 private struct MeetingTimer: View {
-    @State private var startDate = Date()
+    let startDate: Date?
 
     var body: some View {
         TimelineView(.periodic(from: .now, by: 1)) { context in
-            Text(formatted(context.date.timeIntervalSince(startDate)))
+            let elapsed = startDate.map { context.date.timeIntervalSince($0) } ?? 0
+            Text(formatted(elapsed))
                 .font(MW.mono).foregroundStyle(MW.live)
         }
     }
 
     private func formatted(_ elapsed: TimeInterval) -> String {
         let total = max(0, Int(elapsed))
-        let m = total / 60
+        let h = total / 3600
+        let m = (total % 3600) / 60
         let s = total % 60
-        return String(format: "%02d:%02d", m, s)
+        return h > 0
+            ? String(format: "%d:%02d:%02d", h, m, s)
+            : String(format: "%02d:%02d", m, s)
     }
 }
 

@@ -1,0 +1,450 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>v6 · Combined (v2 + v3 + your fixes)</title>
+<link rel="stylesheet" href="_shared.css">
+<style>
+  body { overflow: hidden; }
+  .layout {
+    display: grid;
+    grid-template-columns: 240px 1fr;
+    height: 100vh;
+  }
+
+  /* SIDEBAR — scrollable date list */
+  .sidebar-pane {
+    border-right: 1px solid var(--border);
+    background: rgba(0,0,0,0.25);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+  .sb-top {
+    padding: 16px 18px 12px;
+    border-bottom: 1px solid var(--border);
+    flex-shrink: 0;
+  }
+  .sb-top .back { font-family: var(--mono); font-size: 11px; color: var(--text-muted); }
+  .sb-top h2 {
+    font-size: 14px;
+    font-weight: 600;
+    margin-top: 12px;
+  }
+
+  .sb-scroll {
+    overflow-y: auto;
+    padding: 8px 0;
+  }
+
+  .sb-row {
+    padding: 10px 18px;
+    border-left: 3px solid transparent;
+    cursor: pointer;
+  }
+  .sb-row:hover { background: rgba(255,255,255,0.03); }
+  .sb-row.active {
+    background: var(--bg-elev);
+    border-left-color: var(--accent);
+  }
+  .sb-row.future {
+    background: rgba(255,214,10,0.04);
+    border-bottom: 1px solid var(--border);
+  }
+  .sb-row .sb-label {
+    font-family: var(--mono);
+    font-size: 10px;
+    letter-spacing: 1.1px;
+    color: var(--text-muted);
+    margin-bottom: 3px;
+  }
+  .sb-row.active .sb-label { color: var(--accent); }
+  .sb-row.future .sb-label { color: var(--accent); }
+  .sb-row .sb-preview {
+    font-size: 12px;
+    color: var(--text);
+    line-height: 1.35;
+    overflow: hidden;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+  }
+  .sb-row .sb-meta {
+    display: flex;
+    gap: 6px;
+    margin-top: 4px;
+  }
+  .sb-row .sb-meta .dot {
+    font-family: var(--mono);
+    font-size: 9px;
+    color: var(--text-dim);
+  }
+  .sb-row .sb-meta .ok { color: var(--green); }
+  .sb-row.empty .sb-preview { color: var(--text-muted); font-style: italic; }
+
+  /* MAIN PANE */
+  .main-pane {
+    overflow-y: auto;
+    padding: 24px 28px;
+  }
+
+  /* Top header inside main */
+  .main-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 18px;
+  }
+  .main-head h1 { font-size: 26px; font-weight: 700; }
+  .nav-arrows { display: flex; gap: 6px; }
+
+  /* TODAY + TOMORROW split — compact */
+  .split {
+    display: grid;
+    grid-template-columns: 1.3fr 1fr;
+    gap: 14px;
+    margin-bottom: 14px;
+  }
+
+  .day-card { padding: 18px 20px; }
+  .day-card .dh-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 12px;
+  }
+  .day-card .dh-label {
+    font-family: var(--mono);
+    font-size: 10px;
+    letter-spacing: 1.4px;
+    color: var(--text-muted);
+  }
+  .day-card .dh-label strong { color: var(--text); margin-right: 6px; }
+  .day-card.tomorrow .dh-label strong { color: var(--accent); }
+  .day-card.tomorrow {
+    background: linear-gradient(180deg, rgba(255,214,10,0.04), var(--bg-elev));
+    border-color: rgba(255,214,10,0.18);
+  }
+
+  .day-card .headline {
+    font-size: 18px;
+    font-weight: 600;
+    line-height: 1.25;
+    margin-bottom: 12px;
+  }
+  .day-card.tomorrow .headline {
+    font-size: 14px;
+    color: var(--text-muted);
+    margin-bottom: 10px;
+  }
+
+  .compact-section {
+    margin-top: 8px;
+    padding-top: 8px;
+    border-top: 0.5px solid var(--border);
+  }
+  .compact-section .section-label { margin-bottom: 4px; }
+  .compact-section .bullet-list li { font-size: 12px; padding: 1px 0; }
+
+  /* Hero arrows for prev/next day */
+  .arrow-btn {
+    width: 28px;
+    height: 28px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 6px;
+    border: 0.5px solid var(--border);
+    color: var(--text-muted);
+    cursor: pointer;
+    background: transparent;
+  }
+  .arrow-btn:hover { color: var(--text); border-color: var(--border-strong); }
+  .arrow-btn.disabled { opacity: 0.3; cursor: not-allowed; }
+
+  /* STATS — 4 separate cards (juzer wanted them OUT of today) */
+  .stats-grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 12px;
+    margin-bottom: 14px;
+  }
+  .stat-card {
+    padding: 16px;
+    text-align: left;
+  }
+  .stat-card .num {
+    font-size: 28px;
+    font-weight: 600;
+    line-height: 1;
+    margin-bottom: 6px;
+  }
+  .stat-card .lbl {
+    font-family: var(--mono);
+    font-size: 10px;
+    letter-spacing: 1px;
+    color: var(--text-muted);
+  }
+
+  /* Bottom row — screen activity (kept) */
+  .bottom-row {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 14px;
+  }
+  .scr-list .scr-row {
+    display: grid;
+    grid-template-columns: 1fr auto auto;
+    gap: 16px;
+    padding: 6px 0;
+    align-items: baseline;
+    font-size: 13px;
+  }
+  .scr-list .scr-row .pct {
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--text-muted);
+    width: 36px;
+    text-align: right;
+  }
+  .scr-list .scr-row .dur {
+    font-family: var(--mono);
+    font-size: 12px;
+    color: var(--text);
+  }
+
+  .energy {
+    margin-top: 12px;
+    font-size: 12px;
+    font-style: italic;
+    color: var(--text-muted);
+  }
+</style>
+</head>
+<body>
+  <div class="layout">
+
+    <!-- SIDEBAR — scrollable date list -->
+    <div class="sidebar-pane">
+      <div class="sb-top">
+        <a class="back" href="index.html">← BACK TO MOCKUPS</a>
+        <h2>Recap timeline</h2>
+      </div>
+
+      <div class="sb-scroll">
+        <!-- TOMORROW -->
+        <div class="sb-row future">
+          <div class="sb-label">TOMORROW · APR 26</div>
+          <div class="sb-preview" style="color: var(--text-muted);">3 events · 2 due tasks</div>
+          <div class="sb-meta"><span class="dot">📅 plans</span></div>
+        </div>
+
+        <!-- TODAY active -->
+        <div class="sb-row active">
+          <div class="sb-label">TODAY · APR 25</div>
+          <div class="sb-preview">Memory issue and clarity review</div>
+          <div class="sb-meta"><span class="dot ok">✓ recap</span></div>
+        </div>
+
+        <div class="sb-row">
+          <div class="sb-label">YESTERDAY · APR 24</div>
+          <div class="sb-preview">Stripe billing test + Atomic Bot launch prep</div>
+          <div class="sb-meta"><span class="dot ok">✓ recap</span></div>
+        </div>
+
+        <div class="sb-row">
+          <div class="sb-label">THU · APR 23</div>
+          <div class="sb-preview">Crypto market trends + content manager hiring</div>
+          <div class="sb-meta"><span class="dot ok">✓ recap</span></div>
+        </div>
+
+        <div class="sb-row empty">
+          <div class="sb-label">WED · APR 22</div>
+          <div class="sb-preview">Quiet day — only screen activity</div>
+          <div class="sb-meta"><span class="dot">— no recap</span></div>
+        </div>
+
+        <div class="sb-row">
+          <div class="sb-label">TUE · APR 21</div>
+          <div class="sb-preview">Marketing strategy + DRUGENERATOR plan</div>
+          <div class="sb-meta"><span class="dot ok">✓ recap</span></div>
+        </div>
+
+        <div class="sb-row">
+          <div class="sb-label">MON · APR 20</div>
+          <div class="sb-preview">Project Discussion · marketing campaign</div>
+          <div class="sb-meta"><span class="dot ok">✓ recap</span></div>
+        </div>
+
+        <div class="sb-row">
+          <div class="sb-label">SUN · APR 19</div>
+          <div class="sb-preview">AI freelance platform Q&amp;A</div>
+          <div class="sb-meta"><span class="dot ok">✓ recap</span></div>
+        </div>
+
+        <div class="sb-row empty">
+          <div class="sb-label">SAT · APR 18</div>
+          <div class="sb-preview">Quiet day</div>
+          <div class="sb-meta"><span class="dot">— no recap</span></div>
+        </div>
+
+        <div class="sb-row">
+          <div class="sb-label">FRI · APR 17</div>
+          <div class="sb-preview">Releasing DRUGENERATOR · K2.6 skims</div>
+          <div class="sb-meta"><span class="dot ok">✓ recap</span></div>
+        </div>
+
+        <div class="sb-row">
+          <div class="sb-label">THU · APR 16</div>
+          <div class="sb-preview">Team Discusses Project Updates</div>
+          <div class="sb-meta"><span class="dot ok">✓ recap</span></div>
+        </div>
+
+        <div class="sb-row">
+          <div class="sb-label">WED · APR 15</div>
+          <div class="sb-preview">Building AI Community Platform</div>
+          <div class="sb-meta"><span class="dot ok">✓ recap</span></div>
+        </div>
+
+        <div class="sb-row empty">
+          <div class="sb-label">TUE · APR 14</div>
+          <div class="sb-preview">Quiet day</div>
+          <div class="sb-meta"><span class="dot">— no recap</span></div>
+        </div>
+
+        <div class="sb-row">
+          <div class="sb-label">MON · APR 13</div>
+          <div class="sb-preview">Pricing tier discussion · Stripe model</div>
+          <div class="sb-meta"><span class="dot ok">✓ recap</span></div>
+        </div>
+
+        <!-- ↓ continues, scroll for older -->
+      </div>
+    </div>
+
+    <!-- MAIN PANE -->
+    <div class="main-pane">
+      <div class="main-head">
+        <h1>Dashboard</h1>
+        <div class="nav-arrows">
+          <button class="arrow-btn" title="Previous day">←</button>
+          <button class="btn">Today</button>
+          <button class="arrow-btn" title="Next day">→</button>
+        </div>
+      </div>
+
+      <!-- COMPACT TODAY + TOMORROW SPLIT -->
+      <div class="split">
+
+        <!-- TODAY — compact (smaller than v3) -->
+        <div class="card day-card today">
+          <div class="dh-row">
+            <div class="dh-label"><strong>TODAY</strong> · Sat, Apr 25</div>
+            <button class="btn">↻ Regenerate</button>
+          </div>
+          <div class="headline">Memory issue and clarity review</div>
+
+          <div class="compact-section">
+            <div class="section-label">💡 LEARNED</div>
+            <ul class="bullet-list">
+              <li>Overchat has memory issue</li>
+              <li>Skygen Desktop lacks clarity</li>
+            </ul>
+          </div>
+          <div class="compact-section">
+            <div class="section-label">✓ DECIDED</div>
+            <ul class="bullet-list">
+              <li>Check test results</li>
+            </ul>
+          </div>
+          <div class="energy">📊 Low activity · scattered apps</div>
+        </div>
+
+        <!-- TOMORROW — plans -->
+        <div class="card day-card tomorrow">
+          <div class="dh-row">
+            <div class="dh-label"><strong>TOMORROW</strong> · Sun, Apr 26</div>
+            <span class="chip accent">3 events</span>
+          </div>
+          <div class="headline">Standup-heavy day · 2 tasks due</div>
+
+          <div class="compact-section">
+            <div class="section-label">📅 CALENDAR</div>
+            <div class="plan-item" style="padding: 4px 0;">
+              <span class="time" style="width: 44px;">10:00</span>
+              <span class="label" style="font-size: 12px;">Standup · Pasha + Andrey</span>
+            </div>
+            <div class="plan-item" style="padding: 4px 0;">
+              <span class="time" style="width: 44px;">14:00</span>
+              <span class="label" style="font-size: 12px;">Q2 budget sync</span>
+            </div>
+            <div class="plan-item" style="padding: 4px 0;">
+              <span class="time" style="width: 44px;">17:00</span>
+              <span class="label" style="font-size: 12px;">Acme interview</span>
+            </div>
+          </div>
+
+          <div class="compact-section">
+            <div class="section-label">⏰ DUE</div>
+            <div class="plan-item" style="padding: 4px 0;">
+              <span class="time" style="width: 44px;">EOD</span>
+              <span class="label" style="font-size: 12px;">Q2 roadmap to Pasha</span>
+              <span class="chip red" style="font-size: 8px;">overdue</span>
+            </div>
+            <div class="plan-item" style="padding: 4px 0;">
+              <span class="time" style="width: 44px;">EOD</span>
+              <span class="label" style="font-size: 12px;">SEO report review</span>
+            </div>
+          </div>
+
+          <div class="compact-section">
+            <div class="section-label">💡 SUGGESTED</div>
+            <div class="plan-item" style="padding: 4px 0;">
+              <span class="time" style="width: 44px;">—</span>
+              <span class="label" style="font-size: 12px;">Followup Andrey on auth migration</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- STATS — 4 SEPARATE CARDS (out of Today block) -->
+      <div class="stats-grid">
+        <div class="card stat-card">
+          <div class="num">2</div>
+          <div class="lbl">CONVOS</div>
+        </div>
+        <div class="card stat-card">
+          <div class="num">2</div>
+          <div class="lbl">MEMORIES</div>
+        </div>
+        <div class="card stat-card">
+          <div class="num">0</div>
+          <div class="lbl">DONE</div>
+        </div>
+        <div class="card stat-card">
+          <div class="num">1</div>
+          <div class="lbl">NEW TASKS</div>
+        </div>
+      </div>
+
+      <!-- LAST 24H ON SCREEN -->
+      <div class="bottom-row">
+        <div class="card">
+          <div class="row-between" style="margin-bottom: 12px;">
+            <span class="section-label" style="margin: 0;">📅 LAST 24H ON SCREEN</span>
+            <span style="font-family: var(--mono); font-size: 10px; color: var(--text-dim);">TOP 5</span>
+          </div>
+          <div class="scr-list">
+            <div class="scr-row"><span>Telegram</span><span class="dur">3h 7m</span><span class="pct">39%</span></div>
+            <div class="scr-row"><span>Arc</span><span class="dur">1h 55m</span><span class="pct">24%</span></div>
+            <div class="scr-row"><span>Claude</span><span class="dur">1h 10m</span><span class="pct">15%</span></div>
+            <div class="scr-row"><span>loginwindow</span><span class="dur">57m</span><span class="pct">12%</span></div>
+            <div class="scr-row"><span>Safari</span><span class="dur">53m</span><span class="pct">11%</span></div>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+</body>
+</html>

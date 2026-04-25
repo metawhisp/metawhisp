@@ -47,7 +47,7 @@ struct InsightsView: View {
                             }
                             .foregroundStyle(MW.textSecondary)
                             .padding(.horizontal, 8).padding(.vertical, 4)
-                            .overlay(Rectangle().stroke(MW.border, lineWidth: MW.hairline))
+                            .overlay(RoundedRectangle(cornerRadius: MW.rSmall, style: .continuous).stroke(MW.border, lineWidth: 0.5))
                             .contentShape(Rectangle())
                         }
                         .buttonStyle(.plain)
@@ -189,7 +189,7 @@ struct InsightsView: View {
             }
         }
         .padding(12)
-        .background(MW.surface)
+        .mwCard(radius: MW.rSmall, elevation: .flat)
         .overlay(
             RoundedRectangle(cornerRadius: 6)
                 .stroke(MW.border, lineWidth: MW.hairline)
@@ -299,7 +299,7 @@ struct InsightsView: View {
             }
         }
         .padding(10)
-        .background(MW.surface)
+        .mwCard(radius: MW.rSmall, elevation: .flat)
         .overlay(
             RoundedRectangle(cornerRadius: 4)
                 .stroke(MW.border, lineWidth: MW.hairline)
@@ -410,7 +410,7 @@ private struct MeetingCardView: View {
             }
         }
         .padding(12)
-        .background(MW.surface)
+        .mwCard(radius: MW.rSmall, elevation: .flat)
         .overlay(
             RoundedRectangle(cornerRadius: 6)
                 .stroke(MW.border, lineWidth: MW.hairline)

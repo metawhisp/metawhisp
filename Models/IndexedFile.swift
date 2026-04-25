@@ -23,6 +23,10 @@ final class IndexedFile {
     var indexedAt: Date
     /// Set when FileMemoryExtractor has processed this file's content. Null = pending.
     var contentExtractedAt: Date?
+    /// Raw file text (for .md/.txt/etc.), capped at 20 KB. Populated by `FileIndexerService.backfillContent`.
+    /// Enables substring search + chat RAG over note contents.
+    /// spec://iterations/ITER-004-file-rag#scope.1
+    var contentText: String?
 
     init(
         path: String,
@@ -47,7 +51,11 @@ final class IndexedFile {
         self.fileModifiedAt = fileModifiedAt
         self.indexedAt = Date()
         self.contentExtractedAt = nil
+        self.contentText = nil
     }
+
+    /// Hard cap for per-file content stored in DB (20 KB). Obsidian notes typically <5 KB.
+    static let maxContentBytes = 20_000
 
     /// Categorize by extension — mirrors FileTypeCategory enum.
     static func category(for fileExtension: String?) -> String {

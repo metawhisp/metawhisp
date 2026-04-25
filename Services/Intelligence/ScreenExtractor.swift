@@ -112,22 +112,27 @@ final class ScreenExtractor: ObservableObject {
                 return
             }
 
-            // 1. Persist observations (one per visit).
+            // 1. Persist observations (one per visit). Tolerant to missing LLM fields —
+            // fill with defaults rather than drop the observation. Also floor endedAt to
+            // startedAt + minVisitSeconds to prevent 0-duration rows (single-sample visits
+            // previously had start == end, which broke dashboard "top apps by time").
             var obsCount = 0
             for (i, obsJson) in parsed.observations.enumerated() where i < trimmed.count {
                 let v = trimmed[i]
+                let durationFloor = AppSettings.shared.screenContextInterval
+                let safeEnd = max(v.endedAt, v.startedAt.addingTimeInterval(durationFloor))
                 let obs = ScreenObservation(
                     screenContextId: v.lastContextId,
                     appName: v.appName,
                     windowTitle: v.windowTitle,
-                    contextSummary: obsJson.contextSummary,
-                    currentActivity: obsJson.currentActivity,
-                    hasTask: obsJson.hasTask,
+                    contextSummary: obsJson.contextSummary ?? "",
+                    currentActivity: obsJson.currentActivity ?? "",
+                    hasTask: obsJson.hasTask ?? false,
                     taskTitle: obsJson.taskTitle,
                     sourceCategory: obsJson.category,
                     focusStatus: obsJson.focusStatus,
                     startedAt: v.startedAt,
-                    endedAt: v.endedAt
+                    endedAt: safeEnd
                 )
                 ctx.insert(obs)
                 obsCount += 1
@@ -135,7 +140,7 @@ final class ScreenExtractor: ObservableObject {
 
             // 2. Persist memories — linked back to the visit's ScreenContext.
             let existingMems = fetchRecentMemoryContents(in: ctx, limit: 100)
-            var memCount = 0
+            var newMemories: [UserMemory] = []
             for memJson in (parsed.memories ?? []) where memJson.visitIndex < trimmed.count {
                 let v = trimmed[memJson.visitIndex]
                 let wordCount = memJson.content.split(separator: " ").count
@@ -159,22 +164,54 @@ final class ScreenExtractor: ObservableObject {
                     screenContextId: v.lastContextId
                 )
                 ctx.insert(mem)
-                memCount += 1
+                newMemories.append(mem)
             }
+            let memCount = newMemories.count
 
             // 3. Persist tasks — linked to the visit's ScreenContext.
+            // Also collect them into `newTasks` so we can fire one notification per task after
+            // the save commits — copying reference `TaskPromotionService.swift:84-90` pattern.
             let existingTasks = fetchRecentTaskDescriptions(in: ctx, limit: 100)
-            var taskCount = 0
+            var newTasks: [TaskItem] = []
             let dueParser = ISO8601DateFormatter()
             dueParser.formatOptions = [.withInternetDateTime]
             for taskJson in (parsed.tasks ?? []) where taskJson.visitIndex < trimmed.count {
                 let v = trimmed[taskJson.visitIndex]
+                // Per-visit app blacklist — AI assistants + self + IDEs + messengers never produce tasks.
+                if TaskExtractionFilters.isTaskBlacklisted(appName: v.appName) {
+                    NSLog("[ScreenExtractor] Skipping task from blacklisted app %@: %@",
+                          v.appName, String(taskJson.description.prefix(60)))
+                    continue
+                }
                 let trimmedDesc = taskJson.description.trimmingCharacters(in: .whitespacesAndNewlines)
                 let wordCount = trimmedDesc.split(separator: " ").count
                 guard wordCount <= 15 else { continue }
-                if existingTasks.contains(where: { $0.caseInsensitiveCompare(trimmedDesc) == .orderedSame }) {
+                // Relevance + evidence gates (reference-pattern staged→committed bar).
+                let relevance = taskJson.relevance ?? 0
+                guard relevance >= TaskExtractionFilters.minRelevanceScore else {
+                    NSLog("[ScreenExtractor] Relevance %d < %d, skipping: %@",
+                          relevance, TaskExtractionFilters.minRelevanceScore, String(trimmedDesc.prefix(60)))
                     continue
                 }
+                let evidence = taskJson.evidence?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                guard evidence.count >= TaskExtractionFilters.minEvidenceChars else {
+                    NSLog("[ScreenExtractor] Evidence too weak (%d chars), skipping: %@",
+                          evidence.count, String(trimmedDesc.prefix(60)))
+                    continue
+                }
+                // Generic-phrase reject list.
+                if TaskExtractionFilters.isGenericNoise(trimmedDesc) {
+                    NSLog("[ScreenExtractor] Generic noise, skipping: %@", trimmedDesc)
+                    continue
+                }
+                // Fuzzy dedup — 60% word overlap counts as a duplicate.
+                if TaskExtractionFilters.isNearDuplicate(trimmedDesc, against: existingTasks) {
+                    NSLog("[ScreenExtractor] Near-duplicate task, skipping: %@", String(trimmedDesc.prefix(60)))
+                    continue
+                }
+                // Also avoid dup against tasks we're inserting in THIS batch.
+                let batchDescs = newTasks.map { $0.taskDescription }
+                if TaskExtractionFilters.isNearDuplicate(trimmedDesc, against: batchDescs) { continue }
                 var due: Date? = nil
                 if let raw = taskJson.dueAt, !raw.isEmpty, raw != "null" {
                     due = dueParser.date(from: raw)
@@ -186,15 +223,27 @@ final class ScreenExtractor: ObservableObject {
                     sourceTranscriptId: nil,
                     sourceApp: v.appName,
                     conversationId: nil,
-                    screenContextId: v.lastContextId
+                    screenContextId: v.lastContextId,
+                    // Screen-inferred → staged bin. User promotes from review.
+                    status: "staged"
                 )
                 ctx.insert(task)
-                taskCount += 1
+                newTasks.append(task)
             }
 
             try? ctx.save()
             NSLog("[ScreenExtractor] ✅ %d observations, %d memories, %d tasks from %d visits",
-                  obsCount, memCount, taskCount, trimmed.count)
+                  obsCount, memCount, newTasks.count, trimmed.count)
+
+            // Staged candidates do NOT trigger macOS notifications — they land silently in
+            // the REVIEW CANDIDATES bin. Only promoted (committed) tasks notify. This
+            // matches the reference StagedTask flow and avoids notification spam from
+            // low-confidence LLM inferences.
+            // spec://iterations/ITER-007-staged-tasks
+
+            // Fire-and-forget embeddings for semantic RAG (ITER-008).
+            AppDelegate.shared?.embeddingService.embedMemoriesInBackground(newMemories, in: ctx)
+            AppDelegate.shared?.embeddingService.embedTasksInBackground(newTasks, in: ctx)
         } catch {
             lastError = error.localizedDescription
             NSLog("[ScreenExtractor] ❌ Failed: %@", error.localizedDescription)
@@ -293,8 +342,25 @@ final class ScreenExtractor: ObservableObject {
     - Each memory ≤15 words, starts with "User" (or attribution for external wisdom).
     - Each memory includes visitIndex (0-based) pointing to most relevant visit.
 
-    TASKS — actionable items visible on screen:
-    - Concrete deadline-bearing items, follow-ups, explicit reminders visible in UI.
+    TASKS — be STRICT. Most visits have ZERO tasks. Extract ONLY when the user is the direct recipient of an explicit pending action.
+
+    READING-vs-ACTING FILTER (APPLY FIRST):
+    - Extract a task ONLY if the user is the DIRECT RECIPIENT of a pending action:
+      unread message addressed to user with no reply yet, invoice due, PR assigned to user, form asking user for input, calendar event starting soon.
+    - SKIP (tasks=[]) for all of these:
+      * Articles, blog posts, tutorials, listicles
+      * Dashboards, analytics, charts
+      * AI chat transcripts — Claude/ChatGPT suggesting steps ≠ user committing
+      * Chat threads where the LAST message is FROM the user (already responded)
+      * Other people's schedules, commitments, plans being described
+      * Code editors, terminals, log viewers
+      * News, social feeds, search results, video players
+      * Settings, docs, passive browsing
+
+    SUBJECT CHECK: only when the USER is the one expected to act. If the screen describes
+    what SOMEONE ELSE should do or already did, no task.
+
+    Format (when extracting):
     - description ≤15 words, start with verb. Remove time refs.
     - dueAt ISO-8601 UTC with Z if visible in context. Omit otherwise.
     - Each task includes visitIndex (0-based).
@@ -304,11 +370,19 @@ final class ScreenExtractor: ObservableObject {
 
     Respond in the same language the screen content is in.
 
+    RELEVANCE + EVIDENCE (TASKS ONLY):
+    For every task you extract, include:
+    - relevance: integer 0-100. 90+ only if invoice with due date / PR explicitly assigned
+      to user / calendar event imminent. 75-89 if explicit named action awaiting user.
+      Below 75 → do NOT extract this task.
+    - evidence: verbatim quote (≥20 chars) from THIS visit's OCR that proves the task is
+      pending and addressed to the user. If no such quote exists, do not extract.
+
     Return JSON:
     {
       "observations": [{"contextSummary": "...", "currentActivity": "...", "hasTask": false, "taskTitle": null, "category": "work", "focusStatus": "focused"}],
       "memories": [{"visitIndex": 0, "content": "...", "category": "system", "confidence": 0.8}],
-      "tasks": [{"visitIndex": 0, "description": "...", "dueAt": "2026-04-20T20:59:00Z"}]
+      "tasks": [{"visitIndex": 0, "description": "...", "dueAt": "2026-04-20T20:59:00Z", "relevance": 85, "evidence": "Due Mar 15 — $450 unpaid"}]
     }
 
     CRITICAL OUTPUT RULE: Respond with ONLY the JSON object. No translation. No explanation. No markdown fences.
@@ -336,9 +410,11 @@ final class ScreenExtractor: ObservableObject {
     // MARK: - Response parse
 
     private struct ObservationJSON: Decodable {
-        let contextSummary: String
-        let currentActivity: String
-        let hasTask: Bool
+        // Everything tolerant — LLM sometimes omits fields or swaps types; we shouldn't
+        // discard the entire batch for a missing `currentActivity`. Defaults fill in.
+        let contextSummary: String?
+        let currentActivity: String?
+        let hasTask: Bool?
         let taskTitle: String?
         let category: String?
         let focusStatus: String?
@@ -352,6 +428,8 @@ final class ScreenExtractor: ObservableObject {
     private struct TaskJSON: Decodable {
         let visitIndex: Int
         let description: String
+        let relevance: Int?
+        let evidence: String?
         let dueAt: String?
     }
     private struct BatchResult: Decodable {
@@ -360,10 +438,23 @@ final class ScreenExtractor: ObservableObject {
         let tasks: [TaskJSON]?
     }
 
+    /// Parse LLM response. Logs the decoding error + response snippet on failure so we can
+    /// actually diagnose WHY parse fails (previously this was a silent `try?` nil — we lost
+    /// all info). Decoder is tolerant — missing observation fields get defaults at call site.
     private func parseResponse(_ response: String) -> BatchResult? {
         let extracted = extractJSONObject(from: response)
-        guard let data = extracted.data(using: .utf8) else { return nil }
-        return try? JSONDecoder().decode(BatchResult.self, from: data)
+        guard let data = extracted.data(using: .utf8) else {
+            NSLog("[ScreenExtractor] ❌ Parse: response not UTF-8")
+            return nil
+        }
+        do {
+            return try JSONDecoder().decode(BatchResult.self, from: data)
+        } catch {
+            NSLog("[ScreenExtractor] ❌ Parse error: %@. Response head: %@",
+                  error.localizedDescription,
+                  String(extracted.prefix(400)))
+            return nil
+        }
     }
 
     private func extractJSONObject(from text: String) -> String {

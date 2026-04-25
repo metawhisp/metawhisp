@@ -364,7 +364,19 @@ External readers — самый близкий аналог "auto-подтяги
 
 ### Phase 5: Goals + Task richness
 
-- **G1** Goal SwiftData model (boolean/scale/numeric) + UI card
+- **G1** ⏸️ TESTING PENDING — Goal SwiftData model + UI + MetaChat + DailySummary integration. Implementation 2026-04-23:
+  - `Models/Goal.swift` — boolean (daily checkbox) | scale (1-N rating) | numeric (counter toward target). Fields: title, goalDescription, goalType, targetValue, currentValue, minValue, maxValue, unit, isActive, isDismissed, lastProgressAt, createdAt, updatedAt. Derived: `progressFraction` (0…1), `progressLabel` ("Done" / "7/10" / "350/1000 words"), `resetIfNewDay()` for boolean/scale auto-reset on next-day open.
+  - `Services/Data/HistoryService.swift` — `Goal.self` registered in both real + in-memory schemas.
+  - `Views/Windows/GoalsView.swift` — top-level tab. List of cards with type-specific progress controls (checkbox / slider / +1 / +5 / -1 / -5 buttons), inline progress bar, ellipsis menu (Archive / Edit / Delete). Editor sheet shows type picker + only the fields relevant to the picked type. Archived goals hidden under "ARCHIVED" header.
+  - `Views/Windows/MainWindowView.swift` — sidebar 6→7 tabs (added `.goals` with icon `target` after Library, before Tasks).
+  - `Services/Intelligence/ChatService.swift` — new `<active_goals>` block right after `<pending_tasks>`. System prompt updated in 3 places: context list, GOALS handler instruction (quote exact progress label, surface behind/ahead bluntly, never invent), "all empty" fallback check. Logging gained `goals=N` field.
+  - `Services/Intelligence/DailySummaryService.swift` — `GoalSnapshot` value-type frozen at generation time (avoids Sendable issues with @Model across actor boundaries). `fetchActiveGoals(ctx:)` applies `resetIfNewDay()` per goal. Goals fed to `energyAgent` (can produce lines like "Behind on writing goal, heavy meeting day") + `headlineAgent` (background — only mention if a goal crossed a meaningful threshold). Day-emptiness check now also requires no active goals.
+  - **Three goal shapes:**
+    - boolean → `currentValue` 0/1, resets each day. UI: checkbox.
+    - scale → range `minValue…maxValue`, resets each day. UI: slider step 1.
+    - numeric → `currentValue` accumulates toward `targetValue`, never auto-resets. UI: +/- buttons. `unit` labels both ("words", "push-ups", "min").
+  - **Verify:** Cmd New Goal → fill title + pick type → save → row appears in Goals tab. Toggle checkbox / slide rating / +1 — value persists in DB. MetaChat: ask "what are my goals?" → response cites titles + progress labels verbatim. After day rolls over, daily/scale goals show 0/Pending again. DailySummary GENERATE NOW → energy line may reference goal status.
+  - **Check DB:** `sqlite3 ~/Library/Application\ Support/MetaWhisp.store "SELECT ZTITLE, ZGOALTYPE, ZCURRENTVALUE, ZTARGETVALUE FROM ZGOAL WHERE ZISACTIVE=1;"`
 - **T1** Add to TaskItem: tags, priority, recurrenceRule, sortOrder, indentLevel
 - **T2** Today / No Deadline / Overdue grouping
 - **T3** AI dedup — detect semantic duplicates, auto-dismiss
@@ -398,9 +410,11 @@ User explicit ask 2026-04-19: premium TTS + more voice features revisited after 
 
 ### Phase 7: Daily Summary + Notifications polish
 
-- **N1** Daily Summary at scheduled time
+- **N1** Daily Summary at scheduled time — **DIVERGES FROM REFERENCE** (reference has no daily digest notifications, only immediate per-event). User asked about it 2026-04-20 — deferred pending copy-first discipline. Would be: scheduled fire at user time (default 18:00 or 22:00) → LLM summarizes day's Conversation + TaskItem + UserMemory + top screen apps → `UNCalendarNotificationTrigger` nightly → notification "Today: 5 tasks extracted, 8 memories, top app = Chrome". New `DailySummaryService` + `DailySummary` SwiftData model. ~3h.
 - **N2** Per-category notification toggles (Focus/Task/Insight/Memory)
 - **N3** Insight Notifications system
+- **N4** Task due-time reminders — **DIVERGES FROM REFERENCE** (reference's `TaskPromotionService` notifies only on *promotion*, not at `dueAt`). User asked about it 2026-04-20 — deferred pending copy-first discipline. Would be: when `TaskItem.dueAt` is set, schedule `UNCalendarNotificationTrigger` for `dueAt - 10min`. On task dueAt change → cancel old + schedule new. On complete/dismiss → cancel. ~2h. Needs: hook in TaskExtractor (on create) + TasksView (on edit/complete) + AppDelegate (on launch re-scan pending tasks for rescheduling after app restart).
+- **N5** ✅ Per-task notifications on extraction (ITER-005) — shipped 2026-04-20, copies `TaskPromotionService.swift:84-90` pattern. ScreenExtractor + voice TaskExtractor both fire `NotificationService.postNewTask` per new TaskItem. Click → opens Tasks tab.
 
 ### Phase 8: Agent integration (Claude OAuth + task agent)
 
@@ -415,7 +429,9 @@ User explicit ask 2026-04-19: premium TTS + more voice features revisited after 
 - Speaker diarization
 - Folders
 - BLE wearable reference
-- Vector embeddings + RAG improvements
+- ✅ ITER-011 — Conversation embeddings (semantic ranking in MetaChat) — shipped 2026-04-23
+- HistoryItem-level embeddings for fine-grained dictation retrieval (Tier 3 if needed)
+- Hybrid score `α·similarity + β·recency_decay` for meeting ranking (currently force-include latest)
 - Dev Mode (AI modifies own source code)
 - Apple Foundation Models local LLM
 

@@ -89,7 +89,7 @@ struct OnboardingFeaturesPage: View {
             }.frame(height: 16)
         }
         .padding(.horizontal, 14).padding(.vertical, 8)
-        .background(MW.surface)
+        .mwCard(radius: MW.rSmall, elevation: .flat)
         .overlay(Capsule().stroke(MW.recording.opacity(0.3), lineWidth: 1))
         .clipShape(Capsule())
     }
@@ -105,7 +105,7 @@ struct OnboardingFeaturesPage: View {
         }
         .padding(.horizontal, 10).padding(.vertical, 8)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(MW.surface)
+        .mwCard(radius: MW.rSmall, elevation: .flat)
         .overlay(Rectangle().stroke(MW.idle.opacity(0.3), lineWidth: MW.hairline))
     }
 
@@ -130,8 +130,7 @@ struct OnboardingFeaturesPage: View {
             Spacer()
         }
         .padding(12)
-        .background(MW.surface)
-        .overlay(Rectangle().stroke(MW.border, lineWidth: MW.hairline))
+        .mwCard(radius: MW.rSmall, elevation: .flat)
     }
 
     // MARK: - App Badges
@@ -143,8 +142,7 @@ struct OnboardingFeaturesPage: View {
                     .font(.system(size: 9, weight: .medium, design: .monospaced))
                     .foregroundStyle(MW.textMuted)
                     .padding(.horizontal, 8).padding(.vertical, 4)
-                    .background(MW.surface)
-                    .overlay(Rectangle().stroke(MW.border, lineWidth: MW.hairline))
+                    .mwCard(radius: MW.rSmall, elevation: .flat)
             }
         }
     }

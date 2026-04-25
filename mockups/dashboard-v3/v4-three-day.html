@@ -1,0 +1,263 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>v4 · 3-day window</title>
+<link rel="stylesheet" href="_shared.css">
+<style>
+  .top-bar {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 24px;
+  }
+  .back { font-family: var(--mono); font-size: 11px; color: var(--text-muted); }
+
+  /* 3-day grid: yesterday | TODAY (wider) | tomorrow */
+  .three-day {
+    display: grid;
+    grid-template-columns: 1fr 1.6fr 1fr;
+    gap: 16px;
+    margin-bottom: 24px;
+    align-items: stretch;
+  }
+
+  .day-col { display: flex; flex-direction: column; padding: 18px; }
+  .day-col.past { opacity: 0.85; }
+  .day-col.today {
+    background: var(--bg-elev-2);
+    border-color: var(--border-strong);
+    transform: scale(1.0);
+  }
+  .day-col.future {
+    background: linear-gradient(180deg, rgba(255,214,10,0.05), var(--bg-elev));
+    border-color: rgba(255,214,10,0.18);
+  }
+
+  .col-head {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    margin-bottom: 14px;
+  }
+  .col-label {
+    font-family: var(--mono);
+    font-size: 10px;
+    letter-spacing: 1.4px;
+    color: var(--text-muted);
+  }
+  .col-label.bright { color: var(--text); }
+  .col-label.accent { color: var(--accent); }
+
+  .day-col .headline {
+    font-size: 16px;
+    font-weight: 600;
+    margin-bottom: 12px;
+    line-height: 1.3;
+    min-height: 42px;
+  }
+  .day-col.today .headline { font-size: 19px; min-height: 52px; }
+
+  .compact-section {
+    margin-top: 10px;
+    padding-top: 10px;
+    border-top: 0.5px solid var(--border);
+  }
+  .compact-section .section-label { margin-bottom: 4px; }
+  .compact-section .bullet-list li { font-size: 12px; padding: 2px 0; }
+
+  .quiet {
+    color: var(--text-muted);
+    font-style: italic;
+    font-size: 12px;
+    margin-top: 8px;
+  }
+
+  /* Past horizontal strip */
+  .past-row {
+    display: flex;
+    gap: 8px;
+    overflow-x: auto;
+    padding: 4px 0;
+  }
+  .mini-pill {
+    flex-shrink: 0;
+    padding: 8px 12px;
+    border: 0.5px solid var(--border);
+    border-radius: 8px;
+    background: var(--bg-elev);
+    cursor: pointer;
+    width: 160px;
+  }
+  .mini-pill:hover { border-color: var(--border-strong); }
+  .mini-pill.empty { opacity: 0.6; }
+  .mini-pill .day { font-family: var(--mono); font-size: 9px; letter-spacing: 0.8px; color: var(--text-muted); }
+  .mini-pill .text { font-size: 11px; margin-top: 4px; line-height: 1.3; }
+
+  .nav-arrows { display: flex; gap: 6px; }
+  .nav-arrows .btn { padding: 4px 8px; }
+</style>
+</head>
+<body>
+  <div class="container">
+    <div class="top-bar">
+      <a class="back" href="index.html">← BACK TO MOCKUPS</a>
+      <h1 class="h-page" style="font-size: 24px;">Dashboard</h1>
+      <div class="nav-arrows">
+        <button class="btn">← Prev day</button>
+        <button class="btn">Today</button>
+        <button class="btn">Next →</button>
+      </div>
+    </div>
+
+    <p style="color: var(--text-muted); font-size: 12px; margin-bottom: 16px;">
+      3-card layout always visible · arrows shift window left/right · NO layout jump
+    </p>
+
+    <!-- THREE-DAY WINDOW -->
+    <div class="three-day">
+
+      <!-- YESTERDAY (compact past) -->
+      <div class="card day-col past">
+        <div class="col-head">
+          <div class="col-label">YESTERDAY · APR 24</div>
+          <span class="chip">recap</span>
+        </div>
+        <div class="headline">Stripe billing test + Atomic Bot launch prep</div>
+
+        <div class="compact-section">
+          <div class="section-label">✓ DECIDED</div>
+          <ul class="bullet-list">
+            <li>Switch to test customers</li>
+            <li>Move launch Tue → Mon</li>
+          </ul>
+        </div>
+        <div class="compact-section">
+          <div class="section-label">📦 SHIPPED</div>
+          <ul class="bullet-list">
+            <li>Webhook test fix · PR #142</li>
+          </ul>
+        </div>
+        <div class="energy" style="font-size: 11px; margin-top: 12px;">
+          <span>📊</span><span>5 calls · low fragmentation</span>
+        </div>
+      </div>
+
+      <!-- TODAY (centered, larger, brightest) -->
+      <div class="card day-col today">
+        <div class="col-head">
+          <div class="col-label bright"><strong>TODAY</strong> · SAT, APR 25</div>
+          <button class="btn">↻ Regenerate</button>
+        </div>
+        <div class="headline">Memory issue and clarity review</div>
+
+        <div class="row" style="gap: 18px; margin: 8px 0 14px; padding: 10px 0; border-top: 1px solid var(--border); border-bottom: 1px solid var(--border);">
+          <div><span style="font-size:18px;font-weight:600;">2</span> <span style="color:var(--text-muted);font-size:10px;">CONV</span></div>
+          <div><span style="font-size:18px;font-weight:600;">2</span> <span style="color:var(--text-muted);font-size:10px;">MEM</span></div>
+          <div><span style="font-size:18px;font-weight:600;">0</span> <span style="color:var(--text-muted);font-size:10px;">DONE</span></div>
+          <div><span style="font-size:18px;font-weight:600;">1</span> <span style="color:var(--text-muted);font-size:10px;">NEW</span></div>
+        </div>
+
+        <div class="section">
+          <div class="section-label">💡 LEARNED</div>
+          <ul class="bullet-list">
+            <li>Overchat has memory issue</li>
+            <li>Skygen Desktop lacks clarity</li>
+          </ul>
+        </div>
+        <div class="section">
+          <div class="section-label">✓ DECIDED</div>
+          <ul class="bullet-list">
+            <li>Check test results</li>
+          </ul>
+        </div>
+
+        <div class="energy" style="margin-top: 14px;">
+          <span>📊</span><span>Low activity · scattered apps · most time in Telegram</span>
+        </div>
+      </div>
+
+      <!-- TOMORROW (future plans) -->
+      <div class="card day-col future">
+        <div class="col-head">
+          <div class="col-label accent"><strong>TOMORROW</strong> · APR 26</div>
+          <span class="chip accent">3 events</span>
+        </div>
+        <div class="headline" style="color: var(--text-muted);">Standup-heavy day · 2 due</div>
+
+        <div class="compact-section">
+          <div class="section-label">📅 CALENDAR</div>
+          <div class="plan-item" style="padding: 4px 0;">
+            <span class="time" style="width: 44px;">10:00</span>
+            <span class="label" style="font-size: 12px;">Standup · Pasha + Andrey</span>
+          </div>
+          <div class="plan-item" style="padding: 4px 0;">
+            <span class="time" style="width: 44px;">14:00</span>
+            <span class="label" style="font-size: 12px;">Q2 budget sync</span>
+          </div>
+          <div class="plan-item" style="padding: 4px 0;">
+            <span class="time" style="width: 44px;">17:00</span>
+            <span class="label" style="font-size: 12px;">Acme interview</span>
+          </div>
+        </div>
+
+        <div class="compact-section">
+          <div class="section-label">⏰ DUE</div>
+          <div class="plan-item" style="padding: 4px 0;">
+            <span class="time" style="width: 44px;">EOD</span>
+            <span class="label" style="font-size: 12px;">Q2 roadmap</span>
+            <span class="chip red" style="font-size: 8px;">overdue</span>
+          </div>
+          <div class="plan-item" style="padding: 4px 0;">
+            <span class="time" style="width: 44px;">EOD</span>
+            <span class="label" style="font-size: 12px;">SEO report review</span>
+          </div>
+        </div>
+
+        <div class="compact-section">
+          <div class="section-label">💡 SUGGESTED</div>
+          <p style="font-size: 12px; color: var(--text-muted); padding: 4px 0;">Followup Andrey on auth migration · 3w idle</p>
+        </div>
+      </div>
+    </div>
+
+    <!-- PAST WEEK strip -->
+    <div class="card" style="padding: 14px 18px;">
+      <div class="row" style="margin-bottom: 10px; justify-content: space-between;">
+        <span class="section-label" style="margin: 0;">📜 PAST WEEK</span>
+        <span style="font-family: var(--mono); font-size: 10px; color: var(--text-dim);">click to focus</span>
+      </div>
+      <div class="past-row">
+        <div class="mini-pill">
+          <div class="day">THU · APR 23</div>
+          <div class="text">Crypto trends + content manager hiring</div>
+        </div>
+        <div class="mini-pill empty">
+          <div class="day">WED · APR 22</div>
+          <div class="text" style="font-style:italic;color:var(--text-muted);">Quiet · 0 conv</div>
+        </div>
+        <div class="mini-pill">
+          <div class="day">TUE · APR 21</div>
+          <div class="text">Marketing + DRUGENERATOR plan</div>
+        </div>
+        <div class="mini-pill">
+          <div class="day">MON · APR 20</div>
+          <div class="text">Project Discussion · marketing</div>
+        </div>
+        <div class="mini-pill">
+          <div class="day">SUN · APR 19</div>
+          <div class="text">AI freelance platform Q&amp;A</div>
+        </div>
+        <div class="mini-pill empty">
+          <div class="day">SAT · APR 18</div>
+          <div class="text" style="font-style:italic;color:var(--text-muted);">Quiet</div>
+        </div>
+        <div class="mini-pill">
+          <div class="day">FRI · APR 17</div>
+          <div class="text">Releasing DRUGENERATOR · K2.6 skims</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</body>
+</html>

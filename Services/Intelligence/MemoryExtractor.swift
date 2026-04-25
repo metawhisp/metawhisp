@@ -1,9 +1,14 @@
 import Foundation
 import SwiftData
 
-/// Extracts structured facts about the user from voice transcripts.
-/// Triggered on each completed voice transcription (≥20 chars) — same pattern as AdviceService.
-/// Screen context is NOT input — reference pattern uses voice conversations, not screen OCR (garbage in → garbage out).
+/// Extracts structured facts about the user from a FULL closed Conversation — not per-transcript.
+///
+/// Triggered on conversation close (dictation 10-min gap or meeting stop). Runs once
+/// over all HistoryItems of the conversation so the LLM can:
+/// - See conversation-wide context (not fragments in isolation)
+/// - Apply USER-IS-SUBJECT filter (skip memories about third parties)
+/// - Dedup repeated mentions of the same fact across fragments
+///
 /// spec://iterations/ITER-001#architecture.extractor
 @MainActor
 final class MemoryExtractor: ObservableObject {
@@ -27,34 +32,56 @@ final class MemoryExtractor: ObservableObject {
         self.modelContainer = modelContainer
     }
 
-    /// Fire-and-forget memory extraction triggered by a completed voice transcription.
-    /// Mirrors AdviceService.triggerOnTranscription — runs async, respects `memoriesEnabled` toggle.
-    func triggerOnTranscription(text: String, source: String, conversationId: UUID? = nil) {
+    /// Fire-and-forget extraction on the whole conversation. Called by ConversationGrouper
+    /// after a conversation closes.
+    func triggerOnConversationClose(conversationId: UUID) {
         guard settings.memoriesEnabled else { return }
-        guard text.count >= 20 else { return }
         Task { [weak self] in
-            await self?.extract(transcript: text, source: source, conversationId: conversationId)
+            await self?.extractFromConversation(conversationId: conversationId)
         }
     }
 
-    /// Run one extraction cycle on the most recent transcript in history (EXTRACT NOW button).
+    /// Manual EXTRACT NOW button. Uses the most recent HistoryItem's conversation.
     func extractOnce() async {
         guard hasLLMAccess else {
             NSLog("[MemoryExtractor] No LLM access — skipping")
             return
         }
-        let recent = fetchRecentTranscripts(limit: 1)
-        guard let latest = recent.first, latest.count >= 20 else {
-            NSLog("[MemoryExtractor] No recent transcript (need ≥20 chars) — skipping")
+        guard let container = modelContainer else { return }
+        let ctx = ModelContext(container)
+        var desc = FetchDescriptor<HistoryItem>(
+            sortBy: [SortDescriptor(\.createdAt, order: .reverse)]
+        )
+        desc.fetchLimit = 1
+        guard let latest = (try? ctx.fetch(desc))?.first,
+              let convId = latest.conversationId else {
+            NSLog("[MemoryExtractor] No recent conversation — skipping")
             return
         }
-        await extract(transcript: latest, source: "manual", conversationId: nil)
+        await extractFromConversation(conversationId: convId)
     }
 
-    /// Core extraction — voice transcript → LLM → persist up to 2 memories.
-    private func extract(transcript: String, source: String, conversationId: UUID?) async {
+    /// Core extraction — collect all transcripts for the conversation, send as one block.
+    private func extractFromConversation(conversationId: UUID) async {
         guard !isRunning else { return }
         guard hasLLMAccess else { return }
+
+        guard let container = modelContainer else { return }
+        let ctx = ModelContext(container)
+
+        var desc = FetchDescriptor<HistoryItem>(
+            predicate: #Predicate { $0.conversationId == conversationId },
+            sortBy: [SortDescriptor(\.createdAt, order: .forward)]
+        )
+        desc.fetchLimit = 100
+        let items = (try? ctx.fetch(desc)) ?? []
+        let fragments = items
+            .map { $0.displayText.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+
+        guard !fragments.isEmpty else { return }
+        let totalChars = fragments.reduce(0) { $0 + $1.count }
+        guard totalChars >= 20 else { return }
 
         isRunning = true
         defer {
@@ -63,12 +90,16 @@ final class MemoryExtractor: ObservableObject {
         }
 
         let existing = fetchExistingMemories()
-        let prompt = buildPrompt(transcript: transcript, existing: existing)
+        let prompt = buildPrompt(fragments: fragments, existing: existing)
+
+        let sourceApp = items.last.flatMap { $0.source } ?? "conversation"
+        let windowTitle: String? = nil  // on-close extraction has no real-time window context
 
         do {
             let response: String
             if LicenseService.shared.isPro, let licenseKey = LicenseService.shared.licenseKey {
-                NSLog("[MemoryExtractor] Extracting via Pro proxy")
+                NSLog("[MemoryExtractor] Extracting via Pro proxy (convo %@, %d fragments, %d chars)",
+                      conversationId.uuidString.prefix(8) as CVarArg, fragments.count, totalChars)
                 response = try await callProProxy(system: Self.systemPrompt, user: prompt, licenseKey: licenseKey)
             } else {
                 let apiKey = settings.activeAPIKey
@@ -85,26 +116,24 @@ final class MemoryExtractor: ObservableObject {
                 )
             }
 
-            let sourceApp = screenContext?.recentContexts.last?.appName ?? source
-            let windowTitle = screenContext?.recentContexts.last?.windowTitle
             let memories = parseResponse(response, sourceApp: sourceApp, windowTitle: windowTitle, conversationId: conversationId)
             guard !memories.isEmpty else {
-                NSLog("[MemoryExtractor] No new memories this cycle")
+                NSLog("[MemoryExtractor] No new memories from conversation %@", conversationId.uuidString.prefix(8) as CVarArg)
                 return
             }
 
-            // Persist only high-confidence, cap at maxPerExtraction.
-            if let container = modelContainer {
-                let ctx = ModelContext(container)
-                var insertedCount = 0
-                for mem in memories where mem.confidence >= minConfidence {
-                    ctx.insert(mem)
-                    insertedCount += 1
-                    if insertedCount >= maxPerExtraction { break }
-                }
-                try? ctx.save()
-                NSLog("[MemoryExtractor] ✅ Extracted %d memories (inserted: %d)", memories.count, insertedCount)
+            var insertedMemories: [UserMemory] = []
+            for mem in memories where mem.confidence >= minConfidence {
+                ctx.insert(mem)
+                insertedMemories.append(mem)
+                if insertedMemories.count >= maxPerExtraction { break }
             }
+            try? ctx.save()
+            NSLog("[MemoryExtractor] ✅ Extracted %d memories (inserted: %d) from conversation %@",
+                  memories.count, insertedMemories.count, conversationId.uuidString.prefix(8) as CVarArg)
+
+            // Fire-and-forget embedding for semantic RAG (ITER-008).
+            AppDelegate.shared?.embeddingService.embedMemoriesInBackground(insertedMemories, in: ctx)
         } catch {
             lastError = error.localizedDescription
             NSLog("[MemoryExtractor] ❌ Failed: %@", error.localizedDescription)
@@ -113,16 +142,32 @@ final class MemoryExtractor: ObservableObject {
 
     // MARK: - Prompt
 
-    /// memory extraction prompt. Adapted from backend/utils/prompts.py:12.
-    /// Input is a voice transcript (not screen OCR). Max 2 memories per extraction. 15 words each.
+    /// Memory extraction prompt — on-conversation-close pattern.
+    /// Input is a full conversation (multiple dictation fragments). Max 2 memories per extraction.
+    /// Single-user desktop dictation: assignee check via linguistic USER-IS-SUBJECT rule.
     /// spec://iterations/ITER-001#architecture.extractor
     static let systemPrompt = """
-    You are an expert memory curator. Extract high-quality, genuinely valuable memories from a voice transcript while filtering out trivial, mundane, or uninteresting content.
+    You are an expert memory curator. Extract high-quality, genuinely valuable memories from a full dictation conversation while filtering out trivial, mundane, or uninteresting content.
 
     CRITICAL CONTEXT:
-    - You are extracting memories about the User (who dictated this transcript).
-    - Focus on information about the User and people they directly mention.
+    - You receive a FULL conversation composed of multiple dictation fragments ordered by time.
+    - All fragments are from the SAME single User (no other speakers).
+    - You are extracting memories about the User and people they directly mention.
     - Never use generic labels — when a name is spoken, use the name.
+
+    CONVERSATION-WIDE CONTEXT:
+    Treat the fragments as one thought stream:
+    - If a later fragment CONTRADICTS or UPDATES an earlier one → prefer the later version.
+    - If the same fact appears in multiple fragments → extract AT MOST ONCE.
+    - If the User says something hypothetical/exploratory early on and walks it back later → do not extract.
+
+    USER-IS-SUBJECT CHECK:
+    Only extract memories where the USER is the subject, or someone directly in the User's network:
+    - "Я живу в Берлине" / "I'm the CTO at Acme" → about User → EXTRACT.
+    - "Мой друг Паша живёт в Берлине" → Паша in User's network with relationship → can EXTRACT.
+    - "Паша живёт в Берлине" (no relationship context) → about a third party → SKIP.
+    - "В компании X ввели политику" (generic commentary) → not User-specific → SKIP.
+    Do NOT extract memories about unrelated people or abstract entities.
 
     THE CATEGORIZATION TEST (apply to EVERY potential memory):
     Q1: "Is this wisdom/advice FROM someone else that User can learn from?"
@@ -186,19 +231,37 @@ final class MemoryExtractor: ObservableObject {
     - Better to return [] than to include low-quality memories.
     - DEFAULT TO EMPTY LIST.
 
+    ENRICHMENT FIELDS (REQUIRED for every memory):
+    - `headline`: ≤6 word display label. Subject-led. Examples:
+        content "User builds Overchat, an AI ChatGPT wrapper" → headline "Overchat product"
+        content "User's cofounder Araf handles backend" → headline "Araf — cofounder, backend"
+        content "User decided to integrate Stripe billing" → headline "Stripe billing decision"
+    - `reasoning`: 1 sentence WHY this is being stored. Cite the source moment.
+        Examples:
+        "Mentioned as primary product when describing current work."
+        "Stated as a Q2 decision during marketing strategy discussion."
+        "Named as a recurring 1-on-1 contact in standup notes."
+    - `tags`: 1-3 short tags from {work, personal, network, decision, preference, role, project, tool, learning, health, finance}.
+
     Return JSON:
-    {"memories": [{"content": "...", "category": "system|interesting", "confidence": 0.0-1.0}]}
+    {"memories": [{
+      "content": "...",
+      "headline": "≤6 words",
+      "reasoning": "why we are storing this, cite the source moment",
+      "category": "system|interesting",
+      "confidence": 0.0-1.0,
+      "tags": ["tag1", "tag2"]
+    }]}
 
     If nothing passes: {"memories": []}
 
     CRITICAL OUTPUT RULE: Respond with ONLY the JSON object. No translation of the transcript. No explanation. No preamble like "Since the transcript is in Russian...". No markdown fences. Just the raw JSON.
     """
 
-    private func buildPrompt(transcript: String, existing: [UserMemory]) -> String {
+    private func buildPrompt(fragments: [String], existing: [UserMemory]) -> String {
         var parts: [String] = []
 
         // Existing memories passed ALL (not windowed) — up to 1000 for robust dedup.
-        // UserMemory corpus is small (< 100 typical), no budget concern.
         if !existing.isEmpty {
             parts.append("Existing memories you already know about User (DO NOT repeat or duplicate):")
             for m in existing {
@@ -207,10 +270,11 @@ final class MemoryExtractor: ObservableObject {
             parts.append("")
         }
 
-        parts.append("Voice transcript to analyze:")
-        parts.append("```")
-        parts.append(transcript)
-        parts.append("```")
+        parts.append("Conversation fragments to analyze (ordered by time, all from the same User):")
+        for (i, frag) in fragments.enumerated() {
+            parts.append("--- fragment \(i + 1) ---")
+            parts.append(frag)
+        }
 
         let combined = parts.joined(separator: "\n")
         if combined.count > 20000 { return String(combined.prefix(20000)) }
@@ -231,31 +295,21 @@ final class MemoryExtractor: ObservableObject {
         return (try? ctx.fetch(desc)) ?? []
     }
 
-    private func fetchRecentTranscripts(limit: Int) -> [String] {
-        guard let container = modelContainer else { return [] }
-        let ctx = ModelContext(container)
-        var desc = FetchDescriptor<HistoryItem>(
-            sortBy: [SortDescriptor(\.createdAt, order: .reverse)]
-        )
-        desc.fetchLimit = limit
-        let items = (try? ctx.fetch(desc)) ?? []
-        return items.map { $0.displayText }
-    }
-
     // MARK: - Response parsing
 
     private struct MemoryJSON: Decodable {
         let content: String
         let category: String
         let confidence: Double
+        let headline: String?
+        let reasoning: String?
+        let tags: [String]?
     }
     private struct ExtractionResult: Decodable {
         let memories: [MemoryJSON]
     }
 
     private func parseResponse(_ response: String, sourceApp: String, windowTitle: String?, conversationId: UUID?) -> [UserMemory] {
-        // LLM sometimes prepends prose ("Since the transcript is in Russian, I'll translate first...")
-        // before the JSON despite prompt rules. Extract the JSON substring instead of trusting the full response.
         let extracted = extractJSONObject(from: response)
         guard let data = extracted.data(using: .utf8) else { return [] }
         guard let parsed = try? JSONDecoder().decode(ExtractionResult.self, from: data) else {
@@ -273,7 +327,7 @@ final class MemoryExtractor: ObservableObject {
                 NSLog("[MemoryExtractor] ⚠️ Rejected memory (bad category '%@'): %@", json.category, json.content)
                 return nil
             }
-            return UserMemory(
+            let mem = UserMemory(
                 content: json.content,
                 category: json.category,
                 sourceApp: sourceApp,
@@ -282,6 +336,17 @@ final class MemoryExtractor: ObservableObject {
                 contextSummary: nil,
                 conversationId: conversationId
             )
+            // Enrichment fields (ITER-010). Trim + validate optional values.
+            mem.headline = json.headline?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
+            mem.reasoning = json.reasoning?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
+            if let tags = json.tags, !tags.isEmpty {
+                mem.tagsCSV = tags
+                    .map { $0.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() }
+                    .filter { !$0.isEmpty }
+                    .joined(separator: ",")
+                    .nilIfEmpty
+            }
+            return mem
         }
     }
 
@@ -341,4 +406,9 @@ final class MemoryExtractor: ObservableObject {
     private var hasLLMAccess: Bool {
         !settings.activeAPIKey.isEmpty || LicenseService.shared.isPro
     }
+}
+
+private extension String {
+    /// Helper — return nil instead of empty string so SwiftData stores NULL.
+    var nilIfEmpty: String? { isEmpty ? nil : self }
 }

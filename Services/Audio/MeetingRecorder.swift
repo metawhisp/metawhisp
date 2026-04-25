@@ -18,11 +18,45 @@ final class MeetingRecorder: ObservableObject {
     @Published var lastError: String?
     /// True if mic capture failed but system audio is still active (user will lose their own voice).
     @Published var micOnlyMode = false
+    /// Wall-clock time when the current recording actually began. The MeetingTimer
+    /// reads this so the elapsed counter is correct regardless of how many times
+    /// the user opens / closes the menu-bar popover (previously the timer used
+    /// `Date()` captured on first view-appear and reset on every popover open).
+    @Published var recordingStartedAt: Date?
+
+    /// Reasons MeetingRecorder may auto-stop itself. Owner (AppDelegate) routes these
+    /// to the same downstream pipeline as a manual stop, plus posts a user-facing
+    /// notification so the user understands why the recording ended.
+    /// spec://iterations/ITER-012-meeting-stop-guarantee
+    enum AutoStopReason {
+        case callEnded            // window-title transition signalled call ended
+        case silenceTimeout       // audioLevel below threshold for N minutes
+        case maxDurationReached   // total duration crossed user-configured cap
+    }
+
+    /// Owner installs this to receive auto-stop events. Closure runs on MainActor.
+    var onAutoStop: ((AutoStopReason) -> Void)?
 
     let mic: AudioRecordingService
     let systemAudio: SystemAudioCaptureService
 
     private var cancellables = Set<AnyCancellable>()
+
+    // Auto-stop state (ITER-012). Reset on every start/stop so a fresh recording
+    // gets a clean slate.
+    private var maxDurationTask: Task<Void, Never>?
+    /// Wall-clock when audioLevel first dropped below the silence threshold and stayed
+    /// there. nil while audio is loud or recording is off. We arm the silence stop
+    /// once `silentSince + windowMinutes` is in the past.
+    private var silentSince: Date?
+    /// RMS threshold below which audio is considered "silence". 0.005 picks up
+    /// background noise/breathing too — but the WINDOW (3 min default) makes false
+    /// positives near-zero. Same threshold as the existing transcription guard.
+    private let silenceRMSThreshold: Float = 0.005
+    /// How often we re-check the silence timer (seconds). Cheap — just a Combine
+    /// publisher, no I/O.
+    private let silenceCheckInterval: TimeInterval = 1.0
+    private var silenceCheckTimer: AnyCancellable?
 
     init(mic: AudioRecordingService, systemAudio: SystemAudioCaptureService) {
         self.mic = mic
@@ -114,13 +148,22 @@ final class MeetingRecorder: ObservableObject {
 
             self.isRecording = true
             self.isStarting = false
+            self.recordingStartedAt = Date()
             NSLog("[MeetingRecorder] ✅ Recording (mic=%@, system=yes)",
                   self.micOnlyMode ? "NO" : "yes")
+
+            // Arm the two backstops that prevent zombie recordings (ITER-012).
+            self.armMaxDurationGuard()
+            self.armSilenceGuard()
         }
     }
 
     /// Stop both captures and return the MIXED audio samples.
     func stop() -> [Float] {
+        // Disarm backstops first — otherwise a stale silence-timer fire after manual
+        // stop could try to fire `onAutoStop` against an already-stopped recorder.
+        disarmAutoStopGuards()
+
         let micSamples = mic.isRecording ? mic.stop() : []
         let sysSamples = systemAudio.stop()
 
@@ -128,11 +171,71 @@ final class MeetingRecorder: ObservableObject {
         isStarting = false
         audioLevel = 0
         audioBars = Array(repeating: 0, count: 24)
+        recordingStartedAt = nil
 
         NSLog("[MeetingRecorder] Stopped: mic=%d samples, system=%d samples",
               micSamples.count, sysSamples.count)
 
         return Self.mix(mic: micSamples, system: sysSamples)
+    }
+
+    // MARK: - Auto-stop guards (ITER-012)
+
+    /// Hard cap on total recording duration. After `meetingMaxDurationMinutes`,
+    /// fires `onAutoStop(.maxDurationReached)` so the owner can run the same
+    /// stop+transcribe pipeline as a manual stop.
+    private func armMaxDurationGuard() {
+        maxDurationTask?.cancel()
+        let cap = max(5, AppSettings.shared.meetingMaxDurationMinutes) // floor 5 min for sanity
+        let seconds = cap * 60
+        maxDurationTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .seconds(seconds))
+            guard !Task.isCancelled, let self, self.isRecording else { return }
+            NSLog("[MeetingRecorder] ⏱️ Max duration (%.0fm) reached — auto-stop", cap)
+            self.onAutoStop?(.maxDurationReached)
+        }
+    }
+
+    /// Watches `audioLevel` via Combine. Once it falls below `silenceRMSThreshold`
+    /// for `meetingSilenceStopMinutes` consecutively, fires `onAutoStop(.silenceTimeout)`.
+    /// Resets the silence window any time audio crosses back above threshold.
+    private func armSilenceGuard() {
+        silenceCheckTimer?.cancel()
+        silentSince = nil
+        let windowMinutes = max(0.5, AppSettings.shared.meetingSilenceStopMinutes)
+        let windowSeconds = windowMinutes * 60
+        // Use a periodic timer (cheap) over $audioLevel.debounce to keep
+        // the check cadence independent of how often audioLevel publishes —
+        // RMS bursts could otherwise prevent us from ever evaluating "silent for X".
+        silenceCheckTimer = Timer.publish(every: silenceCheckInterval, on: .main, in: .common)
+            .autoconnect()
+            .sink { [weak self] _ in
+                guard let self, self.isRecording else { return }
+                let level = self.audioLevel
+                if level < self.silenceRMSThreshold {
+                    if self.silentSince == nil {
+                        self.silentSince = Date()
+                    } else if let start = self.silentSince,
+                              Date().timeIntervalSince(start) >= windowSeconds {
+                        NSLog("[MeetingRecorder] 🤫 Silence (%.1fm < %.4f RMS) — auto-stop",
+                              windowMinutes, self.silenceRMSThreshold)
+                        self.onAutoStop?(.silenceTimeout)
+                    }
+                } else {
+                    // Audio came back — reset the silence window.
+                    if self.silentSince != nil {
+                        self.silentSince = nil
+                    }
+                }
+            }
+    }
+
+    private func disarmAutoStopGuards() {
+        maxDurationTask?.cancel()
+        maxDurationTask = nil
+        silenceCheckTimer?.cancel()
+        silenceCheckTimer = nil
+        silentSince = nil
     }
 
     // MARK: - Audio Mixing

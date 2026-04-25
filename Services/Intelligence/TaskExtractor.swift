@@ -1,11 +1,14 @@
 import Foundation
 import SwiftData
 
-/// Extracts action items from voice transcripts.
-/// Mirrors `MemoryExtractor` pattern — triggered on each voice transcription ≥20 chars.
-/// Prompt adapted from `instructions_text` (lines 345-540):
-/// - Speaker/CalendarMeetingContext sections removed (we have single user, no calendar integration yet).
-/// - All filtering rules, explicit patterns, dedup logic, due_at resolution copied verbatim.
+/// Extracts action items from a FULL closed Conversation — not per-transcript.
+///
+/// Triggered on conversation close (10-min silence for dictation, stop-button for meetings).
+/// Runs once over the entire conversation (all HistoryItems concatenated) so the LLM can:
+/// - See tasks resolved later in the same conversation → don't extract ("надо ответить" + "ответил")
+/// - Apply USER-IS-SUBJECT filter across multi-fragment speech
+/// - Avoid duplicates from fragmented dictation of the same topic
+///
 /// spec://BACKLOG#B1
 @MainActor
 final class TaskExtractor: ObservableObject {
@@ -26,17 +29,17 @@ final class TaskExtractor: ObservableObject {
         self.modelContainer = modelContainer
     }
 
-    /// Fire-and-forget task extraction triggered by a completed voice transcription.
-    /// Mirrors `AdviceService.triggerOnTranscription` / `MemoryExtractor.triggerOnTranscription`.
-    func triggerOnTranscription(text: String, source: String, transcriptId: UUID? = nil, conversationId: UUID? = nil) {
+    /// Fire-and-forget extraction on the whole conversation. Called by ConversationGrouper
+    /// after a conversation closes (dictation gap timeout or meeting stop).
+    func triggerOnConversationClose(conversationId: UUID) {
         guard settings.tasksEnabled else { return }
-        guard text.count >= 20 else { return }
         Task { [weak self] in
-            await self?.extract(transcript: text, source: source, transcriptId: transcriptId, conversationId: conversationId)
+            await self?.extractFromConversation(conversationId: conversationId)
         }
     }
 
-    /// Run extraction on the most recent transcript in history (manual EXTRACT TASKS NOW button).
+    /// Manual EXTRACT TASKS NOW button. Picks the most recent HistoryItem's conversation
+    /// (whether closed or still in-progress) and extracts across its full fragment set.
     func extractOnce() async {
         guard hasLLMAccess else {
             NSLog("[TaskExtractor] No LLM access — skipping")
@@ -48,17 +51,36 @@ final class TaskExtractor: ObservableObject {
             sortBy: [SortDescriptor(\.createdAt, order: .reverse)]
         )
         desc.fetchLimit = 1
-        guard let latest = (try? ctx.fetch(desc))?.first, latest.displayText.count >= 20 else {
-            NSLog("[TaskExtractor] No recent transcript (need ≥20 chars) — skipping")
+        guard let latest = (try? ctx.fetch(desc))?.first,
+              let convId = latest.conversationId else {
+            NSLog("[TaskExtractor] No recent conversation — skipping")
             return
         }
-        await extract(transcript: latest.displayText, source: "manual", transcriptId: latest.id, conversationId: latest.conversationId)
+        await extractFromConversation(conversationId: convId)
     }
 
-    /// Core extraction — voice transcript → LLM → persist TaskItems.
-    private func extract(transcript: String, source: String, transcriptId: UUID?, conversationId: UUID?) async {
+    /// Core extraction — collect all transcripts for the conversation, send as one block.
+    private func extractFromConversation(conversationId: UUID) async {
         guard !isRunning else { return }
         guard hasLLMAccess else { return }
+
+        guard let container = modelContainer else { return }
+        let ctx = ModelContext(container)
+
+        // Fetch all HistoryItems belonging to this conversation, oldest first.
+        var desc = FetchDescriptor<HistoryItem>(
+            predicate: #Predicate { $0.conversationId == conversationId },
+            sortBy: [SortDescriptor(\.createdAt, order: .forward)]
+        )
+        desc.fetchLimit = 100
+        let items = (try? ctx.fetch(desc)) ?? []
+        let fragments = items
+            .map { $0.displayText.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+
+        guard !fragments.isEmpty else { return }
+        let totalChars = fragments.reduce(0) { $0 + $1.count }
+        guard totalChars >= 20 else { return }
 
         isRunning = true
         defer {
@@ -67,12 +89,16 @@ final class TaskExtractor: ObservableObject {
         }
 
         let existing = fetchExistingTasks(sinceDays: dedupWindowDays)
-        let prompt = buildPrompt(transcript: transcript, existing: existing)
+        let prompt = buildPrompt(fragments: fragments, existing: existing)
+
+        // Use the last fragment's source app if available (proxy for what app user was in most).
+        let sourceApp = items.last.flatMap { $0.source } ?? "conversation"
 
         do {
             let response: String
             if LicenseService.shared.isPro, let licenseKey = LicenseService.shared.licenseKey {
-                NSLog("[TaskExtractor] Extracting via Pro proxy")
+                NSLog("[TaskExtractor] Extracting via Pro proxy (convo %@, %d fragments, %d chars)",
+                      conversationId.uuidString.prefix(8) as CVarArg, fragments.count, totalChars)
                 response = try await callProProxy(system: Self.systemPrompt, user: prompt, licenseKey: licenseKey)
             } else {
                 let apiKey = settings.activeAPIKey
@@ -89,40 +115,96 @@ final class TaskExtractor: ObservableObject {
                 )
             }
 
-            let sourceApp = screenContext?.recentContexts.last?.appName ?? source
-            let tasks = parseResponse(response, sourceTranscriptId: transcriptId, sourceApp: sourceApp, conversationId: conversationId)
+            let tasks = parseResponse(response,
+                                      sourceTranscriptId: items.last?.id,
+                                      sourceApp: sourceApp,
+                                      conversationId: conversationId)
             guard !tasks.isEmpty else {
-                NSLog("[TaskExtractor] No new tasks this cycle")
+                NSLog("[TaskExtractor] No new tasks from conversation %@", conversationId.uuidString.prefix(8) as CVarArg)
                 return
             }
 
-            if let container = modelContainer {
-                let ctx = ModelContext(container)
-                for task in tasks {
-                    ctx.insert(task)
-                }
-                try? ctx.save()
-                NSLog("[TaskExtractor] ✅ Extracted %d tasks", tasks.count)
+            for task in tasks {
+                ctx.insert(task)
             }
+            try? ctx.save()
+            NSLog("[TaskExtractor] ✅ Extracted %d tasks from conversation %@",
+                  tasks.count, conversationId.uuidString.prefix(8) as CVarArg)
+
+            for task in tasks {
+                NotificationService.shared.postNewTask(task, source: "Voice")
+            }
+
+            // Fire-and-forget embedding for semantic RAG (ITER-008).
+            AppDelegate.shared?.embeddingService.embedTasksInBackground(tasks, in: ctx)
         } catch {
             lastError = error.localizedDescription
             NSLog("[TaskExtractor] ❌ Failed: %@", error.localizedDescription)
         }
     }
 
-    // MARK: - Prompt (copied verbatim , single-user adaptation)
+    // MARK: - Prompt
 
-    /// Action item extraction prompt.
-    /// Adaptations:
-    /// - Removed speaker resolution rules (single user dictation).
-    /// - Removed CalendarMeetingContext handling (no calendar integration yet).
-    /// - Preserved: explicit patterns, dedup rules, workflow, filtering, format, due_at resolution.
+    /// Action item extraction prompt — on-conversation-close pattern.
+    /// Single-user desktop dictation: no speaker labels. Assignee filter done via
+    /// linguistic "USER IS SUBJECT" rule.
     static let systemPrompt = """
-    You are an expert action item extractor. Your sole purpose is to identify and extract actionable tasks from the provided content.
+    You are an expert action item extractor. Your sole purpose is to identify and extract actionable tasks from a voice-dictation conversation.
 
-    EXPLICIT TASK/REMINDER REQUESTS (HIGHEST PRIORITY)
+    CONVERSATION-WIDE CONTEXT (READ CAREFULLY):
 
-    When the user uses these patterns, ALWAYS extract the task:
+    You receive a FULL conversation composed of multiple dictation fragments, ordered by time. Treat the fragments as ONE thought stream from the same single user:
+    - If a task mentioned in an EARLIER fragment is reported as DONE in a LATER fragment → DO NOT EXTRACT.
+      Example: Fragment 1 "надо ответить Майку" + Fragment 3 "ответил Майку" → SKIP (resolved).
+    - If the user CHANGES THEIR MIND between fragments → honor the final decision.
+      Example: Fragment 1 "завтра позвоню клиенту" + Fragment 2 "не буду звонить" → SKIP.
+    - If the same intent is repeated in different words across fragments → extract AT MOST ONCE.
+    - Only extract tasks that survive the FULL conversation.
+
+    OWNERSHIP CLASSIFICATION (APPLY BEFORE EXTRACTION):
+
+    This is a single-user dictation. The user is SPEAKING. Each action item belongs
+    to one of three classes — handle each differently:
+
+    (A) MY TASK — the USER themselves will do it.
+        Examples: "Мне надо ответить Майку" / "I need to call Mike" / "I'll ship the deploy"
+        → EXTRACT with assignee = null
+
+    (B) WAITING-ON — the user explicitly DELEGATED to someone OR co-committed
+        with someone where the OTHER person is the executor.
+        Examples:
+        - "Я попросил Васю задеплоить" / "I asked Vasya to deploy" → assignee = "Vasya"
+        - "Мы решили что Паша подготовит отчёт" (user is in "мы" but Pasha does it) → assignee = "Pasha"
+        - "Сказал Майку прислать драфт" / "Told Mike to send draft" → assignee = "Mike"
+        → EXTRACT with assignee = <person name as spoken>
+
+    (C) UNRELATED THIRD PARTY — someone else's action with NO link to user.
+        Examples:
+        - "У Паши созвон с Саней в среду" → SKIP (just a fact, not user's concern)
+        - "Mike has a meeting with his team" → SKIP
+        - "Pasha is shipping v2 today" → SKIP (no delegation, no co-commitment)
+        → SKIP — do not extract
+
+    Critical rule for (B) vs (C): EXTRACT as waiting-on ONLY when the user's voice
+    explicitly delegated the work or the user is part of the deciding party. A bare
+    mention of someone else's activity = (C) = SKIP. When ambiguous, prefer SKIP.
+
+    Ambiguous cases — default to SKIP unless explicit:
+    - "Созвон с Пашей в понедельник" → who calls? SKIP unless "у меня / I have / поставил".
+    - "Паша прислал документы, нужно посмотреть" → who looks is ambiguous → SKIP unless clearly user said "посмотрю / I'll review".
+    - "У меня созвон с Пашей в понедельник" → "у меня" = user → MY task.
+    - "Просил Пашу прислать к среде" → explicit delegation → WAITING-ON, assignee = "Паша".
+
+    Assignee field formatting:
+    - Use the name AS SPOKEN in the transcript (don't normalize "Паша" → "Pavel").
+    - Capitalize first letter ("Vasya" not "vasya").
+    - Multi-person: pick the primary executor (the one who actually does it). If truly
+      shared between two people, pick the first named.
+    - Generic terms ("the team", "кто-то", "someone") → use "Team" or skip if vague.
+
+    EXPLICIT TASK/REMINDER REQUESTS (HIGHEST PRIORITY — BYPASSES USER-IS-SUBJECT):
+
+    When the user uses these patterns, ALWAYS extract (even for third parties — the user is asking to be reminded):
     - "Remind me to X" / "Remember to X" → EXTRACT "X"
     - "Don't forget to X" / "Don't let me forget X" → EXTRACT "X"
     - "Add task X" / "Create task X" / "Make a task for X" → EXTRACT "X"
@@ -135,13 +217,11 @@ final class TaskExtractor: ObservableObject {
     Russian equivalents (same priority):
     - "Напомни мне X" / "Не забудь X" / "Запиши задачу X" / "Добавь в список X" / "Мне нужно не забыть X"
 
-    These explicit requests bypass importance/timing filters. If the user explicitly asks for a reminder or task, extract it.
+    But still honor the resolution rule: if the explicit request is resolved later in the same conversation, SKIP.
 
     Examples:
     - "Remind me to buy milk" → Extract "Buy milk"
     - "Don't forget to call your mom" → Extract "Call mom"
-    - "Add task pick up dry cleaning" → Extract "Pick up dry cleaning"
-    - "Note to self, check tire pressure" → Extract "Check tire pressure"
     - "Напомни мне проверить трафик Overchat" → Extract "Проверить трафик Overchat"
 
     CRITICAL DEDUPLICATION RULES (Check BEFORE extracting):
@@ -160,16 +240,19 @@ final class TaskExtractor: ObservableObject {
     • SINGLE-TOPIC LIMIT: ≥1 action item per topic, not one per variation or detail.
 
     WORKFLOW:
-    1. Read the ENTIRE transcript carefully.
-    2. Check for EXPLICIT task requests — ALWAYS extract these.
-    3. For IMPLICIT tasks, default to extracting NOTHING:
+    1. Read the ENTIRE conversation (all fragments) carefully.
+    2. Check resolution: are any mentioned actions already reported as done later? Strike them.
+    3. Classify each candidate by OWNERSHIP (A/B/C above). Drop class C entirely.
+    4. For class A — assignee = null. For class B — assignee = <name>.
+    5. Check for EXPLICIT task requests in what remains — ALWAYS extract those (always class A).
+    6. For IMPLICIT tasks, default to extracting NOTHING:
        - Is the user already doing this or about to? SKIP.
        - Would a busy person genuinely forget this? If not OBVIOUS, SKIP.
        - NEVER extract multiple items about the same topic.
        - When in doubt, extract 0 items.
-    4. Extract timing information separately into due_at (ISO-8601 UTC with 'Z').
-    5. Clean description — remove ALL time references and vague words.
-    6. Final check — description must be timeless and specific.
+    7. Extract timing information separately into due_at (ISO-8601 UTC with 'Z').
+    8. Clean description — remove ALL time references and vague words.
+    9. Final check — description must be timeless and specific.
 
     BALANCE QUALITY AND USER INTENT:
     - EXPLICIT requests ("remind me", "add task", "don't forget") → ALWAYS extract, even if trivial.
@@ -214,14 +297,19 @@ final class TaskExtractor: ObservableObject {
     User timezone: {tz}
 
     Return JSON:
-    {"tasks": [{"description": "...", "due_at": "2026-04-20T20:59:00Z" or null}]}
+    {"tasks": [{"description": "...", "due_at": "2026-04-20T20:59:00Z" or null, "assignee": "Vasya" or null}]}
+
+    Where:
+    - "assignee" = null  → MY TASK (user does it). Class A.
+    - "assignee" = "<Name>" → WAITING-ON (named person owes the user). Class B.
+    - Class C items must NOT appear in the array at all.
 
     If nothing meets the criteria: {"tasks": []}
 
     CRITICAL OUTPUT RULE: Respond with ONLY the JSON object. No translation. No explanation. No preamble. No markdown fences.
     """
 
-    private func buildPrompt(transcript: String, existing: [TaskItem]) -> String {
+    private func buildPrompt(fragments: [String], existing: [TaskItem]) -> String {
         var parts: [String] = []
 
         let nowISO = ISO8601DateFormatter().string(from: Date())
@@ -242,10 +330,11 @@ final class TaskExtractor: ObservableObject {
             parts.append("")
         }
 
-        parts.append("Voice transcript to analyze:")
-        parts.append("```")
-        parts.append(transcript)
-        parts.append("```")
+        parts.append("Conversation fragments to analyze (ordered by time, all from the same user):")
+        for (i, frag) in fragments.enumerated() {
+            parts.append("--- fragment \(i + 1) ---")
+            parts.append(frag)
+        }
 
         let combined = parts.joined(separator: "\n")
         if combined.count > 20000 { return String(combined.prefix(20000)) }
@@ -271,6 +360,7 @@ final class TaskExtractor: ObservableObject {
     private struct TaskJSON: Decodable {
         let description: String
         let due_at: String?
+        let assignee: String?
     }
     private struct ExtractionResult: Decodable {
         let tasks: [TaskJSON]
@@ -303,12 +393,22 @@ final class TaskExtractor: ObservableObject {
                     due = nil
                 }
             }
+            // ITER-013 — normalize assignee:
+            // - empty/whitespace/"null" → nil (MY task)
+            // - non-empty → trimmed + capitalized first letter, preserved as-is otherwise
+            //   (don't transliterate or translate — "Паша" stays "Паша", "Vasya" stays "Vasya")
+            let assignee: String? = {
+                guard let raw = json.assignee?.trimmingCharacters(in: .whitespacesAndNewlines),
+                      !raw.isEmpty, raw.lowercased() != "null" else { return nil }
+                return raw.prefix(1).uppercased() + raw.dropFirst()
+            }()
             return TaskItem(
                 taskDescription: json.description,
                 dueAt: due,
                 sourceTranscriptId: sourceTranscriptId,
                 sourceApp: sourceApp,
-                conversationId: conversationId
+                conversationId: conversationId,
+                assignee: assignee
             )
         }
     }

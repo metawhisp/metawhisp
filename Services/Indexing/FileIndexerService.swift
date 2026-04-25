@@ -83,6 +83,11 @@ final class FileIndexerService: ObservableObject {
         }
         lastScanSummary = "Added \(totalAdded), updated \(totalUpdated) across \(folders.count) folder(s)"
         NSLog("[FileIndexer] ✅ %@", lastScanSummary ?? "")
+
+        // Always follow metadata scan with content backfill — cheap disk-only pass, no LLM calls.
+        // Ensures periodic scans (every 6h) also keep chat RAG in sync without a separate timer.
+        // spec://iterations/ITER-004-file-rag#scope.2
+        await backfillContent()
     }
 
     /// Scan one folder — returns (added, updated).
@@ -185,5 +190,59 @@ final class FileIndexerService: ObservableObject {
         desc.fetchLimit = 100_000
         let items = (try? ctx.fetch(desc)) ?? []
         return Dictionary(uniqueKeysWithValues: items.map { ($0.path, $0) })
+    }
+
+    // MARK: - Content backfill (ITER-004)
+
+    /// Read file content from disk for all extractable IndexedFile rows where `contentText == nil`
+    /// and save truncated text (cap `IndexedFile.maxContentBytes` = 20 KB per file). Zero LLM calls.
+    ///
+    /// Runs BEFORE `FileMemoryExtractor.runPass()` — so chat RAG can query content even for files
+    /// whose LLM memory extraction already completed (existing 287 files before ITER-004).
+    /// Also re-reads when `contentText` is empty after an update reset.
+    /// spec://iterations/ITER-004-file-rag#scope.2
+    func backfillContent() async {
+        guard let container = modelContainer else { return }
+        guard settings.fileIndexingEnabled else { return }
+
+        let ctx = ModelContext(container)
+        // Fetch extractable files missing content. Overfetch and filter by extension client-side —
+        // SwiftData predicates don't easily express the isExtractable() categorization.
+        var desc = FetchDescriptor<IndexedFile>(
+            predicate: #Predicate<IndexedFile> { $0.contentText == nil },
+            sortBy: [SortDescriptor(\.indexedAt, order: .reverse)]
+        )
+        desc.fetchLimit = 1000  // sweep up to 1000/pass; periodic scan handles the tail.
+        let candidates = ((try? ctx.fetch(desc)) ?? [])
+            .filter { IndexedFile.isExtractable($0.fileExtension) }
+
+        guard !candidates.isEmpty else {
+            NSLog("[FileIndexer] Content backfill: no pending files")
+            return
+        }
+
+        let maxBytes = IndexedFile.maxContentBytes
+        var saved = 0
+        var skipped = 0
+        var batchCount = 0
+        for file in candidates {
+            guard let data = try? Data(contentsOf: URL(fileURLWithPath: file.path)) else {
+                skipped += 1
+                continue
+            }
+            if data.count > 2 * 1024 * 1024 { skipped += 1; continue } // 2 MB safety cap on raw read
+            guard let text = String(data: data, encoding: .utf8) else { skipped += 1; continue }
+
+            // Truncate stored text to keep DB footprint bounded.
+            file.contentText = text.count > maxBytes ? String(text.prefix(maxBytes)) : text
+            saved += 1
+            batchCount += 1
+            if batchCount >= batchSize {
+                try? ctx.save()
+                batchCount = 0
+            }
+        }
+        try? ctx.save()
+        NSLog("[FileIndexer] ✅ Content backfill: %d saved, %d skipped", saved, skipped)
     }
 }

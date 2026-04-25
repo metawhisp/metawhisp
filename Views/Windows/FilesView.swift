@@ -11,14 +11,55 @@ struct FilesView: View {
 
     @State private var isWorking = false
     @State private var workingMessage: String?
+    @State private var searchQuery: String = ""
+
+    /// Files filtered by `searchQuery` (case-insensitive, matches filename OR contentText).
+    /// Empty query = show all. Non-empty = flat filtered set, still grouped by folder below.
+    /// spec://iterations/ITER-004-file-rag#scope.5
+    private var filteredFiles: [IndexedFile] {
+        let q = searchQuery.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !q.isEmpty else { return files }
+        return files.filter { f in
+            if f.filename.lowercased().contains(q) { return true }
+            if let c = f.contentText, c.lowercased().contains(q) { return true }
+            return false
+        }
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             header
             Rectangle().fill(MW.border).frame(height: MW.hairline)
+            if !files.isEmpty && settings.fileIndexingEnabled {
+                searchBar
+                Rectangle().fill(MW.border).frame(height: MW.hairline)
+            }
             content
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+    }
+
+    private var searchBar: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "magnifyingglass")
+                .font(.system(size: 11)).foregroundStyle(MW.textMuted)
+            TextField("Search filename or note contents…", text: $searchQuery)
+                .textFieldStyle(.plain)
+                .font(MW.mono)
+                .foregroundStyle(MW.textPrimary)
+            if !searchQuery.isEmpty {
+                Text("\(filteredFiles.count) / \(files.count)")
+                    .font(MW.monoSm).foregroundStyle(MW.textMuted)
+                Button {
+                    searchQuery = ""
+                } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.system(size: 11)).foregroundStyle(MW.textMuted)
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(.horizontal, 20).padding(.vertical, 10)
     }
 
     private var header: some View {
@@ -40,7 +81,7 @@ struct FilesView: View {
                         }
                         .foregroundStyle(MW.textSecondary)
                         .padding(.horizontal, 8).padding(.vertical, 4)
-                        .overlay(Rectangle().stroke(MW.border, lineWidth: MW.hairline))
+                        .overlay(RoundedRectangle(cornerRadius: MW.rSmall, style: .continuous).stroke(MW.border, lineWidth: 0.5))
                     }
                     .buttonStyle(.plain)
                     .disabled(isWorking)
@@ -63,6 +104,9 @@ struct FilesView: View {
             emptyConfigState
         } else if files.isEmpty {
             emptyScanState
+        } else if filteredFiles.isEmpty {
+            // Active query returned zero hits — honest feedback instead of a blank list.
+            searchEmptyState
         } else {
             list
         }
@@ -72,7 +116,7 @@ struct FilesView: View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 0) {
                 ForEach(settings.indexedFolders, id: \.self) { folder in
-                    let folderFiles = files.filter { $0.folder == folder }
+                    let folderFiles = filteredFiles.filter { $0.folder == folder }
                     if !folderFiles.isEmpty {
                         folderSection(folder: folder, files: folderFiles)
                     }
@@ -80,6 +124,19 @@ struct FilesView: View {
             }
             .padding(16)
         }
+    }
+
+    private var searchEmptyState: some View {
+        VStack(spacing: 12) {
+            Spacer()
+            Image(systemName: "doc.text.magnifyingglass").font(.system(size: 28)).foregroundStyle(MW.textMuted)
+            Text("No matches for \"\(searchQuery)\"")
+                .font(MW.monoLg).foregroundStyle(MW.textSecondary)
+            Text("Searched \(files.count) files by filename and content.")
+                .font(MW.monoSm).foregroundStyle(MW.textMuted)
+            Spacer()
+        }
+        .frame(maxWidth: .infinity)
     }
 
     private func folderSection(folder: String, files: [IndexedFile]) -> some View {
@@ -108,10 +165,19 @@ struct FilesView: View {
                 .font(MW.mono).foregroundStyle(MW.textPrimary)
                 .lineLimit(1)
             Spacer()
+            // Indexed-for-chat indicator (ITER-004): contentText is populated → chat RAG can find it.
+            if file.contentText != nil {
+                Image(systemName: "sparkle.magnifyingglass")
+                    .font(.system(size: 10))
+                    .foregroundStyle(MW.textSecondary)
+                    .help("Indexed for chat search")
+            }
+            // Memory-extracted indicator: LLM has processed this file for durable facts.
             if file.contentExtractedAt != nil {
                 Image(systemName: "checkmark.circle")
                     .font(.system(size: 9))
                     .foregroundStyle(MW.textMuted)
+                    .help("Memories extracted")
             }
             Text(formatBytes(file.sizeBytes))
                 .font(MW.monoSm).foregroundStyle(MW.textMuted)
@@ -207,9 +273,9 @@ struct FilesView: View {
                 isWorking = false
                 return
             }
+            // scanAll() now does metadata + content backfill (ITER-004) in one pass.
             await app.fileIndexer.scanAll()
             workingMessage = app.fileIndexer.lastScanSummary ?? "Scan done"
-            // Then run content extractor for any newly pending text files.
             workingMessage = (workingMessage ?? "") + " · Extracting memories…"
             await app.fileMemoryExtractor.runPass()
             if let extractSummary = app.fileMemoryExtractor.lastSummary {

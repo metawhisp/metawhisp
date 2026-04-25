@@ -15,6 +15,12 @@ final class AdviceService: ObservableObject {
     private let settings = AppSettings.shared
     private weak var screenContext: ScreenContextService?
     private var modelContainer: ModelContainer?
+    /// ITER-022 G3 — memory-weave. When wired, advice prompt includes top-N
+    /// memories ranked by cosine similarity to the current screen context.
+    /// Lets LLM connect "user opens Stripe" + stored fact "user runs Overchat
+    /// which uses Stripe billing" → category-specific advice referencing prior
+    /// context. Fallback: most-recent N memories when no embedding available.
+    weak var embeddingService: EmbeddingService?
 
     private var timerTask: Task<Void, Never>?
 
@@ -75,16 +81,21 @@ final class AdviceService: ObservableObject {
 
         // Build context: screen activity + transcripts + memories + previous advice
         // spec://iterations/ITER-001#architecture.advice-prompt
-        let contextBlock = buildAdviceUserContext(
+        // ITER-022 G3 — async because memory ranking can call embeddings endpoint.
+        let contextBlock = await buildAdviceUserContext(
             contexts: contexts,
             extraContext: extraContext
         )
 
         do {
+            // ITER-022 G4 — pick prompt based on coach-mode toggle. Read at fire
+            // time so toggle changes take effect immediately, not on next launch.
+            let prompt = Self.activePrompt
+            let mode = settings.adviceCoachMode ? "coach" : "standard"
             let response: String
             if LicenseService.shared.isPro, let licenseKey = LicenseService.shared.licenseKey {
-                NSLog("[Advice] Generating via Pro proxy")
-                response = try await callProProxy(system: Self.systemPrompt, user: contextBlock, licenseKey: licenseKey)
+                NSLog("[Advice] Generating via Pro proxy (mode=%@)", mode)
+                response = try await callProProxy(system: prompt, user: contextBlock, licenseKey: licenseKey)
             } else {
                 let apiKey = settings.activeAPIKey
                 guard !apiKey.isEmpty else {
@@ -92,9 +103,9 @@ final class AdviceService: ObservableObject {
                     return nil
                 }
                 let provider = LLMProvider(rawValue: settings.llmProvider) ?? .openai
-                NSLog("[Advice] Generating via direct %@ API", provider.displayName)
+                NSLog("[Advice] Generating via direct %@ API (mode=%@)", provider.displayName, mode)
                 response = try await llm.complete(
-                    system: Self.systemPrompt,
+                    system: prompt,
                     user: contextBlock,
                     apiKey: apiKey,
                     provider: provider
@@ -136,7 +147,15 @@ final class AdviceService: ObservableObject {
 
     /// System prompt: hard cap, bad examples, no_advice escape.
     /// spec://iterations/ITER-001#architecture.advice-prompt
-    static let systemPrompt = """
+    /// ITER-022 G4 — runtime selector. Returns standard or coach prompt based
+    /// on `AppSettings.shared.adviceCoachMode`. Read once at advice-fire time
+    /// (not cached) so toggling the setting takes effect immediately.
+    static var activePrompt: String {
+        AppSettings.shared.adviceCoachMode ? systemPromptCoach : systemPromptStandard
+    }
+
+    /// Standard prompt (default). Insight-only. Anti-coach by design.
+    static let systemPromptStandard = """
     You find ONE specific, high-value insight the user would NOT figure out on their own. The goal is to IMPRESS the user.
 
     WHEN TO GIVE ADVICE:
@@ -168,7 +187,37 @@ final class AdviceService: ObservableObject {
 
     FORMAT: Under 100 characters. Start with the actionable part.
 
-    CATEGORIES: "productivity", "communication", "learning", "other"
+    CATEGORIES — pick the MOST SPECIFIC one that fits. Pick "other" only if truly none apply.
+    - "productivity"  — workflow shortcuts, automation, faster-way-to-X tips
+    - "communication" — message clarity, recipient checks, tone fixes
+    - "learning"      — concepts to look up, techniques, book/article references
+    - "health"        — ergonomics, posture, screen-time pattern, credential exposure
+                        (NOT generic wellness like "drink water" — those are still banned)
+    - "finance"       — bills, subscriptions, expiring tokens, money decisions visible on screen
+    - "relationships" — interpersonal cues, family/social context (only when explicit on screen)
+    - "focus"         — distraction-pattern observation, NOT prescription
+                        (e.g. "Six Slack threads in 5 min — context switching cost")
+    - "security"      — sensitive credentials/keys/tokens visible, permission leaks, PII exposure
+    - "career"        — interview prep, professional moves, calendar conflict resolution
+    - "mental"        — observed cognitive pattern, NOT therapy and NOT mood judgment
+                        (e.g. "Three windows open with the same form" → focus, not "anxious")
+    - "other"         — only when none of the above fits
+
+    CRITICAL: even with the broader category list, the WHEN-TO-STAY-SILENT rules above
+    OVERRIDE category fit. A "health" category does NOT mean you should produce wellness
+    nags. The advice itself must still be specific, actionable, and non-obvious.
+
+    MEMORY-WEAVE (USER MEMORIES block):
+    - The USER MEMORIES section lists durable facts the user told you previously.
+    - Reference a memory ONLY when it MATERIALLY changes the advice. e.g.:
+      User memory: "User runs Overchat, an AI ChatGPT wrapper using Stripe billing"
+      Current screen: Stripe webhook test mode
+      → "Stripe webhook test mode hits Overchat prod Customer table — switch to test customers"
+        (memory turned a generic warning into a specific one tied to the user's product)
+    - DO NOT shoehorn an irrelevant memory just to mention one. Most advice should
+      NOT reference memory. If the connection feels strained, leave the memory out.
+    - When you DO reference a memory, integrate it naturally — never quote it
+      verbatim with "you said earlier...". Use the fact, not the source.
 
     CONFIDENCE (only when giving advice):
     - 0.90-1.0: Preventing a clear mistake or revealing a critical shortcut
@@ -178,26 +227,101 @@ final class AdviceService: ObservableObject {
     Return JSON. Two possible shapes:
 
     If you have valuable advice:
-    {"type": "advice", "content": "under 100 chars", "category": "productivity|communication|learning|other", "confidence": 0.0-1.0}
+    {"type": "advice", "content": "under 100 chars", "category": "<one of the 11 above>", "confidence": 0.0-1.0}
 
     If nothing worth saying:
     {"type": "no_advice", "reason": "short explanation"}
     """
 
+    /// ITER-022 G4 — Coach mode prompt. Switched in via setting `adviceCoachMode`.
+    /// Diff vs standard: ENABLES accountability nudges (commitment tracking,
+    /// procrastination callouts, goal pressure when active_goals provided).
+    /// STILL FORBIDS: generic wellness, mood judgment, therapy tone.
+    /// The point is direct/specific accountability, not vague motivation.
+    static let systemPromptCoach = """
+    You are a direct accountability coach. The user CHOSE this mode (it is opt-in)
+    because they want push-back on procrastination and slipping commitments. Be
+    specific, blunt, time-aware. NEVER generic motivation.
+
+    WHEN TO PUSH (coach scope):
+    - User stated a commitment with a deadline (in transcripts/memories) and time
+      is running out → name it specifically
+      ("обещал ship X к пятнице — осталось 6 часов, а Twitter открыт 4 раза")
+    - Repeated distraction pattern visible across screen activity
+      ("Slack открыт 3 раза за 20 мин — context-switch обходится в ~10 мин/раз")
+    - Goal slipping (when <active_goals> shows progress at 0 mid-day)
+    - Stated intent contradicted by action
+      ("утром писал 'фокус на MetaWhisp', сейчас 40 мин в YouTube")
+
+    WHEN TO STAY SILENT (still applies):
+    - No specific commitment to anchor advice — vague pressure is just noise
+    - You'd be repeating PREVIOUS ADVICE
+    - Reasonable break (≤15 min after focused work) — that's healthy, not slacking
+    - User is in active recorded meeting / call — DO NOT interrupt with coaching
+
+    BANNED (even in coach mode):
+    - Generic wellness ("drink water", "stretch", "take a break", "stay hydrated")
+    - Mood judgment ("you seem stressed/anxious/tired")
+    - Therapy tone ("how does that make you feel")
+    - Unsolicited life advice ("you should consider therapy / a vacation")
+    - Vague motivation ("you got this", "stay focused", "keep pushing")
+    - Insulting / shaming language
+
+    GOOD COACH EXAMPLES:
+    - "Ship X promised by Friday — 6h left, you've checked Twitter 5x in 30 min"
+    - "Push-up goal sits at 0/10 — 3pm, half day burned"
+    - "3 days no commit on MetaWhisp — break, blocker, or dropped?"
+    - "PM said 'focus mode'; opened Telegram 4× in 12 min — quit it for this hour?"
+    - "Standup with Pasha at 3pm — calendar prep doc is empty"
+
+    BAD COACH EXAMPLES (would still produce these in coach mode? NO):
+    - "Stay focused!"  ← vague
+    - "You can do it!" ← motivation no anchor
+    - "Take a break, you've earned it" ← unsolicited wellness
+    - "Don't be lazy" ← shaming, no specifics
+
+    CATEGORIES — same 11 as standard. Coach mode advice often falls in
+    "focus", "productivity", or "career". Use "mental" sparingly — only when
+    pattern is observable + actionable, never as therapy.
+
+    CONFIDENCE — same scale as standard.
+
+    Return JSON:
+    {"type": "advice", "content": "under 100 chars", "category": "<one of 11>", "confidence": 0.0-1.0}
+
+    OR if nothing concrete to push on:
+    {"type": "no_advice", "reason": "short explanation"}
+    """
+
+    /// ITER-022 — Whitelisted categories. LLM may emit any of these; anything else
+    /// (typo, hallucinated category, missing field) gets normalized to "other" by
+    /// the parser. Keeps DB consistent and UI filters meaningful.
+    static let validCategories: Set<String> = [
+        "productivity", "communication", "learning",
+        "health", "finance", "relationships", "focus",
+        "security", "career", "mental", "other",
+    ]
+
     /// Build user-content block: screen activity + transcripts + memories + previous advice.
     /// spec://iterations/ITER-001#architecture.advice-prompt
+    /// ITER-022 G3 — memories are semantically ranked by cosine similarity to the
+    /// current screen context (when embeddings + Pro available). Falls back to
+    /// recent-N when no query embedding can be produced.
     private func buildAdviceUserContext(
         contexts: [ScreenContextService.ScreenContextSnapshot],
         extraContext: String?
-    ) -> String {
+    ) async -> String {
         var parts: [String] = []
 
-        // USER MEMORIES — cap 15 most recent, short bullet
-        let memories = fetchUserMemories(limit: 15)
+        // USER MEMORIES — semantic ranking (ITER-022 G3) when possible.
+        // Query text = most recent screen context's OCR (capped) + extraContext.
+        // Top 8 by cosine, threshold 0.45 to drop irrelevant. Falls back to
+        // recent-15 when no embedding-service / no Pro / empty embeddings.
+        let memories = await fetchMemoriesForAdvice(contexts: contexts, extraContext: extraContext, limit: 8)
         if !memories.isEmpty {
-            parts.append("USER MEMORIES (for personalization):")
+            parts.append("USER MEMORIES (durable facts — weave only when materially relevant):")
             for m in memories {
-                parts.append("- \(m.content)")  // dropped category label — saves tokens
+                parts.append("- \(m.content)")
             }
             parts.append("")
         }
@@ -257,6 +381,70 @@ final class AdviceService: ObservableObject {
         )
         desc.fetchLimit = limit
         return (try? ctx.fetch(desc)) ?? []
+    }
+
+    /// ITER-022 G3 — Memory ranking for advice prompts.
+    ///
+    /// Strategy:
+    /// 1. Build a query string from the latest screen context + extraContext.
+    /// 2. Embed it via `EmbeddingService` (Pro only). On failure → fall back to
+    ///    recent-N (cheap, predictable).
+    /// 3. Score each non-dismissed memory by cosine similarity to query.
+    ///    Drop those below `minRelevance` threshold (0.45) — random unrelated
+    ///    memories are noise and would push LLM toward shoehorning.
+    /// 4. Return top-`limit` by score. If all below threshold → empty array
+    ///    (better no memories than wrong memories).
+    private func fetchMemoriesForAdvice(
+        contexts: [ScreenContextService.ScreenContextSnapshot],
+        extraContext: String?,
+        limit: Int
+    ) async -> [UserMemory] {
+        // Build query string (≤1500 chars for embedding API).
+        var queryParts: [String] = []
+        if let extra = extraContext, !extra.isEmpty { queryParts.append(extra) }
+        if let last = contexts.last {
+            // appName + windowTitle + first ~600 chars OCR — the "what is the user
+            // doing right now" signal that should match memory facts about projects/
+            // people/tools.
+            queryParts.append("\(last.appName) — \(last.windowTitle)")
+            queryParts.append(String(last.ocrText.prefix(600)))
+        }
+        let query = queryParts.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !query.isEmpty else { return fetchUserMemories(limit: limit) }
+
+        // Try semantic ranking via embeddings.
+        guard let svc = embeddingService, LicenseService.shared.isPro else {
+            return fetchUserMemories(limit: limit)
+        }
+        guard let qVec = try? await svc.embedOne(String(query.prefix(1500))) else {
+            return fetchUserMemories(limit: limit)
+        }
+
+        guard let container = modelContainer else { return [] }
+        let ctx = ModelContext(container)
+        let desc = FetchDescriptor<UserMemory>(
+            predicate: #Predicate<UserMemory> { !$0.isDismissed && $0.embedding != nil },
+            sortBy: [SortDescriptor(\.createdAt, order: .reverse)]
+        )
+        let candidates = (try? ctx.fetch(desc)) ?? []
+        guard !candidates.isEmpty else { return fetchUserMemories(limit: limit) }
+
+        let minRelevance: Float = 0.45
+        var scored: [(UserMemory, Float)] = []
+        for m in candidates {
+            guard let data = m.embedding else { continue }
+            let v = EmbeddingService.decode(data)
+            guard !v.isEmpty else { continue }
+            let sim = EmbeddingService.cosineSimilarity(qVec, v)
+            if sim >= minRelevance { scored.append((m, sim)) }
+        }
+        // Better: empty over irrelevant. If nothing crossed threshold, no memory
+        // block at all (LLM won't be tempted to shoehorn).
+        guard !scored.isEmpty else { return [] }
+        let ranked = scored.sorted { $0.1 > $1.1 }.prefix(limit).map { $0.0 }
+        NSLog("[Advice] G3 memory-weave: %d/%d memories scored ≥ %.2f, picked top %d",
+              scored.count, candidates.count, minRelevance, ranked.count)
+        return ranked
     }
 
     /// Try parsing response as {"type": "no_advice", "reason": "..."}.
@@ -393,9 +581,17 @@ final class AdviceService: ObservableObject {
             ? String(parsed.content.prefix(120))
             : parsed.content
 
+        // ITER-022 — normalize category: lowercase + whitelist check.
+        // LLM occasionally types "Productivity" / "Communications" / new ones.
+        // Unknown → "other" so DB stays consistent.
+        let normalizedCategory: String = {
+            let candidate = parsed.category.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            return Self.validCategories.contains(candidate) ? candidate : "other"
+        }()
+
         return AdviceItem(
             content: truncated,
-            category: parsed.category,
+            category: normalizedCategory,
             reasoning: parsed.reasoning,
             sourceApp: contexts.last?.appName,
             confidence: parsed.confidence ?? 0.5

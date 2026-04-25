@@ -1,0 +1,241 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>v1 · Feed</title>
+<link rel="stylesheet" href="_shared.css">
+<style>
+  .feed { max-width: 760px; margin: 0 auto; padding: 32px 24px; }
+  .day-card { margin-bottom: 16px; }
+  .day-header {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    margin-bottom: 14px;
+  }
+  .day-header .label {
+    font-family: var(--mono);
+    font-size: 11px;
+    letter-spacing: 1.2px;
+    color: var(--text-muted);
+    text-transform: uppercase;
+  }
+  .day-header .label strong { color: var(--text); margin-right: 8px; }
+  .day-card .headline { font-size: 20px; font-weight: 600; margin-bottom: 10px; }
+  .day-card.future { border-color: rgba(255, 214, 10, 0.2); background: linear-gradient(180deg, rgba(255,214,10,0.04), var(--bg-elev)); }
+  .day-card.future .label strong { color: var(--accent); }
+  .past-divider {
+    text-align: center;
+    margin: 24px 0 16px;
+    font-family: var(--mono);
+    font-size: 10px;
+    letter-spacing: 1.2px;
+    color: var(--text-dim);
+  }
+  .quiet {
+    font-size: 13px;
+    color: var(--text-muted);
+    font-style: italic;
+  }
+  .top-bar {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 24px;
+  }
+  .back { font-family: var(--mono); font-size: 11px; color: var(--text-muted); }
+  .back:hover { color: var(--text); }
+</style>
+</head>
+<body>
+  <div class="feed">
+    <div class="top-bar">
+      <a class="back" href="index.html">← BACK TO MOCKUPS</a>
+      <div class="row gap-8">
+        <span class="chip active">FEED</span>
+        <span class="chip">STATS</span>
+      </div>
+    </div>
+    <h1 class="h-page">Dashboard</h1>
+    <p style="color: var(--text-muted); font-size: 13px; margin-bottom: 24px;">
+      Variant 1 · single chronological scroll · zero layout-jump · tomorrow pinned at top
+    </p>
+
+    <!-- TOMORROW (pinned, future-aware) -->
+    <div class="card day-card future">
+      <div class="day-header">
+        <div class="label"><strong>TOMORROW</strong> · Sun, Apr 26</div>
+        <span class="chip accent">PLANS</span>
+      </div>
+      <div class="headline" style="font-size: 17px; color: var(--text-muted);">3 events · 2 tasks due · 1 followup suggested</div>
+
+      <div class="section">
+        <div class="section-label">📅 Calendar</div>
+        <div class="plan-item">
+          <span class="time">10:00</span>
+          <span class="label">Standup with Pasha + Andrey</span>
+          <span class="badge">30m</span>
+        </div>
+        <div class="plan-item">
+          <span class="time">14:00</span>
+          <span class="label">Q2 budget sync</span>
+          <span class="badge">1h · recurring</span>
+        </div>
+        <div class="plan-item">
+          <span class="time">17:00</span>
+          <span class="label">Interview · Acme candidate</span>
+          <span class="badge">45m</span>
+        </div>
+      </div>
+
+      <div class="section">
+        <div class="section-label">⏰ Tasks due</div>
+        <div class="plan-item">
+          <span class="time">EOD</span>
+          <span class="label">Send Q2 roadmap to Pasha</span>
+          <span class="chip red">overdue from Fri</span>
+        </div>
+        <div class="plan-item">
+          <span class="time">EOD</span>
+          <span class="label">Review SEO report from Mike</span>
+          <span class="badge">my task</span>
+        </div>
+      </div>
+
+      <div class="section">
+        <div class="section-label">💡 Suggested followups</div>
+        <div class="plan-item">
+          <span class="time">—</span>
+          <span class="label">Followup with Andrey on auth migration</span>
+          <span class="badge">last touched 3 weeks ago</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- TODAY -->
+    <div class="card day-card elev-2">
+      <div class="day-header">
+        <div class="label"><strong>TODAY</strong> · Sat, Apr 25</div>
+        <button class="btn">↻ Regenerate</button>
+      </div>
+      <div class="headline">Memory issue and clarity review</div>
+
+      <div class="section">
+        <div class="section-label">💡 Learned</div>
+        <ul class="bullet-list">
+          <li>Overchat has memory issue</li>
+          <li>Skygen Desktop lacks clarity</li>
+        </ul>
+      </div>
+
+      <div class="section">
+        <div class="section-label">✓ Decided</div>
+        <ul class="bullet-list">
+          <li>Check test results</li>
+        </ul>
+      </div>
+
+      <div class="energy">
+        <span>📊</span>
+        <span>Low activity · scattered apps</span>
+      </div>
+
+      <div class="row" style="margin-top: 16px; gap: 24px;">
+        <div><span class="h-section">2</span> <span style="color:var(--text-muted);font-size:12px;">CONVOS</span></div>
+        <div><span class="h-section">2</span> <span style="color:var(--text-muted);font-size:12px;">MEMORIES</span></div>
+        <div><span class="h-section">0</span> <span style="color:var(--text-muted);font-size:12px;">DONE</span></div>
+        <div><span class="h-section">1</span> <span style="color:var(--text-muted);font-size:12px;">NEW TASKS</span></div>
+      </div>
+    </div>
+
+    <!-- YESTERDAY -->
+    <div class="card day-card">
+      <div class="day-header">
+        <div class="label"><strong>YESTERDAY</strong> · Fri, Apr 24</div>
+        <button class="btn">↻</button>
+      </div>
+      <div class="headline">Stripe billing test + Atomic Bot launch prep</div>
+
+      <div class="section">
+        <div class="section-label">💡 Learned</div>
+        <ul class="bullet-list">
+          <li>Stripe webhook test mode hits prod customer table</li>
+          <li>Pasha ships DRUGENERATOR Mon morning</li>
+        </ul>
+      </div>
+      <div class="section">
+        <div class="section-label">✓ Decided</div>
+        <ul class="bullet-list">
+          <li>Switch to test customers in Stripe sandbox</li>
+          <li>Move launch announcement from Tue → Mon</li>
+        </ul>
+      </div>
+      <div class="section">
+        <div class="section-label">📦 Shipped</div>
+        <ul class="bullet-list">
+          <li>Webhook test fix · merged PR #142</li>
+        </ul>
+      </div>
+      <div class="energy">
+        <span>📊</span>
+        <span>High output · 5 calls · low fragmentation</span>
+      </div>
+    </div>
+
+    <div class="past-divider">— PAST WEEK —</div>
+
+    <!-- THU APR 23 -->
+    <div class="card day-card">
+      <div class="day-header">
+        <div class="label"><strong>THU</strong> · Apr 23</div>
+        <button class="btn">↻</button>
+      </div>
+      <div class="headline">Crypto market trends + content manager hiring</div>
+      <div class="section">
+        <div class="section-label">💡 Learned</div>
+        <ul class="bullet-list">
+          <li>RWA tokens dominate Q1 narratives</li>
+          <li>Telegram influencer pricing dropped 30% MoM</li>
+        </ul>
+      </div>
+      <div class="section">
+        <div class="section-label">✓ Decided</div>
+        <ul class="bullet-list">
+          <li>Hire content manager part-time first</li>
+        </ul>
+      </div>
+    </div>
+
+    <!-- WED APR 22 — empty day, but useful -->
+    <div class="card day-card" style="opacity: 0.7;">
+      <div class="day-header">
+        <div class="label"><strong>WED</strong> · Apr 22</div>
+        <button class="btn">+ Generate</button>
+      </div>
+      <div class="quiet">Quiet day · 0 conversations recorded · only screen activity (Telegram 2h, Arc 1h)</div>
+    </div>
+
+    <!-- TUE APR 21 -->
+    <div class="card day-card">
+      <div class="day-header">
+        <div class="label"><strong>TUE</strong> · Apr 21</div>
+        <button class="btn">↻</button>
+      </div>
+      <div class="headline">Marketing strategy + DRUGENERATOR release plan</div>
+      <div class="section">
+        <div class="section-label">✓ Decided</div>
+        <ul class="bullet-list">
+          <li>Release DRUGENERATOR with K2.6 skims</li>
+          <li>Drop FNBOTA stats from launch — add post-launch</li>
+        </ul>
+      </div>
+      <div class="energy">
+        <span>📊</span>
+        <span>Iteration-heavy day on launch prep</span>
+      </div>
+    </div>
+
+    <div class="past-divider">— OLDER ↓ scroll for more —</div>
+  </div>
+</body>
+</html>

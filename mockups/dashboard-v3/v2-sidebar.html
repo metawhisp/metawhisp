@@ -1,0 +1,222 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>v2 · Sidebar + Detail</title>
+<link rel="stylesheet" href="_shared.css">
+<style>
+  .layout {
+    display: grid;
+    grid-template-columns: 280px 1fr;
+    height: 100vh;
+    overflow: hidden;
+  }
+
+  .day-list {
+    border-right: 1px solid var(--border);
+    overflow-y: auto;
+    padding: 16px 0;
+    background: rgba(0,0,0,0.25);
+  }
+  .top-bar {
+    padding: 0 20px 16px;
+    border-bottom: 1px solid var(--border);
+    margin-bottom: 12px;
+  }
+  .back { font-family: var(--mono); font-size: 11px; color: var(--text-muted); }
+  .day-row {
+    padding: 12px 20px;
+    border-left: 3px solid transparent;
+    cursor: pointer;
+  }
+  .day-row:hover { background: rgba(255,255,255,0.03); }
+  .day-row.active {
+    background: var(--bg-elev);
+    border-left-color: var(--accent);
+  }
+  .day-row.tomorrow {
+    border-bottom: 1px solid var(--border);
+    margin-bottom: 8px;
+    background: rgba(255,214,10,0.04);
+  }
+  .day-row .label {
+    font-family: var(--mono);
+    font-size: 10px;
+    letter-spacing: 1.2px;
+    color: var(--text-muted);
+    margin-bottom: 4px;
+  }
+  .day-row.active .label { color: var(--accent); }
+  .day-row.tomorrow .label { color: var(--accent); }
+  .day-row .preview {
+    font-size: 13px;
+    color: var(--text);
+    line-height: 1.4;
+    overflow: hidden;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+  }
+  .day-row .meta {
+    font-family: var(--mono);
+    font-size: 10px;
+    color: var(--text-dim);
+    margin-top: 4px;
+    display: flex;
+    gap: 8px;
+  }
+  .day-row .meta .empty { color: var(--text-dim); font-style: italic; }
+
+  /* DETAIL — fixed area, scroll INSIDE so right side never jumps */
+  .detail-pane {
+    overflow-y: auto;
+    padding: 32px 40px;
+  }
+  .detail-pane .head { margin-bottom: 24px; }
+  .detail-pane .head .day {
+    font-family: var(--mono);
+    font-size: 11px;
+    letter-spacing: 1.2px;
+    color: var(--accent);
+    margin-bottom: 4px;
+  }
+  .detail-pane .head .h1 {
+    font-size: 28px;
+    font-weight: 700;
+    line-height: 1.2;
+  }
+  .detail-pane .stats-row {
+    display: flex;
+    gap: 32px;
+    padding: 16px 0;
+    border-top: 1px solid var(--border);
+    border-bottom: 1px solid var(--border);
+    margin: 16px 0 24px;
+  }
+  .detail-pane .stat .num { font-size: 22px; font-weight: 600; }
+  .detail-pane .stat .lbl { font-family: var(--mono); font-size: 10px; color: var(--text-muted); letter-spacing: 0.8px; }
+  .detail-pane .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+</style>
+</head>
+<body>
+  <div class="layout">
+
+    <!-- LEFT: day list -->
+    <div class="day-list">
+      <div class="top-bar">
+        <a class="back" href="index.html">← BACK TO MOCKUPS</a>
+        <h2 style="font-size: 14px; font-weight: 600; margin-top: 12px;">Recap timeline</h2>
+      </div>
+
+      <!-- TOMORROW pinned at top -->
+      <div class="day-row tomorrow">
+        <div class="label">TOMORROW · Sun, Apr 26</div>
+        <div class="preview" style="color: var(--text-muted);">3 events · 2 due tasks · Standup at 10:00</div>
+        <div class="meta"><span>📅 plans</span></div>
+      </div>
+
+      <!-- TODAY active -->
+      <div class="day-row active">
+        <div class="label">TODAY · Sat, Apr 25</div>
+        <div class="preview">Memory issue and clarity review</div>
+        <div class="meta"><span>2 conv</span><span>2 mem</span><span>1 task</span></div>
+      </div>
+
+      <div class="day-row">
+        <div class="label">YESTERDAY · Apr 24</div>
+        <div class="preview">Stripe billing test + Atomic Bot launch prep</div>
+        <div class="meta"><span>5 conv</span><span>3 mem</span><span>1 done</span></div>
+      </div>
+
+      <div class="day-row">
+        <div class="label">THU · Apr 23</div>
+        <div class="preview">Crypto market trends + content manager hiring</div>
+        <div class="meta"><span>3 conv</span><span>2 mem</span></div>
+      </div>
+
+      <div class="day-row">
+        <div class="label">WED · Apr 22</div>
+        <div class="preview" style="color: var(--text-muted); font-style: italic;">Quiet day — only screen activity</div>
+        <div class="meta empty">no recordings</div>
+      </div>
+
+      <div class="day-row">
+        <div class="label">TUE · Apr 21</div>
+        <div class="preview">Marketing strategy + DRUGENERATOR release plan</div>
+        <div class="meta"><span>4 conv</span><span>1 mem</span></div>
+      </div>
+
+      <div class="day-row">
+        <div class="label">MON · Apr 20</div>
+        <div class="preview">Project Discussion · marketing campaign</div>
+        <div class="meta"><span>2 conv</span></div>
+      </div>
+
+      <div class="day-row">
+        <div class="label">SUN · Apr 19</div>
+        <div class="preview">AI freelance platform Q&amp;A</div>
+        <div class="meta"><span>1 conv</span></div>
+      </div>
+
+      <div class="day-row">
+        <div class="label">SAT · Apr 18</div>
+        <div class="preview" style="color: var(--text-muted); font-style: italic;">Quiet day</div>
+        <div class="meta empty">no recordings</div>
+      </div>
+    </div>
+
+    <!-- RIGHT: detail pane (FIXED area, internal scroll, no layout jump) -->
+    <div class="detail-pane">
+      <div class="head">
+        <div class="day">TODAY · SAT, APR 25</div>
+        <div class="h1">Memory issue and clarity review</div>
+        <div style="margin-top: 8px;">
+          <button class="btn">↻ Regenerate</button>
+          <button class="btn">📤 Share</button>
+        </div>
+      </div>
+
+      <div class="stats-row">
+        <div class="stat"><div class="num">2</div><div class="lbl">CONVOS</div></div>
+        <div class="stat"><div class="num">2</div><div class="lbl">MEMORIES</div></div>
+        <div class="stat"><div class="num">0</div><div class="lbl">DONE</div></div>
+        <div class="stat"><div class="num">1</div><div class="lbl">NEW TASKS</div></div>
+      </div>
+
+      <div class="grid-2">
+        <div>
+          <div class="section-label">💡 LEARNED</div>
+          <ul class="bullet-list">
+            <li>Overchat has memory issue</li>
+            <li>Skygen Desktop lacks clarity</li>
+          </ul>
+        </div>
+        <div>
+          <div class="section-label">✓ DECIDED</div>
+          <ul class="bullet-list">
+            <li>Check test results</li>
+          </ul>
+        </div>
+        <div>
+          <div class="section-label">📦 SHIPPED</div>
+          <ul class="bullet-list" style="color: var(--text-muted); font-style: italic;">
+            <li style="list-style: none;">Nothing finished today</li>
+          </ul>
+        </div>
+        <div>
+          <div class="section-label">📊 ENERGY</div>
+          <p style="font-style: italic; color: var(--text-muted); font-size: 13px;">Low activity · scattered apps · most time in Telegram (3h 7m)</p>
+        </div>
+      </div>
+
+      <div style="margin-top: 32px;">
+        <div class="section-label">📅 LAST 24H ON SCREEN</div>
+        <div class="plan-item"><span class="time">Telegram</span><span class="label">3h 7m</span><span class="badge">39%</span></div>
+        <div class="plan-item"><span class="time">Arc</span><span class="label">1h 55m</span><span class="badge">24%</span></div>
+        <div class="plan-item"><span class="time">Claude</span><span class="label">1h 10m</span><span class="badge">15%</span></div>
+        <div class="plan-item"><span class="time">Safari</span><span class="label">53m</span><span class="badge">11%</span></div>
+      </div>
+    </div>
+  </div>
+</body>
+</html>

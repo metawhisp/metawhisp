@@ -20,6 +20,22 @@ final class ScreenContextService: ObservableObject {
     private var lastWindowTitle: String?
     private var modelContainer: ModelContainer?
 
+    /// Fires on video-call state change detected during window polling.
+    /// Argument: call display name ("Google Meet", "Zoom", …) when a call starts,
+    /// or `nil` when the previously-detected call ends (window switched / closed).
+    /// Fires only on transitions, so the handler doesn't need its own debounce.
+    ///
+    /// Implements spec://iterations/ITER-002-call-detection
+    var onCallContext: ((String?) -> Void)?
+    private var lastCallContext: String?
+
+    /// Fires after each newly-persisted ScreenContext (one per captured window change).
+    /// Used by `RealtimeScreenReactor` (ITER-006) to do per-window LLM task checks with its
+    /// own debounce/rate-limit. Hook layered on top of the polling loop — no extra timers.
+    ///
+    /// Implements spec://iterations/ITER-006-realtime-screen-reaction#scope.2
+    var onContextPersisted: ((ScreenContext) -> Void)?
+
     /// Set the model container for SwiftData persistence.
     func configure(modelContainer: ModelContainer) {
         self.modelContainer = modelContainer
@@ -98,6 +114,23 @@ final class ScreenContextService: ObservableObject {
         let appName = frontApp.localizedName ?? "Unknown"
         let bundleID = frontApp.bundleIdentifier ?? ""
 
+        // Get window title via Accessibility API (needed for both OCR and call detection)
+        let windowTitle = getActiveWindowTitle(pid: frontApp.processIdentifier) ?? ""
+
+        // Call detection — runs BEFORE blacklist/whitelist/change guards so a Zoom call
+        // still fires the callback even if the user blacklisted Zoom from OCR capture.
+        // Fires on state transition only (nil→name or name→nil), so no external debounce needed.
+        let currentCall = SystemAudioCaptureService.detectCallContext(
+            bundleID: bundleID,
+            appName: appName,
+            windowTitle: windowTitle
+        )
+        if currentCall != lastCallContext {
+            lastCallContext = currentCall
+            NSLog("[ScreenContext] Call context changed: %@", currentCall ?? "nil")
+            onCallContext?(currentCall)
+        }
+
         // Check blacklist
         if blacklist.contains(bundleID) || blacklist.contains(appName) {
             return
@@ -109,9 +142,6 @@ final class ScreenContextService: ObservableObject {
                 return
             }
         }
-
-        // Get window title via Accessibility API
-        let windowTitle = getActiveWindowTitle(pid: frontApp.processIdentifier) ?? ""
 
         // Only capture if app or window changed
         guard appName != lastAppName || windowTitle != lastWindowTitle else { return }
@@ -241,6 +271,10 @@ final class ScreenContextService: ObservableObject {
         )
         ctx.insert(record)
         try? ctx.save()
+
+        // Fire realtime hook for ITER-006 reactor (per-window LLM task check).
+        // Callback handles its own guards/debounce — we just pass every persisted row.
+        onContextPersisted?(record)
     }
 
     /// Get the title of the active window using Accessibility API.

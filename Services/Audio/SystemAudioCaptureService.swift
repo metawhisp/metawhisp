@@ -76,6 +76,17 @@ final class SystemAudioCaptureService: NSObject, ObservableObject, AudioSource {
         }
     }
 
+    /// ITER-019 — total samples accumulated so far.
+    var currentSampleCount: Int { samples.count }
+
+    /// ITER-019 — non-destructive read of samples accumulated since `from`.
+    /// Final `stop()` still returns the full recording.
+    func peekSamples(from index: Int) -> [Float] {
+        guard index < samples.count else { return [] }
+        let safeStart = max(0, index)
+        return Array(samples[safeStart..<samples.count])
+    }
+
     /// Stop capturing and return collected PCM samples.
     func stop() -> [Float] {
         Task {
@@ -233,21 +244,85 @@ final class SystemAudioCaptureService: NSObject, ObservableObject, AudioSource {
 
     // MARK: - Meeting Detection
 
-    /// Detect if a video call app is currently running.
-    static func detectActiveMeetingApp() -> String? {
-        let meetingBundleIDs: [String: String] = [
-            "us.zoom.xos": "Zoom",
-            "com.microsoft.teams2": "Teams",
-            "com.microsoft.teams": "Teams",
-            "com.apple.FaceTime": "FaceTime",
-            "com.tinyspeck.slackmacgap": "Slack",
-            "com.discord.Discord": "Discord",
-            "com.webex.meetingmanager": "Webex",
-        ]
+    /// Bundle IDs of native video-call apps → display name.
+    private static let callAppBundleIDs: [String: String] = [
+        "us.zoom.xos": "Zoom",
+        "com.microsoft.teams2": "Teams",
+        "com.microsoft.teams": "Teams",
+        "com.apple.FaceTime": "FaceTime",
+        "com.tinyspeck.slackmacgap": "Slack",
+        "com.discord.Discord": "Discord",
+        "com.webex.meetingmanager": "Webex",
+        "com.webex.meetings": "Webex",
+        "com.logmein.gotomeeting": "GoTo Meeting",
+    ]
 
+    /// Browser bundle IDs — we look at the active window title for call keywords.
+    private static let browserBundleIDs: Set<String> = [
+        "com.google.Chrome",
+        "com.apple.Safari",
+        "company.thebrowser.Browser",     // Arc
+        "org.mozilla.firefox",
+        "com.microsoft.edgemac",
+        "com.brave.Browser",
+        "com.operasoftware.Opera",
+    ]
+
+    /// Window-title keywords that indicate an active video call (matched case-insensitive).
+    /// Observed title formats (2026-04-21 missed a Meet call because we required "Google Meet"
+    /// but Chrome shows "Meet – <name>..."):
+    ///   Chrome in-meeting:  "Meet – DAILY TWO — Trouble..."        (em-dash)
+    ///   Chrome pre-join:    "Meet - Google Chrome - <profile>"     (hyphen, tab title just "Meet")
+    ///   Chrome direct URL:  "<name> - Google Meet" / "meet.google.com/..."
+    ///   Arc:                "gpq-mmkq-iaz" (room code only)
+    private static let callTitleKeywords: [(keyword: String, name: String)] = [
+        ("meet.google.com", "Google Meet"),
+        ("Google Meet", "Google Meet"),
+        ("Meet – ", "Google Meet"),        // Chrome in-meeting (em-dash, Google's own format)
+        ("Meet - Google Chrome", "Google Meet"),  // Chrome pre-join (tab title "Meet" + chrome suffix)
+        ("Teams - Microsoft", "Teams"),
+        ("Microsoft Teams", "Teams"),
+        ("Zoom Meeting", "Zoom"),
+    ]
+
+    /// Arc (and some Chrome setups) show only the Google Meet room code in the window title
+    /// (format `xxx-yyyy-zzz` — lowercase, 3-{3,4}-3 dashes). Word-boundary match so we catch
+    /// both Arc (title == code) AND Chrome (title == `code - Google Chrome - profile`).
+    /// The old `^...$` anchoring missed Chrome because of the trailing chrome suffix.
+    private static let meetRoomCodeRegex: NSRegularExpression = {
+        // swiftlint:disable:next force_try — literal pattern, cannot fail at runtime.
+        try! NSRegularExpression(pattern: #"\b[a-z]{3}-[a-z]{3,4}-[a-z]{3}\b"#)
+    }()
+
+    /// Detect if a video call app is currently running (legacy — whole system scan).
+    static func detectActiveMeetingApp() -> String? {
         for app in NSWorkspace.shared.runningApplications {
-            if let bundleID = app.bundleIdentifier, let name = meetingBundleIDs[bundleID] {
+            if let bundleID = app.bundleIdentifier, let name = callAppBundleIDs[bundleID] {
                 return name
+            }
+        }
+        return nil
+    }
+
+    /// Detect call context from the **currently-frontmost** app + its window title.
+    /// Returns display name ("Google Meet", "Zoom", …) or nil if no call is active.
+    ///
+    /// Implements spec://iterations/ITER-002-call-detection#detection
+    static func detectCallContext(bundleID: String, appName: String, windowTitle: String) -> String? {
+        // Native call app wins.
+        if let name = callAppBundleIDs[bundleID] { return name }
+
+        // Browser: scan window title for call keywords.
+        if browserBundleIDs.contains(bundleID) {
+            for (kw, name) in callTitleKeywords where windowTitle.localizedCaseInsensitiveContains(kw) {
+                return name
+            }
+            // Fallback: Arc & some Chrome builds show only the Google Meet room code
+            // (xxx-yyyy-zzz) without any "Google Meet" suffix. Regex-match it.
+            let trimmed = windowTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+            let range = NSRange(trimmed.startIndex..., in: trimmed)
+            if meetRoomCodeRegex.firstMatch(in: trimmed, range: range) != nil {
+                return "Google Meet"
             }
         }
         return nil

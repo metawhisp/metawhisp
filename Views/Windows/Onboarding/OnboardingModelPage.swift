@@ -137,8 +137,7 @@ struct OnboardingModelPage: View {
             .disabled(downloadDone)
         }
         .padding(12)
-        .background(MW.surface)
-        .overlay(Rectangle().stroke(MW.border, lineWidth: MW.hairline))
+        .mwCard(radius: MW.rSmall, elevation: .flat)
     }
 
     private func startDownload() {
@@ -168,8 +167,7 @@ struct OnboardingModelPage: View {
                     .textFieldStyle(.plain)
                     .font(.system(size: 12, design: .monospaced))
                     .padding(10)
-                    .background(MW.surface)
-                    .overlay(Rectangle().stroke(MW.border, lineWidth: MW.hairline))
+                    .mwCard(radius: MW.rSmall, elevation: .flat)
 
                 Button {
                     AppSettings.shared.transcriptionEngine = "cloud"

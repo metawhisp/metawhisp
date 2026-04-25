@@ -36,6 +36,25 @@ final class UserMemory {
     var sourceFile: String?
     var createdAt: Date
     var updatedAt: Date
+    /// OpenAI text-embedding-3-small 1536d Float32 vector, packed as raw Data.
+    /// Used for semantic dedup + semantic retrieval in MetaChat RAG.
+    /// Nullable — legacy rows and rows inserted without LLM access have nil and
+    /// fall back to substring matching. EmbeddingService backfill fills missing ones.
+    /// spec://iterations/ITER-008-embeddings
+    var embedding: Data?
+
+    // Enrichment fields (ITER-010 — reference-pattern memory metadata):
+    // - `headline`: ≤6 word label rendered as the primary line in the Memories
+    //   UI and in MetaChat retrieval previews. Lets the user scan a list quickly
+    //   without reading every full content sentence.
+    // - `reasoning`: WHY this fact was stored — short justification pulled from
+    //   the source context. The chat LLM cites this when explaining where a
+    //   memory came from ("Mentioned in Q2 standup on Apr 21").
+    // - `tagsCSV`: comma-separated tags for category filtering (e.g. "work,product").
+    // Optional so SwiftData migration adds the columns without a versioning plan.
+    var headline: String?
+    var reasoning: String?
+    var tagsCSV: String?
 
     init(
         content: String,
