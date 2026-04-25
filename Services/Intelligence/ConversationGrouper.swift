@@ -94,7 +94,7 @@ final class ConversationGrouper {
             conv.status = "completed"
             conv.finishedAt = time
             ctx.insert(conv)
-            scheduleStructuredGeneration(for: conv.id)
+            scheduleOnClose(for: conv.id)
             return conv
         }
 
@@ -127,17 +127,28 @@ final class ConversationGrouper {
         conv.status = "completed"
         conv.finishedAt = Date()
         conv.updatedAt = Date()
-        scheduleStructuredGeneration(for: conv.id)
+        scheduleOnClose(for: conv.id)
     }
 
-    /// Fire-and-forget StructuredGenerator for a closed conversation.
-    /// spec://BACKLOG#C1.2
-    private func scheduleStructuredGeneration(for conversationId: UUID) {
+    /// Fire-and-forget work on a closed conversation:
+    /// 1. StructuredGenerator — title/overview/category/icon (spec://BACKLOG#C1.2)
+    /// 2. MemoryExtractor — full-conversation memory extraction (spec://iterations/ITER-001)
+    /// 3. TaskExtractor — full-conversation action items (spec://BACKLOG#B1)
+    ///
+    /// Replaces the previous per-transcript triggers. Running on close gives each
+    /// extractor the whole conversation context — needed for resolution, assignee, dedup.
+    ///
+    /// Delay raised to 2s because meeting conversations are created + their HistoryItem
+    /// is saved in the same tick (single-shot flow). The fresh ModelContext that
+    /// StructuredGenerator opens can race the SwiftData commit — 300ms was occasionally
+    /// too short and produced "Quick note (empty)" placeholder titles.
+    private func scheduleOnClose(for conversationId: UUID) {
         Task { @MainActor [weak self] in
-            // Small delay so the HistoryItem assigned in the same tick is persisted first.
-            try? await Task.sleep(for: .milliseconds(300))
+            try? await Task.sleep(for: .seconds(2))
             _ = self
             await AppDelegate.shared?.structuredGenerator.generate(conversationId: conversationId)
+            AppDelegate.shared?.memoryExtractor.triggerOnConversationClose(conversationId: conversationId)
+            AppDelegate.shared?.taskExtractor.triggerOnConversationClose(conversationId: conversationId)
         }
     }
 }

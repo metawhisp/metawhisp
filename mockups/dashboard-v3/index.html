@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>MetaWhisp · Dashboard v3 mockups</title>
+<link rel="stylesheet" href="_shared.css">
+<style>
+  body { padding: 40px; }
+  .grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+    gap: 16px;
+    margin-top: 24px;
+  }
+  .preview {
+    display: block;
+    padding: 20px;
+    text-decoration: none;
+  }
+  .preview:hover { border-color: var(--border-strong); transform: translateY(-2px); transition: 0.15s; }
+  .preview .num {
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--text-muted);
+    letter-spacing: 0.6px;
+    margin-bottom: 6px;
+  }
+  .preview .title {
+    font-size: 17px;
+    font-weight: 600;
+    margin-bottom: 8px;
+  }
+  .preview .desc {
+    font-size: 13px;
+    color: var(--text-muted);
+    line-height: 1.5;
+  }
+  .preview .pros {
+    margin-top: 12px;
+    padding-top: 12px;
+    border-top: 0.5px solid var(--border);
+    font-size: 12px;
+    color: var(--text-muted);
+  }
+  .preview .pros strong { color: var(--green); }
+</style>
+</head>
+<body>
+  <div class="container">
+    <div class="h-page">Dashboard v3 — 5 mockups</div>
+    <p style="color: var(--text-muted); font-size: 14px; max-width: 640px; margin-top: 8px;">
+      Каждый вариант фиксит: <strong style="color:var(--text)">layout-jump</strong> при смене дня,
+      <strong style="color:var(--text)">tomorrow с реальными планами</strong> (events / due tasks / suggested),
+      и <strong style="color:var(--text)">no-empty-day frustration</strong>.
+      Click чтобы открыть. Скажи какой нравится — портирую в приложение.
+    </p>
+
+    <div class="grid">
+      <a class="card preview" href="v1-feed.html">
+        <div class="num">VARIANT 1</div>
+        <div class="title">Feed (Omi-style)</div>
+        <div class="desc">Single chronological scroll: today → yesterday → past. Каждый день — full card. Никакого picker'а.</div>
+        <div class="pros"><strong>+</strong> No layout jump · <strong>+</strong> familiar timeline UX · <strong>+</strong> tomorrow в начале как pinned card</div>
+      </a>
+
+      <a class="card preview" href="v2-sidebar.html">
+        <div class="num">VARIANT 2</div>
+        <div class="title">macOS Mail (sidebar list + main detail)</div>
+        <div class="desc">Слева — список дней (date + headline preview). Справа — main detail fixed-height со scroll внутри.</div>
+        <div class="pros"><strong>+</strong> Detail area FIXED — никаких прыжков · <strong>+</strong> compact navigation · <strong>+</strong> familiar pattern</div>
+      </a>
+
+      <a class="card preview" href="v3-split.html">
+        <div class="num">VARIANT 3</div>
+        <div class="title">TODAY + TOMORROW split (2 columns)</div>
+        <div class="desc">Главное: today слева большой + tomorrow plans справа. Past — отдельный compact link below.</div>
+        <div class="pros"><strong>+</strong> Future-aware UI · <strong>+</strong> tomorrow first-class · <strong>+</strong> past not in face</div>
+      </a>
+
+      <a class="card preview" href="v4-three-day.html">
+        <div class="num">VARIANT 4</div>
+        <div class="title">3-day window (Yesterday · Today · Tomorrow)</div>
+        <div class="desc">Три card бок о бок: вчера / сегодня (главный, увеличенный) / завтра. Past — collapse below.</div>
+        <div class="pros"><strong>+</strong> Always 3 — no jump · <strong>+</strong> прошлое + будущее одновременно</div>
+      </a>
+
+      <a class="card preview" href="v5-today-focus.html">
+        <div class="num">VARIANT 5</div>
+        <div class="title">Today fullscreen + collapsed past</div>
+        <div class="desc">Today доминирует весь экран. Past 7 days — collapsed accordion внизу. Tomorrow — sticky banner сверху.</div>
+        <div class="pros"><strong>+</strong> Maximum focus on today · <strong>+</strong> tomorrow always visible · <strong>+</strong> past — opt-in</div>
+      </a>
+    </div>
+
+    <p style="color: var(--text-dim); font-size: 12px; margin-top: 32px; max-width: 640px;">
+      Reference: Omi пользует <strong style="color:var(--text-muted)">single chronological feed</strong> для memory items —
+      нет calendar/picker концепции. v1 ближе всего к этому. Но я также сделал альтернативы (sidebar / split / 3-day / focus)
+      на случай если для desktop хочется другой подход.
+    </p>
+  </div>
+</body>
+</html>

@@ -11,12 +11,151 @@ struct StatisticsView: View {
     @State private var selectedMetric: String = "WORDS"
     @State private var chartScale: String = "DAYS"
 
-    private var current: [HistoryItem] { selectedPeriod.filter(allItems) }
-    private var previous: [HistoryItem] { selectedPeriod.previousFilter(allItems) }
+    // Cached expensive text analyses — recomputed off-main-thread via .task(id:).
+    // Previously `topWordsSection` / `fillerSection` joined ALL history text (3k+
+    // items = multi-MB string) and scanned it on every render, which froze the
+    // Dashboard. Now the heavy work runs once per period change + data update.
+    @State private var topWordsCache: [(word: String, count: Int)] = []
+    @State private var fillersCache: [(word: String, count: Int)] = []
+    @State private var textStatsReady = false
 
-    private let gap: CGFloat = 2
+    /// Cached non-text derived stats. Each property below previously did a full
+    /// O(N) scan of `current` or `allItems` (Calendar.startOfDay inside a tight
+    /// loop on 3500+ rows = many thousand date ops PER RENDER FRAME). Sample
+    /// profiler caught `bestDay`/`peakWordsDay` accounting for the bulk of
+    /// main-thread CPU after the fillerCount fix landed.
+    /// Now they're computed once per (allItems.count, selectedPeriod) change in
+    /// `recomputeDerivedStats()` and read from this struct.
+    @State private var derivedCache: DerivedStats = .empty
+    @State private var currentCache: [HistoryItem] = []
+    @State private var previousCache: [HistoryItem] = []
+
+    /// Pure-data bundle of derived non-text stats. Populated off the main path.
+    struct DerivedStats {
+        let streakDays: Int
+        let translationsCount: Int
+        let wpm: Int
+        let popularHour: Int
+        let bestDay: (count: Int, date: String)
+        let peakWordsDay: String
+        let longestStreak: Int
+        static let empty = DerivedStats(
+            streakDays: 0, translationsCount: 0, wpm: 0, popularHour: 0,
+            bestDay: (0, "—"), peakWordsDay: "—", longestStreak: 0
+        )
+    }
+
+    /// Read access — UI reads these instead of the heavy computed getters below.
+    private var current: [HistoryItem] { currentCache }
+    private var previous: [HistoryItem] { previousCache }
+
+    /// Spacing between glass tiles. BLOCKS used 2pt so tiles touched edge-to-edge
+    /// with hairline strokes — for glass we need breathing room or the materials
+    /// blur into one another.
+    private let gap: CGFloat = 12
 
     var body: some View {
+        content
+            .task(id: "\(selectedPeriod.label)-\(allItems.count)") {
+                // Run BOTH the text-analysis cache AND the date/calendar derived
+                // cache off the render path. Order matters minimally; just don't
+                // serialize them needlessly — `async let` would be nice but text
+                // stats already use Task internally; keep simple sequence here.
+                recomputeFilteredItems()
+                await recomputeTextStats()
+                await recomputeDerivedStats()
+            }
+    }
+
+    /// Pre-filter `current`/`previous` once per period change so the body
+    /// doesn't re-run `selectedPeriod.filter(allItems)` on every render frame.
+    private func recomputeFilteredItems() {
+        currentCache = selectedPeriod.filter(allItems)
+        previousCache = selectedPeriod.previousFilter(allItems)
+    }
+
+    /// Compute every Calendar-heavy derived stat in one sweep, off the render path.
+    /// Uses Task.detached so the calendar work doesn't block main even if SwiftUI
+    /// is mid-render. Capture-by-value of `allItems` is OK — copies are cheap (just
+    /// pointers under the hood) and we read read-only.
+    private func recomputeDerivedStats() async {
+        let items = allItems
+        let curr = currentCache
+        let computed = await Task.detached(priority: .utility) { () -> DerivedStats in
+            let cal = Calendar.current
+            let fmt = DateFormatter()
+            fmt.dateFormat = "MMM d"
+
+            // --- streakDays ---
+            let allDays = Set(items.map { cal.startOfDay(for: $0.createdAt) }).sorted(by: >)
+            var streakDays = 0
+            if let latest = allDays.first {
+                let today = cal.startOfDay(for: Date())
+                let yesterday = cal.date(byAdding: .day, value: -1, to: today)!
+                if latest >= yesterday {
+                    streakDays = 1
+                    for i in 1..<allDays.count {
+                        let expected = cal.date(byAdding: .day, value: -1, to: allDays[i - 1])!
+                        if cal.isDate(allDays[i], inSameDayAs: expected) { streakDays += 1 }
+                        else { break }
+                    }
+                }
+            }
+
+            // --- longestStreak (over all-time) ---
+            let asc = allDays.reversed().map { $0 }
+            var maxStreak = asc.isEmpty ? 0 : 1
+            var run = 1
+            for i in 1..<asc.count {
+                let expected = cal.date(byAdding: .day, value: 1, to: asc[i - 1])!
+                if cal.isDate(asc[i], inSameDayAs: expected) {
+                    run += 1; if run > maxStreak { maxStreak = run }
+                } else { run = 1 }
+            }
+
+            // --- translationsCount on current ---
+            let translationsCount = curr.filter { $0.translatedTo != nil }.count
+
+            // --- wpm on current ---
+            let words = curr.reduce(0) { $0 + $1.wordCount }
+            let audio = curr.reduce(0) { $0 + $1.audioDuration }
+            let mins = audio / 60.0
+            let wpm = mins > 0 ? Int(Double(words) / mins) : 0
+
+            // --- popularHour on current ---
+            var hourCounts = [Int: Int]()
+            for item in curr {
+                hourCounts[cal.component(.hour, from: item.createdAt), default: 0] += 1
+            }
+            let popularHour = hourCounts.max(by: { $0.value < $1.value })?.key ?? 0
+
+            // --- bestDay (count) on current ---
+            var dayCounts = [Date: Int]()
+            for item in curr { dayCounts[cal.startOfDay(for: item.createdAt), default: 0] += 1 }
+            let best = dayCounts.max(by: { $0.value < $1.value })
+            let bestDay: (Int, String) = best.map { ($0.value, fmt.string(from: $0.key)) } ?? (0, "—")
+
+            // --- peakWordsDay on current ---
+            var dayWords = [Date: Int]()
+            for item in curr { dayWords[cal.startOfDay(for: item.createdAt), default: 0] += item.wordCount }
+            let peak = dayWords.max(by: { $0.value < $1.value })
+            let peakWordsDay = peak.map { fmt.string(from: $0.key) } ?? "—"
+
+            return DerivedStats(
+                streakDays: streakDays,
+                translationsCount: translationsCount,
+                wpm: wpm,
+                popularHour: popularHour,
+                bestDay: bestDay,
+                peakWordsDay: peakWordsDay,
+                longestStreak: maxStreak
+            )
+        }.value
+        derivedCache = computed
+    }
+
+    @ViewBuilder
+    private var content: some View {
         if allItems.isEmpty {
             emptyState
         } else {
@@ -104,100 +243,18 @@ struct StatisticsView: View {
 
     // MARK: - Computed Stats
 
-    /// Days streak — consecutive days with at least one transcription
-    private var streakDays: Int {
-        let cal = Calendar.current
-        let days = Set(allItems.map { cal.startOfDay(for: $0.createdAt) }).sorted(by: >)
-        guard let latest = days.first else { return 0 }
+    // ── Derived stats — read from `derivedCache` (computed off-main in
+    //    `recomputeDerivedStats()`). The body must NOT do per-render Calendar
+    //    scans; doing so on 3500+ history items froze the Dashboard. The cache
+    //    refreshes whenever (allItems.count, selectedPeriod) changes.
+    private var streakDays: Int { derivedCache.streakDays }
+    private var translationsCount: Int { derivedCache.translationsCount }
+    private var wpm: Int { derivedCache.wpm }
+    private var popularHour: Int { derivedCache.popularHour }
 
-        // Check if today or yesterday has activity (streak must be current)
-        let today = cal.startOfDay(for: Date())
-        let yesterday = cal.date(byAdding: .day, value: -1, to: today)!
-        guard latest >= yesterday else { return 0 }
-
-        var streak = 1
-        for i in 1..<days.count {
-            let expected = cal.date(byAdding: .day, value: -1, to: days[i - 1])!
-            if cal.isDate(days[i], inSameDayAs: expected) {
-                streak += 1
-            } else {
-                break
-            }
-        }
-        return streak
-    }
-
-    /// Count of translations in current period
-    private var translationsCount: Int {
-        current.filter { $0.translatedTo != nil }.count
-    }
-
-    /// Words per minute average
-    private var wpm: Int {
-        let totalWords = stats.words
-        let totalMinutes = stats.audio / 60.0
-        guard totalMinutes > 0 else { return 0 }
-        return Int(Double(totalWords) / totalMinutes)
-    }
-
-    /// Popular hour (0-23) for transcriptions
-    private var popularHour: Int {
-        let cal = Calendar.current
-        var counts = [Int: Int]()
-        for item in current {
-            let hour = cal.component(.hour, from: item.createdAt)
-            counts[hour, default: 0] += 1
-        }
-        return counts.max(by: { $0.value < $1.value })?.key ?? 0
-    }
-
-    /// Best day stats
-    private var bestDay: (count: Int, date: String) {
-        let cal = Calendar.current
-        let fmt = DateFormatter()
-        fmt.dateFormat = "MMM d"
-        var days = [Date: Int]()
-        for item in current {
-            let day = cal.startOfDay(for: item.createdAt)
-            days[day, default: 0] += 1
-        }
-        guard let best = days.max(by: { $0.value < $1.value }) else { return (0, "—") }
-        return (best.value, fmt.string(from: best.key))
-    }
-
-    /// Longest streak ever (not just current)
-    private var longestStreak: Int {
-        let cal = Calendar.current
-        let days = Set(allItems.map { cal.startOfDay(for: $0.createdAt) }).sorted()
-        guard !days.isEmpty else { return 0 }
-
-        var maxStreak = 1
-        var currentStreak = 1
-        for i in 1..<days.count {
-            let expected = cal.date(byAdding: .day, value: 1, to: days[i - 1])!
-            if cal.isDate(days[i], inSameDayAs: expected) {
-                currentStreak += 1
-                maxStreak = max(maxStreak, currentStreak)
-            } else {
-                currentStreak = 1
-            }
-        }
-        return maxStreak
-    }
-
-    /// Peak words date
-    private var peakWordsDay: String {
-        let cal = Calendar.current
-        let fmt = DateFormatter()
-        fmt.dateFormat = "MMM d"
-        var days = [Date: Int]()
-        for item in current {
-            let day = cal.startOfDay(for: item.createdAt)
-            days[day, default: 0] += item.wordCount
-        }
-        guard let best = days.max(by: { $0.value < $1.value }) else { return "—" }
-        return fmt.string(from: best.key)
-    }
+    private var bestDay: (count: Int, date: String) { derivedCache.bestDay }
+    private var longestStreak: Int { derivedCache.longestStreak }
+    private var peakWordsDay: String { derivedCache.peakWordsDay }
 
     // MARK: - Period Switcher
 
@@ -214,12 +271,23 @@ struct StatisticsView: View {
 
     private func periodTab(_ label: String, period: StatPeriod) -> some View {
         Text(label)
-            .font(MW.label).tracking(1.2)
-            .foregroundStyle(selectedPeriod == period ? .black : MW.textSecondary)
+            .font(MW.label).tracking(1.0)
+            .foregroundStyle(selectedPeriod == period ? MW.textPrimary : MW.textSecondary)
             .frame(maxWidth: .infinity)
             .padding(.vertical, MW.sp8)
-            .background(selectedPeriod == period ? Color.white : MW.surface)
-            .overlay(Rectangle().stroke(MW.border, lineWidth: MW.hairline))
+            .background {
+                ZStack {
+                    RoundedRectangle(cornerRadius: MW.rTiny, style: .continuous)
+                        .fill(.ultraThinMaterial)
+                    if selectedPeriod == period {
+                        RoundedRectangle(cornerRadius: MW.rTiny, style: .continuous)
+                            .fill(Color.primary.opacity(0.10))
+                    }
+                    RoundedRectangle(cornerRadius: MW.rTiny, style: .continuous)
+                        .strokeBorder(Color.primary.opacity(selectedPeriod == period ? 0.20 : 0.08), lineWidth: 0.5)
+                }
+            }
+            .contentShape(Rectangle())
             .onTapGesture {
                 withAnimation(.easeInOut(duration: 0.15)) { selectedPeriod = period }
             }
@@ -244,7 +312,7 @@ struct StatisticsView: View {
                         .foregroundStyle(chartScale == s ? .black : MW.textSecondary)
                         .padding(.horizontal, MW.sp8).padding(.vertical, 3)
                         .background(chartScale == s ? Color.white : .clear)
-                        .overlay(Rectangle().stroke(MW.border, lineWidth: MW.hairline))
+                        .overlay(RoundedRectangle(cornerRadius: MW.rSmall, style: .continuous).stroke(MW.border, lineWidth: 0.5))
                         .onTapGesture {
                             withAnimation(.easeInOut(duration: 0.15)) { chartScale = s }
                         }
@@ -258,8 +326,7 @@ struct StatisticsView: View {
         }
         .padding(MW.sp16)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .background(MW.surface)
-        .overlay(Rectangle().stroke(MW.border, lineWidth: MW.hairline))
+        .mwCard(radius: MW.rSmall, elevation: .flat)
     }
 
     // MARK: - Hours Usage Chart
@@ -297,8 +364,7 @@ struct StatisticsView: View {
         }
         .padding(MW.sp16)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(MW.surface)
-        .overlay(Rectangle().stroke(MW.border, lineWidth: MW.hairline))
+        .mwCard(radius: MW.rSmall, elevation: .flat)
     }
 
     private var hourlyData: [(hour: Int, count: Int)] {
@@ -311,15 +377,16 @@ struct StatisticsView: View {
         return (0..<24).map { (hour: $0, count: counts[$0, default: 0]) }
     }
 
-    // MARK: - Top Words
+    // MARK: - Top Words (cache-backed, recomputed off-main)
 
     private var topWordsSection: some View {
-        let text = current.map(\.text).joined(separator: " ")
-        let top = TextAnalyzer.wordFrequency(in: text, top: 10)
+        let top = topWordsCache
         return VStack(alignment: .leading, spacing: MW.sp8) {
             Text("POPULAR WORDS").mwBadge()
 
-            if top.isEmpty {
+            if !textStatsReady {
+                Text("Computing…").font(MW.monoSm).foregroundStyle(MW.textMuted)
+            } else if top.isEmpty {
                 Text("Not enough data").font(MW.monoSm).foregroundStyle(MW.textMuted)
             } else {
                 ForEach(top, id: \.word) { item in
@@ -339,19 +406,19 @@ struct StatisticsView: View {
         }
         .padding(MW.sp16)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(MW.surface)
-        .overlay(Rectangle().stroke(MW.border, lineWidth: MW.hairline))
+        .mwCard(radius: MW.rSmall, elevation: .flat)
     }
 
-    // MARK: - Filler Words
+    // MARK: - Filler Words (cache-backed)
 
     private var fillerSection: some View {
-        let text = current.map(\.text).joined(separator: " ")
-        let fillers = TextAnalyzer.fillerWords(in: text)
+        let fillers = fillersCache
         return VStack(alignment: .leading, spacing: MW.sp8) {
             Text("FILLER WORDS").mwBadge()
 
-            if fillers.isEmpty {
+            if !textStatsReady {
+                Text("Computing…").font(MW.monoSm).foregroundStyle(MW.textMuted)
+            } else if fillers.isEmpty {
                 Text("No fillers detected").font(MW.monoSm).foregroundStyle(MW.textMuted)
             } else {
                 FlowLayout(spacing: 6) {
@@ -368,9 +435,34 @@ struct StatisticsView: View {
         }
         .padding(MW.sp16)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(MW.surface)
-        .overlay(Rectangle().stroke(MW.border, lineWidth: MW.hairline))
+        .mwCard(radius: MW.rSmall, elevation: .flat)
     }
+
+    /// Recompute text analyses off the main thread. Runs on first appear, and
+    /// whenever the period or dataset size changes. The heavy string-join +
+    /// word-counting (multi-MB on 3k+ items) no longer blocks the render path.
+    private func recomputeTextStats() async {
+        let period = selectedPeriod
+        let items = allItems
+        let task = Task.detached(priority: .utility) { () -> ([Ref], [Ref]) in
+            let filtered = period.filter(items)
+            let text = filtered.map(\.text).joined(separator: " ")
+            let top = TextAnalyzer.wordFrequency(in: text, top: 10)
+                .map { Ref(word: $0.word, count: $0.count) }
+            let fill = TextAnalyzer.fillerWords(in: text)
+                .map { Ref(word: $0.word, count: $0.count) }
+            return (top, fill)
+        }
+        let (top, fill) = await task.value
+        await MainActor.run {
+            self.topWordsCache = top.map { ($0.word, $0.count) }
+            self.fillersCache = fill.map { ($0.word, $0.count) }
+            self.textStatsReady = true
+        }
+    }
+
+    /// Sendable tuple for cross-actor transfer.
+    private struct Ref: Sendable { let word: String; let count: Int }
 
     // MARK: - Auto-Corrections
 
@@ -402,8 +494,7 @@ struct StatisticsView: View {
         }
         .padding(MW.sp16)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .background(MW.surface)
-        .overlay(Rectangle().stroke(MW.border, lineWidth: MW.hairline))
+        .mwCard(radius: MW.rSmall, elevation: .flat)
     }
 
     // MARK: - Records
@@ -440,8 +531,7 @@ struct StatisticsView: View {
         }
         .padding(MW.sp24)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .background(MW.surface)
-        .overlay(Rectangle().stroke(MW.border, lineWidth: MW.hairline))
+        .mwCard(radius: MW.rSmall, elevation: .flat)
     }
 
     private func recordItem(_ label: String, _ value: String) -> some View {
@@ -481,12 +571,16 @@ struct StatisticsView: View {
     private func sharePeriodStats() {
         let s = PeriodStats(current)
         let period = selectedPeriod == .allTime ? "All Time" : selectedPeriod.label
+        // Filler % computed on-demand from the async-cached fillersCache so we
+        // don't trigger a fresh O(N) text scan on the share path either.
+        let fillerCount = fillersCache.reduce(0) { $0 + $1.count }
+        let fillerPct: Double = s.words > 0 ? Double(fillerCount) / Double(s.words) * 100 : 0
         let text = """
         MetaWhisp Stats (\(period))
         Transcriptions: \(s.count) | Translations: \(translationsCount)
         Words: \(s.words) | Avg: \(s.avgWords)/transcription | WPM: \(wpm)
         Audio: \(StatFormatters.duration(s.audio)) | Saved: \(StatFormatters.duration(s.saved))
-        Filler words: \(String(format: "%.1f%%", s.fillerPct)) of speech
+        Filler words: \(String(format: "%.1f%%", fillerPct)) of speech
         Streak: \(streakDays) days | Best streak: \(longestStreak) days
         """
         NSPasteboard.general.clearContents()
@@ -503,29 +597,48 @@ private struct BigMetricTile: View {
     var isSelected: Bool = false
 
     var body: some View {
-        VStack(alignment: .leading, spacing: MW.sp4) {
-            Text(value).font(MW.monoTitle).foregroundStyle(MW.textPrimary)
+        VStack(alignment: .leading, spacing: MW.sp6) {
+            Text(label.uppercased())
+                .font(MW.label).tracking(1.0)
+                .foregroundStyle(MW.textMuted)
                 .lineLimit(1)
-            HStack(spacing: 4) {
-                Text(label).mwBadge().lineLimit(1)
-                if let unit {
-                    Text(unit.uppercased()).font(MW.monoSm).foregroundStyle(MW.textMuted).lineLimit(1)
-                }
+            // Numbers — monospace for tabular alignment across a row of stats.
+            Text(value)
+                .font(MW.dataLarge)
+                .foregroundStyle(MW.textPrimary)
+                .lineLimit(1)
+                .minimumScaleFactor(0.7)
+            if let unit {
+                Text(unit)
+                    .font(MW.monoSm)
+                    .foregroundStyle(MW.textMuted)
+                    .lineLimit(1)
             }
         }
         .padding(MW.sp16)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .frame(height: 80)
+        .frame(maxWidth: .infinity, minHeight: 96, alignment: .leading)
         .contentShape(Rectangle())
-        .background(isSelected ? MW.elevated : MW.surface)
-        .overlay(
-            HStack(spacing: 0) {
+        .background {
+            ZStack {
+                RoundedRectangle(cornerRadius: MW.rSmall, style: .continuous)
+                    .fill(.thinMaterial)
                 if isSelected {
-                    Rectangle().fill(MW.textPrimary).frame(width: 2)
+                    RoundedRectangle(cornerRadius: MW.rSmall, style: .continuous)
+                        .fill(Color.primary.opacity(0.10))
                 }
-                Spacer(minLength: 0)
+                RoundedRectangle(cornerRadius: MW.rSmall, style: .continuous)
+                    .strokeBorder(
+                        LinearGradient(colors: [Color.white.opacity(0.30),
+                                                Color.white.opacity(0.04),
+                                                Color.white.opacity(0)],
+                                       startPoint: .top, endPoint: .center),
+                        lineWidth: 1
+                    )
+                    .blendMode(.overlay)
+                RoundedRectangle(cornerRadius: MW.rSmall, style: .continuous)
+                    .strokeBorder(Color.primary.opacity(isSelected ? 0.20 : 0.08), lineWidth: 0.5)
             }
-        )
-        .overlay(Rectangle().stroke(isSelected ? MW.borderLight : MW.border, lineWidth: MW.hairline))
+        }
+        .clipShape(RoundedRectangle(cornerRadius: MW.rSmall, style: .continuous))
     }
 }

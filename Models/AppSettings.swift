@@ -27,7 +27,38 @@ final class AppSettings: ObservableObject {
 
     // Meeting recording
     @AppStorage("meetingRecordingEnabled") var meetingRecordingEnabled: Bool = false
+    /// Show notification when a call (Zoom / Meet / Teams / …) is detected.
+    /// Wired in AppDelegate via `ScreenContextService.onCallContext` hook (ITER-002).
     @AppStorage("autoDetectCalls") var autoDetectCalls: Bool = false
+    /// When ON: auto-start recording 5s after call detection (requires `autoDetectCalls` ON).
+    @AppStorage("callsAutoStartEnabled") var callsAutoStartEnabled: Bool = false
+    /// Hard cap on meeting recording duration. After N minutes, force-stop with notification.
+    /// Layered defense for the "7-hour zombie recording" bug (ITER-012). Default 4h.
+    @AppStorage("meetingMaxDurationMinutes") var meetingMaxDurationMinutes: Double = 240
+    /// Silence backstop. If `MeetingRecorder.audioLevel` stays below threshold for N minutes
+    /// consecutively, auto-stop. Catches "Chrome tab still open after meeting ended" case.
+    /// Default 3 min — enough to span natural conversation pauses without false-stopping.
+    @AppStorage("meetingSilenceStopMinutes") var meetingSilenceStopMinutes: Double = 3
+    /// When ON: post a notification ~8s after meeting stops, summarising title + extracted
+    /// tasks/memories. Click → opens Library tab.
+    @AppStorage("meetingRecapNotifications") var meetingRecapNotifications: Bool = true
+
+    /// ITER-019 — Live advice during meeting recording. Periodically transcribes
+    /// the last 30s of audio and feeds it to AdviceService for realtime hints
+    /// ("contradiction with prior call", "matches a memory from last week"). Pro only.
+    /// Off by default — opt-in because it costs ~$0.05 per hour-long meeting.
+    @AppStorage("liveMeetingAdviceEnabled") var liveMeetingAdviceEnabled: Bool = false
+
+    // ITER-015 — Proactive surfacing. Opt-in. Silently surfaces a peripheral chip
+    // with 2-3 relevant memories / past decisions / pending tasks while user is
+    // composing a reply in another app. Not a notification — NSWindow-based chip.
+    @AppStorage("proactiveEnabled") var proactiveEnabled: Bool = false
+    /// Minimum gap between chip surfaces. Lower = more useful but more intrusive.
+    /// Default 5 min balances usefulness against annoyance.
+    @AppStorage("proactiveCooldownMinutes") var proactiveCooldownMinutes: Double = 5
+    /// Apps where proactive chip is DISABLED (comma-separated bundle-ids or display names).
+    /// Sensitive apps like 1Password, Keychain, Terminal are banned by default.
+    @AppStorage("proactiveBlacklist") var proactiveBlacklist: String = "1Password,Keychain Access,Terminal,iTerm,Activity Monitor,System Settings"
 
     // Screen context
     @AppStorage("screenContextEnabled") var screenContextEnabled: Bool = false
@@ -38,6 +69,18 @@ final class AppSettings: ObservableObject {
     // AI Advice
     @AppStorage("adviceEnabled") var adviceEnabled: Bool = false
     @AppStorage("adviceInterval") var adviceInterval: Double = 900 // seconds (15 min)
+    /// ITER-022 G4 — Coach mode. When ON, advice prompt switches to a more
+    /// direct accountability tone (commitment tracking, pattern callouts).
+    /// Still NOT generic wellness or therapy. Opt-in by design — default Off.
+    @AppStorage("adviceCoachMode") var adviceCoachMode: Bool = false
+
+    /// ITER-022 G5 — Weekly cross-conversation pattern digest. When ON, runs
+    /// every Sunday (default 18:00) over the past 7 days of conversations +
+    /// memories + tasks. Surfaces recurring themes / people / stuck loops /
+    /// cross-context insights that aren't visible in any single meeting.
+    @AppStorage("weeklyPatternsEnabled") var weeklyPatternsEnabled: Bool = false
+    /// Hour of day (0-23) at which the weekly digest fires. Default Sunday 18:00.
+    @AppStorage("weeklyPatternsHour") var weeklyPatternsHour: Int = 18
 
     // Memories — independent from advice (spec://iterations/ITER-001#architecture.settings)
     @AppStorage("memoriesEnabled") var memoriesEnabled: Bool = false
@@ -49,6 +92,10 @@ final class AppSettings: ObservableObject {
     // Screen extraction — hourly batch analysis of ScreenContext → ScreenObservation (spec://BACKLOG#Phase2.R1)
     @AppStorage("screenExtractionEnabled") var screenExtractionEnabled: Bool = true
     @AppStorage("screenExtractionInterval") var screenExtractionInterval: Double = 3600  // seconds (1 hour)
+
+    // Realtime screen reaction — per-window LLM check for actionable tasks (spec://iterations/ITER-006).
+    // Off by default: Pro-only, adds LLM cost. User opts in for real-time task surfacing.
+    @AppStorage("realtimeScreenReactionEnabled") var realtimeScreenReactionEnabled: Bool = false
 
     // File Indexing — scan user-picked folders + extract memories from text files (spec://BACKLOG#Phase3.E1)
     @AppStorage("fileIndexingEnabled") var fileIndexingEnabled: Bool = false
@@ -78,6 +125,13 @@ final class AppSettings: ObservableObject {
     @AppStorage("ttsCloudEnabled") var ttsCloudEnabled: Bool = false
     /// Cloud voice id (alloy / echo / fable / onyx / nova / shimmer). Default "nova" (warm female).
     @AppStorage("ttsCloudVoice") var ttsCloudVoice: String = "nova"
+
+    // Daily Summary (spec://iterations/ITER-009-daily-summary)
+    @AppStorage("dailySummaryEnabled") var dailySummaryEnabled: Bool = true
+    /// Hour (0-23) in local time when the recap fires. Default 22 = 10 PM.
+    @AppStorage("dailySummaryHour") var dailySummaryHour: Int = 22
+    /// Minute (0-59) at the scheduled hour. Default 0.
+    @AppStorage("dailySummaryMinute") var dailySummaryMinute: Int = 0
 
     /// Parsed list of scanned folder paths.
     var indexedFolders: [String] {

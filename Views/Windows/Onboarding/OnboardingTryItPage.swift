@@ -171,7 +171,7 @@ struct OnboardingTryItPage: View {
                 }
                 .frame(maxWidth: .infinity, minHeight: 50, alignment: .topLeading)
                 .padding(16)
-                .background(MW.surface)
+                .mwCard(radius: MW.rSmall, elevation: .flat)
                 .overlay(RoundedRectangle(cornerRadius: 8).stroke(MW.idle.opacity(0.3), lineWidth: 1))
                 .clipShape(RoundedRectangle(cornerRadius: 8))
             }

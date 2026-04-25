@@ -29,8 +29,7 @@ struct MetricCardView: View {
         }
         .frame(maxWidth: .infinity)
         .padding(MW.sp16)
-        .background(MW.surface)
-        .overlay(Rectangle().stroke(MW.border, lineWidth: MW.hairline))
+        .mwCard(radius: MW.rSmall, elevation: .flat)
     }
 
     private func deltaColor(_ d: Double) -> Color {
@@ -63,9 +62,23 @@ struct FlowLayout: Layout {
     }
 }
 
-/// Aggregated stats for a set of history items.
+/// Aggregated stats for a set of history items. Pure O(N) sums — NO text analysis.
+///
+/// PERFORMANCE NOTE (root cause of Dashboard freeze, 2026-04-25):
+/// This init is called by `StatisticsView.stats` AND by every computed property
+/// that derives from it (`wpm`, `words`, `audio`, etc.). SwiftUI re-evaluates
+/// these on every render frame. Previously the init also computed
+/// `TextAnalyzer.fillerCount(...)` on the joined text of ALL items (3500+ rows
+/// × avg 50 chars = ~177KB string scanned through the filler word list with
+/// `String.range(of:)` for each word — multi-million Unicode comparisons per render).
+/// Sample profiling caught it: 1187/1567 main-thread samples sat in `_stringCompareInternal`
+/// inside `TextAnalyzer.fillerWords` triggered from `wpm.getter`.
+///
+/// Fix: drop fillerPct from this struct. The single place that needs it
+/// (`StatisticsView` share text, line 541) computes it on-demand from the
+/// already-cached `fillersCache: [(word, count)]` populated asynchronously.
 struct PeriodStats {
-    let count: Int, words: Int, audio: Double, saved: Double, avgWords: Int, fillerPct: Double
+    let count: Int, words: Int, audio: Double, saved: Double, avgWords: Int
     init(_ items: [HistoryItem]) {
         count = items.count; words = items.reduce(0) { $0 + $1.wordCount }
         audio = items.reduce(0) { $0 + $1.audioDuration }
@@ -73,8 +86,6 @@ struct PeriodStats {
         let actualTime = audio + items.reduce(0) { $0 + $1.processingTime }
         saved = max(0, typingTime - actualTime)
         avgWords = count > 0 ? words / count : 0
-        let fc = Double(TextAnalyzer.fillerCount(in: items.map(\.text).joined(separator: " ")))
-        fillerPct = words > 0 ? fc / Double(words) * 100 : 0
     }
 }
 

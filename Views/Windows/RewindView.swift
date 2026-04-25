@@ -239,8 +239,7 @@ struct RewindView: View {
             if isExpanded { expandedDetails(obs).padding(.leading, 80) }
         }
         .padding(12)
-        .background(MW.surface)
-        .overlay(Rectangle().stroke(MW.border, lineWidth: MW.hairline))
+        .mwCard(radius: MW.rSmall, elevation: .flat)
         .contentShape(Rectangle())
         .onTapGesture {
             if isExpanded { expandedIds.remove(obs.id) } else { expandedIds.insert(obs.id) }
@@ -351,7 +350,7 @@ struct RewindView: View {
             .font(MW.label).tracking(0.5)
             .foregroundStyle(focus == "focused" ? MW.textSecondary : MW.textMuted)
             .padding(.horizontal, 5).padding(.vertical, 1)
-            .overlay(Rectangle().stroke(MW.border, lineWidth: MW.hairline))
+            .overlay(RoundedRectangle(cornerRadius: MW.rSmall, style: .continuous).stroke(MW.border, lineWidth: 0.5))
     }
 
     private func categoryChip(_ category: String) -> some View {

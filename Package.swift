@@ -19,11 +19,12 @@ let package = Package(
                 "Sparkle",
             ],
             path: ".",
-            exclude: ["Package.swift", "Resources"],
+            exclude: ["Package.swift", "Resources", "mockup-liquid-glass"],
             resources: [
                 .copy("Resources/Sounds"),
                 .process("Resources/mw_menubar.png"),
                 .process("Resources/mw_menubar@2x.png"),
+                .process("Resources/AppIcon.png"),
             ]
         ),
     ]

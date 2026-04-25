@@ -98,7 +98,7 @@ struct PermissionRow: View {
             }
         }
         .padding(14)
-        .background(MW.surface)
+        .mwCard(radius: MW.rSmall, elevation: .flat)
         .overlay(Rectangle().stroke(granted ? MW.idle.opacity(0.3) : MW.border, lineWidth: MW.hairline))
     }
 }

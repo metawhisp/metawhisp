@@ -27,16 +27,22 @@ struct ChatView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .onAppear { inputFocused = true }
+        // ITER-015 — accept pre-fill from the proactive chip (tap on item).
+        .onReceive(NotificationCenter.default.publisher(for: .proactivePrefillChat)) { notification in
+            if let q = notification.object as? String, !q.isEmpty {
+                inputText = q
+                inputFocused = true
+            }
+        }
     }
 
     // MARK: - Header
 
     private var header: some View {
         HStack {
-            Text("METACHAT")
-                .font(MW.monoLg)
+            Text("MetaChat")
+                .font(MW.monoTitle)
                 .foregroundStyle(MW.textPrimary)
-                .tracking(2)
             Spacer()
             if !messages.isEmpty {
                 Button(action: clearHistory) {
@@ -44,7 +50,7 @@ struct ChatView: View {
                         .font(MW.label).tracking(0.6)
                         .foregroundStyle(MW.textMuted)
                         .padding(.horizontal, 8).padding(.vertical, 4)
-                        .overlay(Rectangle().stroke(MW.border, lineWidth: MW.hairline))
+                        .overlay(RoundedRectangle(cornerRadius: MW.rSmall, style: .continuous).stroke(MW.border, lineWidth: 0.5))
                 }
                 .buttonStyle(.plain)
             }
@@ -97,6 +103,13 @@ struct ChatView: View {
                 }
                 .padding(16)
             }
+            .onAppear {
+                // On first open, jump to the latest message without animation —
+                // onChange below only fires on subsequent count changes, not initial load.
+                if let last = messages.last {
+                    proxy.scrollTo(last.id, anchor: .bottom)
+                }
+            }
             .onChange(of: messages.count) {
                 if let last = messages.last {
                     withAnimation(.easeOut(duration: 0.2)) {
@@ -126,14 +139,77 @@ struct ChatView: View {
                         .padding(10)
                         .overlay(Rectangle().stroke(Color.red.opacity(0.3), lineWidth: MW.hairline))
                 } else {
-                    Text(msg.text)
-                        .font(MW.mono)
-                        .foregroundStyle(MW.textPrimary)
-                        .padding(10)
-                        .background(isUser ? MW.elevated : MW.surface)
-                        .overlay(Rectangle().stroke(MW.border, lineWidth: MW.hairline))
-                        .frame(maxWidth: 520, alignment: isUser ? .trailing : .leading)
-                        .textSelection(.enabled)
+                    VStack(alignment: .leading, spacing: 6) {
+                        if !msg.text.isEmpty {
+                            Text(msg.text)
+                                .font(MW.mono)
+                                .foregroundStyle(MW.textPrimary)
+                                .textSelection(.enabled)
+                        }
+                        // ITER-016 — pending tool-call confirm bubble.
+                        if let preview = msg.pendingToolPreview, msg.pendingToolCallJSON != nil {
+                            Divider().background(MW.border)
+                            Text(preview)
+                                .font(MW.monoSm)
+                                .foregroundStyle(MW.textSecondary)
+                            HStack(spacing: 8) {
+                                Button {
+                                    AppDelegate.shared?.chatService.confirmTool(messageId: msg.id)
+                                } label: {
+                                    Text("YES, DO IT")
+                                        .font(MW.label).tracking(0.6)
+                                        .foregroundStyle(MW.textPrimary)
+                                        .padding(.horizontal, 8).padding(.vertical, 4)
+                                        .overlay(RoundedRectangle(cornerRadius: MW.rSmall, style: .continuous).stroke(MW.border, lineWidth: 0.5))
+                                }
+                                .buttonStyle(.plain)
+                                Button {
+                                    AppDelegate.shared?.chatService.cancelTool(messageId: msg.id)
+                                } label: {
+                                    Text("CANCEL")
+                                        .font(MW.label).tracking(0.6)
+                                        .foregroundStyle(MW.textMuted)
+                                        .padding(.horizontal, 8).padding(.vertical, 4)
+                                        .overlay(RoundedRectangle(cornerRadius: MW.rSmall, style: .continuous).stroke(MW.border, lineWidth: 0.5))
+                                }
+                                .buttonStyle(.plain)
+                            }
+                        } else if let result = msg.toolResultSummary, !result.isEmpty {
+                            // Tool already executed — show outcome line + (when within
+                            // the 60s window) an Undo button. Wrapping in TimelineView
+                            // re-evaluates `undoVisible` every 5s so the button vanishes
+                            // automatically when the window expires (without a chat re-render).
+                            Divider().background(MW.border)
+                            TimelineView(.periodic(from: .now, by: 5)) { _ in
+                                HStack(alignment: .center, spacing: 6) {
+                                    Text(result)
+                                        .font(MW.monoSm)
+                                        .foregroundStyle(
+                                            result.hasPrefix("✓") ? MW.textSecondary :
+                                            result.hasPrefix("↩︎") ? MW.textMuted :
+                                            Color.red.opacity(0.85)
+                                        )
+                                    Spacer()
+                                    if undoVisible(for: msg) {
+                                        Button {
+                                            AppDelegate.shared?.chatService.undoTool(messageId: msg.id)
+                                        } label: {
+                                            Text("UNDO")
+                                                .font(MW.label).tracking(0.6)
+                                                .foregroundStyle(MW.textSecondary)
+                                                .padding(.horizontal, 6).padding(.vertical, 2)
+                                                .overlay(RoundedRectangle(cornerRadius: 3, style: .continuous).stroke(MW.border, lineWidth: 0.5))
+                                        }
+                                        .buttonStyle(.plain)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    .padding(10)
+                    .background(isUser ? MW.elevated : MW.surface)
+                    .overlay(RoundedRectangle(cornerRadius: MW.rSmall, style: .continuous).stroke(MW.border, lineWidth: 0.5))
+                    .frame(maxWidth: 520, alignment: isUser ? .trailing : .leading)
                 }
                 Text(msg.createdAt.formatted(date: .omitted, time: .shortened))
                     .font(MW.monoSm)
@@ -149,8 +225,7 @@ struct ChatView: View {
             TypingDots()
                 .padding(.horizontal, 12)
                 .padding(.vertical, 10)
-                .background(MW.surface)
-                .overlay(Rectangle().stroke(MW.border, lineWidth: MW.hairline))
+                .mwCard(radius: MW.rSmall, elevation: .flat)
             Spacer(minLength: 40)
         }
     }
@@ -173,7 +248,7 @@ struct ChatView: View {
                     .textFieldStyle(.plain)
                     .lineLimit(1...5)
                     .padding(10)
-                    .overlay(Rectangle().stroke(MW.border, lineWidth: MW.hairline))
+                    .overlay(RoundedRectangle(cornerRadius: MW.rSmall, style: .continuous).stroke(MW.border, lineWidth: 0.5))
                     .focused($inputFocused)
                     .onSubmit { submit() }
                 .accessibilityLabel("MetaChat input")
@@ -189,7 +264,7 @@ struct ChatView: View {
                 }
                 .buttonStyle(.plain)
                 .padding(.horizontal, 12).padding(.vertical, 8)
-                .overlay(Rectangle().stroke(MW.border, lineWidth: MW.hairline))
+                .overlay(RoundedRectangle(cornerRadius: MW.rSmall, style: .continuous).stroke(MW.border, lineWidth: 0.5))
                 .disabled(isSending || inputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 .keyboardShortcut(.return, modifiers: [.command])
             }
@@ -222,6 +297,19 @@ struct ChatView: View {
 
     private func clearHistory() {
         AppDelegate.shared?.chatService.clearHistory()
+    }
+
+    /// ITER-016 v2 — Undo button visibility:
+    /// Show only when (a) message has a tool_result, (b) result wasn't already
+    /// reverted (text doesn't start with ↩︎ or ✗), (c) we have a real execution
+    /// timestamp, (d) within the 60s window computed against THAT timestamp
+    /// (not `createdAt` — user may sit on confirm bubble for minutes).
+    private func undoVisible(for msg: ChatMessage) -> Bool {
+        guard let result = msg.toolResultSummary, !result.isEmpty else { return false }
+        guard !result.hasPrefix("↩︎") else { return false }
+        guard !result.hasPrefix("✗") else { return false }
+        guard let executedAt = msg.toolExecutedAt else { return false }
+        return Date().timeIntervalSince(executedAt) <= 60
     }
 }
 

@@ -280,20 +280,15 @@ final class TranscriptionCoordinator: ObservableObject {
             }
 
             // Save to history (with processed text if available).
-            // Keep the saved item reference so downstream triggers can link back via transcriptId + conversationId.
-            var savedItemId: UUID? = nil
-            var savedConvId: UUID? = nil
             if let hs = historyService {
                 let item = hs.save(result)
                 item?.processedText = processedText
                 item?.translatedTo = shouldTranslate ? settings.translateTo : nil
                 item?.modelName = settings.selectedModel
                 item?.source = audioSourceLabel
-                savedItemId = item?.id
                 // Assign to Conversation (C1.1) — sets conversationId on the item.
                 if let item {
                     conversationGrouper?.assign(historyItem: item)
-                    savedConvId = item.conversationId
                 }
             }
 
@@ -327,12 +322,10 @@ final class TranscriptionCoordinator: ObservableObject {
                 if autoPasted { correctionMonitor?.startMonitoring(pastedText: finalText) }
             }
 
-            // Fire memory + task triggers on meaningful transcripts (≥20 chars).
-            // Both now carry conversationId FK so downstream records link back to the Conversation (C1.3).
-            if finalText.count >= 20 {
-                memoryExtractor?.triggerOnTranscription(text: finalText, source: audioSourceLabel, conversationId: savedConvId)
-                taskExtractor?.triggerOnTranscription(text: finalText, source: audioSourceLabel, transcriptId: savedItemId, conversationId: savedConvId)
-            }
+            // Memory + task extractors no longer fire per-transcript. They run once on
+            // conversation close (via ConversationGrouper.scheduleOnClose) so the LLM sees
+            // the whole conversation context — needed for resolution, assignee filter, dedup.
+            // spec://BACKLOG#B1
 
             soundService.playSuccess()
             stage = .idle

@@ -39,7 +39,7 @@ struct AppPickerView: View {
                     .foregroundStyle(MW.textPrimary)
             }
             .padding(.horizontal, 16).padding(.vertical, 10)
-            .background(MW.surface)
+            .mwCard(radius: MW.rSmall, elevation: .flat)
 
             Rectangle().fill(MW.border).frame(height: MW.hairline)
 

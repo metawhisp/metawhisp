@@ -26,6 +26,8 @@ struct MainWindowView: View {
     enum SidebarTab: String, CaseIterable, Identifiable {
         case dashboard = "Dashboard"
         case library = "Library"
+        case projects = "Projects"
+        case goals = "Goals"
         case tasks = "Tasks"
         case chat = "MetaChat"
         case dictionary = "Dictionary"
@@ -37,6 +39,8 @@ struct MainWindowView: View {
             switch self {
             case .dashboard: "gauge.with.dots.needle.33percent"
             case .library: "books.vertical"
+            case .projects: "folder.badge.person.crop"
+            case .goals: "target"
             case .tasks: "checklist"
             case .chat: "message"
             case .dictionary: "character.book.closed"
@@ -46,16 +50,23 @@ struct MainWindowView: View {
     }
 
     var body: some View {
-        HStack(spacing: 0) {
-            // Custom dark sidebar
-            sidebar
-            // Separator
-            Rectangle().fill(MW.border).frame(width: MW.hairline)
-            // Detail
-            detailContent
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
+        ZStack {
+            // Hero color wash — gives the glass materials something to refract.
+            // Without this the whole window reads as flat gray.
+            heroBackground
+                .ignoresSafeArea()
+
+            HStack(spacing: 0) {
+                sidebar
+                    .frame(width: 200)
+                    .padding(.leading, 12)
+                    .padding(.vertical, 12)
+
+                detailContent
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .padding(.leading, 4)
+            }
         }
-        .background(MW.bg)
         .modelContainer(historyService.modelContainer)
         .onReceive(NotificationCenter.default.publisher(for: .switchMainTab)) { notification in
             if let tab = notification.object as? SidebarTab {
@@ -64,64 +75,82 @@ struct MainWindowView: View {
         }
     }
 
-    // MARK: - Custom Sidebar
+    private var heroBackground: some View {
+        LinearGradient(
+            colors: MW.isDark
+                ? [Color(w: 0.10), Color(w: 0.04)]
+                : [Color(w: 0.97), Color(w: 0.92)],
+            startPoint: .top,
+            endPoint: .bottom
+        )
+    }
+
+    // MARK: - Custom Sidebar (glass)
 
     private var sidebar: some View {
-        VStack(alignment: .leading, spacing: 2) {
-            // Logo header
-            Text("MW")
-                .font(MW.monoTitle)
-                .foregroundStyle(MW.textPrimary)
-                .tracking(2)
-                .padding(.horizontal, 16)
-                .padding(.top, 14)
-                .padding(.bottom, 12)
+        VStack(alignment: .leading, spacing: 0) {
+            // Brand: real app icon + wordmark.
+            HStack(spacing: 10) {
+                Image(nsImage: NSImage(named: "AppIcon") ?? NSApp.applicationIconImage)
+                    .resizable()
+                    .interpolation(.high)
+                    .aspectRatio(contentMode: .fit)
+                    .frame(width: 30, height: 30)
+                Text("MetaWhisp")
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(MW.textPrimary)
+                Spacer()
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 12)
 
-            Rectangle().fill(MW.border).frame(height: MW.hairline)
-                .padding(.bottom, 8)
+            GlassDivider().padding(.horizontal, 8).padding(.bottom, 6)
 
             // Tab items
-            ForEach(SidebarTab.allCases) { tab in
-                sidebarItem(tab)
+            VStack(spacing: 2) {
+                ForEach(SidebarTab.allCases) { tab in
+                    sidebarItem(tab)
+                }
             }
+            .padding(.horizontal, 6)
 
             Spacer()
 
-            // Version at bottom
-            Rectangle().fill(MW.border).frame(height: MW.hairline)
+            // Version
             Text("v0.0.1")
                 .font(MW.monoSm)
-                .foregroundStyle(MW.textMuted)
-                .padding(.horizontal, 16)
-                .padding(.vertical, 8)
+                .foregroundStyle(MW.textDim)
+                .padding(.horizontal, 14)
+                .padding(.vertical, 10)
         }
-        .frame(width: 170)
-        .background(MW.surface)
+        .mwCard(radius: MW.rLarge, elevation: .hero)
     }
 
     private func sidebarItem(_ tab: SidebarTab) -> some View {
         Button {
             selectedTab = tab
         } label: {
-            HStack(spacing: 8) {
+            HStack(spacing: 10) {
                 Image(systemName: tab.icon)
-                    .font(.system(size: 11, weight: .medium))
-                    .frame(width: 16)
-                Text(tab.rawValue.uppercased())
-                    .font(MW.label)
-                    .tracking(0.8)
+                    .font(.system(size: 13, weight: .medium))
+                    .frame(width: 18, height: 18)
+                Text(tab.rawValue)
+                    .font(.system(size: 13, weight: .medium))
                 Spacer()
             }
-            .foregroundStyle(selectedTab == tab ? MW.textPrimary : MW.textMuted)
-            .padding(.horizontal, 14)
+            .foregroundStyle(selectedTab == tab ? MW.textPrimary : MW.textSecondary)
+            .padding(.horizontal, 12)
             .padding(.vertical, 8)
-            .background(selectedTab == tab ? Color.white.opacity(0.06) : .clear)
-            .overlay(
-                Rectangle()
-                    .fill(selectedTab == tab ? Color.white.opacity(0.5) : .clear)
-                    .frame(width: 2),
-                alignment: .leading
-            )
+            .background {
+                if selectedTab == tab {
+                    RoundedRectangle(cornerRadius: MW.rSmall, style: .continuous)
+                        .fill(Color.primary.opacity(0.10))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: MW.rSmall, style: .continuous)
+                                .strokeBorder(Color.primary.opacity(0.16), lineWidth: 0.5)
+                        )
+                }
+            }
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -134,6 +163,10 @@ struct MainWindowView: View {
             DashboardView(coordinator: coordinator)
         case .library:
             LibraryView()
+        case .projects:
+            ProjectsView()
+        case .goals:
+            GoalsView()
         case .tasks:
             TasksView()
         case .chat:

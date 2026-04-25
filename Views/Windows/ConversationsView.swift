@@ -19,6 +19,9 @@ struct ConversationsView: View {
 
     @State private var selectedFilter: Filter = .all
     @State private var expandedIds: Set<UUID> = []
+    /// ITER-021 — when non-nil, the list is replaced by `ConversationDetailView`
+    /// for that conversation. Tap row to push, click BACK to pop.
+    @State private var openedDetailId: UUID?
 
     @Environment(\.modelContext) private var modelContext
 
@@ -31,18 +34,50 @@ struct ConversationsView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            header
-            Rectangle().fill(MW.border).frame(height: MW.hairline)
-            filterBar
-            Rectangle().fill(MW.border).frame(height: MW.hairline)
-
-            if filtered.isEmpty {
-                emptyState
+            // ITER-021 — when a conversation is opened, swap the list for the
+            // dedicated detail view. Keep navigation state local (not pushing
+            // through SwiftUI NavigationStack) so this view continues to work
+            // inside the existing tab container without restructure.
+            if let detailId = openedDetailId {
+                detailHeader
+                Rectangle().fill(MW.border).frame(height: MW.hairline)
+                ConversationDetailView(conversationId: detailId)
             } else {
-                conversationList
+                header
+                Rectangle().fill(MW.border).frame(height: MW.hairline)
+                filterBar
+                Rectangle().fill(MW.border).frame(height: MW.hairline)
+
+                if filtered.isEmpty {
+                    emptyState
+                } else {
+                    conversationList
+                }
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+    }
+
+    /// Header for the detail mode — BACK button + breadcrumb. Replaces the
+    /// regular Conversations header while a detail is open.
+    private var detailHeader: some View {
+        HStack(spacing: 8) {
+            Button {
+                openedDetailId = nil
+            } label: {
+                HStack(spacing: 4) {
+                    Image(systemName: "chevron.left").font(.system(size: 11))
+                    Text("CONVERSATIONS").font(MW.label).tracking(0.6)
+                }
+                .foregroundStyle(MW.textSecondary)
+                .padding(.horizontal, 8).padding(.vertical, 4)
+                .overlay(RoundedRectangle(cornerRadius: MW.rSmall, style: .continuous).stroke(MW.border, lineWidth: 0.5))
+            }
+            .buttonStyle(.plain)
+            Spacer()
+        }
+        .padding(.horizontal, 20)
+        .padding(.vertical, 10)
     }
 
     // MARK: - Header
@@ -151,7 +186,9 @@ struct ConversationsView: View {
 
     @ViewBuilder
     private func conversationRow(_ conv: Conversation) -> some View {
-        let isExpanded = expandedIds.contains(conv.id)
+        // ITER-021 — primary tap pushes to ConversationDetailView (full transcript
+        // + structured summary + linked items). Inline expand kept for option-click
+        // as a quick peek; users who don't know about it just go to detail.
         VStack(alignment: .leading, spacing: 8) {
             HStack(alignment: .top, spacing: 10) {
                 Image(systemName: conv.emoji ?? fallbackIcon(for: conv))
@@ -171,27 +208,25 @@ struct ConversationsView: View {
                         }
                         Spacer()
                         meta(conv)
+                        // Affordance hint — tells the user the row is clickable.
+                        Image(systemName: "chevron.right")
+                            .font(.system(size: 10))
+                            .foregroundStyle(MW.textMuted)
                     }
                     if let overview = conv.overview, !overview.isEmpty {
                         Text(overview)
                             .font(MW.monoSm)
                             .foregroundStyle(MW.textSecondary)
-                            .lineLimit(isExpanded ? nil : 2)
+                            .lineLimit(2)
                     }
                 }
             }
-            if isExpanded {
-                expandedDetails(conv)
-                    .padding(.leading, 30)
-                    .padding(.top, 4)
-            }
         }
         .padding(12)
-        .background(MW.surface)
-        .overlay(Rectangle().stroke(MW.border, lineWidth: MW.hairline))
+        .mwCard(radius: MW.rSmall, elevation: .flat)
         .contentShape(Rectangle())
         .onTapGesture {
-            if isExpanded { expandedIds.remove(conv.id) } else { expandedIds.insert(conv.id) }
+            openedDetailId = conv.id
         }
     }
 
@@ -270,7 +305,7 @@ struct ConversationsView: View {
             .foregroundStyle(MW.textMuted)
             .padding(.horizontal, 5)
             .padding(.vertical, 1)
-            .overlay(Rectangle().stroke(MW.border, lineWidth: MW.hairline))
+            .overlay(RoundedRectangle(cornerRadius: MW.rSmall, style: .continuous).stroke(MW.border, lineWidth: 0.5))
     }
 
     @ViewBuilder

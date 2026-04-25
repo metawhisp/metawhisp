@@ -33,6 +33,9 @@ final class OnboardingWindowController {
         window.center()
         window.isReleasedWhenClosed = false
         window.level = .floating
+        // Same Space-fix as MainWindowController: bring the window TO the user, don't teleport
+        // them to a different Space on first launch.
+        window.collectionBehavior = [.moveToActiveSpace, .fullScreenAuxiliary]
 
         self.window = window
 

@@ -51,6 +51,174 @@ final class CalendarReaderService: ObservableObject {
         timerTask = nil
     }
 
+    // MARK: - ITER-018 — Conversation ↔ EKEvent linker
+
+    /// Link a single Conversation to the best-matching EKEvent in its time
+    /// neighborhood. No-op if calendar permission was never granted, or if
+    /// the conversation has no startedAt, or if no candidate scores above
+    /// threshold (0.5).
+    ///
+    /// Score = 0.6 × time-overlap-fraction + 0.4 × title-similarity (Jaccard
+    /// over lowercase tokens of length ≥ 3). Title weight is the secondary
+    /// signal because meeting titles drift between auto-generated structured
+    /// titles and the calendar event's actual subject.
+    ///
+    /// spec://iterations/ITER-018-calendar-cross-ref
+    func linkConversation(_ convId: UUID) async {
+        guard settings.calendarReaderEnabled else { return }
+        guard let container = modelContainer else { return }
+        // Cheap pre-check: if access was never granted, EKEventStore returns
+        // empty results — no point even fetching.
+        if #available(macOS 14.0, *) {
+            let status = EKEventStore.authorizationStatus(for: .event)
+            guard status == .fullAccess || status == .authorized else { return }
+        }
+
+        let ctx = ModelContext(container)
+        var convDesc = FetchDescriptor<Conversation>(predicate: #Predicate { $0.id == convId })
+        convDesc.fetchLimit = 1
+        guard let conv = (try? ctx.fetch(convDesc))?.first else { return }
+        // Skip if already linked (idempotent — backfill won't re-clobber a known link).
+        guard conv.calendarEventId == nil else { return }
+
+        let convStart = conv.startedAt
+        // Determine reasonable convEnd: last HistoryItem.createdAt for this conv,
+        // or finishedAt if set, or convStart + 30 min as fallback.
+        let convEnd: Date = {
+            if let f = conv.finishedAt { return f }
+            // Fetch latest HistoryItem.
+            var hd = FetchDescriptor<HistoryItem>(
+                predicate: #Predicate { $0.conversationId == convId },
+                sortBy: [SortDescriptor(\.createdAt, order: .reverse)]
+            )
+            hd.fetchLimit = 1
+            if let last = (try? ctx.fetch(hd))?.first {
+                return last.createdAt
+            }
+            return convStart.addingTimeInterval(30 * 60)
+        }()
+        // Padding window — we look 5 min before/after the conv span so that an
+        // event scheduled slightly before user actually started recording still matches.
+        let windowStart = convStart.addingTimeInterval(-5 * 60)
+        let windowEnd   = convEnd.addingTimeInterval(5 * 60)
+
+        let predicate = store.predicateForEvents(withStart: windowStart, end: windowEnd, calendars: nil)
+        let candidates = store.events(matching: predicate).filter { ev in
+            // Exclude declined / cancelled.
+            if ev.status == .canceled { return false }
+            if let me = ev.attendees?.first(where: { $0.isCurrentUser }),
+               me.participantStatus == .declined { return false }
+            return true
+        }
+        guard !candidates.isEmpty else { return }
+
+        // Score each candidate.
+        let convTitle = conv.title ?? ""
+        var best: (event: EKEvent, score: Double)?
+        for ev in candidates {
+            let evTitle = ev.title ?? ""
+            let timeScore = Self.timeOverlapFraction(
+                a: (convStart, convEnd),
+                b: (ev.startDate, ev.endDate)
+            )
+            let titleScore = Self.tokenJaccard(convTitle, evTitle)
+            let score = 0.6 * timeScore + 0.4 * titleScore
+            if best == nil || score > best!.score {
+                best = (ev, score)
+            }
+        }
+
+        guard let (matched, score) = best, score >= 0.5 else {
+            NSLog("[Calendar] no event match for conv %@ (best score %.2f)",
+                  convId.uuidString.prefix(8) as CVarArg, best?.score ?? 0)
+            return
+        }
+
+        // Save link snapshot.
+        conv.calendarEventId = matched.eventIdentifier
+        conv.calendarEventTitle = matched.title
+        conv.calendarEventStartDate = matched.startDate
+        conv.calendarEventEndDate = matched.endDate
+        let attendeeNames = (matched.attendees ?? []).compactMap { participant -> String? in
+            // Display name preferred, fall back to URL last component (email).
+            if let name = participant.name, !name.isEmpty { return name }
+            return participant.url.absoluteString.split(separator: ":").last.map(String.init)
+        }
+        conv.calendarAttendeesJSON = (try? String(data: JSONEncoder().encode(attendeeNames), encoding: .utf8)) ?? "[]"
+        conv.updatedAt = Date()
+        try? ctx.save()
+        NSLog("[Calendar] ✅ linked conv %@ → event '%@' (score %.2f)",
+              convId.uuidString.prefix(8) as CVarArg,
+              matched.title ?? "(untitled)", score)
+    }
+
+    /// Backfill: walk completed conversations missing a calendar link, attempt to
+    /// link each. Bounded to last 90 days to avoid scanning all history.
+    /// Called from AppDelegate on launch (after grant + after a small delay).
+    func backfillCalendarLinks() async {
+        guard settings.calendarReaderEnabled else { return }
+        guard let container = modelContainer else { return }
+        let ctx = ModelContext(container)
+        let cutoff = Date().addingTimeInterval(-90 * 24 * 3600)
+        var desc = FetchDescriptor<Conversation>(
+            predicate: #Predicate {
+                !$0.discarded
+                && $0.status == "completed"
+                && $0.calendarEventId == nil
+                && $0.startedAt >= cutoff
+            },
+            sortBy: [SortDescriptor(\.startedAt, order: .reverse)]
+        )
+        desc.fetchLimit = 200
+        let candidates = (try? ctx.fetch(desc)) ?? []
+        guard !candidates.isEmpty else {
+            NSLog("[Calendar] backfill links: nothing to do")
+            return
+        }
+        NSLog("[Calendar] backfill links: %d conversations to attempt", candidates.count)
+        var linked = 0
+        for conv in candidates {
+            await linkConversation(conv.id)
+            // After save the row's calendarEventId either set or still nil.
+            // Re-fetch for accurate counter — cheap on small results.
+            if conv.calendarEventId != nil { linked += 1 }
+            try? await Task.sleep(for: .milliseconds(20))
+        }
+        NSLog("[Calendar] backfill links: ✅ %d / %d linked", linked, candidates.count)
+    }
+
+    // MARK: - Linker scoring helpers (pure)
+
+    /// Returns [0...1] — fraction of conversation duration that overlaps with the event.
+    /// Falls back to a small reward (0.3) when the conv is zero-duration but lies inside
+    /// the event window — useful for very short recordings made mid-meeting.
+    static func timeOverlapFraction(a: (Date, Date), b: (Date, Date)) -> Double {
+        let (aStart, aEnd) = a
+        let (bStart, bEnd) = b
+        let overlapStart = max(aStart, bStart)
+        let overlapEnd = min(aEnd, bEnd)
+        let overlap = overlapEnd.timeIntervalSince(overlapStart)
+        let aDuration = max(1, aEnd.timeIntervalSince(aStart))
+        if overlap <= 0 { return 0 }
+        // Cap fraction at 1.0 — if conv is much shorter than event we still want full credit.
+        return min(1.0, overlap / aDuration)
+    }
+
+    /// Token Jaccard similarity over lowercase alphanum tokens of length ≥ 3.
+    /// Returns 0 when either side is empty or no overlap.
+    static func tokenJaccard(_ a: String, _ b: String) -> Double {
+        let tok = { (s: String) -> Set<String> in
+            Set(s.lowercased()
+                .components(separatedBy: CharacterSet.alphanumerics.inverted)
+                .filter { $0.count >= 3 })
+        }
+        let A = tok(a), B = tok(b)
+        if A.isEmpty || B.isEmpty { return 0 }
+        let inter = A.intersection(B).count
+        let uni = A.union(B).count
+        return uni == 0 ? 0 : Double(inter) / Double(uni)
+    }
+
     /// Request Calendar permission (macOS 14+ uses requestFullAccessToEvents).
     @discardableResult
     func requestAccess() async -> Bool {

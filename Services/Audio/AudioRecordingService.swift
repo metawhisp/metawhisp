@@ -195,6 +195,19 @@ final class AudioRecordingService: ObservableObject, AudioSource {
         self.isRecording = true
     }
 
+    /// ITER-019 — total samples accumulated so far. `LiveMeetingAdvisor` uses
+    /// this as the offset between periodic peeks. Cheap O(1).
+    var currentSampleCount: Int { samples.count }
+
+    /// ITER-019 — non-destructive read. Returns samples accumulated since `from`
+    /// (exclusive). Doesn't drain or modify the buffer — `stop()` still returns
+    /// the FULL recording for final transcription. Used by realtime partial transcribe.
+    func peekSamples(from index: Int) -> [Float] {
+        guard index < samples.count else { return [] }
+        let safeStart = max(0, index)
+        return Array(samples[safeStart..<samples.count])
+    }
+
     /// Stop recording and return the collected PCM samples.
     func stop() -> [Float] {
         engine?.inputNode.removeTap(onBus: 0)

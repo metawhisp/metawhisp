@@ -82,7 +82,7 @@ struct MemoriesView: View {
                         }
                         .foregroundStyle(MW.textSecondary)
                         .padding(.horizontal, 8).padding(.vertical, 4)
-                        .overlay(Rectangle().stroke(MW.border, lineWidth: MW.hairline))
+                        .overlay(RoundedRectangle(cornerRadius: MW.rSmall, style: .continuous).stroke(MW.border, lineWidth: 0.5))
                         .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
@@ -250,8 +250,7 @@ private struct MemoryRowView: View {
                 .foregroundStyle(MW.textPrimary)
         }
         .padding(10)
-        .background(MW.surface)
-        .overlay(Rectangle().stroke(MW.border, lineWidth: MW.hairline))
+        .mwCard(radius: MW.rSmall, elevation: .flat)
         .onHover { isHovered = $0 }
     }
 }
@@ -292,7 +291,7 @@ private struct MemoryEditSheet: View {
                 .foregroundStyle(MW.textPrimary)
                 .padding(8)
                 .frame(minHeight: 80)
-                .overlay(Rectangle().stroke(MW.border, lineWidth: MW.hairline))
+                .overlay(RoundedRectangle(cornerRadius: MW.rSmall, style: .continuous).stroke(MW.border, lineWidth: 0.5))
 
             Text("Keep memories concise (max 15 words). Start system facts with 'User'.")
                 .font(MW.monoSm).foregroundStyle(MW.textMuted)

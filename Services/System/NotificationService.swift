@@ -72,6 +72,139 @@ final class NotificationService: NSObject, ObservableObject {
 
     // MARK: - Post Advice
 
+    /// Post a notification for a newly-extracted task. Copied from reference
+    /// `TaskPromotionService.swift:84-90` — one notification per task, immediate delivery,
+    /// no rate limit. Click opens Tasks tab (same handler as advice).
+    ///
+    /// `source` labels where the task came from (e.g. "Screen", "Voice") — shown as title.
+    /// Implements spec://iterations/ITER-005-task-notifications#scope
+    func postNewTask(_ task: TaskItem, source: String) {
+        guard hasPermission else {
+            NSLog("[Notifications] No permission — skipping task notification (still in Tasks tab)")
+            return
+        }
+
+        let content = UNMutableNotificationContent()
+        content.title = source.isEmpty ? "New task" : "New task from \(source)"
+        content.body = String(task.taskDescription.prefix(200))
+        content.sound = .default
+        content.categoryIdentifier = Self.adviceCategoryID  // reuse — same click → Tasks behavior
+
+        let id = "com.metawhisp.task.\(task.id.uuidString)"
+        let request = UNNotificationRequest(identifier: id, content: content, trigger: nil)
+        UNUserNotificationCenter.current().add(request) { err in
+            if let err {
+                NSLog("[Notifications] ❌ Task notification failed: %@", err.localizedDescription)
+            } else {
+                NSLog("[Notifications] ✅ Posted task notification: %@", String(task.taskDescription.prefix(60)))
+            }
+        }
+    }
+
+    /// Post a call-detection notification. Not rate-limited — call events are
+    /// already debounced at source (fire only on state change in ScreenContextService).
+    ///
+    /// Implements spec://iterations/ITER-002-call-detection#notification
+    func postCallDetected(appName: String, autoStart: Bool) {
+        guard hasPermission else {
+            NSLog("[Notifications] No permission — skipping call notification")
+            return
+        }
+
+        let content = UNMutableNotificationContent()
+        content.title = "\(appName) detected"
+        content.body = autoStart
+            ? "Recording starts in 5 seconds…"
+            : "Tap the menu bar to start recording."
+        content.sound = .default
+
+        let request = UNNotificationRequest(
+            identifier: "com.metawhisp.call.\(UUID().uuidString)",
+            content: content,
+            trigger: nil
+        )
+        UNUserNotificationCenter.current().add(request) { err in
+            if let err {
+                NSLog("[Notifications] ❌ Call notification failed: %@", err.localizedDescription)
+            } else {
+                NSLog("[Notifications] ✅ Call notification posted: %@ (autoStart=%@)",
+                      appName, autoStart ? "YES" : "NO")
+            }
+        }
+    }
+
+    /// Notification fired when MeetingRecorder auto-stops itself (ITER-012).
+    /// Reasons: call window closed, prolonged silence, or max-duration cap.
+    /// User-facing copy explains WHY so the recording vanishing isn't surprising.
+    func postMeetingAutoStopped(reason: MeetingRecorder.AutoStopReason) {
+        guard hasPermission else { return }
+        let (title, body): (String, String) = {
+            switch reason {
+            case .callEnded:
+                return ("Recording stopped", "The call window closed — saving transcript.")
+            case .silenceTimeout:
+                let mins = Int(AppSettings.shared.meetingSilenceStopMinutes)
+                return ("Recording stopped", "Silence for \(mins) min — saving transcript.")
+            case .maxDurationReached:
+                let hrs = Int(AppSettings.shared.meetingMaxDurationMinutes / 60)
+                return ("Recording stopped", "Hit \(hrs)h max duration — saving transcript.")
+            }
+        }()
+        let content = UNMutableNotificationContent()
+        content.title = title
+        content.body = body
+        content.sound = .default
+        let req = UNNotificationRequest(
+            identifier: "com.metawhisp.meeting.autostop.\(UUID().uuidString)",
+            content: content,
+            trigger: nil
+        )
+        UNUserNotificationCenter.current().add(req) { err in
+            if let err {
+                NSLog("[Notifications] ❌ Auto-stop notif failed: %@", err.localizedDescription)
+            }
+        }
+    }
+
+    /// Post the per-meeting recap notification (ITER-012). Sent after extractors
+    /// finish so body counts of tasks/memories are accurate. Click → Library tab.
+    /// `conversationId` lets future iterations deep-link to the specific row.
+    func postMeetingRecap(title: String, overview: String, taskCount: Int,
+                          memoryCount: Int, conversationId: UUID) {
+        guard hasPermission else { return }
+        let content = UNMutableNotificationContent()
+        content.title = "Meeting recap: \(title.isEmpty ? "untitled" : title)"
+        var body = String(overview.prefix(140))
+        var counts: [String] = []
+        if taskCount > 0  { counts.append("\(taskCount) task\(taskCount == 1 ? "" : "s")") }
+        if memoryCount > 0 { counts.append("\(memoryCount) memor\(memoryCount == 1 ? "y" : "ies")") }
+        if !counts.isEmpty {
+            if !body.isEmpty { body += "\n" }
+            body += counts.joined(separator: " · ")
+        }
+        if body.isEmpty { body = "Transcript saved." }
+        content.body = body
+        content.sound = .default
+        content.userInfo = ["conversationId": conversationId.uuidString,
+                            "target": "library"]
+        // Reuse advice category so click routing → tab switch works through existing handler.
+        content.categoryIdentifier = Self.adviceCategoryID
+
+        let req = UNNotificationRequest(
+            identifier: "com.metawhisp.meeting.recap.\(conversationId.uuidString)",
+            content: content,
+            trigger: nil
+        )
+        UNUserNotificationCenter.current().add(req) { err in
+            if let err {
+                NSLog("[Notifications] ❌ Recap notif failed: %@", err.localizedDescription)
+            } else {
+                NSLog("[Notifications] ✅ Recap posted: '%@' (%d tasks, %d memories)",
+                      title, taskCount, memoryCount)
+            }
+        }
+    }
+
     /// Post a notification for a newly-generated advice item.
     /// Rate-limited to 1 per minute.
     func postAdvice(_ advice: AdviceItem) {
@@ -138,13 +271,23 @@ extension NotificationService: UNUserNotificationCenterDelegate {
 
             switch response.actionIdentifier {
             case UNNotificationDefaultActionIdentifier:
-                // User clicked the notification — bring app to foreground + open Insights
+                // User clicked the notification — bring app to foreground.
                 NSApp.activate(ignoringOtherApps: true)
 
-                // Advice notifications deprecated — Tasks tab replaces the surface (spec://BACKLOG#sidebar-reorg).
+                // Route to the right tab based on notification's userInfo.
+                // Default: Tasks (advice/task/legacy). Meeting recap: Library.
+                let userInfo = response.notification.request.content.userInfo
+                let target = userInfo["target"] as? String ?? ""
+                let destinationTab: MainWindowView.SidebarTab = {
+                    switch target {
+                    case "library": return .library
+                    case "dashboard": return .dashboard
+                    default: return .tasks
+                    }
+                }()
                 NotificationCenter.default.post(
                     name: .switchMainTab,
-                    object: MainWindowView.SidebarTab.tasks
+                    object: destinationTab
                 )
 
                 // Signal to AdviceService / InsightsView to mark this item as read

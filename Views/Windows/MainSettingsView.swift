@@ -9,51 +9,127 @@ struct MainSettingsView: View {
     @State private var showAppPicker = false
     @State private var appCache: [String: AppInfo] = [:]  // bundleID → AppInfo for rendering
 
+    // Tab selection — single column scroll per tab beats the previous two-column wall
+    // (1500-line settings was hard to scan).
+    @State private var selectedTab: SettingsTab = .general
+
+    enum SettingsTab: String, CaseIterable, Identifiable {
+        case general = "General"
+        case dictation = "Dictation"
+        case ai = "AI"
+        case integrations = "Integrations"
+        var id: String { rawValue }
+    }
+
+    /// Max width of the content + tab column — native-app pattern (System Settings,
+    /// Raycast, Linear). Wide enough for two-column rows, narrow enough to stay
+    /// readable on ultrawide screens.
+    private let contentMaxWidth: CGFloat = 640
+
     var body: some View {
-        ScrollView {
-            VStack(spacing: 0) {
-                settingsHeader
-                divider
+        VStack(spacing: 0) {
+            settingsHeader
+            divider
+            tabPicker
+            divider
 
+            ScrollView {
                 HStack(alignment: .top, spacing: 0) {
-                    // Left column
+                    Spacer(minLength: 0)
                     VStack(spacing: 0) {
-                        modelSection
-                        divider
-                        languageSection
-                        divider
-                        processingSection
-                        divider
-                        translationSection
-                        divider
-                        textStyleSection
+                        tabContent(for: selectedTab)
                         Spacer(minLength: 0)
                     }
-                    .frame(minWidth: 340)
-
-                    verticalDivider
-
-                    // Right column
-                    VStack(spacing: 0) {
-                        accountSection
-                        divider
-                        hotkeySection
-                        divider
-                        optionsSection
-                        divider
-                        overlaySection
-                        divider
-                        cloudSection
-                        divider
-                        intelligenceSection
-                        Spacer(minLength: 0)
-                    }
-                    .frame(minWidth: 320)
+                    .frame(maxWidth: contentMaxWidth, alignment: .top)
+                    Spacer(minLength: 0)
                 }
+                .padding(.horizontal, MW.sp16)
             }
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        // Sane minimum — below this tab labels / section headers start to clip.
+        .frame(minWidth: 520, maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .background(MW.bg)
+    }
+
+    // MARK: - Tab picker
+
+    private var tabPicker: some View {
+        HStack(spacing: 0) {
+            Spacer(minLength: 0)
+            HStack(spacing: 6) {
+                ForEach(SettingsTab.allCases) { tab in
+                    tabButton(tab)
+                }
+            }
+            .frame(maxWidth: contentMaxWidth, alignment: .leading)
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, MW.sp16)
+        .padding(.vertical, MW.sp8)
+    }
+
+    private func tabButton(_ tab: SettingsTab) -> some View {
+        let isSelected = selectedTab == tab
+        return Text(tab.rawValue)
+            .font(.system(size: 13, weight: .medium))
+            .lineLimit(1)
+            .fixedSize(horizontal: true, vertical: false)
+            .foregroundStyle(isSelected ? MW.textPrimary : MW.textSecondary)
+            .glassChip(selected: isSelected, radius: MW.rTiny)
+            .contentShape(Rectangle())
+            .onTapGesture {
+                withAnimation(.easeInOut(duration: 0.12)) { selectedTab = tab }
+            }
+    }
+
+    // MARK: - Tab content
+
+    @ViewBuilder
+    private func tabContent(for tab: SettingsTab) -> some View {
+        // Each section is now a self-contained glass card with its own header/toggle,
+        // so we can lay them out with real spacing (no more hairline dividers) and
+        // group semantically-related ones into 2-column rows to avoid stretching
+        // narrow controls across the whole column.
+        switch tab {
+        case .general:
+            VStack(spacing: MW.sp12) {
+                accountSection
+                cloudSection
+                twoColumn(hotkeySection, overlaySection)
+                optionsSection
+            }
+        case .dictation:
+            VStack(spacing: MW.sp12) {
+                modelSection
+                twoColumn(languageSection, processingSection)
+                twoColumn(translationSection, textStyleSection)
+            }
+        case .ai:
+            VStack(spacing: MW.sp12) {
+                twoColumn(memoriesSection, adviceSection)
+                dailySummarySection
+                weeklyPatternsSection
+                voiceQuestionSection
+            }
+        case .integrations:
+            VStack(spacing: MW.sp12) {
+                meetingSection
+                screenContextSection
+                proactiveSection
+                twoColumn(fileIndexingSection, appleNotesSection)
+                calendarSection
+            }
+        }
+    }
+
+    /// Two-column row — pairs two small sections so neither stretches across the
+    /// whole 640-pt content column. Equal widths, glass gap between.
+    @ViewBuilder
+    private func twoColumn<L: View, R: View>(_ left: L, _ right: R) -> some View {
+        HStack(alignment: .top, spacing: MW.sp12) {
+            left.frame(maxWidth: .infinity, alignment: .topLeading)
+            right.frame(maxWidth: .infinity, alignment: .topLeading)
+        }
     }
 
     // MARK: - Shared Dividers
@@ -70,11 +146,14 @@ struct MainSettingsView: View {
 
     private var settingsHeader: some View {
         HStack {
-            Text("SETTINGS").font(MW.monoLg).foregroundStyle(MW.textPrimary).tracking(2)
+            Text("Settings")
+                .font(MW.monoTitle)
+                .foregroundStyle(MW.textPrimary)
             Spacer()
-            Text("CONFIGURATION").blocksLabel()
         }
-        .padding(MW.sp16)
+        .padding(.horizontal, MW.sp16)
+        .padding(.top, MW.sp8)
+        .padding(.bottom, MW.sp4)
     }
 
     // MARK: - Model
@@ -112,6 +191,8 @@ struct MainSettingsView: View {
             }
         }
         .padding(MW.sp16)
+        .frame(maxWidth: .infinity, alignment: .topLeading)
+        .mwCard(radius: MW.rMedium, elevation: .raised)
     }
 
     private func engineButton(_ label: String, value: String, subtitle: String) -> some View {
@@ -196,7 +277,7 @@ struct MainSettingsView: View {
                     .foregroundStyle(MW.textPrimary)
                     .padding(.horizontal, MW.sp8)
                     .padding(.vertical, MW.sp4)
-                    .overlay(Rectangle().stroke(MW.border, lineWidth: MW.hairline))
+                    .overlay(RoundedRectangle(cornerRadius: MW.rSmall, style: .continuous).stroke(MW.border, lineWidth: 0.5))
             } else {
                 HStack(spacing: MW.sp8) {
                     let masked = String(repeating: "\u{2022}", count: min(20, key.count - 4)) + String(key.suffix(4))
@@ -308,11 +389,13 @@ struct MainSettingsView: View {
                     .padding(.horizontal, MW.sp8)
                     .padding(.vertical, MW.sp4)
                     .background(settings.transcriptionLanguage == lang.1 ? MW.elevated : .clear)
-                    .overlay(Rectangle().stroke(MW.border, lineWidth: MW.hairline))
+                    .overlay(RoundedRectangle(cornerRadius: MW.rSmall, style: .continuous).stroke(MW.border, lineWidth: 0.5))
                     .onTapGesture { settings.transcriptionLanguage = lang.1 }
             }
         }
         .padding(MW.sp16)
+        .frame(maxWidth: .infinity, alignment: .topLeading)
+        .mwCard(radius: MW.rMedium, elevation: .raised)
     }
 
     // MARK: - Processing
@@ -348,6 +431,8 @@ struct MainSettingsView: View {
             Text(desc).font(MW.monoSm).foregroundStyle(MW.textMuted)
         }
         .padding(MW.sp16)
+        .frame(maxWidth: .infinity, alignment: .topLeading)
+        .mwCard(radius: MW.rMedium, elevation: .raised)
     }
 
     // MARK: - Translation
@@ -363,7 +448,7 @@ struct MainSettingsView: View {
                     .padding(.horizontal, MW.sp8)
                     .padding(.vertical, MW.sp4)
                     .background(settings.translateTo == lang.1 ? MW.elevated : .clear)
-                    .overlay(Rectangle().stroke(MW.border, lineWidth: MW.hairline))
+                    .overlay(RoundedRectangle(cornerRadius: MW.rSmall, style: .continuous).stroke(MW.border, lineWidth: 0.5))
                     .onTapGesture { settings.translateTo = lang.1 }
             }
 
@@ -371,6 +456,8 @@ struct MainSettingsView: View {
                 .font(MW.monoSm).foregroundStyle(MW.textMuted)
         }
         .padding(MW.sp16)
+        .frame(maxWidth: .infinity, alignment: .topLeading)
+        .mwCard(radius: MW.rMedium, elevation: .raised)
     }
 
     // MARK: - Text Style
@@ -409,6 +496,8 @@ struct MainSettingsView: View {
             }
         }
         .padding(MW.sp16)
+        .frame(maxWidth: .infinity, alignment: .topLeading)
+        .mwCard(radius: MW.rMedium, elevation: .raised)
     }
 
     // MARK: - Account
@@ -492,7 +581,7 @@ struct MainSettingsView: View {
                             .padding(.horizontal, MW.sp16)
                             .padding(.vertical, MW.sp4)
                             .frame(maxWidth: .infinity)
-                            .overlay(Rectangle().stroke(MW.border, lineWidth: MW.hairline))
+                            .overlay(RoundedRectangle(cornerRadius: MW.rSmall, style: .continuous).stroke(MW.border, lineWidth: 0.5))
                             .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
@@ -519,6 +608,8 @@ struct MainSettingsView: View {
             .buttonStyle(.plain)
         }
         .padding(MW.sp16)
+        .frame(maxWidth: .infinity, alignment: .topLeading)
+        .mwCard(radius: MW.rMedium, elevation: .raised)
     }
 
     // MARK: - Hotkeys
@@ -545,6 +636,8 @@ struct MainSettingsView: View {
                 .font(MW.monoSm).foregroundStyle(MW.textMuted)
         }
         .padding(MW.sp16)
+        .frame(maxWidth: .infinity, alignment: .topLeading)
+        .mwCard(radius: MW.rMedium, elevation: .raised)
     }
 
     private func hotkeyRow(_ action: String, keys: [String]) -> some View {
@@ -560,20 +653,35 @@ struct MainSettingsView: View {
     }
 
     private func modeButton(_ label: String, value: String, desc: String) -> some View {
-        VStack(spacing: MW.spaceXs) {
+        let isSelected = settings.hotkeyMode == value
+        return VStack(spacing: 2) {
             Text(label)
-                .font(MW.monoSm)
-                .foregroundStyle(settings.hotkeyMode == value ? Color.black : MW.textSecondary)
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(isSelected ? MW.textPrimary : MW.textSecondary)
             Text(desc)
-                .font(.system(size: 8, weight: .regular, design: .monospaced))
-                .foregroundStyle(settings.hotkeyMode == value ? Color.black.opacity(0.6) : MW.textMuted)
+                .font(.system(size: 10, weight: .regular))
+                .foregroundStyle(isSelected ? MW.textSecondary : MW.textMuted)
         }
         .padding(.horizontal, MW.sp12)
-        .padding(.vertical, MW.sp8)
+        .padding(.vertical, MW.sp10)
         .frame(maxWidth: .infinity)
-        .background(settings.hotkeyMode == value ? MW.elevated : .clear)
-        .overlay(Rectangle().stroke(MW.border, lineWidth: MW.hairline))
-        .onTapGesture { settings.hotkeyMode = value }
+        .background {
+            ZStack {
+                RoundedRectangle(cornerRadius: MW.rSmall, style: .continuous)
+                    .fill(.ultraThinMaterial)
+                if isSelected {
+                    RoundedRectangle(cornerRadius: MW.rSmall, style: .continuous)
+                        .fill(Color.primary.opacity(0.10))
+                }
+                RoundedRectangle(cornerRadius: MW.rSmall, style: .continuous)
+                    .strokeBorder(Color.primary.opacity(isSelected ? 0.20 : 0.08), lineWidth: 0.5)
+            }
+        }
+        .clipShape(RoundedRectangle(cornerRadius: MW.rSmall, style: .continuous))
+        .contentShape(Rectangle())
+        .onTapGesture {
+            withAnimation(.easeInOut(duration: 0.12)) { settings.hotkeyMode = value }
+        }
     }
 
     // MARK: - Options
@@ -624,6 +732,8 @@ struct MainSettingsView: View {
             }
         }
         .padding(MW.sp16)
+        .frame(maxWidth: .infinity, alignment: .topLeading)
+        .mwCard(radius: MW.rMedium, elevation: .raised)
     }
 
     private func soundPresetButton(_ label: String, value: String) -> some View {
@@ -634,7 +744,7 @@ struct MainSettingsView: View {
             .padding(.horizontal, MW.sp8)
             .padding(.vertical, 2)
             .background(isSelected ? MW.elevated : .clear)
-            .overlay(Rectangle().stroke(MW.border, lineWidth: MW.hairline))
+            .overlay(RoundedRectangle(cornerRadius: MW.rSmall, style: .continuous).stroke(MW.border, lineWidth: 0.5))
             .onTapGesture {
                 settings.soundPreset = value
                 NotificationCenter.default.post(name: .init("ReloadSounds"), object: nil)
@@ -649,7 +759,7 @@ struct MainSettingsView: View {
             .padding(.horizontal, MW.sp8)
             .padding(.vertical, 2)
             .background(isSelected ? MW.elevated : .clear)
-            .overlay(Rectangle().stroke(MW.border, lineWidth: MW.hairline))
+            .overlay(RoundedRectangle(cornerRadius: MW.rSmall, style: .continuous).stroke(MW.border, lineWidth: 0.5))
             .onTapGesture {
                 settings.appTheme = value
                 MW.applyTheme(value)
@@ -680,7 +790,7 @@ struct MainSettingsView: View {
                 Text("CHOOSE").font(MW.label).tracking(0.8)
                     .foregroundStyle(MW.textSecondary)
                     .padding(.horizontal, MW.sp8).padding(.vertical, 2)
-                    .overlay(Rectangle().stroke(MW.border, lineWidth: MW.hairline))
+                    .overlay(RoundedRectangle(cornerRadius: MW.rSmall, style: .continuous).stroke(MW.border, lineWidth: 0.5))
             }
             .buttonStyle(.plain)
         }
@@ -691,6 +801,8 @@ struct MainSettingsView: View {
         panel.allowedContentTypes = [.audio]
         panel.allowsMultipleSelection = false
         panel.message = "Choose a sound file for \(role)"
+        // Activate so the panel renders in front, not hidden behind windows.
+        NSApp.activate(ignoringOtherApps: true)
         panel.begin { response in
             guard response == .OK, let url = panel.url else { return }
             // Copy to App Support so file persists
@@ -760,6 +872,8 @@ struct MainSettingsView: View {
                 .font(MW.monoSm).foregroundStyle(MW.textMuted)
         }
         .padding(MW.sp16)
+        .frame(maxWidth: .infinity, alignment: .topLeading)
+        .mwCard(radius: MW.rMedium, elevation: .raised)
     }
 
     private func pillStyleRow(_ style: (label: String, value: String, desc: String)) -> some View {
@@ -819,6 +933,8 @@ struct MainSettingsView: View {
                 .font(MW.monoSm).foregroundStyle(MW.textMuted)
         }
         .padding(MW.sp16)
+        .frame(maxWidth: .infinity, alignment: .topLeading)
+        .mwCard(radius: MW.rMedium, elevation: .raised)
     }
 
     private func providerButton(_ prov: LLMProvider) -> some View {
@@ -872,7 +988,7 @@ struct MainSettingsView: View {
                     .foregroundStyle(MW.textPrimary)
                     .padding(.horizontal, MW.sp8)
                     .padding(.vertical, MW.sp4)
-                    .overlay(Rectangle().stroke(MW.border, lineWidth: MW.hairline))
+                    .overlay(RoundedRectangle(cornerRadius: MW.rSmall, style: .continuous).stroke(MW.border, lineWidth: 0.5))
             } else {
                 HStack(spacing: MW.sp8) {
                     let masked = String(repeating: "•", count: min(20, activeKey.count - 4)) + String(activeKey.suffix(4))
@@ -891,7 +1007,7 @@ struct MainSettingsView: View {
                 }
                 .padding(.horizontal, MW.sp8)
                 .padding(.vertical, MW.sp4)
-                .overlay(Rectangle().stroke(MW.border, lineWidth: MW.hairline))
+                .overlay(RoundedRectangle(cornerRadius: MW.rSmall, style: .continuous).stroke(MW.border, lineWidth: 0.5))
             }
 
             if !activeKey.isEmpty {
@@ -908,182 +1024,386 @@ struct MainSettingsView: View {
             : "\(prov) key needed for Structured mode and translation. Raw/Clean work offline."
     }
 
-    // MARK: - Intelligence (Meeting Recording, Screen Context, AI Advice)
+    // MARK: - Integrations tab sections
+    // (Meeting Recording, Screen Context, File Indexing, Apple Notes, Calendar
+    //  — all external-data / capture integrations, previously in `intelligenceSection`.)
 
-    private var intelligenceSection: some View {
-        VStack(alignment: .leading, spacing: MW.sp8) {
-            Text("INTELLIGENCE").blocksLabel()
-
-            // Meeting Recording
-            toggleRow("MEETING RECORDING", isOn: $settings.meetingRecordingEnabled)
+    private var meetingSection: some View {
+        VStack(alignment: .leading, spacing: MW.sp10) {
+            toggleRow("Meeting Recording", isOn: $settings.meetingRecordingEnabled)
             if settings.meetingRecordingEnabled {
-                toggleRow("AUTO-DETECT CALLS", isOn: $settings.autoDetectCalls)
                 Text("Records system audio from Zoom, Meet, Teams. Transcribed locally via WhisperKit.")
                     .font(MW.monoSm).foregroundStyle(MW.textMuted)
-            }
+                    .fixedSize(horizontal: false, vertical: true)
+                GlassDivider()
+                toggleRow("Auto-detect calls", isOn: $settings.autoDetectCalls)
+                if settings.autoDetectCalls {
+                    GlassDivider()
+                    toggleRow("Auto-start (5s)", isOn: $settings.callsAutoStartEnabled)
+                    Text(settings.callsAutoStartEnabled
+                         ? "Recording starts automatically 5 seconds after a Zoom / Meet / Teams window is detected."
+                         : "Only posts a notification. Click the menu bar to start recording manually.")
+                        .font(MW.monoSm).foregroundStyle(MW.textMuted)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
 
-            Rectangle().fill(MW.border).frame(height: MW.hairline)
-                .padding(.vertical, MW.sp4)
-
-            // Screen Context
-            toggleRow("SCREEN CONTEXT", isOn: $settings.screenContextEnabled)
-            if settings.screenContextEnabled {
+                // ITER-012: layered defense against zombie recordings + per-meeting recap.
+                GlassDivider()
                 HStack {
-                    Text("MODE").font(MW.mono).foregroundStyle(MW.textSecondary)
+                    Text("Stop on silence").font(MW.mono).foregroundStyle(MW.textSecondary)
+                    Spacer()
+                    Text("\(Int(settings.meetingSilenceStopMinutes)) min")
+                        .font(MW.monoSm).foregroundStyle(MW.textPrimary)
+                        .frame(width: 60, alignment: .trailing)
+                }
+                Slider(value: $settings.meetingSilenceStopMinutes, in: 1...15, step: 1)
+                    .controlSize(.small)
+                Text("Auto-stops recording after this many minutes of silence. Default 3 min.")
+                    .font(MW.monoSm).foregroundStyle(MW.textMuted)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                GlassDivider()
+                HStack {
+                    Text("Max duration").font(MW.mono).foregroundStyle(MW.textSecondary)
+                    Spacer()
+                    Text("\(Int(settings.meetingMaxDurationMinutes / 60))h")
+                        .font(MW.monoSm).foregroundStyle(MW.textPrimary)
+                        .frame(width: 60, alignment: .trailing)
+                }
+                Slider(value: $settings.meetingMaxDurationMinutes, in: 30...480, step: 30)
+                    .controlSize(.small)
+                Text("Hard cap. Recording always stops after this duration regardless of silence. Default 4h.")
+                    .font(MW.monoSm).foregroundStyle(MW.textMuted)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                GlassDivider()
+                toggleRow("Recap notifications", isOn: $settings.meetingRecapNotifications)
+                Text(settings.meetingRecapNotifications
+                     ? "After each meeting: notification with title + extracted tasks/memories. Click → Library."
+                     : "No post-meeting notification. View meetings in Library → Conversations.")
+                    .font(MW.monoSm).foregroundStyle(MW.textMuted)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                // ITER-019 — Live advice during meeting (Pro only).
+                GlassDivider()
+                toggleRow("Live advice during meeting", isOn: $settings.liveMeetingAdviceEnabled)
+                Text(settings.liveMeetingAdviceEnabled
+                     ? "Every 30s during a recording: partial transcribe + advice trigger. Catches contradictions and surfaces relevant memories WHILE you're talking. Pro only · ~$0.05 per hour-long meeting."
+                     : "Advice fires only after the meeting stops. Turn ON for realtime hints during the call.")
+                    .font(MW.monoSm).foregroundStyle(MW.textMuted)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .padding(MW.sp16)
+        .frame(maxWidth: .infinity, alignment: .topLeading)
+        .mwCard(radius: MW.rMedium, elevation: .raised)
+    }
+
+    /// ITER-015 — Proactive chip that surfaces relevant memories/past decisions/waiting-on
+    /// tasks while the user is composing a reply in Slack/Mail/etc. Opt-in. Requires
+    /// Screen Context on (feeds on its ScreenContext pipeline) + Pro (needs embeddings).
+    private var proactiveSection: some View {
+        VStack(alignment: .leading, spacing: MW.sp10) {
+            toggleRow("Proactive Chip", isOn: $settings.proactiveEnabled)
+            if settings.proactiveEnabled {
+                Text("While you're typing in Slack, Mail, Notion, or similar apps, MetaWhisp silently surfaces 2-3 relevant memories, past decisions, and waiting-on tasks as a peripheral chip. Never a notification — no sound, no interrupt.")
+                    .font(MW.monoSm).foregroundStyle(MW.textMuted)
+                    .fixedSize(horizontal: false, vertical: true)
+                if !settings.screenContextEnabled {
+                    Text("⚠️ Requires Screen Context — turn that on above.")
+                        .font(MW.monoSm).foregroundStyle(.orange.opacity(0.85))
+                }
+                GlassDivider()
+                HStack {
+                    Text("Cooldown").font(MW.mono).foregroundStyle(MW.textSecondary)
+                    Spacer()
+                    Text("\(Int(settings.proactiveCooldownMinutes)) min")
+                        .font(MW.monoSm).foregroundStyle(MW.textPrimary)
+                        .frame(width: 60, alignment: .trailing)
+                }
+                Slider(value: $settings.proactiveCooldownMinutes, in: 1...30, step: 1)
+                    .controlSize(.small)
+                Text("Minimum gap between chip surfaces. Default 5 min.")
+                    .font(MW.monoSm).foregroundStyle(MW.textMuted)
+
+                GlassDivider()
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Blacklist (comma-separated app names)").font(MW.mono).foregroundStyle(MW.textSecondary)
+                    TextField("1Password, Keychain, Terminal…", text: $settings.proactiveBlacklist, axis: .vertical)
+                        .textFieldStyle(.plain)
+                        .font(MW.monoSm)
+                        .foregroundStyle(MW.textPrimary)
+                        .lineLimit(1...3)
+                        .padding(8)
+                        .overlay(RoundedRectangle(cornerRadius: MW.rSmall, style: .continuous).stroke(MW.border, lineWidth: 0.5))
+                    Text("Substring match on app name. Sensitive apps stay silent.")
+                        .font(MW.monoSm).foregroundStyle(MW.textMuted)
+                }
+            }
+        }
+        .padding(MW.sp16)
+        .frame(maxWidth: .infinity, alignment: .topLeading)
+        .mwCard(radius: MW.rMedium, elevation: .raised)
+    }
+
+    private var screenContextSection: some View {
+        VStack(alignment: .leading, spacing: MW.sp10) {
+            toggleRow("Screen Context", isOn: $settings.screenContextEnabled)
+            if settings.screenContextEnabled {
+                Text("OCR via Apple Vision — fully on-device. Screenshots are never saved.")
+                    .font(MW.monoSm).foregroundStyle(MW.textMuted)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                GlassDivider()
+                HStack {
+                    Text("Mode").font(MW.mono).foregroundStyle(MW.textSecondary)
                     Spacer()
                     HStack(spacing: 0) {
                         contextModeButton("BLACKLIST", value: "blacklist")
                         contextModeButton("WHITELIST", value: "whitelist")
                     }
                 }
-
                 // App list with picker — implements spec://intelligence/FEAT-0002#app-picker
                 screenContextAppList
 
-                Text("OCR via Apple Vision — fully on-device. Screenshots are never saved.")
-                    .font(MW.monoSm).foregroundStyle(MW.textMuted)
-            }
-
-            Rectangle().fill(MW.border).frame(height: MW.hairline)
-                .padding(.vertical, MW.sp4)
-
-            // Memories — independent from AI Advice
-            // spec://iterations/ITER-001#architecture.settings
-            toggleRow("MEMORIES", isOn: $settings.memoriesEnabled)
-            if settings.memoriesEnabled {
-                Text("Automatically extracts facts about you from screen activity + transcriptions. Used to personalize AI Advice.")
-                    .font(MW.monoSm).foregroundStyle(MW.textMuted)
-            }
-
-            Rectangle().fill(MW.border).frame(height: MW.hairline)
-                .padding(.vertical, MW.sp4)
-
-            // AI Advice
-            toggleRow("AI ADVICE", isOn: $settings.adviceEnabled)
-            if settings.adviceEnabled {
-                if license.isPro {
-                    // Pro covers advice via /api/pro/advice server proxy — no key needed
-                    HStack(spacing: MW.sp4) {
-                        Circle().fill(MW.idle).frame(width: 6, height: 6)
-                        Text("Included with Pro — no API key required")
-                            .font(MW.monoSm).foregroundStyle(MW.textMuted)
-                    }
-                    Text("Contextual suggestions from screen activity + transcriptions, delivered via macOS notifications.")
+                GlassDivider()
+                toggleRow("Realtime task detection", isOn: $settings.realtimeScreenReactionEnabled)
+                if settings.realtimeScreenReactionEnabled {
+                    Text("LLM checks each new window for actionable tasks. Max 30 checks/hour. Per-app 60s cooldown. Pro only.")
                         .font(MW.monoSm).foregroundStyle(MW.textMuted)
-                } else {
-                    Text("Contextual suggestions based on screen activity and transcriptions. Uses your LLM provider (set above).")
-                        .font(MW.monoSm).foregroundStyle(MW.textMuted)
-
-                    if settings.activeAPIKey.isEmpty {
-                        HStack(spacing: MW.sp4) {
-                            Circle().fill(MW.recording).frame(width: 6, height: 6)
-                            Text("Add an \(activeProviderName) API key in LLM Provider above")
-                                .font(MW.monoSm).foregroundStyle(MW.recording)
-                        }
-                    }
-                }
-                if !settings.memoriesEnabled {
-                    HStack(spacing: MW.sp4) {
-                        Circle().fill(MW.processing).frame(width: 6, height: 6)
-                        Text("Enable MEMORIES above for personalized advice (recommended)")
-                            .font(MW.monoSm).foregroundStyle(MW.textMuted)
-                    }
+                        .fixedSize(horizontal: false, vertical: true)
                 }
             }
+        }
+        .padding(MW.sp16)
+        .frame(maxWidth: .infinity, alignment: .topLeading)
+        .mwCard(radius: MW.rMedium, elevation: .raised)
+    }
 
-            Rectangle().fill(MW.border).frame(height: MW.hairline)
-                .padding(.vertical, MW.sp4)
-
-            // File Indexing — scan user-picked folders, extract memories from .md/.txt files.
-            // spec://BACKLOG#Phase3.E1
-            toggleRow("FILE INDEXING", isOn: $settings.fileIndexingEnabled)
+    private var fileIndexingSection: some View {
+        VStack(alignment: .leading, spacing: MW.sp10) {
+            toggleRow("File Indexing", isOn: $settings.fileIndexingEnabled)
             if settings.fileIndexingEnabled {
                 Text("Scan local folders (e.g. your Obsidian vault) for .md/.txt files. MetaWhisp extracts durable facts about you and your projects into Memories.")
                     .font(MW.monoSm).foregroundStyle(MW.textMuted)
+                    .fixedSize(horizontal: false, vertical: true)
                 fileIndexingFolderList
             }
+        }
+        .padding(MW.sp16)
+        .frame(maxWidth: .infinity, alignment: .topLeading)
+        .mwCard(radius: MW.rMedium, elevation: .raised)
+    }
 
-            Rectangle().fill(MW.border).frame(height: MW.hairline)
-                .padding(.vertical, MW.sp4)
-
-            // Apple Notes reader (spec://BACKLOG#Phase3.E2)
-            toggleRow("APPLE NOTES", isOn: $settings.appleNotesEnabled)
+    private var appleNotesSection: some View {
+        VStack(alignment: .leading, spacing: MW.sp10) {
+            toggleRow("Apple Notes", isOn: $settings.appleNotesEnabled)
             if settings.appleNotesEnabled {
-                Text("Reads recent Apple Notes via AppleScript. First run will prompt for Automation permission. Extracts memories into Memories.")
+                Text("Reads recent Apple Notes via AppleScript. First run will prompt for Automation permission.")
                     .font(MW.monoSm).foregroundStyle(MW.textMuted)
-                Button {
-                    Task { @MainActor in
-                        await AppDelegate.shared?.appleNotesReader.scanNow()
-                    }
-                } label: {
-                    HStack(spacing: 4) {
-                        Image(systemName: "arrow.clockwise").font(.system(size: 10))
-                        Text("SCAN NOW").font(MW.label).tracking(0.6)
-                    }
-                    .foregroundStyle(MW.textSecondary)
-                    .padding(.horizontal, 8).padding(.vertical, 4)
-                    .overlay(Rectangle().stroke(MW.border, lineWidth: MW.hairline))
-                }
-                .buttonStyle(.plain)
-                .padding(.top, 4)
+                    .fixedSize(horizontal: false, vertical: true)
+                scanNowButton { await AppDelegate.shared?.appleNotesReader.scanNow() }
             }
+        }
+        .padding(MW.sp16)
+        .frame(maxWidth: .infinity, alignment: .topLeading)
+        .mwCard(radius: MW.rMedium, elevation: .raised)
+    }
 
-            Rectangle().fill(MW.border).frame(height: MW.hairline)
-                .padding(.vertical, MW.sp4)
-
-            // Calendar reader (spec://BACKLOG#Phase3.E3)
-            toggleRow("CALENDAR", isOn: $settings.calendarReaderEnabled)
+    private var calendarSection: some View {
+        VStack(alignment: .leading, spacing: MW.sp10) {
+            toggleRow("Calendar", isOn: $settings.calendarReaderEnabled)
             if settings.calendarReaderEnabled {
                 Text("Reads your Apple Calendar (iCloud/Google/Exchange). Creates Tasks for upcoming events and extracts routine patterns into Memories.")
                     .font(MW.monoSm).foregroundStyle(MW.textMuted)
-                Button {
-                    Task { @MainActor in
-                        await AppDelegate.shared?.calendarReader.scanNow()
-                    }
-                } label: {
-                    HStack(spacing: 4) {
-                        Image(systemName: "arrow.clockwise").font(.system(size: 10))
-                        Text("SCAN NOW").font(MW.label).tracking(0.6)
-                    }
-                    .foregroundStyle(MW.textSecondary)
-                    .padding(.horizontal, 8).padding(.vertical, 4)
-                    .overlay(Rectangle().stroke(MW.border, lineWidth: MW.hairline))
-                }
-                .buttonStyle(.plain)
-                .padding(.top, 4)
+                    .fixedSize(horizontal: false, vertical: true)
+                scanNowButton { await AppDelegate.shared?.calendarReader.scanNow() }
             }
-
-            Rectangle().fill(MW.border).frame(height: MW.hairline)
-                .padding(.vertical, MW.sp4)
-
-            // Voice questions + TTS (spec://BACKLOG#Phase6)
-            voiceQuestionSection
         }
         .padding(MW.sp16)
+        .frame(maxWidth: .infinity, alignment: .topLeading)
+        .mwCard(radius: MW.rMedium, elevation: .raised)
+    }
+
+    /// Shared SCAN NOW button for readers.
+    private func scanNowButton(_ action: @escaping () async -> Void) -> some View {
+        Button {
+            Task { @MainActor in await action() }
+        } label: {
+            HStack(spacing: 4) {
+                Image(systemName: "arrow.clockwise").font(.system(size: 10))
+                Text("Scan now").font(MW.label).tracking(0.6)
+            }
+            .foregroundStyle(MW.textSecondary)
+            .glassChip(selected: false, radius: MW.rTiny)
+        }
+        .buttonStyle(.plain)
+        .padding(.top, 2)
+    }
+
+    // MARK: - AI tab sections
+
+    private var memoriesSection: some View {
+        VStack(alignment: .leading, spacing: MW.sp10) {
+            toggleRow("Memories", isOn: $settings.memoriesEnabled)
+            if settings.memoriesEnabled {
+                Text("Automatically extracts facts about you from screen activity + transcriptions. Used to personalize AI Advice.")
+                    .font(MW.monoSm).foregroundStyle(MW.textMuted)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .padding(MW.sp16)
+        .frame(maxWidth: .infinity, alignment: .topLeading)
+        .mwCard(radius: MW.rMedium, elevation: .raised)
+    }
+
+    private var dailySummarySection: some View {
+        VStack(alignment: .leading, spacing: MW.sp10) {
+            toggleRow("Daily Summary", isOn: $settings.dailySummaryEnabled)
+            if settings.dailySummaryEnabled {
+                Text("Nightly recap of conversations, tasks, memories, and top apps. Delivered via macOS notification and visible on the Dashboard.")
+                    .font(MW.monoSm).foregroundStyle(MW.textMuted)
+                    .fixedSize(horizontal: false, vertical: true)
+                GlassDivider()
+                HStack {
+                    Text("Scheduled time").font(MW.mono).foregroundStyle(MW.textSecondary)
+                    Spacer()
+                    DatePicker(
+                        "",
+                        selection: Binding(
+                            get: {
+                                Calendar.current.date(
+                                    bySettingHour: settings.dailySummaryHour,
+                                    minute: settings.dailySummaryMinute,
+                                    second: 0,
+                                    of: Date()
+                                ) ?? Date()
+                            },
+                            set: { newValue in
+                                let comps = Calendar.current.dateComponents([.hour, .minute], from: newValue)
+                                settings.dailySummaryHour = comps.hour ?? 22
+                                settings.dailySummaryMinute = comps.minute ?? 0
+                                AppDelegate.shared?.dailySummaryService.startScheduler()
+                            }
+                        ),
+                        displayedComponents: .hourAndMinute
+                    )
+                    .labelsHidden()
+                    .datePickerStyle(.compact)
+                }
+            }
+        }
+        .padding(MW.sp16)
+        .frame(maxWidth: .infinity, alignment: .topLeading)
+        .mwCard(radius: MW.rMedium, elevation: .raised)
+    }
+
+    /// ITER-022 G5 — Weekly cross-conversation pattern digest. Sunday at user-
+    /// chosen hour. Reads past 7 days of conversations + memories + tasks, sends
+    /// to LLM, returns themes / people / stuck-loops / cross-context insights.
+    private var weeklyPatternsSection: some View {
+        VStack(alignment: .leading, spacing: MW.sp10) {
+            toggleRow("Weekly Patterns", isOn: $settings.weeklyPatternsEnabled)
+            if settings.weeklyPatternsEnabled {
+                Text("Every Sunday: cross-conversation recap. Recurring themes, people who keep coming up, stuck loops, insights you can't see in any single meeting.")
+                    .font(MW.monoSm).foregroundStyle(MW.textMuted)
+                    .fixedSize(horizontal: false, vertical: true)
+                GlassDivider()
+                HStack {
+                    Text("Sunday at").font(MW.mono).foregroundStyle(MW.textSecondary)
+                    Spacer()
+                    DatePicker(
+                        "",
+                        selection: Binding(
+                            get: {
+                                Calendar.current.date(
+                                    bySettingHour: settings.weeklyPatternsHour,
+                                    minute: 0, second: 0, of: Date()
+                                ) ?? Date()
+                            },
+                            set: { newValue in
+                                settings.weeklyPatternsHour = Calendar.current.component(.hour, from: newValue)
+                                AppDelegate.shared?.weeklyPatternDetector.startScheduler()
+                            }
+                        ),
+                        displayedComponents: .hourAndMinute
+                    )
+                    .labelsHidden()
+                    .datePickerStyle(.compact)
+                }
+                Text("Manual trigger: Insights tab → GENERATE WEEKLY DIGEST.")
+                    .font(MW.monoSm).foregroundStyle(MW.textMuted)
+            }
+        }
+        .padding(MW.sp16)
+        .frame(maxWidth: .infinity, alignment: .topLeading)
+        .mwCard(radius: MW.rMedium, elevation: .raised)
+    }
+
+    private var adviceSection: some View {
+        VStack(alignment: .leading, spacing: MW.sp10) {
+            toggleRow("AI Advice", isOn: $settings.adviceEnabled)
+            if settings.adviceEnabled {
+                if license.isPro {
+                    Text("Contextual suggestions from screen activity + transcriptions, delivered via macOS notifications. Included with Pro — no API key required.")
+                        .font(MW.monoSm).foregroundStyle(MW.textMuted)
+                        .fixedSize(horizontal: false, vertical: true)
+                } else {
+                    Text("Contextual suggestions based on screen activity and transcriptions. Uses your LLM provider (set in General).")
+                        .font(MW.monoSm).foregroundStyle(MW.textMuted)
+                        .fixedSize(horizontal: false, vertical: true)
+                    if settings.activeAPIKey.isEmpty {
+                        hintRow(color: MW.recording,
+                                "Add an \(activeProviderName) API key in General → Cloud API")
+                    }
+                }
+                if !settings.memoriesEnabled {
+                    hintRow(color: MW.processing,
+                            "Enable Memories above for personalized advice (recommended)")
+                }
+                // ITER-022 G4 — Coach mode toggle. Opt-in (off by default).
+                GlassDivider()
+                toggleRow("Coach mode", isOn: $settings.adviceCoachMode)
+                Text(settings.adviceCoachMode
+                     ? "Direct accountability nudges based on stated commitments and patterns. Still NOT generic wellness or therapy."
+                     : "Default: pure insight only — no nudges. Turn ON for accountability push (when you slip a stated commitment, distract for too long, miss goal pace).")
+                    .font(MW.monoSm).foregroundStyle(MW.textMuted)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .padding(MW.sp16)
+        .frame(maxWidth: .infinity, alignment: .topLeading)
+        .mwCard(radius: MW.rMedium, elevation: .raised)
+    }
+
+    private func hintRow(color: Color, _ text: String) -> some View {
+        HStack(spacing: MW.sp6) {
+            Circle().fill(color).frame(width: 5, height: 5)
+            Text(text).font(MW.monoSm).foregroundStyle(MW.textMuted)
+                .fixedSize(horizontal: false, vertical: true)
+        }
     }
 
     // MARK: - Voice questions section (Phase 6)
 
     private var voiceQuestionSection: some View {
-        VStack(alignment: .leading, spacing: MW.sp8) {
-            Text("VOICE")
-                .font(MW.monoLg).foregroundStyle(MW.textPrimary).tracking(2)
-
-            HStack(spacing: MW.sp8) {
-                Image(systemName: "info.circle").font(.system(size: 11)).foregroundStyle(MW.textMuted)
-                Text("Hold Right ⌘ to ask MetaChat aloud. Short tap still starts dictation as before.")
-                    .font(MW.monoSm).foregroundStyle(MW.textMuted)
-            }
-
-            toggleRow("SPEAK ANSWERS TO VOICE QUESTIONS", isOn: $settings.ttsVoiceQuestions)
-            toggleRow("SPEAK ANSWERS TO TYPED QUESTIONS", isOn: $settings.ttsTypedQuestions)
+        VStack(alignment: .leading, spacing: MW.sp10) {
+            toggleRow("Speak voice question answers", isOn: $settings.ttsVoiceQuestions)
+            toggleRow("Speak typed question answers", isOn: $settings.ttsTypedQuestions)
 
             if settings.ttsVoiceQuestions || settings.ttsTypedQuestions {
+                GlassDivider()
+                Text("Hold Right ⌘ to ask MetaChat aloud. Short tap still starts dictation as before.")
+                    .font(MW.monoSm).foregroundStyle(MW.textMuted)
+                    .fixedSize(horizontal: false, vertical: true)
                 cloudVoiceSection
                 voicePicker
                 speedPicker
             }
         }
+        .padding(MW.sp16)
+        .frame(maxWidth: .infinity, alignment: .topLeading)
+        .mwCard(radius: MW.rMedium, elevation: .raised)
     }
 
     private var cloudVoiceSection: some View {
@@ -1180,7 +1500,7 @@ struct MainSettingsView: View {
                             .buttonStyle(.plain)
                         }
                         .padding(.vertical, 4).padding(.horizontal, 8)
-                        .overlay(Rectangle().stroke(MW.border, lineWidth: MW.hairline))
+                        .overlay(RoundedRectangle(cornerRadius: MW.rSmall, style: .continuous).stroke(MW.border, lineWidth: 0.5))
                     }
                 }
             }
@@ -1193,27 +1513,23 @@ struct MainSettingsView: View {
                     }
                     .foregroundStyle(MW.textSecondary)
                     .padding(.horizontal, 8).padding(.vertical, 4)
-                    .overlay(Rectangle().stroke(MW.border, lineWidth: MW.hairline))
+                    .overlay(RoundedRectangle(cornerRadius: MW.rSmall, style: .continuous).stroke(MW.border, lineWidth: 0.5))
                 }
                 .buttonStyle(.plain)
 
-                if !settings.indexedFolders.isEmpty {
-                    Button {
-                        Task { @MainActor in
-                            await AppDelegate.shared?.fileIndexer.scanAll()
-                            await AppDelegate.shared?.fileMemoryExtractor.runPass()
-                        }
-                    } label: {
-                        HStack(spacing: 4) {
-                            Image(systemName: "arrow.clockwise").font(.system(size: 10))
-                            Text("SCAN NOW").font(MW.label).tracking(0.6)
-                        }
-                        .foregroundStyle(MW.textSecondary)
-                        .padding(.horizontal, 8).padding(.vertical, 4)
-                        .overlay(Rectangle().stroke(MW.border, lineWidth: MW.hairline))
-                    }
-                    .buttonStyle(.plain)
+                if !settings.indexedFolders.isEmpty,
+                   let indexer = AppDelegate.shared?.fileIndexer,
+                   let extractor = AppDelegate.shared?.fileMemoryExtractor {
+                    FileIndexingScanButton(indexer: indexer, extractor: extractor)
                 }
+            }
+
+            // Status line — shows "Scanning…" / "287 files · 8 memories · 2m ago" / errors.
+            // Without this there's zero feedback on whether SCAN NOW finished successfully.
+            if let indexer = AppDelegate.shared?.fileIndexer,
+               let extractor = AppDelegate.shared?.fileMemoryExtractor {
+                FileIndexingStatusLine(indexer: indexer, extractor: extractor)
+                    .padding(.top, MW.sp4)
             }
         }
     }
@@ -1225,8 +1541,13 @@ struct MainSettingsView: View {
         panel.canChooseDirectories = true
         panel.allowsMultipleSelection = false
         panel.canCreateDirectories = false
-        if panel.runModal() == .OK, let url = panel.url {
-            settings.addIndexedFolder(url.path)
+        // Activate app first — on macOS Sonoma/Sequoia menu bar apps, NSOpenPanel sometimes
+        // renders BEHIND the main window if app isn't frontmost → UI appears frozen.
+        // Also use async .begin() instead of .runModal() so we don't block the main thread.
+        NSApp.activate(ignoringOtherApps: true)
+        panel.begin { response in
+            guard response == .OK, let url = panel.url else { return }
+            Task { @MainActor in settings.addIndexedFolder(url.path) }
         }
     }
 
@@ -1273,7 +1594,7 @@ struct MainSettingsView: View {
                 }
                 .foregroundStyle(MW.textSecondary)
                 .padding(.horizontal, MW.sp8).padding(.vertical, MW.sp4)
-                .overlay(Rectangle().stroke(MW.border, lineWidth: MW.hairline))
+                .overlay(RoundedRectangle(cornerRadius: MW.rSmall, style: .continuous).stroke(MW.border, lineWidth: 0.5))
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
@@ -1314,7 +1635,7 @@ struct MainSettingsView: View {
         }
         .padding(.horizontal, MW.sp4).padding(.vertical, 3)
         .background(MW.elevated.opacity(0.4))
-        .overlay(Rectangle().stroke(MW.border, lineWidth: MW.hairline))
+        .overlay(RoundedRectangle(cornerRadius: MW.rSmall, style: .continuous).stroke(MW.border, lineWidth: 0.5))
     }
 
     private func lookupAppInfo(bundleID: String) -> AppInfo? {
@@ -1345,7 +1666,7 @@ struct MainSettingsView: View {
             .padding(.horizontal, MW.sp8)
             .padding(.vertical, 2)
             .background(isSelected ? MW.elevated : .clear)
-            .overlay(Rectangle().stroke(MW.border, lineWidth: MW.hairline))
+            .overlay(RoundedRectangle(cornerRadius: MW.rSmall, style: .continuous).stroke(MW.border, lineWidth: 0.5))
             .onTapGesture { settings.screenContextMode = value }
     }
 }
@@ -1405,5 +1726,136 @@ private struct WrappingHStack<Item, Content: View>: View {
             }
             return Color.clear
         }
+    }
+}
+
+// MARK: - File Indexing status / button (observers for reactive UI)
+
+/// SCAN NOW button that reflects running state. Disabled + "SCANNING…" label
+/// while either the file indexer or the memory extractor pass is in flight.
+private struct FileIndexingScanButton: View {
+    @ObservedObject var indexer: FileIndexerService
+    @ObservedObject var extractor: FileMemoryExtractor
+
+    private var isRunning: Bool { indexer.isScanning || extractor.isRunning }
+
+    var body: some View {
+        Button {
+            guard !isRunning else { return }
+            // `scanAll` internally runs `backfillContent` at the end — one call covers metadata
+            // discovery AND content storage for chat RAG (ITER-004). Then LLM memory extraction.
+            Task { @MainActor in
+                await indexer.scanAll()
+                await extractor.runPass()
+            }
+        } label: {
+            HStack(spacing: 4) {
+                if isRunning {
+                    ProgressView().controlSize(.mini).scaleEffect(0.7)
+                    Text("SCANNING…").font(MW.label).tracking(0.6)
+                } else {
+                    Image(systemName: "arrow.clockwise").font(.system(size: 10))
+                    Text("SCAN NOW").font(MW.label).tracking(0.6)
+                }
+            }
+            .foregroundStyle(isRunning ? MW.textMuted : MW.textSecondary)
+            .padding(.horizontal, 8).padding(.vertical, 4)
+            .overlay(RoundedRectangle(cornerRadius: MW.rSmall, style: .continuous).stroke(MW.border, lineWidth: 0.5))
+        }
+        .buttonStyle(.plain)
+        .disabled(isRunning)
+    }
+}
+
+/// One-line status: "Scanning…" / "287 files · 8 memories · 2m ago" / "Error: …".
+/// Pulls live state from `FileIndexerService.lastScanSummary` + `FileMemoryExtractor.lastSummary`.
+/// Gives the user concrete confirmation that scan finished successfully (was invisible before).
+private struct FileIndexingStatusLine: View {
+    @ObservedObject var indexer: FileIndexerService
+    @ObservedObject var extractor: FileMemoryExtractor
+
+    var body: some View {
+        HStack(spacing: 4) {
+            statusIcon
+            Text(statusText)
+                .font(MW.monoSm)
+                .foregroundStyle(statusColor)
+                .lineLimit(2)
+            Spacer(minLength: 0)
+        }
+    }
+
+    private var statusIcon: some View {
+        Group {
+            if indexer.isScanning || extractor.isRunning {
+                Image(systemName: "clock")
+            } else if extractor.lastError != nil {
+                Image(systemName: "exclamationmark.triangle")
+            } else if indexer.lastRun != nil {
+                Image(systemName: "checkmark.circle")
+            } else {
+                Image(systemName: "circle.dotted")
+            }
+        }
+        .font(.system(size: 9, weight: .medium))
+        .foregroundStyle(statusColor)
+    }
+
+    private var statusText: String {
+        if indexer.isScanning { return "Scanning folders…" }
+        if extractor.isRunning { return "Extracting memories from files…" }
+        if let err = extractor.lastError { return "Extraction error: \(err)" }
+        guard let run = indexer.lastRun else {
+            return "Not scanned yet. Click SCAN NOW to index."
+        }
+        // Parse "Added 287, updated 0 across 1 folder(s)" → "287 files"
+        // Parse "Processed 15 files, added 8 memories" → "8 memories"
+        let filesPart = indexer.lastScanSummary.flatMap(Self.fileCountLabel) ?? "files scanned"
+        let memPart = extractor.lastSummary.flatMap(Self.memoryCountLabel) ?? ""
+        let ago = Self.relativeAgo(from: run, to: Date())
+        return memPart.isEmpty
+            ? "\(filesPart) · \(ago)"
+            : "\(filesPart) · \(memPart) · \(ago)"
+    }
+
+    private var statusColor: Color {
+        if indexer.isScanning || extractor.isRunning { return MW.textSecondary }
+        if extractor.lastError != nil { return .orange }
+        if indexer.lastRun != nil { return MW.textSecondary }
+        return MW.textMuted
+    }
+
+    /// "Added 287, updated 12 across 2 folder(s)" → "287 new, 12 updated".
+    private static func fileCountLabel(_ s: String) -> String? {
+        // Lightweight regex via ranges — avoid bringing NSRegularExpression for a 1-liner.
+        func num(after marker: String) -> Int? {
+            guard let r = s.range(of: marker) else { return nil }
+            let rest = s[r.upperBound...]
+            let digits = rest.prefix(while: { $0.isWhitespace || $0.isNumber })
+                .trimmingCharacters(in: .whitespaces)
+            return Int(digits)
+        }
+        let added = num(after: "Added") ?? 0
+        let updated = num(after: "updated") ?? 0
+        if added + updated == 0 { return "no new files" }
+        if updated == 0 { return "\(added) files" }
+        return "\(added) new · \(updated) updated"
+    }
+
+    /// "Processed 15 files, added 8 memories" → "8 memories".
+    private static func memoryCountLabel(_ s: String) -> String? {
+        guard let r = s.range(of: "added ") else { return nil }
+        let rest = s[r.upperBound...]
+        let digits = rest.prefix(while: { $0.isNumber })
+        guard let n = Int(digits), n > 0 else { return nil }
+        return "\(n) memories"
+    }
+
+    private static func relativeAgo(from: Date, to: Date) -> String {
+        let secs = Int(to.timeIntervalSince(from))
+        if secs < 60 { return "just now" }
+        if secs < 3600 { return "\(secs / 60)m ago" }
+        let h = secs / 3600
+        return h < 24 ? "\(h)h ago" : "\(h / 24)d ago"
     }
 }
