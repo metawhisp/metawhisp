@@ -87,7 +87,7 @@ struct CapsulePillView: View {
             }
         }
         .padding(.horizontal, 20).padding(.vertical, 10)
-        .background(MW.surface)
+        .mwCard(radius: MW.rSmall, elevation: .flat)
         .overlay(
             Capsule()
                 .stroke(displayedStage == .recording ? MW.textPrimary.opacity(pulse ? 0.4 : 0.15) : MW.border,

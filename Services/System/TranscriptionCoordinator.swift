@@ -19,7 +19,7 @@ final class TranscriptionCoordinator: ObservableObject {
     /// Per-recording flag: translate this recording (set by Right ⌥ shortcut).
     @Published var translateNext = false
 
-    private let recorder: AudioRecordingService
+    private let recorder: any AudioSource
     var whisperEngine: WhisperKitEngine?
     private let cloudEngine = CloudWhisperEngine()
     private let textInserter: TextInsertionService
@@ -29,9 +29,40 @@ final class TranscriptionCoordinator: ObservableObject {
     var textProcessor: TextProcessor?
     var correctionDictionary: CorrectionDictionary?
     var correctionMonitor: CorrectionMonitor?
+    /// Optional. If set and AI Advice is enabled, each successful transcription
+    /// fires a trigger that may generate a contextual advice.
+    /// spec://intelligence/FEAT-0003#triggers.transcription
+    weak var adviceService: AdviceService?
+
+    /// Optional. If set and memory collection is enabled, each successful transcription
+    /// fires a trigger that may extract up to 2 memories.
+    /// spec://iterations/ITER-001#architecture.extractor
+    weak var memoryExtractor: MemoryExtractor?
+
+    /// Optional. If set and tasks enabled, each successful transcription fires a trigger
+    /// that may extract action items (dedup over 2 days).
+    /// spec://BACKLOG#B1
+    weak var taskExtractor: TaskExtractor?
+
+    /// Optional. Groups consecutive transcripts into Conversations (aggregation root).
+    /// spec://BACKLOG#C1.1
+    weak var conversationGrouper: ConversationGrouper?
+
+    /// Optional. When voiceQuestionMode is active, the transcript is routed to ChatService
+    /// (as a voice question) instead of the clipboard.
+    /// spec://BACKLOG#Phase6
+    weak var chatService: ChatService?
+
+    /// True while user is holding Right ⌘ (long-press). Set by `startVoiceQuestion()` /
+    /// cleared by `stopVoiceQuestion()` handler after the transcript is sent.
+    var voiceQuestionMode: Bool = false
+
+    /// Source label for history items (set when switching audio source).
+    var audioSourceLabel: String = "microphone"
 
     /// Returns the active transcription engine based on settings.
-    private var activeEngine: (any TranscriptionEngine)? {
+    /// Internal so meeting recording can reuse the same engine without duplicating logic.
+    var activeEngine: (any TranscriptionEngine)? {
         settings.transcriptionEngine == "cloud" ? cloudEngine : whisperEngine
     }
 
@@ -39,7 +70,7 @@ final class TranscriptionCoordinator: ObservableObject {
     private var lastToggleTime: Date = .distantPast
 
     init(
-        recorder: AudioRecordingService,
+        recorder: any AudioSource,
         whisperEngine: WhisperKitEngine?,
         textInserter: TextInsertionService,
         soundService: SoundService,
@@ -97,6 +128,32 @@ final class TranscriptionCoordinator: ObservableObject {
         case .processing, .postProcessing:
             NSLog("[Coordinator] Ignoring toggle: processing in progress")
         }
+    }
+
+    /// Right ⌘ long-press → start voice question recording. Routed to MetaChat on release.
+    /// spec://BACKLOG#Phase6
+    func startVoiceQuestion() {
+        guard stage == .idle else {
+            NSLog("[Coordinator] Voice question: busy (stage=\(stage)) — skipping")
+            return
+        }
+        voiceQuestionMode = true
+        VoiceQuestionState.shared.startListening()
+        NSLog("[Coordinator] 🎤 Voice question mode ON")
+        startRecording()
+    }
+
+    /// Right ⌘ release after long-press → stop + transcribe + send to ChatService.
+    func stopVoiceQuestion() {
+        guard stage == .recording, voiceQuestionMode else {
+            NSLog("[Coordinator] Voice question stop called but not in voice question recording state")
+            voiceQuestionMode = false
+            return
+        }
+        NSLog("[Coordinator] 🎤 Voice question mode STOPPING")
+        VoiceQuestionState.shared.transcribing()
+        stopAndTranscribe()
+        // voiceQuestionMode flag reset inside the transcription completion path.
     }
 
     private func startRecording() {
@@ -222,12 +279,17 @@ final class TranscriptionCoordinator: ObservableObject {
                 }
             }
 
-            // Save to history (with processed text if available)
+            // Save to history (with processed text if available).
             if let hs = historyService {
                 let item = hs.save(result)
                 item?.processedText = processedText
                 item?.translatedTo = shouldTranslate ? settings.translateTo : nil
                 item?.modelName = settings.selectedModel
+                item?.source = audioSourceLabel
+                // Assign to Conversation (C1.1) — sets conversationId on the item.
+                if let item {
+                    conversationGrouper?.assign(historyItem: item)
+                }
             }
 
             // Apply learned corrections (before paste, after all processing)
@@ -239,8 +301,19 @@ final class TranscriptionCoordinator: ObservableObject {
                 }
             }
 
-            // Copy to clipboard (+ auto-paste if accessibility granted)
-            if settings.autoSubmit {
+            // Voice question mode (Phase 6) — route to MetaChat instead of clipboard paste.
+            if voiceQuestionMode {
+                voiceQuestionMode = false
+                NSLog("[Coordinator] 🎤 Voice question transcript → MetaChat: %@", String(finalText.prefix(80)))
+                VoiceQuestionState.shared.thinking(transcript: finalText)
+                if let chat = chatService {
+                    Task { await chat.send(finalText, source: .voice) }
+                } else {
+                    NSLog("[Coordinator] ⚠️ chatService nil — voice question dropped")
+                    VoiceQuestionState.shared.failed("Chat not available")
+                }
+                // Skip clipboard / paste for voice questions.
+            } else if settings.autoSubmit {
                 let autoPasted = textInserter.insert(text: finalText)
                 if !autoPasted {
                     lastError = "Copied to clipboard — press ⌘V to paste"
@@ -248,6 +321,11 @@ final class TranscriptionCoordinator: ObservableObject {
                 // Start monitoring for user corrections (auto-learn)
                 if autoPasted { correctionMonitor?.startMonitoring(pastedText: finalText) }
             }
+
+            // Memory + task extractors no longer fire per-transcript. They run once on
+            // conversation close (via ConversationGrouper.scheduleOnClose) so the LLM sees
+            // the whole conversation context — needed for resolution, assignee filter, dedup.
+            // spec://BACKLOG#B1
 
             soundService.playSuccess()
             stage = .idle
@@ -263,7 +341,7 @@ final class TranscriptionCoordinator: ObservableObject {
     // MARK: - Audio Analysis
 
     /// Calculate RMS energy of audio samples.
-    private static func calculateRMS(_ samples: [Float]) -> Float {
+    static func calculateRMS(_ samples: [Float]) -> Float {
         guard !samples.isEmpty else { return 0 }
         var sumSq: Float = 0
         for s in samples { sumSq += s * s }
@@ -274,7 +352,8 @@ final class TranscriptionCoordinator: ObservableObject {
 
     /// Tokens that are ALWAYS hallucinations — filter regardless of audio energy.
     /// These are YouTube artifacts that Whisper never produces from real speech.
-    private static func isAlwaysHallucination(_ text: String) -> Bool {
+    /// Exposed internally so meeting recording can reuse the same filter.
+    static func isAlwaysHallucination(_ text: String) -> Bool {
         let lower = text.lowercased()
         let toxicTokens = [
             "♪", "♫", "торзок", "torzok", "dimatorzok", "dima torzok",
@@ -326,7 +405,8 @@ final class TranscriptionCoordinator: ObservableObject {
     /// IMPORTANT: Only called on near-silence audio (RMS < 0.008).
     /// Uses strict matching — short texts must be primarily a hallucination phrase,
     /// not just contain a keyword (the user might actually say "music" or "subscribe").
-    private static func isHallucination(_ text: String) -> Bool {
+    /// Exposed internally so meeting recording can reuse the same filter.
+    static func isHallucination(_ text: String) -> Bool {
         let lower = text.lowercased()
             .trimmingCharacters(in: .whitespacesAndNewlines)
             .trimmingCharacters(in: .punctuationCharacters)

@@ -1,0 +1,14 @@
+# Human-only buffer — AI never reads this
+.human/
+
+# Build artifacts — noise
+.build/
+dist/
+*.dSYM/
+
+# Website build (separate project)
+website/node_modules/
+website/_site/
+
+# Third-party
+node_modules/

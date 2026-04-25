@@ -25,6 +25,134 @@ final class AppSettings: ObservableObject {
     @AppStorage("textStyle_noPeriod") var textStyleNoPeriod: Bool = false
     @AppStorage("textStyle_noCapitalization") var textStyleNoCapitalization: Bool = false
 
+    // Meeting recording
+    @AppStorage("meetingRecordingEnabled") var meetingRecordingEnabled: Bool = false
+    /// Show notification when a call (Zoom / Meet / Teams / …) is detected.
+    /// Wired in AppDelegate via `ScreenContextService.onCallContext` hook (ITER-002).
+    @AppStorage("autoDetectCalls") var autoDetectCalls: Bool = false
+    /// When ON: auto-start recording 5s after call detection (requires `autoDetectCalls` ON).
+    @AppStorage("callsAutoStartEnabled") var callsAutoStartEnabled: Bool = false
+    /// Hard cap on meeting recording duration. After N minutes, force-stop with notification.
+    /// Layered defense for the "7-hour zombie recording" bug (ITER-012). Default 4h.
+    @AppStorage("meetingMaxDurationMinutes") var meetingMaxDurationMinutes: Double = 240
+    /// Silence backstop. If `MeetingRecorder.audioLevel` stays below threshold for N minutes
+    /// consecutively, auto-stop. Catches "Chrome tab still open after meeting ended" case.
+    /// Default 3 min — enough to span natural conversation pauses without false-stopping.
+    @AppStorage("meetingSilenceStopMinutes") var meetingSilenceStopMinutes: Double = 3
+    /// When ON: post a notification ~8s after meeting stops, summarising title + extracted
+    /// tasks/memories. Click → opens Library tab.
+    @AppStorage("meetingRecapNotifications") var meetingRecapNotifications: Bool = true
+
+    /// ITER-019 — Live advice during meeting recording. Periodically transcribes
+    /// the last 30s of audio and feeds it to AdviceService for realtime hints
+    /// ("contradiction with prior call", "matches a memory from last week"). Pro only.
+    /// Off by default — opt-in because it costs ~$0.05 per hour-long meeting.
+    @AppStorage("liveMeetingAdviceEnabled") var liveMeetingAdviceEnabled: Bool = false
+
+    // ITER-015 — Proactive surfacing. Opt-in. Silently surfaces a peripheral chip
+    // with 2-3 relevant memories / past decisions / pending tasks while user is
+    // composing a reply in another app. Not a notification — NSWindow-based chip.
+    @AppStorage("proactiveEnabled") var proactiveEnabled: Bool = false
+    /// Minimum gap between chip surfaces. Lower = more useful but more intrusive.
+    /// Default 5 min balances usefulness against annoyance.
+    @AppStorage("proactiveCooldownMinutes") var proactiveCooldownMinutes: Double = 5
+    /// Apps where proactive chip is DISABLED (comma-separated bundle-ids or display names).
+    /// Sensitive apps like 1Password, Keychain, Terminal are banned by default.
+    @AppStorage("proactiveBlacklist") var proactiveBlacklist: String = "1Password,Keychain Access,Terminal,iTerm,Activity Monitor,System Settings"
+
+    // Screen context
+    @AppStorage("screenContextEnabled") var screenContextEnabled: Bool = false
+    @AppStorage("screenContextInterval") var screenContextInterval: Double = 30
+    @AppStorage("screenContextMode") var screenContextMode: String = "blacklist" // blacklist, whitelist
+    @AppStorage("screenContextAppList") var screenContextAppList: String = "" // comma-separated
+
+    // AI Advice
+    @AppStorage("adviceEnabled") var adviceEnabled: Bool = false
+    @AppStorage("adviceInterval") var adviceInterval: Double = 900 // seconds (15 min)
+    /// ITER-022 G4 — Coach mode. When ON, advice prompt switches to a more
+    /// direct accountability tone (commitment tracking, pattern callouts).
+    /// Still NOT generic wellness or therapy. Opt-in by design — default Off.
+    @AppStorage("adviceCoachMode") var adviceCoachMode: Bool = false
+
+    /// ITER-022 G5 — Weekly cross-conversation pattern digest. When ON, runs
+    /// every Sunday (default 18:00) over the past 7 days of conversations +
+    /// memories + tasks. Surfaces recurring themes / people / stuck loops /
+    /// cross-context insights that aren't visible in any single meeting.
+    @AppStorage("weeklyPatternsEnabled") var weeklyPatternsEnabled: Bool = false
+    /// Hour of day (0-23) at which the weekly digest fires. Default Sunday 18:00.
+    @AppStorage("weeklyPatternsHour") var weeklyPatternsHour: Int = 18
+
+    // Memories — independent from advice (spec://iterations/ITER-001#architecture.settings)
+    @AppStorage("memoriesEnabled") var memoriesEnabled: Bool = false
+    @AppStorage("memoriesInterval") var memoriesInterval: Double = 600 // seconds (10 min)
+
+    // Tasks
+    @AppStorage("tasksEnabled") var tasksEnabled: Bool = true
+
+    // Screen extraction — hourly batch analysis of ScreenContext → ScreenObservation (spec://BACKLOG#Phase2.R1)
+    @AppStorage("screenExtractionEnabled") var screenExtractionEnabled: Bool = true
+    @AppStorage("screenExtractionInterval") var screenExtractionInterval: Double = 3600  // seconds (1 hour)
+
+    // Realtime screen reaction — per-window LLM check for actionable tasks (spec://iterations/ITER-006).
+    // Off by default: Pro-only, adds LLM cost. User opts in for real-time task surfacing.
+    @AppStorage("realtimeScreenReactionEnabled") var realtimeScreenReactionEnabled: Bool = false
+
+    // File Indexing — scan user-picked folders + extract memories from text files (spec://BACKLOG#Phase3.E1)
+    @AppStorage("fileIndexingEnabled") var fileIndexingEnabled: Bool = false
+    /// Comma-separated absolute folder paths (e.g. "/Users/alice/Obsidian,/Users/alice/Documents/notes").
+    @AppStorage("indexedFoldersCSV") var indexedFoldersCSV: String = ""
+    @AppStorage("fileIndexingInterval") var fileIndexingInterval: Double = 21600  // seconds (6 hours)
+
+    // Apple Notes reader — scan Notes.app via AppleScript, extract memories (spec://BACKLOG#Phase3.E2)
+    @AppStorage("appleNotesEnabled") var appleNotesEnabled: Bool = false
+    @AppStorage("appleNotesInterval") var appleNotesInterval: Double = 43200  // seconds (12 hours)
+
+    // Calendar reader — EventKit → tasks for upcoming events + memories for recurring patterns (spec://BACKLOG#Phase3.E3)
+    @AppStorage("calendarReaderEnabled") var calendarReaderEnabled: Bool = false
+    @AppStorage("calendarReaderInterval") var calendarReaderInterval: Double = 21600  // seconds (6 hours)
+
+    // Voice questions via long-press Right ⌘ + TTS answers (spec://BACKLOG#Phase6)
+    @AppStorage("ttsVoiceQuestions") var ttsVoiceQuestions: Bool = true
+    @AppStorage("ttsTypedQuestions") var ttsTypedQuestions: Bool = false
+    /// Long-press hold threshold for voice-question trigger (ms).
+    @AppStorage("voiceQuestionHoldMs") var voiceQuestionHoldMs: Double = 500
+    /// AVSpeechSynthesisVoice identifier — defaults to system's preferred voice.
+    @AppStorage("ttsVoice") var ttsVoice: String = ""
+    /// Speech rate multiplier (AVSpeechUtteranceDefaultSpeechRate = 0.5, range 0.5-2.0x).
+    @AppStorage("ttsSpeed") var ttsSpeed: Double = 1.0
+    /// Pro-only: route TTS through cloud (OpenAI via /api/pro/tts) for natural voices.
+    /// Falls back to local AVSpeech if disabled, non-Pro, or cloud fails.
+    @AppStorage("ttsCloudEnabled") var ttsCloudEnabled: Bool = false
+    /// Cloud voice id (alloy / echo / fable / onyx / nova / shimmer). Default "nova" (warm female).
+    @AppStorage("ttsCloudVoice") var ttsCloudVoice: String = "nova"
+
+    // Daily Summary (spec://iterations/ITER-009-daily-summary)
+    @AppStorage("dailySummaryEnabled") var dailySummaryEnabled: Bool = true
+    /// Hour (0-23) in local time when the recap fires. Default 22 = 10 PM.
+    @AppStorage("dailySummaryHour") var dailySummaryHour: Int = 22
+    /// Minute (0-59) at the scheduled hour. Default 0.
+    @AppStorage("dailySummaryMinute") var dailySummaryMinute: Int = 0
+
+    /// Parsed list of scanned folder paths.
+    var indexedFolders: [String] {
+        indexedFoldersCSV
+            .split(separator: ",")
+            .map { String($0).trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty }
+    }
+
+    func addIndexedFolder(_ path: String) {
+        var list = indexedFolders
+        guard !list.contains(path) else { return }
+        list.append(path)
+        indexedFoldersCSV = list.joined(separator: ",")
+    }
+
+    func removeIndexedFolder(_ path: String) {
+        let list = indexedFolders.filter { $0 != path }
+        indexedFoldersCSV = list.joined(separator: ",")
+    }
+
     // Sound preset: "default" (system sounds), "bass", "signature", or "custom"
     @AppStorage("soundPreset") var soundPreset: String = "default"
 

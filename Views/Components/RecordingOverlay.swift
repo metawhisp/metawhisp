@@ -59,6 +59,14 @@ final class RecordingOverlayController {
         hideTimer?.invalidate()
         hideTimer = nil
 
+        // Voice question (Phase 6) has its own floating panel — suppress the dictation pill
+        // so they don't stack in top-center. spec://BACKLOG#Phase6
+        if VoiceQuestionState.shared.isVisible {
+            if panel != nil { hidePanel() }
+            pillState.stage = .idle
+            return
+        }
+
         switch stage {
         case .idle:
             pillState.stage = .idle

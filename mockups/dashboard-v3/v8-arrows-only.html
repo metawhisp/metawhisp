@@ -1,0 +1,323 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>v8 · Arrows only (no calendar, no sidebar)</title>
+<link rel="stylesheet" href="_shared.css">
+<style>
+  .container { padding: 24px 28px; }
+
+  .top-bar {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 18px;
+  }
+  .back { font-family: var(--mono); font-size: 11px; color: var(--text-muted); }
+  .top-bar h1 { font-size: 28px; font-weight: 700; }
+
+  /* TODAY + TOMORROW split — equal-height columns so Tomorrow can grow tall */
+  .split {
+    display: grid;
+    grid-template-columns: 1.3fr 1fr;
+    gap: 14px;
+    margin-bottom: 14px;
+    align-items: stretch;
+  }
+  .day-card { padding: 18px 20px; display: flex; flex-direction: column; }
+  .day-card .body { flex: 1; }
+
+  /* Header row WITH arrows inside the today card itself */
+  .day-card .dh-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 12px;
+    gap: 8px;
+  }
+  .day-card .dh-left {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .day-card .dh-label {
+    font-family: var(--mono);
+    font-size: 10px;
+    letter-spacing: 1.4px;
+    color: var(--text-muted);
+  }
+  .day-card .dh-label strong { color: var(--text); margin-right: 6px; }
+  .day-card.tomorrow .dh-label strong { color: var(--accent); }
+  .day-card.tomorrow {
+    background: linear-gradient(180deg, rgba(255,214,10,0.04), var(--bg-elev));
+    border-color: rgba(255,214,10,0.18);
+  }
+  .day-card .headline {
+    font-size: 18px;
+    font-weight: 600;
+    line-height: 1.25;
+    margin-bottom: 12px;
+  }
+  .day-card.tomorrow .headline {
+    font-size: 14px;
+    color: var(--text-muted);
+  }
+
+  /* Inline arrow buttons inside today card */
+  .arrow-btn {
+    width: 24px;
+    height: 24px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 5px;
+    border: 0.5px solid var(--border);
+    color: var(--text-muted);
+    cursor: pointer;
+    background: transparent;
+    font-size: 14px;
+    line-height: 1;
+  }
+  .arrow-btn:hover { color: var(--text); border-color: var(--border-strong); }
+  .arrow-btn.disabled { opacity: 0.3; cursor: not-allowed; }
+
+  .compact-section {
+    margin-top: 8px;
+    padding-top: 8px;
+    border-top: 0.5px solid var(--border);
+  }
+  .compact-section .section-label { margin-bottom: 4px; }
+  .compact-section .bullet-list li { font-size: 12px; padding: 1px 0; }
+
+  /* COMPACT ROW under split — Stats + Screen activity side by side */
+  .compact-row {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 14px;
+    margin-bottom: 14px;
+  }
+  .compact-card { padding: 12px 16px; }
+  .compact-card .card-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 8px;
+  }
+  .compact-card .card-head .lbl {
+    font-family: var(--mono);
+    font-size: 10px;
+    letter-spacing: 1.2px;
+    color: var(--text-muted);
+  }
+
+  /* Stats — 4 inline pills, баребоне, минимум места */
+  .stats-inline {
+    display: flex;
+    gap: 14px;
+  }
+  .stat-pill {
+    display: flex;
+    align-items: baseline;
+    gap: 4px;
+  }
+  .stat-pill .num {
+    font-size: 18px;
+    font-weight: 600;
+    line-height: 1;
+    color: var(--text);
+  }
+  .stat-pill .lbl {
+    font-family: var(--mono);
+    font-size: 9px;
+    letter-spacing: 0.6px;
+    color: var(--text-muted);
+    text-transform: uppercase;
+  }
+
+  /* Screen activity — compact list with mini bar viz */
+  .scr-mini .scr-mini-row {
+    display: grid;
+    grid-template-columns: 64px 1fr 32px;
+    gap: 8px;
+    align-items: center;
+    padding: 2px 0;
+    font-size: 11px;
+  }
+  .scr-mini .name {
+    color: var(--text);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .scr-mini .bar {
+    height: 4px;
+    background: rgba(255,255,255,0.05);
+    border-radius: 2px;
+    overflow: hidden;
+  }
+  .scr-mini .bar .fill {
+    height: 100%;
+    background: var(--text-muted);
+    border-radius: 2px;
+  }
+  .scr-mini .pct {
+    font-family: var(--mono);
+    font-size: 10px;
+    color: var(--text-muted);
+    text-align: right;
+  }
+
+  /* Screen activity */
+  .scr-list .scr-row {
+    display: grid;
+    grid-template-columns: 1fr auto auto;
+    gap: 16px;
+    padding: 6px 0;
+    align-items: baseline;
+    font-size: 13px;
+  }
+  .scr-list .scr-row .pct {
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--text-muted);
+    width: 36px;
+    text-align: right;
+  }
+  .scr-list .scr-row .dur {
+    font-family: var(--mono);
+    font-size: 12px;
+    color: var(--text);
+  }
+
+  .energy {
+    margin-top: 12px;
+    font-size: 12px;
+    font-style: italic;
+    color: var(--text-muted);
+  }
+</style>
+</head>
+<body>
+  <div class="container">
+    <div class="top-bar">
+      <a class="back" href="index.html">← BACK TO MOCKUPS</a>
+      <h1>Dashboard</h1>
+      <div></div>
+    </div>
+
+    <!-- TODAY + TOMORROW SPLIT — arrows ВНУТРИ today card -->
+    <div class="split">
+
+      <!-- TODAY — compact, ОДНА стрелка ← prev day, stats 2x2 INSIDE under content -->
+      <div class="card day-card today">
+        <div class="dh-row">
+          <div class="dh-left">
+            <button class="arrow-btn" title="Previous day">‹</button>
+            <div class="dh-label"><strong>TODAY</strong> · Sat, Apr 25</div>
+          </div>
+          <button class="btn">↻ Regenerate</button>
+        </div>
+        <div class="body">
+          <div class="headline">Memory issue and clarity review</div>
+
+          <div class="compact-section">
+            <div class="section-label">💡 LEARNED</div>
+            <ul class="bullet-list">
+              <li>Overchat has memory issue</li>
+              <li>Skygen Desktop lacks clarity</li>
+            </ul>
+          </div>
+          <div class="compact-section">
+            <div class="section-label">✓ DECIDED</div>
+            <ul class="bullet-list">
+              <li>Check test results</li>
+            </ul>
+          </div>
+          <div class="energy">📊 Low activity · scattered apps</div>
+        </div>
+
+      </div>
+
+      <!-- TOMORROW — plans -->
+      <div class="card day-card tomorrow">
+        <div class="dh-row">
+          <div class="dh-label"><strong>TOMORROW</strong> · Sun, Apr 26</div>
+          <span class="chip accent">3 events</span>
+        </div>
+        <div class="headline">Standup-heavy day · 2 tasks due</div>
+
+        <div class="compact-section">
+          <div class="section-label">📅 CALENDAR</div>
+          <div class="plan-item" style="padding: 4px 0;">
+            <span class="time" style="width: 44px;">10:00</span>
+            <span class="label" style="font-size: 12px;">Standup · Pasha + Andrey</span>
+          </div>
+          <div class="plan-item" style="padding: 4px 0;">
+            <span class="time" style="width: 44px;">14:00</span>
+            <span class="label" style="font-size: 12px;">Q2 budget sync</span>
+          </div>
+          <div class="plan-item" style="padding: 4px 0;">
+            <span class="time" style="width: 44px;">17:00</span>
+            <span class="label" style="font-size: 12px;">Acme interview</span>
+          </div>
+        </div>
+
+        <div class="compact-section">
+          <div class="section-label">⏰ DUE</div>
+          <div class="plan-item" style="padding: 4px 0;">
+            <span class="time" style="width: 44px;">EOD</span>
+            <span class="label" style="font-size: 12px;">Q2 roadmap to Pasha</span>
+            <span class="chip red" style="font-size: 8px;">overdue</span>
+          </div>
+          <div class="plan-item" style="padding: 4px 0;">
+            <span class="time" style="width: 44px;">EOD</span>
+            <span class="label" style="font-size: 12px;">SEO report review</span>
+          </div>
+        </div>
+
+        <div class="compact-section">
+          <div class="section-label">💡 SUGGESTED</div>
+          <div class="plan-item" style="padding: 4px 0;">
+            <span class="time" style="width: 44px;">—</span>
+            <span class="label" style="font-size: 12px;">Followup Andrey on auth migration</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- COMPACT ROW under split — Stats + Screen activity, side by side, both narrow -->
+    <div class="compact-row">
+
+      <!-- STATS — 4 inline pills -->
+      <div class="card compact-card">
+        <div class="card-head">
+          <span class="lbl">TODAY</span>
+        </div>
+        <div class="stats-inline">
+          <div class="stat-pill"><span class="num">2</span><span class="lbl">CONV</span></div>
+          <div class="stat-pill"><span class="num">2</span><span class="lbl">MEM</span></div>
+          <div class="stat-pill"><span class="num">0</span><span class="lbl">DONE</span></div>
+          <div class="stat-pill"><span class="num">1</span><span class="lbl">NEW</span></div>
+        </div>
+      </div>
+
+      <!-- SCREEN ACTIVITY — compact list with bar viz -->
+      <div class="card compact-card">
+        <div class="card-head">
+          <span class="lbl">LAST 24H ON SCREEN</span>
+          <span style="font-family: var(--mono); font-size: 9px; color: var(--text-dim);">TOP 5</span>
+        </div>
+        <div class="scr-mini">
+          <div class="scr-mini-row"><span class="name">Telegram</span><div class="bar"><div class="fill" style="width:39%"></div></div><span class="pct">39%</span></div>
+          <div class="scr-mini-row"><span class="name">Arc</span><div class="bar"><div class="fill" style="width:24%"></div></div><span class="pct">24%</span></div>
+          <div class="scr-mini-row"><span class="name">Claude</span><div class="bar"><div class="fill" style="width:15%"></div></div><span class="pct">15%</span></div>
+          <div class="scr-mini-row"><span class="name">loginwindow</span><div class="bar"><div class="fill" style="width:12%"></div></div><span class="pct">12%</span></div>
+          <div class="scr-mini-row"><span class="name">Safari</span><div class="bar"><div class="fill" style="width:11%"></div></div><span class="pct">11%</span></div>
+        </div>
+      </div>
+
+    </div>
+
+  </div>
+</body>
+</html>

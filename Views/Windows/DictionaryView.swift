@@ -76,7 +76,7 @@ struct DictionaryView: View {
 
     private var headerBar: some View {
         HStack {
-            Text("DICTIONARY").font(MW.monoLg).foregroundStyle(MW.textPrimary).tracking(2)
+            Text("Dictionary").font(MW.monoTitle).foregroundStyle(MW.textPrimary)
             Spacer()
             Text("\(totalCount) TOTAL")
                 .font(MW.monoSm).foregroundStyle(MW.textMuted)
@@ -116,7 +116,7 @@ struct DictionaryView: View {
             .padding(.horizontal, MW.sp12)
             .padding(.vertical, 6)
             .background(selectedTab == index ? Color.white : .clear)
-            .overlay(Rectangle().stroke(MW.border, lineWidth: MW.hairline))
+            .overlay(RoundedRectangle(cornerRadius: MW.rSmall, style: .continuous).stroke(MW.border, lineWidth: 0.5))
         }
         .buttonStyle(.plain)
     }
@@ -146,7 +146,7 @@ struct DictionaryView: View {
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, MW.sp8)
                 .background(canAdd ? Color.white : MW.surface)
-                .overlay(Rectangle().stroke(MW.border, lineWidth: MW.hairline))
+                .overlay(RoundedRectangle(cornerRadius: MW.rSmall, style: .continuous).stroke(MW.border, lineWidth: 0.5))
             }
             .buttonStyle(.plain)
             .disabled(!canAdd)
@@ -166,8 +166,7 @@ struct DictionaryView: View {
                     .foregroundStyle(MW.textSecondary)
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, MW.sp8)
-                    .background(MW.surface)
-                    .overlay(Rectangle().stroke(MW.border, lineWidth: MW.hairline))
+                    .mwCard(radius: MW.rSmall, elevation: .flat)
                 }
                 .buttonStyle(.plain)
             }
@@ -342,8 +341,7 @@ struct DictionaryView: View {
             .buttonStyle(.plain)
         }
         .padding(.horizontal, MW.sp8).padding(.vertical, MW.sp4)
-        .background(MW.surface)
-        .overlay(Rectangle().stroke(MW.border, lineWidth: MW.hairline))
+        .mwCard(radius: MW.rSmall, elevation: .flat)
     }
 
     // MARK: - Actions

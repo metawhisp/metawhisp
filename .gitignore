@@ -22,3 +22,6 @@ website/
 *.key
 *.pem
 .secrets
+how-to-build/
+.human/
+.npmrc

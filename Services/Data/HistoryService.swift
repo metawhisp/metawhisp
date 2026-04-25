@@ -11,7 +11,7 @@ final class HistoryService: ObservableObject {
 
     init() {
         do {
-            let schema = Schema([HistoryItem.self])
+            let schema = Schema([HistoryItem.self, ScreenContext.self, AdviceItem.self, UserMemory.self, TaskItem.self, ChatMessage.self, Conversation.self, ScreenObservation.self, IndexedFile.self, DailySummary.self, Goal.self, ProjectAlias.self, AuditLog.self, PatternDigest.self])
             let config = ModelConfiguration("MetaWhisp", schema: schema)
             modelContainer = try ModelContainer(for: schema, configurations: [config])
             Self.log.info("History database ready")
@@ -19,7 +19,8 @@ final class HistoryService: ObservableObject {
             Self.log.error("Failed to create ModelContainer: \(error)")
             // Fallback: in-memory only
             do {
-                modelContainer = try ModelContainer(for: HistoryItem.self,
+                modelContainer = try ModelContainer(
+                    for: HistoryItem.self, ScreenContext.self, AdviceItem.self, UserMemory.self, TaskItem.self, ChatMessage.self, Conversation.self, ScreenObservation.self, IndexedFile.self, DailySummary.self, Goal.self, ProjectAlias.self, AuditLog.self, PatternDigest.self,
                     configurations: ModelConfiguration(isStoredInMemoryOnly: true))
             } catch {
                 Self.log.error("In-memory fallback also failed: \(error)")

@@ -1,3 +1,26 @@
+# MetaWhisp — AI Coprocessor Entry Point
+
+**FIRST STEPS (всегда):**
+1. Прочитай `specs/BOOT.md` — полные правила сессии
+2. Прочитай `specs/WAL.md` — текущее состояние и следующий TODO
+3. Запусти `swift build` — убедись что проект компилируется
+4. Если не билдится — сообщи ДО начала работы
+
+Вся методология — spec-driven (redbook): `specs/` — source of truth, код — compiled binary.
+
+**Key docs:**
+- `specs/BOOT.md` — правила сессии, критические запреты
+- `specs/WAL.md` — continuation state (DONE / TODO / Issues)
+- `specs/common/main.md` — архитектура и ключевые решения
+- `specs/common/structure.md` — module map
+- `specs/modules/<mod>/FEAT-XXXX.md` — спеки фич
+- `specs/WAL-PROTOCOL.md` — правила WAL
+- `specs/SPEC-PROTOCOL.md` — иерархия конфликтов (human > spec > code > tests)
+
+**В конце сессии — ВСЕГДА** обнови `specs/WAL.md`.
+
+---
+
 # Code Rules
 
 - Do not fix symptoms before identifying the root cause.
