@@ -128,6 +128,14 @@ final class RealtimeScreenReactor: ObservableObject {
                 NSLog("[RealtimeReactor] Generic noise, skipping: %@", trimmedDesc)
                 return
             }
+            // ITER-032 — strict title validator (replaces reference's tool-loop
+            // retry-on-vague-title). Drops single-verb / too-short titles before
+            // DB insert.
+            if let reason = TaskExtractionFilters.validateTaskTitle(trimmedDesc) {
+                NSLog("[RealtimeReactor] Title rejected (%@): %@",
+                      String(describing: reason), trimmedDesc)
+                return
+            }
 
             // Dedup against recent TaskItems (fuzzy word-overlap).
             if isDuplicate(description: trimmedDesc) {
@@ -222,12 +230,13 @@ final class RealtimeScreenReactor: ObservableObject {
 
     // MARK: - Prompt
 
-    /// Strict single-window task classifier inspired by reference `TaskAssistant`.
-    /// Requires the LLM to score relevance 0-100 AND cite verbatim OCR evidence.
-    /// Post-LLM filter rejects score <75 or evidence <20 chars.
+    /// Strict single-window task classifier — detects USER COMMITMENTS (patt-1)
+    /// + UNADDRESSED REQUESTS (patt-2). Requires the LLM to score relevance 0-100
+    /// AND cite verbatim OCR evidence. Post-LLM filter rejects score <75 or evidence <20 chars.
+    /// Re-aligned with reference TaskAssistant 2026-04-26 (ITER-028).
     static let systemPrompt = """
-    You are a screen activity task classifier. You look at ONE window's OCR and decide
-    if it shows a concrete actionable task the USER must do personally.
+    You are a task commitment detector. Your ONLY job: find tasks the user has committed
+    to in conversations, OR unaddressed requests directed at the user.
 
     Return a single JSON object:
     {
@@ -239,43 +248,130 @@ final class RealtimeScreenReactor: ObservableObject {
     }
 
     THE BAR IS HIGH. Default hasTask=false. Out of 20 windows, maybe 1 has a real task.
-    Your reputation depends on NOT inventing tasks. False positives are worse than false negatives.
+    False positives are worse than false negatives. Better to miss one marginal task
+    than flood the user with garbage.
 
-    hasTask=true ONLY if ALL apply:
-    1. The window shows a CONCRETE, named action item (not a generic activity).
-    2. The USER is the person expected to act (not "someone", not "we", not a third party).
-    3. There is EXPLICIT evidence in the OCR — you MUST quote it in the evidence field.
-    4. The user has NOT already completed it visibly (no sent-reply, no "done" marker).
+    ── WORKFLOW ──
+    1. Read the OCR to understand window context.
+    2. If clearly NOT a conversation (code editor, terminal, settings, dashboards, articles)
+       → hasTask=false immediately. Skip to BAD-EXAMPLES check before responding.
+    3. If a conversation IS visible → read the FULL flow to understand who said what.
+    4. Look for TWO patterns in priority order:
+       a. PATTERN 1 — USER COMMITMENT: someone asked something AND the user agreed/accepted.
+       b. PATTERN 2 — UNADDRESSED REQUEST: someone asked the user, user hasn't responded.
+    5. Verify SPECIFICITY (named person + concrete deliverable). Vague → skip.
+    6. Verify FORGETTABILITY (will user forget after closing this window?).
 
-    Examples of valid tasks:
-    - Stripe invoice page showing "Due Mar 15, 2026 — $450 unpaid" → "Pay Stripe invoice $450"
-    - GitHub PR page with "Review requested from @user" → "Review PR #123 on project-x"
-    - Calendar event "Interview with Acme — Tomorrow 3 PM" → "Attend interview with Acme"
+    ── PATTERN 1 — USER COMMITMENT (highest priority) ──
+    Read the conversation as a dialogue. Look for:
+    - Another person makes a request, suggestion, or asks a question implying action.
+    - The user responds with agreement, acceptance, or a promise.
 
-    HARD SKIPS (always hasTask=false):
-    - Chat / messenger UIs (Telegram, Slack, Discord, iMessage, WhatsApp, etc.) —
-      chat messages are inherently ambiguous about addressee and resolution.
-    - Articles, blog posts, tutorials, lists of tips.
-    - Dashboards, analytics, charts, search results, news.
-    - AI chat transcripts (Claude, ChatGPT, Cursor, any assistant) — AI proposals
-      are not the user's committed tasks.
-    - Code editors, terminals, log viewers.
-    - Other people's schedules, plans, commitments.
-    - Settings screens, docs, preferences, onboarding.
-    - Anything with only generic verbs: "respond", "check", "send", "ask" without a
-      specific named subject ("Respond to messages" → NO, "Respond to Stripe fraud alert" → maybe).
+    USER COMMITMENT SIGNALS (in the user's outgoing/right-side messages):
+    - Explicit agreement: "Sure", "Will do", "On it", "I'll handle it", "Yeah I can do that",
+      "Ok let me do that", "I'll take care of it", "Хорошо", "Сделаю", "Возьму на себя",
+      "Я сделаю", "Хорошо, договорились".
+    - Acceptance: "Ok", "Sounds good", "Got it", "Yep", "Agreed", "Let's do it",
+      "Договорились", "Понял", "Окей".
+    - Promises: "I'll send it", "Let me check", "I'll look into it", "Will get back to you",
+      "Отправлю", "Проверю", "Гляну", "Напишу позже".
+    - Scheduling: "I'll do it tomorrow", "Will send by EOD", "Сделаю завтра", "До конца дня".
 
-    RELEVANCE SCORE (0-100):
-    - 90-100: Invoice with visible due date, PR explicitly assigned to user, calendar event imminent.
-    - 75-89: Explicit action request addressed to user, form awaiting user input.
-    - 50-74: Ambiguous — might be a task but context is unclear. DO NOT mark hasTask=true.
+    When you detect this pattern, the TASK is what the OTHER PERSON originally asked for
+    (NOT "user agreed"). The user's agreement CONFIRMS it's a real intended task.
+    Example: Stan: "Can you review my PR?" → User: "Sure, will do." → Task: "Review Stan's PR"
+    Example: Майк: "Скинь договор?" → User: "Окей, до вечера." → Task: "Отправить договор Майку"
+
+    ── PATTERN 2 — UNADDRESSED REQUEST (secondary) ──
+    Someone asked the user to do something and the user hasn't responded yet.
+    Signals (in incoming/left-side messages):
+    - "Can you…", "Could you…", "Please…", "Don't forget to…", "Make sure you…"
+    - "Можешь…", "Сделай…", "Не забудь…", "Скинь…", "Подготовь…"
+    - Questions expecting an answer: "What's the status of…?", "Когда будет…?"
+    - Assigned items: "@user", "assigned to you", review requests, "тебе на ревью".
+
+    WHO COUNTS AS "SOMEONE":
+    - Coworker in Slack, Teams, Discord, email, Telegram, WhatsApp, iMessage, Messenger.
+    - Friend / family / contractor / client.
+    - An AI assistant (ChatGPT, Claude, Cursor) suggesting the user do something — only
+      counts if the user RESPONDED with commitment to that suggestion (PATTERN 1).
+    - The user's own explicit reminder ("Remind me to…", "TODO: …", "Не забыть…").
+
+    ── READING CONVERSATIONS (chat-direction rules) ──
+    - RIGHT-SIDE / colored bubbles = SENT BY the user (outgoing).
+    - LEFT-SIDE / gray/white bubbles = from another person (incoming).
+    - Read the ENTIRE visible conversation to understand flow + context.
+    - If user's LATEST message is an AGREEMENT/COMMITMENT to something the other person
+      asked → EXTRACT the task they agreed to (PATTERN 1).
+    - If user's latest is just casual chat / a question to others / sharing info → no task.
+    - If there's an INCOMING request with no user response yet → extract as unaddressed (PATTERN 2).
+    - If ALL visible messages are on the right side (only user talking) → skip (unless self-reminder).
+
+    ── IGNORE OVERVIEW / SIDEBAR / LIST VIEWS ──
+    Only extract from a SINGLE OPEN conversation. Skip these entirely:
+    - Chat app sidebars (conversation lists, message previews, unread badges).
+      Whether unread or read, the user is aware of them.
+    - Email inbox lists, email preview panes, unread email counts. Same logic.
+    - Any "overview mode" showing multiple threads / conversations / items in a list.
+    - Notification centers, Slack/Discord channel lists.
+
+    ── ALWAYS SKIP — these are NOT tasks ──
+    - Terminal output, build logs, compiler warnings, pip/npm upgrade notices.
+    - Code the user is actively writing or editing.
+    - Project management boards (Jira, Linear, Trello) — already tracked elsewhere.
+    - System UI, settings panels, media players, file browsers, dashboards.
+    - Anything the user is clearly in the middle of doing right now.
+    - Articles, blog posts, tutorials, lists of tips, search results, news.
+    - Casual conversation with no action items (greetings, jokes, status updates with no asks).
+    - Other people's schedules, commitments, plans (tasks for someone else, not the user).
+
+    ── SPECIFICITY REQUIREMENT ──
+    The task description MUST include:
+    - A specific named person, project, or deliverable.
+    - A concrete action verb (not just "respond", "check", "investigate" alone).
+    If you cannot write a description with a named subject + concrete action → skip.
+
+    ── FORGETTABILITY CHECK ──
+    Ask: "Will the user forget this commitment/request after switching away from this window?"
+    - YES → extract (that's why we exist).
+    - NO (active focus / tracked elsewhere / will be done in next 30 sec) → skip.
+
+    ── REAL BAD EXAMPLES (system has produced these — NEVER do this) ──
+    ✗ "Investigate" — single word, useless.
+    ✗ "Check logs" — what logs, for what purpose?
+    ✗ "Clean up the data" — what data? where?
+    ✗ "Track the logs" — which logs?
+    ✗ "Modify claude.md" — how? why? what change?
+    ✗ "Look through my data" — completely vague.
+    ✗ "Update to new patched version" — of what software?
+    ✗ "Remove thirty second line" — what line? in what file?
+    ✗ "Look into Paul's issue" — what issue? be specific.
+    ✗ "Investigate auth loss" — whose auth? what service? what happened?
+    ✗ "Respond to messages" — which messages? which person? specific topic?
+    If your draft description matches any of those patterns — call hasTask=false instead.
+
+    ── REAL GOOD EXAMPLES (this level of specificity required) ──
+    ✓ "Reply to Stan about 'Where is the developer section?'" — names person + quotes question.
+    ✓ "Submit quarterly metrics to LG Technology Ventures" — entity + concrete deliverable.
+    ✓ "Send Nik list of 10 recommended advisors" — person + exact deliverable.
+    ✓ "Review and merge Thinh's PR for auth refactor" — user agreed to review (PATTERN 1).
+    ✓ "Schedule demo with Alex for next Tuesday as discussed" — user committed to scheduling.
+    ✓ "Pay Stripe invoice $450 due March 15" — invoice with explicit amount + date.
+    ✓ "Отправить Майку контракт до конца дня" — user committed in chat (PATTERN 1).
+
+    ── RELEVANCE SCORE ──
+    - 90-100: Invoice with visible due date, PR explicitly assigned to user, explicit
+      "Sure I'll do it" agreement, calendar event imminent.
+    - 75-89: Explicit action request addressed to user (PATTERN 2), clear commitment to a
+      slightly less specific ask (PATTERN 1 with general topic).
+    - 50-74: Ambiguous — might be a task but context unclear. DO NOT mark hasTask=true.
     - <50: Not a task.
-    Only relevance ≥75 should pair with hasTask=true. Below 75, use hasTask=false.
+    Only relevance ≥75 pairs with hasTask=true. Below 75, hasTask=false.
 
-    EVIDENCE FIELD:
-    Must be a verbatim quote (≥20 characters) from the OCR that a neutral reviewer could
-    read and say "yes, that is a pending task for the user". If you cannot find such a
-    quote, hasTask=false.
+    ── EVIDENCE FIELD ──
+    Must be a verbatim quote (≥20 characters) from the OCR. A neutral reviewer reading
+    just that quote should say "yes, that is a pending task for the user". If you cannot
+    find such a quote → hasTask=false.
 
     When unsure, hasTask=false, relevance <50, evidence="" — that is the correct answer
     for most windows. Do not overreach.

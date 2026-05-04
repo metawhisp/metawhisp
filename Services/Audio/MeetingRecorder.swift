@@ -37,6 +37,19 @@ final class MeetingRecorder: ObservableObject {
     /// Owner installs this to receive auto-stop events. Closure runs on MainActor.
     var onAutoStop: ((AutoStopReason) -> Void)?
 
+    /// ITER-026 v2 — fires when a manual recording crosses the 2h mark. The
+    /// owner (AppDelegate) shows a non-blocking "still recording" card.
+    /// Recording is NOT stopped — manual sessions keep going until the user
+    /// presses STOP themselves.
+    var onManualHeartbeat: (() -> Void)?
+
+    /// True when the current recording was started by the user pressing
+    /// RECORD (menu bar / hotkey) rather than by the auto-start gate.
+    /// Manual recordings disable silence + max-duration guards (per user
+    /// 2026-05-02: "Если запускаешь вручную, то останавливаешь тоже всегда
+    /// только вручную").
+    private(set) var isManualMode = false
+
     let mic: AudioRecordingService
     let systemAudio: SystemAudioCaptureService
 
@@ -49,14 +62,28 @@ final class MeetingRecorder: ObservableObject {
     /// there. nil while audio is loud or recording is off. We arm the silence stop
     /// once `silentSince + windowMinutes` is in the past.
     private var silentSince: Date?
-    /// RMS threshold below which audio is considered "silence". 0.005 picks up
-    /// background noise/breathing too — but the WINDOW (3 min default) makes false
-    /// positives near-zero. Same threshold as the existing transcription guard.
-    private let silenceRMSThreshold: Float = 0.005
+    /// RMS threshold below which audio is considered "silence". 0.025 sits
+    /// above ambient noise (kbd typing, fan hum, breathing into AirPods,
+    /// idle Spotify DC bias) and below normal speech (~0.05+). Earlier 0.005
+    /// was so low that ANY ambient sound kept the silence timer reset — the
+    /// 1:09 zombie recording user reported on 2026-04-28.
+    private let silenceRMSThreshold: Float = 0.025
     /// How often we re-check the silence timer (seconds). Cheap — just a Combine
     /// publisher, no I/O.
     private let silenceCheckInterval: TimeInterval = 1.0
     private var silenceCheckTimer: AnyCancellable?
+
+    /// ITER-026 v2 — periods during which the user did a top-level dictation /
+    /// voice question / translate. Mic is "paused" by recording the pause
+    /// window timestamps; at `stop()` we zero out the matching slice of the
+    /// raw mic samples before returning so the dictated text doesn't leak
+    /// into the meeting transcript. System audio keeps recording during
+    /// pause — meeting may still be going on the other side.
+    private var pauseWindows: [(startSec: Double, endSec: Double)] = []
+    private var pauseStartedAt: Date?
+
+    /// ITER-026 v2 — manual-mode 2h heartbeat task.
+    private var manualHeartbeatTask: Task<Void, Never>?
 
     init(mic: AudioRecordingService, systemAudio: SystemAudioCaptureService) {
         self.mic = mic
@@ -95,11 +122,17 @@ final class MeetingRecorder: ObservableObject {
             .store(in: &cancellables)
     }
 
-    func start() {
+    /// Start a meeting recording. `manualMode = true` means the user pressed
+    /// RECORD themselves; auto-stop guards (silence + max duration) are
+    /// disabled and a 2h heartbeat is armed instead. `manualMode = false`
+    /// (default) means the auto-start gate triggered the recording, full
+    /// guards apply.
+    func start(manualMode: Bool = false) {
         guard !isRecording, !isStarting else { return }
         lastError = nil
         micOnlyMode = false
         isStarting = true
+        isManualMode = manualMode
 
         Task { [weak self] in
             guard let self else { return }
@@ -152,19 +185,79 @@ final class MeetingRecorder: ObservableObject {
             NSLog("[MeetingRecorder] ✅ Recording (mic=%@, system=yes)",
                   self.micOnlyMode ? "NO" : "yes")
 
-            // Arm the two backstops that prevent zombie recordings (ITER-012).
-            self.armMaxDurationGuard()
-            self.armSilenceGuard()
+            // ITER-026 v2 — auto-stop guards apply ONLY to gate-triggered
+            // recordings. Manual recordings run unbounded; the only auto-
+            // signal is a 2h heartbeat that just shows a card, no stop.
+            if self.isManualMode {
+                NSLog("[MeetingRecorder] manual mode — silence + maxDuration guards disabled, 2h heartbeat armed")
+                self.armManualHeartbeat()
+            } else {
+                self.armMaxDurationGuard()
+                self.armSilenceGuard()
+            }
         }
     }
 
-    /// Stop both captures and return the MIXED audio samples.
-    func stop() -> [Float] {
+    /// ITER-026 v2 — mark mic stream paused. User just triggered a dictation
+    /// or voice question; their voice during that period should NOT land in
+    /// the meeting transcript. We don't actually halt the AudioRecording-
+    /// Service (sharing one input device makes hard pauses unsafe) — instead
+    /// we record the pause start, and `stop()` zeroes out matching mic
+    /// samples before returning.
+    func pauseMic() {
+        guard isRecording, pauseStartedAt == nil else { return }
+        pauseStartedAt = Date()
+        NSLog("[MeetingRecorder] mic paused (dictation in progress)")
+    }
+
+    /// ITER-026 v2 — pair to `pauseMic()`. Closes the pause window using
+    /// elapsed seconds since `recordingStartedAt`.
+    func resumeMic() {
+        guard let pauseStart = pauseStartedAt, let recStart = recordingStartedAt else {
+            pauseStartedAt = nil
+            return
+        }
+        let startSec = pauseStart.timeIntervalSince(recStart)
+        let endSec = Date().timeIntervalSince(recStart)
+        if endSec > startSec {
+            pauseWindows.append((startSec: startSec, endSec: endSec))
+            NSLog("[MeetingRecorder] mic resumed; muting %.2fs..%.2fs in final stream", startSec, endSec)
+        }
+        pauseStartedAt = nil
+    }
+
+    /// Apply `pauseWindows` to a mic sample buffer — zero out matching time
+    /// ranges so dictated audio doesn't reach Whisper.
+    private func applyPauseMutes(to micSamples: [Float]) -> [Float] {
+        guard !pauseWindows.isEmpty else { return micSamples }
+        var muted = micSamples
+        let sampleRate = 16000.0
+        for window in pauseWindows {
+            let startIdx = max(0, Int(window.startSec * sampleRate))
+            let endIdx = min(muted.count, Int(window.endSec * sampleRate))
+            guard endIdx > startIdx else { continue }
+            for i in startIdx..<endIdx { muted[i] = 0 }
+        }
+        return muted
+    }
+
+    /// Stop both captures and return RAW per-channel samples.
+    /// Mic and system are kept separate so the dual-stream transcription path
+    /// can pseudo-diarize (mic = .me, system = .them) without ever summing the
+    /// two streams. `Self.mix` is still available for callers that need a
+    /// single-channel mixdown (e.g. `assembleMeetingTranscriptFromLive` tail).
+    func stop() -> (mic: [Float], system: [Float]) {
         // Disarm backstops first — otherwise a stale silence-timer fire after manual
         // stop could try to fire `onAutoStop` against an already-stopped recorder.
         disarmAutoStopGuards()
 
-        let micSamples = mic.isRecording ? mic.stop() : []
+        // If a dictation pause was open at stop time, close it so its samples
+        // get muted along with the rest. Avoids dictation bleed when user
+        // ends the meeting mid-dictation.
+        if pauseStartedAt != nil { resumeMic() }
+
+        let rawMicSamples = mic.isRecording ? mic.stop() : []
+        let micSamples = applyPauseMutes(to: rawMicSamples)
         let sysSamples = systemAudio.stop()
 
         isRecording = false
@@ -172,11 +265,13 @@ final class MeetingRecorder: ObservableObject {
         audioLevel = 0
         audioBars = Array(repeating: 0, count: 24)
         recordingStartedAt = nil
+        let mutedWindowCount = pauseWindows.count
+        pauseWindows.removeAll()
 
-        NSLog("[MeetingRecorder] Stopped: mic=%d samples, system=%d samples",
-              micSamples.count, sysSamples.count)
+        NSLog("[MeetingRecorder] Stopped: mic=%d samples (%d pause windows muted), system=%d samples",
+              micSamples.count, mutedWindowCount, sysSamples.count)
 
-        return Self.mix(mic: micSamples, system: sysSamples)
+        return (mic: micSamples, system: sysSamples)
     }
 
     // MARK: - Auto-stop guards (ITER-012)
@@ -236,6 +331,21 @@ final class MeetingRecorder: ObservableObject {
         silenceCheckTimer?.cancel()
         silenceCheckTimer = nil
         silentSince = nil
+        manualHeartbeatTask?.cancel()
+        manualHeartbeatTask = nil
+    }
+
+    /// ITER-026 v2 — fires `onManualHeartbeat` once after 2h of recording.
+    /// Owner shows a card "Recording 2h elapsed" without stopping. Manual
+    /// recordings have no other auto-stop — only user STOP ends them.
+    private func armManualHeartbeat() {
+        manualHeartbeatTask?.cancel()
+        manualHeartbeatTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .seconds(2 * 3600))
+            guard !Task.isCancelled, let self, self.isRecording else { return }
+            NSLog("[MeetingRecorder] ⏱ Manual recording 2h elapsed — heartbeat")
+            self.onManualHeartbeat?()
+        }
     }
 
     // MARK: - Audio Mixing

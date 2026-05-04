@@ -101,6 +101,7 @@ struct MainSettingsView: View {
         case .dictation:
             VStack(spacing: MW.sp12) {
                 modelSection
+                microphoneSection
                 twoColumn(languageSection, processingSection)
                 twoColumn(translationSection, textStyleSection)
             }
@@ -118,6 +119,7 @@ struct MainSettingsView: View {
                 proactiveSection
                 twoColumn(fileIndexingSection, appleNotesSection)
                 calendarSection
+                obsidianSyncSection
             }
         }
     }
@@ -362,6 +364,57 @@ struct MainSettingsView: View {
     private var progressText: String {
         let pct = Int(modelManager.downloadProgress * 100)
         return modelManager.downloadSpeed.isEmpty ? "\(pct)%" : "\(pct)% \(modelManager.downloadSpeed)"
+    }
+
+    // MARK: - Microphone
+
+    /// User-picked input device. Empty preferredInputDeviceUID = follow macOS
+    /// default. List is enumerated on view appear; the refresh button re-pulls
+    /// for newly-plugged devices.
+    @State private var availableInputs: [AudioInputDevice] = []
+
+    private var microphoneSection: some View {
+        VStack(alignment: .leading, spacing: MW.sp12) {
+            Text("MICROPHONE").blocksLabel()
+
+            HStack(spacing: MW.sp12) {
+                Image(systemName: "mic")
+                    .font(.system(size: 13))
+                    .foregroundStyle(MW.textSecondary)
+                Picker("", selection: $settings.preferredInputDeviceUID) {
+                    Text("System default").tag("")
+                    if !availableInputs.isEmpty {
+                        Divider()
+                        ForEach(availableInputs) { dev in
+                            Text(dev.name).tag(dev.uid)
+                        }
+                    }
+                }
+                .labelsHidden()
+                .pickerStyle(.menu)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                Button {
+                    availableInputs = AudioInputCatalog.availableInputDevices()
+                } label: {
+                    Image(systemName: "arrow.clockwise")
+                        .font(.system(size: 11))
+                        .foregroundStyle(MW.textMuted)
+                        .padding(6)
+                }
+                .buttonStyle(.plain)
+                .help("Refresh the device list")
+            }
+
+            Text("Pick which mic the app records from. Leave \"System default\" to follow macOS — switches automatically when you plug in AirPods or unplug a USB mic.")
+                .font(MW.monoSm).foregroundStyle(MW.textMuted)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(MW.sp16)
+        .frame(maxWidth: .infinity, alignment: .topLeading)
+        .mwCard(radius: MW.rMedium, elevation: .raised)
+        .onAppear {
+            availableInputs = AudioInputCatalog.availableInputDevices()
+        }
     }
 
     // MARK: - Language
@@ -618,8 +671,22 @@ struct MainSettingsView: View {
         VStack(alignment: .leading, spacing: MW.sp12) {
             Text("HOTKEYS").blocksLabel()
 
-            hotkeyRow("TRANSCRIBE", keys: ["RIGHT", "\u{2318}"])
-            hotkeyRow("TRANSLATE", keys: ["RIGHT", "\u{2325}"])
+            hotkeyRow(
+                "TRANSCRIBE", desc: "Right ⌘ — short tap. Result auto-pasted to active app.",
+                badge: "TAP", keys: ["RIGHT", "\u{2318}"]
+            )
+            hotkeyRow(
+                "TRANSLATE", desc: "Right ⌥ — short tap. Translates to your preferred target language.",
+                badge: "TAP", keys: ["RIGHT", "\u{2325}"]
+            )
+            hotkeyRow(
+                "VOICE QUESTION", desc: "Hold Right ⌘ ≥ 0.5s — speak, release. Reply spoken aloud.",
+                badge: "HOLD", keys: ["RIGHT", "\u{2318}"]
+            )
+            hotkeyRow(
+                "AUTO-TRANSLATE (INPUT)", desc: "Hold Right ⌥ ≥ 1.5s — translates live mic input as you speak.",
+                badge: "HOLD", keys: ["RIGHT", "\u{2325}"]
+            )
 
             Rectangle().fill(MW.border).frame(height: MW.hairline)
 
@@ -640,16 +707,35 @@ struct MainSettingsView: View {
         .mwCard(radius: MW.rMedium, elevation: .raised)
     }
 
-    private func hotkeyRow(_ action: String, keys: [String]) -> some View {
-        HStack {
-            Text(action).font(MW.mono).foregroundStyle(MW.textSecondary)
-            Spacer()
+    private func hotkeyRow(_ action: String, desc: String, badge: String, keys: [String]) -> some View {
+        HStack(alignment: .center, spacing: MW.sp12) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(action).font(MW.mono).foregroundStyle(MW.textPrimary)
+                Text(desc).font(MW.monoSm).foregroundStyle(MW.textMuted)
+                    .lineLimit(2).fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer(minLength: 8)
             HStack(spacing: 4) {
+                hotkeyBadge(badge)
                 ForEach(keys, id: \.self) { key in
                     Keycap(text: key)
                 }
             }
         }
+    }
+
+    /// Small uppercase badge — TAP / HOLD — distinguishes press-and-release
+    /// from press-and-hold actions in the hotkey panel.
+    private func hotkeyBadge(_ text: String) -> some View {
+        Text(text)
+            .font(.system(size: 9, weight: .semibold, design: .default))
+            .tracking(0.6)
+            .foregroundStyle(text == "HOLD" ? MW.accent : MW.textMuted)
+            .padding(.horizontal, 6).padding(.vertical, 3)
+            .background {
+                RoundedRectangle(cornerRadius: 5, style: .continuous)
+                    .stroke(text == "HOLD" ? MW.accent.opacity(0.45) : MW.border, lineWidth: 0.5)
+            }
     }
 
     private func modeButton(_ label: String, value: String, desc: String) -> some View {
@@ -698,6 +784,28 @@ struct MainSettingsView: View {
                     themeButton("DARK", value: "dark")
                     themeButton("LIGHT", value: "light")
                     themeButton("AUTO", value: "auto")
+                }
+            }
+
+            // Accent — 5 swatches per Liquid Glass design spec § 10 Step 1.
+            // Live-updates `MW.accent` everywhere. Default `mono` keeps current
+            // monochrome look; user opts into a colored preset here.
+            // Each swatch wraps a fixed-width slot so circles + labels of
+            // different lengths ("Mono" vs "Electric" vs "Warm Orange") stay
+            // visually equidistant.
+            HStack(alignment: .center) {
+                Text("ACCENT").font(MW.mono).foregroundStyle(MW.textSecondary)
+                Spacer()
+                HStack(spacing: 0) {
+                    ForEach(MW.accentPresets, id: \.id) { preset in
+                        AccentSwatch(
+                            presetID: preset.id,
+                            label: preset.label,
+                            isSelected: settings.accentColor == preset.id,
+                            onTap: { settings.accentColor = preset.id }
+                        )
+                        .frame(width: 64)
+                    }
                 }
             }
 
@@ -856,6 +964,7 @@ struct MainSettingsView: View {
         ("ISLAND AURA", "dotglow", "Notch aura glow"),
         ("ISLAND EXPAND", "island", "Expanding notch"),
         ("EDGE GLOW", "glow", "Top edge light strip"),
+        ("SHREK", "shrek", "Dancing avatar — tints red while transcribing"),
     ]
 
     private var overlaySection: some View {
@@ -1084,6 +1193,14 @@ struct MainSettingsView: View {
                     .font(MW.monoSm).foregroundStyle(MW.textMuted)
                     .fixedSize(horizontal: false, vertical: true)
 
+                GlassDivider()
+                toggleRow("In-app Recap popup", isOn: $settings.meetingRecapPopupEnabled)
+                Text(settings.meetingRecapPopupEnabled
+                     ? "After each meeting: floating card with summary + action items + memories. Copy / Open in Library / Dismiss buttons."
+                     : "No post-meeting popup. Recap still saved to Conversations.")
+                    .font(MW.monoSm).foregroundStyle(MW.textMuted)
+                    .fixedSize(horizontal: false, vertical: true)
+
                 // ITER-019 — Live advice during meeting (Pro only).
                 GlassDivider()
                 toggleRow("Live advice during meeting", isOn: $settings.liveMeetingAdviceEnabled)
@@ -1203,6 +1320,47 @@ struct MainSettingsView: View {
                     .font(MW.monoSm).foregroundStyle(MW.textMuted)
                     .fixedSize(horizontal: false, vertical: true)
                 scanNowButton { await AppDelegate.shared?.appleNotesReader.scanNow() }
+            }
+        }
+        .padding(MW.sp16)
+        .frame(maxWidth: .infinity, alignment: .topLeading)
+        .mwCard(radius: MW.rMedium, elevation: .raised)
+    }
+
+    private var obsidianSyncSection: some View {
+        VStack(alignment: .leading, spacing: MW.sp10) {
+            toggleRow("Obsidian Sync", isOn: $settings.obsidianSyncEnabled)
+            if settings.obsidianSyncEnabled {
+                Text("Appends new memories to <vault>/MetaWhisp/Journal.md so they propagate into your Obsidian-connected knowledge graph (mobile, plugins, search).")
+                    .font(MW.monoSm).foregroundStyle(MW.textMuted)
+                    .fixedSize(horizontal: false, vertical: true)
+                HStack(spacing: 6) {
+                    Text(settings.obsidianVaultPath.isEmpty ? "(no vault picked)" : settings.obsidianVaultPath)
+                        .font(MW.monoSm).foregroundStyle(MW.textSecondary)
+                        .lineLimit(1).truncationMode(.middle)
+                    Spacer()
+                    Button {
+                        let panel = NSOpenPanel()
+                        panel.canChooseDirectories = true
+                        panel.canChooseFiles = false
+                        panel.allowsMultipleSelection = false
+                        panel.prompt = "Pick Obsidian Vault"
+                        if panel.runModal() == .OK, let url = panel.url {
+                            settings.obsidianVaultPath = url.path
+                        }
+                    } label: {
+                        HStack(spacing: 4) {
+                            Image(systemName: "folder").font(.system(size: 10))
+                            Text("Pick vault").font(MW.label).tracking(0.6)
+                        }
+                        .foregroundStyle(MW.textSecondary)
+                        .glassChip(selected: false, radius: MW.rTiny)
+                    }
+                    .buttonStyle(.plain)
+                }
+                scanNowButton {
+                    if let svc = AppDelegate.shared?.obsidianSync { _ = await svc.syncNow() }
+                }
             }
         }
         .padding(MW.sp16)

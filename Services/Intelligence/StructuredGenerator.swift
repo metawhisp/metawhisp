@@ -65,13 +65,22 @@ final class StructuredGenerator: ObservableObject {
     }
 
     /// Helper shared by the main path + retry path.
-    private func fetchHistoryItems(conversationId: UUID, in ctx: ModelContext) -> [HistoryItem] {
+    /// In-memory filter instead of a SwiftData predicate — `$0.conversationId
+    /// == conversationId` (where model is `UUID?` and captured is `UUID`)
+    /// sometimes returned 0 rows on commit-race despite the row being saved
+    /// moments earlier (2026-05-01 bug: 4359-char transcript in DB, predicate
+    /// matched nothing, recap stuck on "Quick note (empty)"). Loading the
+    /// recent 200 rows and filtering in Swift is reliable and cheap.
+    /// `static` + `internal` so retroactive tests can call it directly.
+    static func fetchHistoryItems(conversationId: UUID, in ctx: ModelContext) -> [HistoryItem] {
         var desc = FetchDescriptor<HistoryItem>(
-            predicate: #Predicate { $0.conversationId == conversationId },
-            sortBy: [SortDescriptor(\.createdAt, order: .forward)]
+            sortBy: [SortDescriptor(\.createdAt, order: .reverse)]
         )
         desc.fetchLimit = 200
-        return (try? ctx.fetch(desc)) ?? []
+        let candidates = (try? ctx.fetch(desc)) ?? []
+        return candidates
+            .filter { $0.conversationId == conversationId }
+            .sorted { $0.createdAt < $1.createdAt }
     }
 
     /// Backfill — retries generation for conversations stuck on placeholder fields.
@@ -99,7 +108,7 @@ final class StructuredGenerator: ObservableObject {
         NSLog("[StructuredGenerator] Backfilling %d placeholder conversations", placeholders.count)
         for conv in placeholders {
             // Only retry if there's actually a real transcript available.
-            let items = fetchHistoryItems(conversationId: conv.id, in: ctx)
+            let items = Self.fetchHistoryItems(conversationId: conv.id, in: ctx)
             let transcript = items.map { $0.displayText }.joined(separator: "\n")
             guard transcript.count >= minTranscriptChars else { continue }
             // Reset title/overview so generate() re-runs through the LLM path.
@@ -108,7 +117,9 @@ final class StructuredGenerator: ObservableObject {
             conv.category = nil
             conv.emoji = nil
             try? ctx.save()
-            await generate(conversationId: conv.id)
+            // Pass the transcript we already have — avoids generate() doing
+            // a second DB fetch for the same data.
+            await generate(conversationId: conv.id, knownTranscript: transcript)
         }
     }
 
@@ -164,7 +175,13 @@ final class StructuredGenerator: ObservableObject {
 
     /// Generate title/overview/category/emoji for a conversation by id.
     /// Fire-and-forget — background task, writes result back to the Conversation record.
-    func generate(conversationId: UUID) async {
+    ///
+    /// `knownTranscript` is the in-memory text from the caller (e.g. fresh
+    /// meeting from ConversationGrouper.assign). Passing it bypasses the
+    /// cross-ModelContext race that produced "Quick note (empty)" placeholders
+    /// when the new context didn't see the just-committed HistoryItem row.
+    /// Backfill / manual paths leave it nil and fall back to the DB fetch.
+    func generate(conversationId: UUID, knownTranscript: String? = nil) async {
         guard !isRunning else { return }
         guard hasLLMAccess else {
             NSLog("[StructuredGenerator] No LLM access — skipping")
@@ -189,18 +206,48 @@ final class StructuredGenerator: ObservableObject {
             return
         }
 
-        // Fetch linked HistoryItems.
-        let items = fetchHistoryItems(conversationId: conversationId, in: ctx)
-        var transcript = items.map { $0.displayText }.joined(separator: "\n")
+        // Prefer the caller-provided transcript when available — bypasses
+        // the cross-ModelContext race that occasionally returns 0 items
+        // even when the row IS persisted. Backfill / manual regenerate
+        // paths still fall through to the DB fetch.
+        var transcript: String
+        if let known = knownTranscript, !known.isEmpty {
+            transcript = known
+            NSLog("[StructuredGenerator] Using caller transcript (%d chars) — no DB fetch", known.count)
+        } else {
+            // Fetch linked HistoryItems.
+            let items = Self.fetchHistoryItems(conversationId: conversationId, in: ctx)
+            transcript = items.map { $0.displayText }.joined(separator: "\n")
 
-        // Retry once if transcript is empty — could still be mid-commit for meeting path.
-        if transcript.isEmpty {
-            try? await Task.sleep(for: .seconds(2))
-            let ctx2 = ModelContext(container)
-            let retryItems = fetchHistoryItems(conversationId: conversationId, in: ctx2)
-            transcript = retryItems.map { $0.displayText }.joined(separator: "\n")
-            if !transcript.isEmpty {
-                NSLog("[StructuredGenerator] Transcript appeared on retry (%d chars)", transcript.count)
+            // Retry once if transcript is empty — could still be mid-commit for meeting path.
+            if transcript.isEmpty {
+                try? await Task.sleep(for: .seconds(2))
+                let ctx2 = ModelContext(container)
+                let retryItems = Self.fetchHistoryItems(conversationId: conversationId, in: ctx2)
+                transcript = retryItems.map { $0.displayText }.joined(separator: "\n")
+                if !transcript.isEmpty {
+                    NSLog("[StructuredGenerator] Transcript appeared on retry (%d chars)", transcript.count)
+                }
+            }
+        }
+
+        // CALENDAR LINK FIRST (2026-05-01 reorder). If this meeting has a
+        // matching EKEvent, the recap title comes from the calendar event name
+        // — no need for the LLM to invent one. We still run the LLM below for
+        // overview / category / emoji (calendar doesn't have those). Doing
+        // this BEFORE the LLM call closes the race where recap popup fires
+        // (8s after stop) before the old fire-and-forget linker had finished.
+        if conv.source == "meeting", let cc = conv.callContext, !cc.isEmpty,
+           let calendarReader {
+            await calendarReader.linkConversation(conversationId)
+            // Pull the updated row into our context so subsequent saves don't
+            // stomp the freshly-set calendar fields.
+            if let refreshed = try? ctx.fetch(descriptor).first {
+                conv.calendarEventId = refreshed.calendarEventId
+                conv.calendarEventTitle = refreshed.calendarEventTitle
+                conv.calendarEventStartDate = refreshed.calendarEventStartDate
+                conv.calendarEventEndDate = refreshed.calendarEventEndDate
+                conv.calendarAttendeesJSON = refreshed.calendarAttendeesJSON
             }
         }
 
@@ -300,14 +347,11 @@ final class StructuredGenerator: ObservableObject {
                 _ = projectAggregator.resolveCanonical(raw)
             }
 
-            // ITER-018 — try to link this conversation to a matching EKEvent.
-            // Fire-and-forget; non-meeting dictations rarely match a calendar event
-            // but the linker will simply find no candidate and exit cheaply.
-            if let calendarReader {
-                Task { @MainActor [weak calendarReader] in
-                    await calendarReader?.linkConversation(conv.id)
-                }
-            }
+            // ITER-018 calendar link MOVED to the start of `generate()` (before
+            // the LLM call) on 2026-05-01 — done synchronously so the recap
+            // popup that fires 8s after meeting stop always has the calendar
+            // title in place. Dictations (non-meeting) skip the link entirely
+            // there. Nothing to do here on the post-LLM path anymore.
         } catch {
             lastError = error.localizedDescription
             NSLog("[StructuredGenerator] ❌ Failed: %@", error.localizedDescription)
@@ -321,7 +365,37 @@ final class StructuredGenerator: ObservableObject {
 
     For the TITLE: Write a clear, compelling headline (≤10 words) that captures the central topic and outcome. Use Title Case, avoid filler words, include a key noun + verb where possible (e.g., "Team Finalizes Q2 Budget" or "Debugging Memory Extraction Pipeline").
 
-    For the OVERVIEW: Condense the content into a 1-3 sentence summary with the main topics, making sure to capture the key points and important details. Be specific — mention project names, people, concrete actions.
+    HARD-FORBIDDEN titles (will be rejected — re-generate with more substance):
+    - Single-noun generic words: "Invoice", "Meeting", "Sync", "Call", "Discussion", "Standup", "Talk", "Update".
+    - Single category words: "Work", "Project", "Business", "Marketing", "Sales".
+    - Anything ≤2 words that doesn't include a proper-noun (project / person / product) AND a verb-or-action noun.
+    Even if "invoice" is the most-mentioned word in the transcript, the title must still describe WHAT specifically was discussed about it ("Stripe Invoice Webhook Bug", "Q2 Invoicing Pipeline Review", "Invoice Dispute With Vendor X"). A bare "Invoice" tells the user nothing — they already know there was a meeting; they need to know WHICH ONE.
+    GOOD examples (specific, ≥3 informative words):
+    ✅ "Stripe Webhook Bug — 5XX on PaymentIntent"
+    ✅ "Sam Aligns Marketing on Q2 Roadmap"
+    ✅ "Tech Interview With Sam Ziborov (AcmeWallet)"
+    BAD examples (will be rejected):
+    ❌ "Invoice" / "Sync" / "Meeting" / "Standup"
+    ❌ "Marketing Sync" (still too generic — pick a specific topic discussed)
+    ❌ "Q2 Plans" (which Q2? plans for what? include a project or person)
+
+    For the OVERVIEW: Direct, factual 1-2 sentence summary. Lead with concrete content — what was built, decided, discussed, planned. Use specific project names, people, concrete actions.
+
+    HARD-FORBIDDEN preambles (do NOT start the overview with these — they add zero info):
+    - "The conversation is about ..."
+    - "The team discusses ..."
+    - "The discussion covers ..."
+    - "This call is about ..."
+    - "User talks about ..."
+    - "It's a meeting where ..."
+    GOOD examples:
+    - "Redesigned Today summary card with arrow navigation and stats sub-row."
+    - "Decided to ship Phase 6 voice questions; deferred premium TTS to Phase 6+."
+    - "Sam + Sam aligned on Q2 budget; revisit headcount after week 3."
+    BAD examples (will be rejected):
+    - "The conversation is about redesigning the Today summary card."
+    - "The team discusses Q2 budget and headcount."
+    Begin with a verb, noun phrase, or person name. Skip the preamble.
 
     For the ICON: Select a SINGLE SF Symbol name (Apple's monochrome icon library) that vividly reflects the core subject. DO NOT output Unicode emoji — our app uses monochrome SF Symbols only. Choose a specific symbol over a generic one.
 
@@ -362,36 +436,83 @@ final class StructuredGenerator: ObservableObject {
 
     DECISIONS — concrete choices/commitments made during the talk.
     - 0-5 items, each ≤14 words.
-    - Format: action-led, past/perfective tense.
-    - GOOD: ["Switch to Stripe for billing", "Drop legacy admin panel"]
-    - BAD: ["Discussed pricing"] (discussion ≠ decision), ["Maybe move to Postgres"] (uncertain → SKIP).
+    - Format: action-led, past/perfective tense ("Switch to X", "Drop Y", "Approve Z").
+    - Match transcript language (RU transcript → RU items).
+    GOOD examples:
+    ✅ "Switch to Stripe for billing"
+    ✅ "Drop legacy admin panel — replace with Retool dashboard"
+    ✅ "Hire backend engineer before end of Q2"
+    ✅ "Перенести релиз на 15 мая, чтобы добить QA"
+    ✅ "Цены на Pro поднять до $20/mo с июня"
+    BAD examples (will be rejected):
+    ❌ "Discussed pricing" (discussion ≠ decision)
+    ❌ "Maybe move to Postgres" (uncertain → SKIP)
+    ❌ "Talked about hiring" (no commitment)
+    ❌ "Should consider switching" (modal, not a made decision)
 
     ACTION ITEMS — explicit commitments to do something AFTER this conversation.
     - 0-5 items, each ≤14 words.
-    - Format: imperative verb + object.
-    - GOOD: ["Send Q2 roadmap to Sam by Friday", "Review SEO report"]
-    - BAD: ["Will think about it"] (vague intent → SKIP).
+    - Format: imperative verb + object ("Send X to Y", "Review Z").
+    - Match transcript language.
     - These are HISTORY for the recap view, NOT actionable tasks. The Tasks tab
       gets populated separately by a different extractor — don't worry about overlap.
+    GOOD examples:
+    ✅ "Send Q2 roadmap to Sam by Friday"
+    ✅ "Review SEO report — flag any drops over 10%"
+    ✅ "Set up Stripe webhook integration"
+    ✅ "Отправить Майку контракт до конца недели"
+    ✅ "Подготовить демо для совета директоров"
+    BAD examples:
+    ❌ "Will think about it" (vague intent → SKIP)
+    ❌ "We should follow up" (no owner, no concrete step → SKIP)
+    ❌ "Maybe call Sam" (uncertain → SKIP)
+    ❌ "Talk more about pricing" (that's a NEXT_STEP, not an action item)
 
     PARTICIPANTS — people NAMED in the transcript besides the speaker.
-    - 0-10 items. Names AS SPOKEN ("Sam" stays Sam, "Майк" stays Майк).
-    - Skip generic terms ("the team", "кто-то").
+    - 0-10 items. Names AS SPOKEN ("Sam" stays Sam, "Майк" stays Майк, do NOT translate).
+    - Match transcript language for casing/orthography.
     - Skip the speaker themselves (they're implicit).
+    GOOD examples:
+    ✅ ["Sam", "Sam", "Sarah from marketing"]
+    ✅ ["Майк", "Вася", "Ольга (CTO Acme)"]
+    BAD examples:
+    ❌ ["the team"] (generic, not a name)
+    ❌ ["кто-то", "someone"] (no identity)
+    ❌ ["Sam (the cofounder)"] only if "the cofounder" wasn't said in the transcript
+    ❌ ["Mike"] when transcript says "Майк" (do not transliterate — keep as spoken)
 
     KEY QUOTES — verbatim memorable lines worth re-reading.
     - 0-3 items, each ≤25 words.
-    - Quote DIRECTLY from the transcript — exact wording.
-    - Pick lines that capture insight, decision, or vivid framing.
+    - Quote DIRECTLY from the transcript — exact wording, transcript language.
+    - Pick lines that capture insight, a sharp decision, or vivid framing.
     - Skip filler/greetings. If nothing memorable → empty.
+    GOOD examples:
+    ✅ "If we don't ship Phase 6 by April, we lose the whole quarter."
+    ✅ "Биллинг на Stripe — это не идеал, но альтернатив нет."
+    ✅ "Customers stop caring about features after 30 days — pricing is the lever."
+    BAD examples:
+    ❌ "Hi everyone, hope you're doing well" (filler greeting)
+    ❌ "I think Stripe might be a good idea" (paraphrased — must be verbatim)
+    ❌ "We talked about a lot of things today" (generic)
 
     NEXT STEPS — forward-looking agenda items for a future conversation.
     - 0-3 items, each ≤14 words.
-    - Format: topic phrase, NOT actions.
-    - GOOD: ["Pricing tier breakdown", "Feedback from beta users"]
-    - BAD: ["Send invite"] (that's an action item, not a next-meeting topic).
+    - Format: topic phrase, NOT actions ("Pricing tier breakdown", not "Send pricing tiers").
+    - Match transcript language.
+    GOOD examples:
+    ✅ "Pricing tier breakdown for Pro plan"
+    ✅ "Feedback from beta users on onboarding"
+    ✅ "Q3 hiring plan with Sarah"
+    ✅ "Сравнение Postgres vs Mongo для следующего созвона"
+    BAD examples:
+    ❌ "Send invite" (that's an action item, not a next-meeting topic)
+    ❌ "Discuss everything" (vague)
+    ❌ "Q3 planning" (too broad — what specifically?)
 
-    Respond in the SAME LANGUAGE as the transcript.
+    LANGUAGE RULE: All 5 fields above MUST match the transcript language. RU transcript →
+    RU decisions/action_items/participants/key_quotes/next_steps. EN transcript → EN.
+    Do NOT translate proper names — keep "Майк" if spoken as Майк, "Mike" if spoken as Mike.
+    The TITLE/OVERVIEW also follow the transcript language.
 
     Return JSON:
     {"title": "...", "overview": "...", "icon": "sf.symbol.name", "category": "...",

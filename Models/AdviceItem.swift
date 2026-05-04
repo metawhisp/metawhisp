@@ -17,8 +17,13 @@ final class AdviceItem {
     var isRead: Bool
     var isDismissed: Bool
     var createdAt: Date
+    /// ITER-029 — ≤5-word punchy headline for notification preview.
+    /// Optional → SwiftData lightweight migration adds the column without versioning.
+    /// Falls back to truncated `content` in UI when nil (legacy rows).
+    /// Mirrors reference InsightAssistant `headline` field.
+    var headline: String?
 
-    init(content: String, category: String, reasoning: String? = nil, sourceApp: String? = nil, confidence: Double = 0.5) {
+    init(content: String, category: String, reasoning: String? = nil, sourceApp: String? = nil, confidence: Double = 0.5, headline: String? = nil) {
         self.id = UUID()
         self.content = content
         self.category = category
@@ -28,5 +33,6 @@ final class AdviceItem {
         self.isRead = false
         self.isDismissed = false
         self.createdAt = Date()
+        self.headline = headline
     }
 }

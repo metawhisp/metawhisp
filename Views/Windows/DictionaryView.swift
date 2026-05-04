@@ -99,8 +99,11 @@ struct DictionaryView: View {
         .padding(.vertical, MW.sp8)
     }
 
+    /// Liquid Glass spec § 7: tab pills, active = glass-flat selectFill,
+    /// inactive = ultraThin. No more black-on-white inverted look.
     private func tabButton(_ label: String, count: Int, index: Int) -> some View {
-        Button {
+        let isActive = selectedTab == index
+        return Button {
             withAnimation(.easeInOut(duration: 0.15)) {
                 selectedTab = index
                 searchText = ""
@@ -108,15 +111,21 @@ struct DictionaryView: View {
                 newValue = ""
             }
         } label: {
-            HStack(spacing: MW.sp4) {
-                Text(label).font(MW.label).tracking(1)
-                Text("(\(count))").font(MW.monoSm)
+            HStack(spacing: 6) {
+                Text(label).font(.system(size: 11, weight: .semibold)).tracking(0.8)
+                Text("\(count)").font(MW.monoSm)
             }
-            .foregroundStyle(selectedTab == index ? Color.black : MW.textSecondary)
-            .padding(.horizontal, MW.sp12)
+            .foregroundStyle(isActive ? MW.textPrimary : MW.textMuted)
+            .padding(.horizontal, 14)
             .padding(.vertical, 6)
-            .background(selectedTab == index ? Color.white : .clear)
-            .overlay(RoundedRectangle(cornerRadius: MW.rSmall, style: .continuous).stroke(MW.border, lineWidth: 0.5))
+            .background {
+                Capsule(style: .continuous)
+                    .fill(isActive ? AnyShapeStyle(MW.selectFill) : AnyShapeStyle(.ultraThinMaterial))
+            }
+            .overlay(
+                Capsule(style: .continuous)
+                    .strokeBorder(isActive ? MW.selectRim : MW.border, lineWidth: 0.5)
+            )
         }
         .buttonStyle(.plain)
     }

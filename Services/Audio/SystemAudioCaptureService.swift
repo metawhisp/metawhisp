@@ -244,17 +244,33 @@ final class SystemAudioCaptureService: NSObject, ObservableObject, AudioSource {
 
     // MARK: - Meeting Detection
 
-    /// Bundle IDs of native video-call apps → display name.
-    private static let callAppBundleIDs: [String: String] = [
-        "us.zoom.xos": "Zoom",
-        "com.microsoft.teams2": "Teams",
-        "com.microsoft.teams": "Teams",
+    /// Apps treated as call-only (bundle match alone fires call detection).
+    /// Includes Zoom + Teams since user reported strict title-matching kept
+    /// missing real calls (titles like "Sam's Personal Meeting Room" or
+    /// "Waiting for host" don't contain "Zoom Meeting"). Trade-off: clicking
+    /// the Zoom Workplace home window in idle state still fires a 5s
+    /// countdown — false positive, user can dismiss. Better than missing
+    /// real calls.
+    private static let alwaysCallBundleIDs: [String: String] = [
         "com.apple.FaceTime": "FaceTime",
-        "com.tinyspeck.slackmacgap": "Slack",
-        "com.discord.Discord": "Discord",
         "com.webex.meetingmanager": "Webex",
         "com.webex.meetings": "Webex",
         "com.logmein.gotomeeting": "GoTo Meeting",
+        "us.zoom.xos": "Zoom",
+        "com.microsoft.teams2": "Teams",
+        "com.microsoft.teams": "Teams",
+    ]
+
+    /// Chat-first apps where call mode is optional and rarely the default.
+    /// Title indicator REQUIRED — clicking Slack tab while typing in a thread
+    /// shouldn't trigger a recording countdown. Adjusted scope down from
+    /// Phase A: Zoom/Teams moved back to always-call after user hit
+    /// missed-call cases.
+    private static let dualModeCallBundleIDs: [String: [String]] = [
+        // Slack: huddle adds "Huddle" to the title.
+        "com.tinyspeck.slackmacgap":   ["Huddle"],
+        // Discord: voice call shows "Voice Connected" / "Voice Call".
+        "com.discord.Discord":         ["Voice Connected", "Voice Call"],
     ]
 
     /// Browser bundle IDs — we look at the active window title for call keywords.
@@ -295,9 +311,11 @@ final class SystemAudioCaptureService: NSObject, ObservableObject, AudioSource {
     }()
 
     /// Detect if a video call app is currently running (legacy — whole system scan).
+    /// Only checks `alwaysCallBundleIDs` (FaceTime / Webex / GoToMeeting) since
+    /// dual-mode apps need title verification that this entry point can't do.
     static func detectActiveMeetingApp() -> String? {
         for app in NSWorkspace.shared.runningApplications {
-            if let bundleID = app.bundleIdentifier, let name = callAppBundleIDs[bundleID] {
+            if let bundleID = app.bundleIdentifier, let name = alwaysCallBundleIDs[bundleID] {
                 return name
             }
         }
@@ -307,10 +325,33 @@ final class SystemAudioCaptureService: NSObject, ObservableObject, AudioSource {
     /// Detect call context from the **currently-frontmost** app + its window title.
     /// Returns display name ("Google Meet", "Zoom", …) or nil if no call is active.
     ///
+    /// Two-tier resolution (2026-04-29 strict-mode):
+    /// 1. `alwaysCallBundleIDs` — FaceTime/Webex/GoToMeeting are call-only apps,
+    ///    bundle match alone is enough.
+    /// 2. `dualModeCallBundleIDs` — Zoom/Teams/Slack/Discord are chat-and-call
+    ///    apps. Window title MUST contain a call-indicator substring; otherwise
+    ///    the user is just browsing the app and we return nil.
+    /// 3. Browser bundles → scan title for "Google Meet" / "Teams" / "Zoom Meeting".
+    ///
     /// Implements spec://iterations/ITER-002-call-detection#detection
     static func detectCallContext(bundleID: String, appName: String, windowTitle: String) -> String? {
-        // Native call app wins.
-        if let name = callAppBundleIDs[bundleID] { return name }
+        // Tier 1: always-call apps.
+        if let name = alwaysCallBundleIDs[bundleID] { return name }
+
+        // Tier 2: dual-mode apps — require call indicator in title.
+        if let titleKeywords = dualModeCallBundleIDs[bundleID] {
+            for kw in titleKeywords where windowTitle.localizedCaseInsensitiveContains(kw) {
+                // Display name = first word of bundle's family. Reuse the
+                // browser-title map's display names for consistency.
+                if bundleID.hasPrefix("us.zoom") { return "Zoom" }
+                if bundleID.hasPrefix("com.microsoft.teams") { return "Teams" }
+                if bundleID.hasPrefix("com.tinyspeck.slack") { return "Slack" }
+                if bundleID.hasPrefix("com.discord") { return "Discord" }
+                return appName
+            }
+            // Bundle matched but title didn't — user is browsing the app, not in a call.
+            return nil
+        }
 
         // Browser: scan window title for call keywords.
         if browserBundleIDs.contains(bundleID) {

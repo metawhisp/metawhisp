@@ -28,10 +28,17 @@ struct ChatView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .onAppear { inputFocused = true }
         // ITER-015 — accept pre-fill from the proactive chip (tap on item).
+        // After prefill, auto-submit so user gets the answer immediately
+        // (matches the expected "click chip → answer" UX). Without auto-submit
+        // the chip felt like a dead-end — text appeared in the input box and
+        // nothing happened until the user manually pressed Enter.
         .onReceive(NotificationCenter.default.publisher(for: .proactivePrefillChat)) { notification in
             if let q = notification.object as? String, !q.isEmpty {
                 inputText = q
                 inputFocused = true
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+                    submit()
+                }
             }
         }
     }
@@ -77,9 +84,9 @@ struct ChatView: View {
                 .frame(maxWidth: 340)
             VStack(alignment: .leading, spacing: 6) {
                 Text("Try:").font(MW.label).tracking(0.6).foregroundStyle(MW.textMuted)
-                Text("• Что я делал сегодня?").font(MW.monoSm).foregroundStyle(MW.textSecondary)
-                Text("• Какие у меня активные задачи?").font(MW.monoSm).foregroundStyle(MW.textSecondary)
-                Text("• Что я знаю про ProjectAlpha?").font(MW.monoSm).foregroundStyle(MW.textSecondary)
+                Text("• What did I do today?").font(MW.monoSm).foregroundStyle(MW.textSecondary)
+                Text("• What are my active tasks?").font(MW.monoSm).foregroundStyle(MW.textSecondary)
+                Text("• What do I know about <project>?").font(MW.monoSm).foregroundStyle(MW.textSecondary)
             }
             .padding(.top, 8)
             Spacer()
@@ -207,8 +214,16 @@ struct ChatView: View {
                         }
                     }
                     .padding(10)
-                    .background(isUser ? MW.elevated : MW.surface)
-                    .overlay(RoundedRectangle(cornerRadius: MW.rSmall, style: .continuous).stroke(MW.border, lineWidth: 0.5))
+                    // Liquid Glass spec § 7: user bubble = accent-soft fill,
+                    // AI bubble = ultraThin glass. 14 px radius for both.
+                    .background {
+                        RoundedRectangle(cornerRadius: 14, style: .continuous)
+                            .fill(isUser ? AnyShapeStyle(MW.accentSoft) : AnyShapeStyle(.ultraThinMaterial))
+                    }
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 14, style: .continuous)
+                            .strokeBorder(isUser ? MW.accentRim : MW.border, lineWidth: 0.5)
+                    )
                     .frame(maxWidth: 520, alignment: isUser ? .trailing : .leading)
                 }
                 Text(msg.createdAt.formatted(date: .omitted, time: .shortened))

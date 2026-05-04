@@ -30,13 +30,20 @@ EXECUTABLE="$BUILD_DIR/MetaWhisp"
 APP_DIR="$BUILD_DIR/MetaWhisp.app"
 CONTENTS="$APP_DIR/Contents"
 MACOS="$CONTENTS/MacOS"
+# Frameworks/ is the standard Apple location for embedded frameworks. Putting
+# Sparkle.framework here (instead of Contents/MacOS/) is REQUIRED for Apple
+# notarization — codesign otherwise calls the bundle "ambiguous (could be
+# app or framework)" because a `.framework` next to the main executable
+# confuses the bundle-format heuristic. Notarization rejected our DMG with
+# "signature of the binary is invalid" until we moved Sparkle to Frameworks/.
+FRAMEWORKS="$CONTENTS/Frameworks"
 RESOURCES="$CONTENTS/Resources"
 
 # Clean previous bundle
 rm -rf "$APP_DIR"
 
 # Create bundle structure
-mkdir -p "$MACOS" "$RESOURCES"
+mkdir -p "$MACOS" "$RESOURCES" "$FRAMEWORKS"
 
 # Copy executable
 cp "$EXECUTABLE" "$MACOS/MetaWhisp"
@@ -54,9 +61,27 @@ if [ -d "Resources/Sounds" ]; then
     cp -r "Resources/Sounds" "$RESOURCES/Sounds"
 fi
 
-# Copy Sparkle framework (rpath is @loader_path, so it goes next to the binary)
+# Copy shrek-pill.mov — 5th pill style. SPM's `.copy` in Package.swift doesn't
+# survive the build.sh rebundle step, so we copy explicitly here. The binary
+# resolves it via `Bundle(for: ShrekVideoLayer.Coordinator.self)` which points
+# at this `Contents/Resources/` location.
+if [ -f "Resources/shrek-pill.mov" ]; then
+    cp "Resources/shrek-pill.mov" "$RESOURCES/shrek-pill.mov"
+fi
+
+# Copy Sparkle framework into Contents/Frameworks/ (Apple's standard location).
+# SPM compiles the binary with rpath `@loader_path` (= alongside the main
+# executable, i.e. Contents/MacOS/). With Sparkle moved to Contents/Frameworks/
+# we must add an additional rpath pointing one directory up + Frameworks/ so
+# dyld can still find Sparkle.framework at runtime.
 if [ -d "$BUILD_DIR/Sparkle.framework" ]; then
-    cp -R "$BUILD_DIR/Sparkle.framework" "$MACOS/"
+    # Use `ditto` instead of `cp -R` — ditto reliably preserves the symlink
+    # structure required for a valid macOS framework. `cp -R` on this layout
+    # was producing duplicates (real files at root AND in Versions/B), which
+    # made Apple notarization reject the binary as "signature invalid"
+    # because the bundle structure was malformed.
+    ditto "$BUILD_DIR/Sparkle.framework" "$FRAMEWORKS/Sparkle.framework"
+    install_name_tool -add_rpath "@executable_path/../Frameworks" "$MACOS/MetaWhisp" 2>/dev/null || true
 fi
 
 # Copy any SPM resources (MetaWhisp_MetaWhisp.bundle)
@@ -84,33 +109,68 @@ if ! security find-identity -v -p codesigning | grep -q "$SIGN_IDENTITY"; then
     SIGN_IDENTITY="-"
 fi
 
-# Sign nested Sparkle components bottom-up. --preserve-metadata keeps each nested bundle's
-# original identifier (org.sparkle-project.*) and entitlements — dyld refuses to load
-# Sparkle if its identifier changes, and XPC services need their own entitlements.
-SPARKLE="$MACOS/Sparkle.framework"
+# Sign nested Sparkle components bottom-up. We REMOVE the existing Sparkle
+# Project signatures first (they were valid for Sparkle Project's identity but
+# break notarization when we re-sign with our cert + --preserve-metadata which
+# keeps stale Sparkle entitlements/flags). After remove, we re-sign with explicit
+# `--identifier` so dyld still loads them as `org.sparkle-project.*`.
+SPARKLE="$FRAMEWORKS/Sparkle.framework"
 if [ -d "$SPARKLE" ]; then
-    for target in \
-        "$SPARKLE/Versions/B/XPCServices/Downloader.xpc" \
-        "$SPARKLE/Versions/B/XPCServices/Installer.xpc" \
-        "$SPARKLE/Versions/B/Updater.app" \
-        "$SPARKLE/Versions/B/Autoupdate" \
-        "$SPARKLE/Versions/B/Sparkle" \
-        "$SPARKLE"
-    do
-        codesign --force --sign "$SIGN_IDENTITY" \
-            --options runtime \
-            --preserve-metadata=identifier,entitlements,flags \
-            "$target" 2>&1
-    done
+    # Pairs of "path:identifier" for each nested target.
+    sign_target() {
+        local target="$1"
+        local identifier="$2"
+        # Best-effort remove existing signature; ignored if absent.
+        codesign --remove-signature "$target" 2>/dev/null || true
+        # Sign + verify timestamp landed. Apple's TSA (timestamp.apple.com)
+        # occasionally returns "OK but no timestamp" on flaky network — codesign
+        # silently accepts that with exit 0, and Apple's notarization later
+        # rejects with "signature of the binary is invalid". Verify after each
+        # sign and retry up to 3 times on missing timestamp.
+        local attempt
+        for attempt in 1 2 3; do
+            codesign --force --sign "$SIGN_IDENTITY" \
+                --options runtime \
+                --timestamp \
+                --identifier "$identifier" \
+                "$target"
+            if codesign -dvvv "$target" 2>&1 | grep -q "^Timestamp="; then
+                return 0
+            fi
+            echo "==> ⚠️  No timestamp on $(basename "$target") (attempt $attempt/3) — TSA flake, retrying..."
+            sleep 2
+            codesign --remove-signature "$target" 2>/dev/null || true
+        done
+        echo "==> ❌ Failed to attach timestamp to $target after 3 retries"
+        return 1
+    }
+    sign_target "$SPARKLE/Versions/B/XPCServices/Downloader.xpc"  "org.sparkle-project.Downloader"
+    sign_target "$SPARKLE/Versions/B/XPCServices/Installer.xpc"   "org.sparkle-project.InstallerLauncher"
+    sign_target "$SPARKLE/Versions/B/Updater.app"                 "org.sparkle-project.Sparkle.Updater"
+    sign_target "$SPARKLE/Versions/B/Autoupdate"                  "org.sparkle-project.Sparkle.Autoupdate"
+    sign_target "$SPARKLE/Versions/B/Sparkle"                     "org.sparkle-project.Sparkle"
+    sign_target "$SPARKLE"                                        "org.sparkle-project.Sparkle"
 fi
 
 # Sign outer bundle with our app identifier — macOS uses Identifier as app identity
 # for notifications, TCC, and URL scheme registration.
-codesign --force --sign "$SIGN_IDENTITY" \
-    --options runtime \
-    --identifier "com.metawhisp.app" \
-    --entitlements "Resources/MetaWhisp.entitlements" \
-    "$APP_DIR" 2>&1
+# `--timestamp` is MANDATORY for notarization (Apple verifies timestamp via
+# their TSA) and required for the app to open on other Macs.
+# Retry on missing timestamp — same TSA-flake guard as sign_target above.
+for attempt in 1 2 3; do
+    codesign --force --sign "$SIGN_IDENTITY" \
+        --options runtime \
+        --timestamp \
+        --identifier "com.metawhisp.app" \
+        --entitlements "Resources/MetaWhisp.entitlements" \
+        "$APP_DIR" 2>&1
+    if codesign -dvvv "$APP_DIR" 2>&1 | grep -q "^Timestamp="; then
+        break
+    fi
+    echo "==> ⚠️  No timestamp on outer bundle (attempt $attempt/3) — TSA flake, retrying..."
+    sleep 2
+    codesign --remove-signature "$APP_DIR" 2>/dev/null || true
+done
 
 # Verify: outer bundle identifier must match CFBundleIdentifier — without this
 # macOS notifications return UNErrorDomain error 1.
@@ -123,7 +183,7 @@ else
 fi
 
 # Verify Sparkle.framework kept its original identifier
-SPARKLE_ID=$(codesign -dvv "$MACOS/Sparkle.framework" 2>&1 | grep -E "^Identifier=" | cut -d= -f2)
+SPARKLE_ID=$(codesign -dvv "$FRAMEWORKS/Sparkle.framework" 2>&1 | grep -E "^Identifier=" | cut -d= -f2)
 if [ "$SPARKLE_ID" != "org.sparkle-project.Sparkle" ]; then
     echo "==> ⚠️  Sparkle identifier changed to '$SPARKLE_ID' — dyld will refuse to load it"
 fi

@@ -1,160 +1,137 @@
-# Session Handoff — 2026-04-19
+# Session Handoff — 2026-05-03 (latest)
 
 Pick-up document for a fresh Claude session. Read **in this order**:
-1. `specs/BOOT.md` → `specs/KARPATHY.md` → `specs/WAL.md` → `specs/BACKLOG.md` (mandatory, do NOT shortcut).
-2. This file for recent-session context.
-3. `memory/MEMORY.md` (auto-loaded) for feedback + references.
+1. `specs/BOOT.md` → `specs/KARPATHY.md` → `specs/TDD.md` → `specs/WAL.md` → `specs/BACKLOG.md` (mandatory).
+2. **`specs/RELEASE-PLAYBOOK.md`** — full release/deploy procedure + token requirements + architecture diagram + lessons learned (NEW 2026-05-03).
+3. **`specs/ROADMAP.md`** — Phase 3-7 future direction: voice-everywhere capture, Obsidian as second brain, chat as portal, MCP interop (NEW 2026-05-03).
+4. This file for the last-session context.
+5. `memory/MEMORY.md` (auto-loaded) for feedback + references — includes the **HARD RULES** below.
 
 ---
 
-## Current state (what shipped)
+## Live state at 2026-05-03 handoff
 
-**Phase 0 — Foundation** ✅ deployed
-- Memory extraction: voice-trigger prompt, robust JSON parser.
-- Developer ID signing (MetaWhisp Maintainer, team `6D6948Z4MW`). Stable TCC between rebuilds.
-- `AppDelegate.shared` weak static fix.
-
-**Phase 1 — Conversations as root** ✅ deployed
-- `Conversation` SwiftData entity, `ConversationGrouper` (10-min silence, meetings single-shot).
-- `StructuredGenerator` → title/overview/category/icon on close. Monochrome SF Symbols (diverged color emoji).
-- `conversationId` FK across HistoryItem / UserMemory / TaskItem / ScreenContext.
-- `ConversationsView` with date grouping, filter chips ALL/STARRED/MEETINGS/DICTATIONS, inline expand.
-
-**Phase 2 — Screen pipeline (Rewind)** ✅ deployed
-- `ScreenObservation` model. `ScreenExtractor` hourly batches visits → observations + memories + tasks in one LLM call.
-- `screenContextId` FK on UserMemory and TaskItem.
-- `RewindView` (now "SCREEN" in Library) with date grouping + search + filter chips + click-expand OCR.
-
-**Phase 3 — External readers** ✅ deployed (E1/E2/E3), E4/E5 deferred
-- E1 File Indexing: `FileIndexerService` + `FileMemoryExtractor` for user-picked folders (Obsidian vault etc.).
-- E2 Apple Notes: `AppleNotesReaderService` via AppleScript (diverged 's SQLite GRDB — Automation permission instead of Full Disk Access).
-- E3 Calendar: `CalendarReaderService` via EventKit (diverged 's browser-cookie scraping).
-- E4 Gmail / E5 unified runner — **deferred per user decision**.
-
-**Sidebar reorg** ✅ deployed
-- 9 tabs → 6: Dashboard / Library / Tasks / MetaChat / Dictionary / Settings.
-- Library hub has segmented sections: Conversations / Screen / Files / Memories / History.
-- MetaChat (user-named) with RAG + 3-dot typing animation + Meetings filter chip.
-
-**Phase 6 — Voice questions + TTS** ✅ deployed (MVP)
-- `TTSService` via AVSpeechSynthesizer (premium cloud TTS in Phase 6+).
-- `HotkeyService` Right ⌘ tap/long-press split: tap < 0.4s = dictation as before; long-press ≥ 500ms = voice question.
-- `TranscriptionCoordinator.voiceQuestionMode` routes finalText to ChatService instead of clipboard.
-- `ChatService.send(text, source:)` with `.typed`/`.voice`. Speaks AI reply via TTS per toggles.
-- `VoiceQuestionState` (ObservableObject singleton) — phase state machine: idle / listening / transcribing / thinking / answered / error.
-- `FloatingVoiceWindowController` — borderless floating NSPanel at top-center.
-- `FloatingVoiceView` — redesigned: rounded 14pt, METACHAT brand, phase-specific animated icons (SF Symbol `.symbolEffect`), pulsing ring for LISTENING, speech bubble blocks for YOU/METACHAT, drop shadow, auto-size.
-- **Stop controls:** STOP button (visible while speaking), Space to silence without closing, Esc to close + silence.
-- `RecordingOverlayController` — suppresses dictation pill when `VoiceQuestionState.isVisible` (no UI stacking).
+- **Last running PID**: `21010` (after manual `ditto` + relaunch of release-build 1.3.1).
+- **Bundle**: `/Applications/MetaWhisp.app` is **v1.3.1 (build 6)**, Apple-notarized release-build, Sparkle-signed. Contains all Phase 1 + Phase 2 ITER-026 v2 fixes (gate, calendar awareness, dictation pause, manual mode, back-to-back, dual-stream merger fix, unified notification stack, calendar-task pipeline removed).
+- **DMG distribution**: lives at GitHub Release `v1.3.1` of `metawhisp/metawhisp` repo. `metawhisp.com/downloads/MetaWhisp.dmg` → Cloudflare Page Rule → 302 → GitHub. **Marketing site (Pages) is rolled back to deployment `199df86e` (the safe pre-experiment state with all 13 blog posts).** See RELEASE-PLAYBOOK for the architecture and `specs/WAL.md` 2026-05-02/03 entry for the full release saga (incl. TSA-flake bug fix, near-disaster wipe of 6 blog posts via atomic Pages deploy + recovery).
+- **Working tree**: heavily modified, NOT committed. All Phase 2 + ITER-026 v2 + release-related changes are uncommitted on branch `architecture-phase-1-3`. User has been live-testing via hot-swap; commit when stable.
+- **Tokens used during 2026-05-03 release session ARE compromised** (appeared in chat logs): 2x GitHub PATs + 4x Cloudflare API tokens. User to revoke.
 
 ---
 
-## Testing pending (user-side verify still needed)
+---
 
-- [ ] B1 Tasks — explicit/vague/dedup 3-scenario flow
-- [x] B2 MetaChat — verified by user 2026-04-19 (8 ChatMessage rows)
-- [ ] C1.1 Conversation grouping (3 dictations < 5 min → 1 conversation)
-- [ ] C1.2 Structured generation (title/overview/category/icon after close)
-- [ ] C1.3 FK wiring (new UserMemory/TaskItem carry conversationId)
-- [ ] C1.4 Conversations tab UI + Meetings filter
-- [ ] R1 observations (after 1h of screen activity)
-- [ ] R2 auto-memories/tasks from screen
-- [ ] R3 Rewind/Screen tab UI
-- [ ] E1 File indexing (pick Obsidian vault, verify memories appear)
-- [ ] E2 Apple Notes (Automation permission flow)
-- [ ] E3 Calendar (EventKit permission flow, pattern memories)
-- [ ] Phase 6 voice questions end-to-end (hold Right ⌘, speak, TTS answer)
-- [ ] Phase 6 UI redesign + stop controls
+## HARD RULES (don't violate)
+
+| Rule | Why |
+|---|---|
+| **Never run `swift build` / `swift test` / `bash hot-swap.sh` / `bash build.sh` without explicit user ask.** | Cold builds take 5-15 min. User estimated ~90% of session time was burning on builds. Edits-on-disk is the default state. See `memory/feedback_never_build_without_ask.md`. |
+| **Always fix root cause, not symptom.** | User screams about this. Don't propose backfills, polls, retries-as-bandaids. Find where the data dies; fix THERE. |
+| **Run `specs/SMOKE-TEST.md` before every build.** | 18 critical user stories. Catch regressions before push. |
+| **TDD pair-locked with Karpathy.** | Pure-function changes need RED test first, then GREEN. View body / TCC / network are excluded — see TDD.md. Retroactive tests count when batch was unavoidable, but flag the violation honestly. |
+| **No external-reference mentions in commits / branches / shipping docs.** | The reference project's name and any `desktop/`-style local clone paths stay out of identifiers, comments that ship, spec text. OK in private session chat. See `memory/feedback_no_external_reference_mentions.md`. |
+| **Copy-first methodology.** | Read reference Swift code first; copy structure / prompt / model as-is; adapt only to MetaWhisp constraints; improve only after parity. See `memory/feedback_copy_first_methodology.md`. |
+| **Read full instruction files; propose-then-wait-for-OK before acting.** | No skimming. See `memory/feedback_no_shortcuts.md`. |
 
 ---
 
-## Git + PR state
+## Live state (previous session — 2026-05-02 marathon, see "2026-05-03 handoff" above for current state)
 
-**Local branch:** `architecture-phase-1-3` — diverged from `main` with everything above.
-**Last commit:** `f2247a0` "Add Conversations/Tasks/Screen/MetaChat + readers" (68 files, 11,129+ lines).
-**Push state:** pushed to `origin/architecture-phase-1-3`.
-**PR state:** **NOT created yet** — both gh accounts on this machine failed "must be a collaborator" on `MetaWhisp/MetaWhisp`. User must open PR manually:
-
-> https://github.com/MetaWhisp/MetaWhisp/compare/main...architecture-phase-1-3?quick_pull=1
-
-**Subsequent Phase 6 + UI redesign + stop controls** are LOCAL only — not yet committed. New session should:
-1. Run `git status` to see pending Phase 6 changes.
-2. Commit them to same branch (`architecture-phase-1-3`) as a follow-up commit.
-3. Push (`git push`).
+- **Last running PID** (at the time of 2026-05-02 session end): `47365` (after `bash hot-swap.sh` on 2026-05-02 around 00:15). Long-superseded by 2026-05-03 release-build PID 21010.
+- **Bundle**: `/Applications/MetaWhisp.app` (Developer ID signed). Hot-swap chain: `swift build` → `bash hot-swap.sh` (re-signs outer with Developer ID, no TCC reset).
+- **DB**: `~/Library/Application Support/MetaWhisp.store` (SwiftData store).
+- **Logs**: `~/Library/Logs/MetaWhisp.log` (NSLog).
 
 ---
 
-## ⚠️ Security — rotate secrets
+## Just shipped in PID 47365 (full list in WAL section "2026-04-30 / 2026-05-01" — historical)
 
-During initial PR attempt, `how-to-build/README.md` was staged containing **LIVE credentials**:
-- Stripe `<REDACTED-STRIPE>...` + `<REDACTED-STRIPE>...`
-- Resend `re_ZLZfYhah_...`
-- Cloudflare DNS token
-
-Push was blocked by GitHub secret scanning — credentials did NOT reach the remote. File was removed via `git rm --cached` + amend + added to `.gitignore`. GitHub still logged the attempt (webhook → provider notification likely).
-
-**User must rotate ASAP:**
-- Stripe (both live keys) → https://dashboard.stripe.com/apikeys
-- Resend → https://resend.com/api-keys
-- Cloudflare DNS Edit token → https://dash.cloudflare.com/profile/api-tokens
-
-The local `how-to-build/README.md` on disk is now gitignored but still contains the plain-text credentials. Move to 1Password / external secure storage when user has time.
-
----
-
-## User preferences picked up this session
-
-- **Methodology:** copy-first , never invent, never shortcut instructions. Saved as `memory/feedback_no_shortcuts.md` + `memory/feedback_copy_first_methodology.md`.
-- **UI aesthetic:** monochrome SF Symbols only, no color Unicode emoji. Minimal desktop design.
-- **Branding:** "MetaChat" is the product name for the chat feature.
-- **Screen reorg priority:** unified Library hub; Tasks promoted top-level; Dictionary left alone.
-- **Voice hotkey:** Right ⌘ long-press only (no left ⌘).
-- **Voice question flow:** auto-send after release (no typed confirmation step).
-- **Premium voice:** deferred — AVSpeechSynthesizer MVP is fine, premium "Sloane" voice can wait.
+Big buckets:
+- **Mic instance separation** — `meetingMic` is its own `AudioRecordingService`, separate from top-level `recorder`. Fixed three cascading bugs (voice question 950s buffer, mic=0 in meetings, MeetingCoach "Turn on microphone" loop).
+- **Voice popup multi-turn boundary** — `VoiceQuestionState.voiceSessionStartedAt` anchors the session; `ChatService.fetchVoiceSessionHistory` filters chat history to the open popup only. Closes popup → next ask is fresh.
+- **Voice question screen-aware** — `<current_screen>` block in user prompt with live OCR via `screenContext.captureNow()`. "What's on my screen?" / "fill this form" actually work.
+- **Tool XML strip + drift recovery** — `<searchMemories>{...}</searchMemories>` no longer leaks to chat.
+- **abortVoiceQuestionIfActive** — popup never gets stuck in `.listening` / `.transcribing` if long-press too short; subsequent dictation goes to clipboard, not voice block.
+- **CallSession state machine** — 1 call = 1 notify; user-stopped sessions don't auto-restart; DND of MetaWhisp's own notifications during recording (NEVER touches macOS Focus).
+- **dur=0 fix** — `assign(meetingDurationSec:)` back-dates startedAt; recap popup `durationSec >= 60` guard works on real values.
+- **Calendar title priority + link-before-LLM** — recap shows the EKEvent name; the linker awaits before the LLM call (no race with the 8s recap delay).
+- **StructuredGenerator transcript race fix** — `scheduleOnClose(knownTranscript:)` plumbs the in-memory text past the cross-`ModelContext` race that had caused "Quick note (empty)" placeholders.
+- **Recap popup — 5 missing sections rendered** — `WITH (N)`, `DECISIONS (N)`, `NEXT STEPS (N)` added to `Payload` + `MeetingRecapView`. Data was always saved (`participantsJSON` / `decisionsJSON` / `nextStepsJSON`), UI just wasn't reading.
+- **Dashboard real-time TODAY counters** + onGeometryChange resize-lag fix (was per-pixel re-render under outer `GeometryReader`).
+- **Clipboard verified write + retry** — `writeToClipboardVerified` checks `setString` return + reads back + retries 3×. Catches NSPasteboard ownership race (Universal Clipboard / clipboard managers). New `InsertOutcome` enum exposes `.clipboardFailed` for honest banner.
+- **Dictation hallucination filter recovery** — filter discard now saves text to clipboard + lastResult; `containsExcessivePhraseRepetition` moved to silence-only path so real dictations with brief mid-pauses survive. Empty-result branch now surfaces a banner. `saveSamplesAsWav(_:)` writes wav recovery on Cloud HTTP fail.
+- **Default window 1440×1000 + setFrameAutosaveName**.
+- **MenuBar Variant A redesign** + **FloatingVoiceView Liquid Glass redesign** (mockup `mockups/voice-and-hotkeys.html`).
+- **Settings — Hotkey panel 4 rows + TAP/HOLD badges** + **Microphone picker** (`AudioInputCatalog` / CoreAudio enumerator).
+- **Retroactive TDD coverage** — fetchHistoryItems (3 tests), saveSamplesAsWav (3 tests), writeToClipboardVerified (4 tests), CallSessionMachine (7 tests), DualStreamMerger (4 tests).
+- **`specs/SMOKE-TEST.md`** — 18 critical user stories check-list.
 
 ---
 
-## Recommended next track
+## On disk, NOT yet built (next build will pick up)
 
-Per BACKLOG, next by-phase order:
-1. **Phase 4 — Knowledge Graph (Brain Map)** — entity extraction across memories → nodes/edges → force-directed visualization. Matches Memories tab screenshot.
-2. **Phase 5 — Task richness** — priority / tags / recurrence / indent (all fields already in `ActionItemRecord`, missing from ours).
-3. **Phase 6+ follow-ups** — premium TTS (OpenAI cloud voice, Pro-proxy endpoint), research more voice-communication features (streaming transcription, wake-word, voice commands).
-4. **Phase 7 — Daily Summary** at scheduled time (10PM recap).
+### Shrek pill — 5th option in `AppSettings.pillStyle`
 
-User may also want to test/verify accumulated testing-pending items instead of continuing forward.
+Mockup at `mockups/shrek-pill.html` (open in browser to preview). State → playback rate / color:
+
+| Stage | Rate | Color |
+|---|---|---|
+| `.idle` | 0.4× | grey/desat |
+| `.recording` | 1.0× | full color |
+| `.processing` (transcribing) | 0.35× | red tint (800 ms ease) |
+| `.postProcessing` (answered/translating) | 2.0× | back to color |
+
+Files touched:
+- `Resources/shrek-pill.mov` — 412 KB HEVC + alpha (transparent BG). Generated from `~/Downloads/shrek-dançando-shrek-meme.gif` via `ffmpeg -c:v hevc_videotoolbox -alpha_quality 1 -tag:v hvc1 -pix_fmt yuva420p`.
+- `Package.swift` — `.copy("Resources/shrek-pill.mov")` added to resources.
+- `Views/Components/ShrekPillView.swift` (NEW) — `NSViewRepresentable` over `AVPlayerLayer` + `Color.red` overlay with `.blendMode(.sourceAtop)` so red tint hits only the visible Shrek silhouette, not transparent background. `player.rate` driven by stage.
+- `Views/Components/RecordingOverlay.swift` — `case "shrek"` in `PillRouterView`; `panelSize` returns `(220, 220)`.
+- `Views/Windows/MainSettingsView.swift` — 5th entry in `pillStyles`: `("SHREK", "shrek", "Dancing avatar — tints red while transcribing")`.
+
+Mockup demos: `mockups/voice-and-hotkeys.html` (MenuBar Variant A + Settings hotkey panel) and `mockups/shrek-pill.html` (Shrek pill 4 phases).
 
 ---
 
-## Quick commands for new session
+## Open / next session
 
-```bash
-cd /Users/android/Code/MetaWhisp
-git status                                   # see Phase 6 uncommitted work
-git log --oneline -5                         # last 5 commits
-swift build                                  # quick compile check
-./build.sh                                   # production build + install + launch
-tail -f ~/Library/Logs/MetaWhisp.log         # watch logs live
+1. **DailySummaryService.tasksCompleted always 0** — the field never picks up `TaskItem.completedAt`. Real-time TODAY counter side-stepped this for the dashboard, but DailySummary's narrative agents still see 0. Root cause hunt — separate session.
+2. **ScreenContext call-detect latency** — currently 30s polling. Subscribe to `NSWorkspace.didActivateApplicationNotification` for instant detect on app focus change. ~10 lines.
+3. **ProjectAggregator clutter** — 52 alias rows; 46 are 1-conv noise (VoiceTool/VoiceTool dup, Island/Island Expand/Island Expend typos, Atomic-zoo). Plan: threshold ≥ 2 conv before showing in Projects view + delete-button per row + Latin/Cyrillic transliteration dedup at alias-creation time.
+4. **Phase B chunk overlap** (35s with 5s overlap, dedupe at merge boundary) — original Phase B plan, deprioritized while addressing user pains. Revisit.
+5. **Phase C Deepgram streaming WebSocket** — still budget-pending (~$0.0043/min direct Deepgram).
+6. **Auto-paste promahnulsa mimo input** — `prev.activate()` + 0.2s + `CGEvent ⌘V` fires into whatever's frontResponder, not necessarily the text field. Real fix path = AX direct insert via `kAXSelectedTextAttribute` (Raycast-style), 80 lines. Mitigation today: clipboard always populated (verified), user can ⌘V manually.
 
-# Verify key DB state:
-sqlite3 ~/Library/Application\ Support/MetaWhisp.store \
-  "SELECT ZSTATUS, ZSOURCE, ZTITLE FROM ZCONVERSATION ORDER BY ZSTARTEDAT DESC LIMIT 5;"
-sqlite3 ~/Library/Application\ Support/MetaWhisp.store \
-  "SELECT ZCONTENT, ZSOURCEAPP FROM ZUSERMEMORY WHERE ZISDISMISSED=0 ORDER BY ZCREATEDAT DESC LIMIT 10;"
+---
+
+## Memories you must respect
+
+`memory/MEMORY.md` index points to:
+- `feedback_never_build_without_ask.md`
+- `feedback_no_shortcuts.md`
+- `feedback_copy_first_methodology.md`
+- `feedback_no_external_reference_mentions.md`
+- `feedback_run_commands_yourself.md`
+- `feedback_dont_jump_to_tcc.md`
+- `feedback_hot_swap_signing.md`
+- `feedback_tdd_karpathy.md`
+- `project_distribution.md`
+- `project_iphone_app.md`
+- `reference_design_handoff.md`
+- `reference_omi_architecture.md`
+- `reference_backlog.md`
+- `reference_google_stitch.md`
+
+---
+
+## What to do at session start
+
+```
+1. Read BOOT / KARPATHY / TDD / WAL / BACKLOG (mandatory).
+2. Read this HANDOFF.md.
+3. Skim `specs/SMOKE-TEST.md`.
+4. If user asks for ANYTHING that needs build → propose plan, wait for OK, never build implicitly.
+5. First action when ANY work touches a code file: open the related reference Swift file FIRST.
+6. Surface assumptions; don't guess; ask before designing.
 ```
 
----
-
-## Files most likely to be referenced next
-
-Architecture references:
-- `specs/BACKLOG.md` — full 9-phase roadmap with feature inventory
-- `specs/KARPATHY.md` — process discipline rules
-
-Recently-shipped code you'll want to revisit:
-- `Services/TTS/TTSService.swift` (Phase 6 — premium TTS swap point)
-- `Services/UI/VoiceQuestionState.swift` (state machine for floating voice panel)
-- `Views/FloatingVoice/FloatingVoiceView.swift` (UI redesign — reference for future floating UIs)
-- `Services/Intelligence/ChatService.swift` (RAG implementation + source-based TTS routing)
-- `Services/Indexing/` — four readers (File / FileMemory / AppleNotes / Calendar) all follow similar pattern
-
+PID 47365 is the current truth. All edits since the WAL update are on disk only — not in the running app. Most prominent: the **Shrek pill** code listed above. Next build picks them up.

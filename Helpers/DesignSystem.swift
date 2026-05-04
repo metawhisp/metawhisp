@@ -48,14 +48,81 @@ enum MW {
     /// Faint translucent fill — used for inline highlights inside panels.
     static var subtle: Color { Color.primary.opacity(0.06) }
     static var cardBg: Color { surface }
-    static var accent: Color { textPrimary }
 
-    // Status — only for state dots / inline indicators, never as panel fills.
-    static let live = Color.red
-    static let recording = Color.red
-    static let processing = Color.orange
-    static let postProcess = Color.blue
-    static let idle = Color.green
+    // MARK: - New Liquid Glass tokens (design spec 2026-04-26)
+
+    /// Hairline divider — thinner / fainter than `border`. Used for in-panel
+    /// row separators. Mirrors `--hairline` in tokens.css.
+    static var hairlineColor: Color { Color.primary.opacity(0.06) }
+
+    /// Sidebar / segmented-control SELECTED-row fill. Distinct from `subtle`:
+    /// `subtle` is a generic in-panel highlight, `selectFill` is the canonical
+    /// "this row is active" treatment. Mirrors `--select-fill`.
+    static var selectFill: Color { Color.primary.opacity(0.10) }
+
+    /// Border for the selected row. Mirrors `--select-rim`.
+    static var selectRim: Color { Color.primary.opacity(0.16) }
+
+    /// Inner specular highlight color (top-down white gradient on glass cards).
+    /// Slightly stronger in light mode to read against bright wash. Mirrors
+    /// `--rim-inner` in tokens.css.
+    static var rimInner: Color { isDark ? Color.white.opacity(0.10) : Color.white.opacity(0.55) }
+
+    // MARK: - Accent (5 presets, runtime-switchable)
+
+    /// Brand accent. Reads from `AppSettings.shared.accentColor` so the user can
+    /// pick from 5 presets in Settings → Appearance. Default preset `mono` keeps
+    /// the existing monochrome look (textPrimary) for back-compat — switching to
+    /// `warmOrange` / `electric` / `mint` / `violet` colors every accent-using surface.
+    static var accent: Color {
+        accentPresetColor(AppSettings.shared.accentColor)
+    }
+
+    /// 16% alpha tint of `accent` — soft fill for chips marked active /
+    /// CTA backgrounds / accent badges. Mirrors `--accent-soft`.
+    static var accentSoft: Color { accent.opacity(0.16) }
+
+    /// 45% alpha tint of `accent` — rim for accent-soft backgrounds. Mirrors `--accent-rim`.
+    static var accentRim: Color { accent.opacity(0.45) }
+
+    /// Resolves a preset id to its `Color`. Public so a future Settings picker
+    /// can show the swatches. Unknown id falls back to `mono`.
+    static func accentPresetColor(_ preset: String) -> Color {
+        switch preset {
+        case "warmOrange": return Color(red: 0.88, green: 0.54, blue: 0.28)
+        case "electric":   return Color(red: 0.30, green: 0.55, blue: 1.00)
+        case "mint":       return Color(red: 0.10, green: 0.78, blue: 0.55)
+        case "violet":     return Color(red: 0.65, green: 0.40, blue: 1.00)
+        case "mono":       return Color.primary
+        default:           return Color.primary
+        }
+    }
+
+    /// Stable id list for the Settings picker / future Appearance row.
+    /// Order matches the design spec swatches.
+    static let accentPresets: [(id: String, label: String)] = [
+        ("mono",       "Mono"),
+        ("warmOrange", "Orange"),
+        ("electric",   "Electric"),
+        ("mint",       "Mint"),
+        ("violet",     "Violet"),
+    ]
+
+    // MARK: - Status colors
+    //
+    // Spec hex values (Apple system palette) replace the previous `Color.red /
+    // .orange / .blue / .green` aliases — those produced inconsistent shades
+    // across light/dark and lost the slight desaturation the spec asks for.
+
+    /// Recording / live / alert. `--status-alert` #FF453A.
+    static let live = Color(red: 1.00, green: 0.27, blue: 0.23)
+    static let recording = Color(red: 1.00, green: 0.27, blue: 0.23)
+    /// Mid-pipeline state. `--status-warn` #FF9F0A.
+    static let processing = Color(red: 1.00, green: 0.62, blue: 0.04)
+    /// Post-processing / informational. `--status-info` #5AC8FA.
+    static let postProcess = Color(red: 0.35, green: 0.78, blue: 0.98)
+    /// Idle / ready / success. `--status-ok` #34C759.
+    static let idle = Color(red: 0.20, green: 0.78, blue: 0.35)
 
     // MARK: - Typography
     //
@@ -128,12 +195,21 @@ enum MW {
     static let thinBorder: CGFloat = 1.0
 
     // MARK: - State color
+    //
+    // Pills design spec § 8 STAGE_META mapping:
+    //   idle          → status-ok       (green  #34C759)
+    //   recording     → status-alert    (red    #FF453A)   ← live recording
+    //   processing    → status-info     (blue   #5AC8FA)   ← transcribing
+    //   postProcessing→ accent          (warm orange / preset) ← translating
+    // Recording is the user-action state → red. Transcribing is informational
+    // (waiting on Whisper) → blue. Translating is "we're producing the user's
+    // own voice in another language" → accent (their personal color).
     static func stateColor(_ stage: String) -> Color {
         switch stage {
-        case "recording": return recording
-        case "processing": return processing
-        case "postProcessing": return postProcess
-        default: return idle
+        case "recording": return recording           // red
+        case "processing": return postProcess        // blue (transcribing per new spec)
+        case "postProcessing": return accent         // accent (translating per new spec)
+        default: return idle                         // green
         }
     }
 
@@ -171,15 +247,6 @@ private extension GlassElevation {
         case .hero:   return .regularMaterial
         }
     }
-    var shadowOpacity: Double {
-        switch self { case .flat: 0.04; case .raised: 0.10; case .hero: 0.16 }
-    }
-    var shadowRadius: CGFloat {
-        switch self { case .flat: 4; case .raised: 16; case .hero: 28 }
-    }
-    var shadowY: CGFloat {
-        switch self { case .flat: 1; case .raised: 6; case .hero: 12 }
-    }
 }
 
 struct MWCardModifier: ViewModifier {
@@ -209,8 +276,36 @@ struct MWCardModifier: ViewModifier {
                 }
             }
             .clipShape(RoundedRectangle(cornerRadius: radius, style: .continuous))
-            .shadow(color: Color.black.opacity(elevation.shadowOpacity),
-                    radius: elevation.shadowRadius, x: 0, y: elevation.shadowY)
+            .modifier(GlassShadowsModifier(elevation: elevation))
+    }
+}
+
+/// Per-elevation shadow stack lifted from `tokens.css`. Spec requires two
+/// shadow layers for `.raised` and `.hero` (a wide soft halo + a tight close
+/// one) to read as glass against any wash. Dark theme uses heavier shadows
+/// because the wash itself is dark and would otherwise eat the elevation.
+///
+/// Values mirror tokens.css `--shadow-flat / --shadow-raised / --shadow-hero`.
+/// SwiftUI `.shadow()` modifiers chain — each adds a layer behind the previous.
+private struct GlassShadowsModifier: ViewModifier {
+    let elevation: GlassElevation
+
+    @ViewBuilder
+    func body(content: Content) -> some View {
+        let dark = MW.isDark
+        switch elevation {
+        case .flat:
+            content
+                .shadow(color: .black.opacity(dark ? 0.20 : 0.04), radius: 2, x: 0, y: 1)
+        case .raised:
+            content
+                .shadow(color: .black.opacity(dark ? 0.36 : 0.10), radius: 24, x: 0, y: 8)
+                .shadow(color: .black.opacity(dark ? 0.24 : 0.06), radius: 6,  x: 0, y: 2)
+        case .hero:
+            content
+                .shadow(color: .black.opacity(dark ? 0.55 : 0.16), radius: 60, x: 0, y: 24)
+                .shadow(color: .black.opacity(dark ? 0.35 : 0.08), radius: 16, x: 0, y: 6)
+        }
     }
 }
 

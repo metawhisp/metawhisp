@@ -1,4 +1,5 @@
 import AppKit
+import AVFoundation
 import Foundation
 import os
 
@@ -169,6 +170,12 @@ final class TranscriptionCoordinator: ObservableObject {
             return
         }
 
+        // ITER-026 v2 — if a meeting is recording, signal AppDelegate to pause
+        // mic capture for the meeting so this dictation/voice question doesn't
+        // leak into the meeting transcript. AppDelegate also pushes an
+        // "End meeting?" card on the user's first dictation hotkey.
+        AppDelegate.shared?.dictationDidStart()
+
         do {
             // Remember which app had focus before recording (for auto-paste back)
             textInserter.savePreviousApp()
@@ -182,11 +189,18 @@ final class TranscriptionCoordinator: ObservableObject {
             lastError = error.localizedDescription
             NSLog("[Coordinator] ❌ Failed to start: %@", error.localizedDescription)
             soundService.playError()
+            // Failed before any audio → resume meeting mic immediately so we
+            // don't leave a dangling pause window.
+            AppDelegate.shared?.dictationDidEnd()
         }
     }
 
     private func stopAndTranscribe() {
         let samples = recorder.stop()
+        // ITER-026 v2 — resume meeting mic capture (if a meeting was running
+        // it was paused by `dictationDidStart` in `startRecording`). Once
+        // recorder.stop() returns, dictation mic is off, so it's safe.
+        AppDelegate.shared?.dictationDidEnd()
         // Capture & reset translate flag immediately — prevents leaking to next recording
         let shouldTranslate = translateNext
         translateNext = false
@@ -197,6 +211,7 @@ final class TranscriptionCoordinator: ObservableObject {
         // Discard accidental triggers (< 0.3s of audio = 4800 samples at 16kHz)
         guard samples.count > 4800 else {
             NSLog("[Coordinator] Too short (%d samples), discarding", samples.count)
+            abortVoiceQuestionIfActive(reason: "Too short — try holding longer.")
             stage = .idle
             return
         }
@@ -207,6 +222,7 @@ final class TranscriptionCoordinator: ObservableObject {
         let rms = Self.calculateRMS(samples)
         if rms < 0.0003 {
             NSLog("[Coordinator] Audio too quiet (RMS=%.5f), skipping transcription", rms)
+            abortVoiceQuestionIfActive(reason: "Audio too quiet — speak closer to the mic.")
             stage = .idle
             return
         }
@@ -216,9 +232,24 @@ final class TranscriptionCoordinator: ObservableObject {
         }
     }
 
+    /// Voice-question mode aborts must reset BOTH the flag (so the next
+    /// short-tap dictation doesn't get routed to MetaChat) AND the popup
+    /// state (so the floating answer window doesn't sit there forever in
+    /// `.listening` / `.transcribing`). 2026-05-01 user report:
+    /// "нажимаю долго но не успеваю сказать → попап зависает; следующий
+    /// короткий tap вставляется в этот VoiceBlock". Pair-reset fixes both
+    /// in one helper called from every early-return path.
+    private func abortVoiceQuestionIfActive(reason: String) {
+        guard voiceQuestionMode else { return }
+        NSLog("[Coordinator] 🎤 voice question aborted: %@", reason)
+        voiceQuestionMode = false
+        VoiceQuestionState.shared.failed(reason)
+    }
+
     private func transcribe(samples: [Float], shouldTranslate: Bool, rms: Float) async {
         guard let currentEngine = activeEngine, currentEngine.isModelLoaded else {
             lastError = settings.transcriptionEngine == "cloud" ? "API key not set for cloud transcription" : "No model loaded. Go to Settings to download one."
+            abortVoiceQuestionIfActive(reason: "Transcription engine not ready.")
             stage = .idle
             soundService.playError()
             NSLog("[Coordinator] ❌ Engine not ready")
@@ -237,6 +268,12 @@ final class TranscriptionCoordinator: ObservableObject {
             let trimmed = result.text.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !trimmed.isEmpty else {
                 NSLog("[Coordinator] Empty result")
+                // Surface to user — silent return left them wondering why
+                // pressing ⌘ produced nothing. Most common cause is Cloud
+                // Whisper / on-device engine returning a blank string when
+                // it can't decode the audio. Suggest retry.
+                lastError = "Transcription returned empty — try again louder/closer."
+                abortVoiceQuestionIfActive(reason: "Transcription returned empty.")
                 stage = .idle
                 return
             }
@@ -245,6 +282,15 @@ final class TranscriptionCoordinator: ObservableObject {
             // Phase 1: Always-filter toxic tokens (YouTube artifacts) regardless of RMS.
             if Self.isAlwaysHallucination(trimmed) {
                 NSLog("[Coordinator] ⚠️ Filtered hallucination (always): '%@'", String(trimmed.prefix(80)))
+                // CRITICAL: do NOT auto-paste, but DO save text to clipboard +
+                // expose via lastResult so user can recover. Filter is heuristic;
+                // false positives have lost real dictations (3 times today,
+                // 2026-05-01). Better to put suspect text on clipboard than
+                // silently discard 30-60s of speech.
+                Self.saveSuspectToClipboard(trimmed)
+                lastResult = result
+                lastError = "Looked like a hallucination — text saved to clipboard, ⌘V to paste anyway."
+                abortVoiceQuestionIfActive(reason: "Filtered as hallucination.")
                 stage = .idle
                 return
             }
@@ -252,6 +298,12 @@ final class TranscriptionCoordinator: ObservableObject {
             // Built-in MacBook mic: silence ~0.0005, quiet speech ~0.002, normal speech ~0.005+
             if rms < 0.003, Self.isHallucination(trimmed) {
                 NSLog("[Coordinator] ⚠️ Filtered hallucination (RMS=%.4f): '%@'", rms, String(trimmed.prefix(80)))
+                // Same recovery path — text on clipboard so user has the
+                // option even on quiet-audio false positives.
+                Self.saveSuspectToClipboard(trimmed)
+                lastResult = result
+                lastError = "Audio too quiet, but text saved to clipboard — ⌘V to paste anyway."
+                abortVoiceQuestionIfActive(reason: "Audio too quiet for voice question.")
                 stage = .idle
                 return
             }
@@ -314,12 +366,20 @@ final class TranscriptionCoordinator: ObservableObject {
                 }
                 // Skip clipboard / paste for voice questions.
             } else if settings.autoSubmit {
-                let autoPasted = textInserter.insert(text: finalText)
-                if !autoPasted {
+                let outcome = textInserter.insertResult(text: finalText)
+                switch outcome {
+                case .autoPasted:
+                    // Auto-learn corrections after successful paste.
+                    correctionMonitor?.startMonitoring(pastedText: finalText)
+                case .clipboardOnly:
                     lastError = "Copied to clipboard — press ⌘V to paste"
+                case .clipboardFailed:
+                    // Honest message — clipboard write actually failed (race
+                    // with another process owning the pasteboard). User
+                    // manually pressing ⌘V would paste nothing. Tell them
+                    // where to recover from.
+                    lastError = "Clipboard write failed — recover from Library → History"
                 }
-                // Start monitoring for user corrections (auto-learn)
-                if autoPasted { correctionMonitor?.startMonitoring(pastedText: finalText) }
             }
 
             // Memory + task extractors no longer fire per-transcript. They run once on
@@ -331,10 +391,94 @@ final class TranscriptionCoordinator: ObservableObject {
             stage = .idle
 
         } catch {
-            lastError = error.localizedDescription
-            NSLog("[Coordinator] ❌ Transcription failed: %@", error.localizedDescription)
+            // Cloud Whisper / on-device engine failed (network blip, 502, etc).
+            // Save raw audio to a recovery folder so the user can re-submit
+            // later — losing 30-60 seconds of speech to a transient HTTP
+            // glitch is unacceptable for a dictation tool.
+            let recoveryURL = Self.saveSamplesAsWav(samples)
+            let baseMsg = error.localizedDescription
+            if let url = recoveryURL {
+                lastError = "\(baseMsg) — audio saved to \(url.path)"
+                NSLog("[Coordinator] ❌ Transcription failed: %@ — audio recovery: %@",
+                      baseMsg, url.path)
+            } else {
+                lastError = baseMsg
+                NSLog("[Coordinator] ❌ Transcription failed: %@ (recovery save also failed)", baseMsg)
+            }
+            abortVoiceQuestionIfActive(reason: "Transcription failed: \(baseMsg)")
             soundService.playError()
             stage = .idle
+        }
+    }
+
+    // MARK: - Recovery
+
+    /// Save filtered/suspect transcription text to system pasteboard. Called
+    /// from hallucination-filter discard paths so user never loses 30-60s of
+    /// speech to a false positive. We DON'T auto-paste — just put text on
+    /// clipboard and let user decide. Paired with `lastResult` + `lastError`
+    /// surfacing so the popover shows a preview + recovery hint.
+    static func saveSuspectToClipboard(_ text: String) {
+        let pb = NSPasteboard.general
+        pb.clearContents()
+        pb.setString(text, forType: .string)
+        NSLog("[Coordinator] 💾 Suspect text saved to clipboard (%d chars)", text.count)
+    }
+
+    /// Save raw 16kHz mono Float32 samples as a WAV in
+    /// `~/Library/Application Support/MetaWhisp/Recovery/`.
+    /// Used when transcription fails — gives the user something they can
+    /// re-submit instead of losing the dictation entirely.
+    static func saveSamplesAsWav(_ samples: [Float]) -> URL? {
+        guard !samples.isEmpty else { return nil }
+
+        // Resolve / create the recovery folder.
+        let fm = FileManager.default
+        guard let appSupport = fm.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else {
+            return nil
+        }
+        let dir = appSupport
+            .appendingPathComponent("MetaWhisp", isDirectory: true)
+            .appendingPathComponent("Recovery", isDirectory: true)
+        do {
+            try fm.createDirectory(at: dir, withIntermediateDirectories: true)
+        } catch {
+            NSLog("[Coordinator] saveSamplesAsWav: mkdir failed — %@", error.localizedDescription)
+            return nil
+        }
+
+        let stamp: String = {
+            let fmt = DateFormatter()
+            fmt.dateFormat = "yyyy-MM-dd-HH-mm-ss"
+            return fmt.string(from: Date())
+        }()
+        let url = dir.appendingPathComponent("recording-\(stamp).wav")
+
+        guard let format = AVAudioFormat(
+            commonFormat: .pcmFormatFloat32,
+            sampleRate: 16000,
+            channels: 1,
+            interleaved: false
+        ) else { return nil }
+
+        do {
+            let file = try AVAudioFile(forWriting: url, settings: format.settings)
+            guard let buf = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: AVAudioFrameCount(samples.count)) else {
+                return nil
+            }
+            buf.frameLength = AVAudioFrameCount(samples.count)
+            samples.withUnsafeBufferPointer { ptr in
+                if let dst = buf.floatChannelData?.pointee, let src = ptr.baseAddress {
+                    dst.update(from: src, count: samples.count)
+                }
+            }
+            try file.write(from: buf)
+            NSLog("[Coordinator] 💾 Wrote recovery WAV: %@ (%d samples / %.1fs)",
+                  url.path, samples.count, Double(samples.count) / 16000.0)
+            return url
+        } catch {
+            NSLog("[Coordinator] saveSamplesAsWav: write failed — %@", error.localizedDescription)
+            return nil
         }
     }
 
@@ -369,6 +513,62 @@ final class TranscriptionCoordinator: ObservableObject {
         // Multi-script gibberish: real speech doesn't mix 3+ Unicode scripts.
         // Whisper hallucinations often produce Cyrillic+Latin+CJK+Greek mush.
         if isMixedScriptGibberish(text) { return true }
+
+        // NOTE (2026-05-01): excessive phrase repetition USED to fire here as
+        // an always-discard. Bug report: user dictates 30s, pauses 3s mid-speech
+        // to think, Whisper hallucinates "ну и комьюнити ну и комьюнити …" in
+        // the silence. The repetition check fired on the COMBINED text (real
+        // prefix + hallucinated loop + real suffix) → entire dictation
+        // discarded, clipboard empty, animation looked normal. User lost real
+        // words to a false positive. Moved into `isHallucination` (silence-only
+        // path) so the check only fires when the audio was actually quiet —
+        // real speech with a momentary internal pause survives.
+        return false
+    }
+
+    /// Detect Whisper repetition-loop hallucinations. Three independent checks:
+    /// 1. Any 3-word phrase repeats 3+ times across the text
+    /// 2. Any 2-word phrase (with at least one ≥4-char word) repeats 4+ times
+    /// 3. Any single word repeats 5+ times CONSECUTIVELY
+    /// Real speech rarely triggers any of these — they're characteristic of
+    /// Whisper getting stuck in a generation loop on uncertain audio.
+    static func containsExcessivePhraseRepetition(_ text: String) -> Bool {
+        let words = text.lowercased()
+            .components(separatedBy: .whitespacesAndNewlines)
+            .map { $0.trimmingCharacters(in: .punctuationCharacters) }
+            .filter { !$0.isEmpty }
+        guard words.count >= 6 else { return false }
+
+        // Check 3-grams.
+        var trigramCounts: [String: Int] = [:]
+        for i in 0...(words.count - 3) {
+            let trigram = "\(words[i]) \(words[i+1]) \(words[i+2])"
+            trigramCounts[trigram, default: 0] += 1
+        }
+        if trigramCounts.values.contains(where: { $0 >= 3 }) { return true }
+
+        // Check 2-grams (skip noise pairs like "и я").
+        var bigramCounts: [String: Int] = [:]
+        for i in 0...(words.count - 2) {
+            let w1 = words[i], w2 = words[i+1]
+            if w1.count < 4 && w2.count < 4 { continue }
+            let bigram = "\(w1) \(w2)"
+            bigramCounts[bigram, default: 0] += 1
+        }
+        if bigramCounts.values.contains(where: { $0 >= 4 }) { return true }
+
+        // Single-word consecutive run.
+        var current = ""
+        var run = 0
+        for word in words {
+            if word == current {
+                run += 1
+                if run >= 5 { return true }
+            } else {
+                current = word
+                run = 1
+            }
+        }
 
         return false
     }
@@ -407,6 +607,11 @@ final class TranscriptionCoordinator: ObservableObject {
     /// not just contain a keyword (the user might actually say "music" or "subscribe").
     /// Exposed internally so meeting recording can reuse the same filter.
     static func isHallucination(_ text: String) -> Bool {
+        // Phrase-repetition loop check — moved here from `isAlwaysHallucination`
+        // 2026-05-01. Only fires on low-RMS audio (caller gates), so real
+        // dictation with brief internal pauses isn't punished.
+        if containsExcessivePhraseRepetition(text) { return true }
+
         let lower = text.lowercased()
             .trimmingCharacters(in: .whitespacesAndNewlines)
             .trimmingCharacters(in: .punctuationCharacters)

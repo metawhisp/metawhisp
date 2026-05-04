@@ -386,6 +386,14 @@ External readers — самый близкий аналог "auto-подтяги
 User explicit ask 2026-04-19: premium TTS + more voice features revisited after Phase 6 MVP ships.
 - **Premium TTS (OpenAI / ElevenLabs)** — "Sloane" voice is cloud TTS, not AVSpeechSynthesizer. Options: (a) direct OpenAI API with user's key, (b) new Pro-proxy endpoint `/api/pro/tts`. Revisit after AVSpeechSynthesizer MVP ships.
 - **Research voice-communication features** — user flagged "есть много функций про голосовые коммуникации в референсе". Deeper read of reference FloatingControlBar + ACPBridge needed. Candidates: streaming transcription, voice selector with cloud voices, wake-word, voice commands / macros, multi-speaker diarization, voice-to-action.
+- **Live Transcript + Translation panel inside Meeting Copilot overlay** — `Proposed` (2026-04-29). User wants to read what's being said live in a target language he picks. Use cases: not-native speaker listening to EN, multitasking during call, capturing exact wording. Spec:
+  - **NOT a separate window** — expanded section INSIDE the existing Meeting Copilot overlay (`MeetingCoachWindowController`). Toggle via a small button in the overlay header.
+  - Shows TWO columns when expanded: (1) original transcript text from `LiveMeetingAdvisor.collectedPartials` (last ~30s rolling), (2) translation to a user-picked target language.
+  - Target language picker — small dropdown in the overlay (default: user's system locale). Supports the same language list MetaWhisp already supports for transcription/translation.
+  - Translation pipeline: reuse the existing `SelectionTranslator` / Pro proxy translate endpoint OR send the partial through the LLM with a simple "translate to <lang>" prompt. **Defer the cost decision** — first iteration can do per-30s-chunk translation via the same Pro-proxy call we're already making for `MeetingCoachService.process`.
+  - Toggle in Settings: `liveTranscriptPanelEnabled: Bool = false` (off by default; opt-in because translation adds LLM cost).
+  - State lives next to `MeetingCoachState` — same lifecycle (arm on meeting start, disarm on stop).
+  - **Effort:** ~5h — overlay layout for the expansion, language picker, translation call wiring, settings toggle. Don't start until user OKs (after Per-meeting Recap popup ships).
 
 ### Phase 6: Voice questions + TTS ⏸️ TESTING PENDING
 

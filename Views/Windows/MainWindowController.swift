@@ -3,6 +3,10 @@ import SwiftUI
 
 extension Notification.Name {
     static let switchMainTab = Notification.Name("MetaWhisp.switchMainTab")
+    /// Posted with `object: UUID` (Conversation.id). LibraryView switches its
+    /// section to `.conversations` and ConversationsView opens detail for that ID.
+    /// Used by Dashboard's calendar event rows to drill into a recorded meeting.
+    static let openConversation = Notification.Name("MetaWhisp.openConversation")
 }
 
 /// Manages the main application window (singleton — only one instance).
@@ -48,16 +52,20 @@ final class MainWindowController {
         .environmentObject(projectAggregator)
 
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 700, height: 500),
+            contentRect: NSRect(x: 0, y: 0, width: 1440, height: 1000),
             styleMask: [.titled, .closable, .miniaturizable, .resizable],
             backing: .buffered,
             defer: false
         )
         window.title = "MetaWhisp"
-        window.minSize = NSSize(width: 500, height: 400)
+        window.minSize = NSSize(width: 900, height: 600)
         window.contentView = NSHostingView(rootView: contentView)
         window.center()
         window.isReleasedWhenClosed = false
+        // Persist user's last frame across launches via UserDefaults. First
+        // launch uses the contentRect above; any subsequent resize sticks so
+        // re-opening the window respects what the user picked.
+        window.setFrameAutosaveName("MetaWhispMainWindow")
         // Key fix: `.moveToActiveSpace` tells macOS to move the window to the user's current
         // Space when activating, instead of SWAPPING the user to the Space where the window
         // was last seen. Without this, every relaunch / activate drags the user away from

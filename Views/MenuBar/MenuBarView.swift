@@ -22,6 +22,18 @@ struct MenuBarView: View {
             footer
         }
         .background(MW.bg)
+        // Specular rim — top-down white gradient, fades by 30% mark.
+        // Mirror of the design's `.popover::before` pseudo-element.
+        .overlay(alignment: .top) {
+            LinearGradient(
+                colors: [Color.white.opacity(0.18), Color.white.opacity(0.04), .clear],
+                startPoint: .top, endPoint: .bottom
+            )
+            .frame(height: 80)
+            .allowsHitTesting(false)
+            .blendMode(.plusLighter)
+            .opacity(0.6)
+        }
         .overlay(
             RoundedRectangle(cornerRadius: 0)
                 .stroke(MW.border, lineWidth: MW.hairline)
@@ -33,10 +45,12 @@ struct MenuBarView: View {
     // MARK: - Status Strip
 
     private var statusStrip: some View {
-        HStack(spacing: 6) {
-            stageIcon
+        HStack(spacing: 8) {
+            // Status dot — green-pulse idle, red-pulse recording, blue processing, accent translating.
+            // Replaces the old conditional stageIcon — single primitive, color-driven by state.
+            statusDot
             Text(statusLabel.uppercased())
-                .font(MW.label).tracking(1.5).lineLimit(1)
+                .font(MW.label).tracking(1.8).lineLimit(1)
                 .foregroundStyle(coordinator.stage == .idle ? MW.textSecondary : .white)
 
             if coordinator.stage == .processing || coordinator.stage == .postProcessing {
@@ -57,22 +71,22 @@ struct MenuBarView: View {
         }
     }
 
+    /// Status pulse dot — color + glow driven by current stage. Mirrors design
+    /// spec `.sdot.ok / .alert / .warn / .muted`. Pulses on idle (slow) and
+    /// recording (fast); steady on processing/translating.
     @ViewBuilder
-    private var stageIcon: some View {
+    private var statusDot: some View {
         switch coordinator.stage {
         case .idle:
-            EmptyView()
+            PulsingDot(color: MW.idle, size: 7, period: 1.6)
         case .recording:
-            Circle().fill(MW.live).frame(width: 5, height: 5)
-                .shadow(color: .red.opacity(0.5), radius: 3)
+            PulsingDot(color: MW.live, size: 7, period: 1.0)
         case .processing:
-            Image(systemName: "brain")
-                .font(.system(size: 9, weight: .medium))
-                .foregroundStyle(.white)
+            Circle().fill(MW.processing).frame(width: 7, height: 7)
+                .shadow(color: MW.processing.opacity(0.6), radius: 3)
         case .postProcessing:
-            Image(systemName: "globe")
-                .font(.system(size: 9, weight: .medium))
-                .foregroundStyle(.white)
+            Circle().fill(MW.accent).frame(width: 7, height: 7)
+                .shadow(color: MW.accent.opacity(0.6), radius: 3)
         }
     }
 
@@ -80,7 +94,7 @@ struct MenuBarView: View {
     private var stageTrailing: some View {
         switch coordinator.stage {
         case .idle:
-            Text("v0.0.1").font(MW.monoSm).foregroundStyle(MW.textMuted)
+            Text("v\(Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "?")").font(MW.monoSm).foregroundStyle(MW.textMuted)
         case .recording:
             RecordingTimer()
         case .processing:
@@ -115,10 +129,13 @@ struct MenuBarView: View {
                             onMeetingToggle()
                         } label: {
                             Text("STOP")
-                                .font(MW.label).tracking(0.5)
+                                .font(MW.label).tracking(0.8)
                                 .foregroundStyle(.white)
-                                .padding(.horizontal, 6).padding(.vertical, 2)
-                                .overlay(Rectangle().stroke(Color.white.opacity(0.3), lineWidth: MW.hairline))
+                                .padding(.horizontal, 9).padding(.vertical, 3)
+                                .background(
+                                    Capsule().fill(MW.live.opacity(0.20))
+                                        .overlay(Capsule().stroke(MW.live.opacity(0.45), lineWidth: 0.5))
+                                )
                         }
                         .buttonStyle(.plain)
                     } else if meetingRecorder.isStarting {
@@ -137,10 +154,13 @@ struct MenuBarView: View {
                             onMeetingToggle()
                         } label: {
                             Text("RECORD")
-                                .font(MW.label).tracking(0.5)
+                                .font(MW.label).tracking(0.8)
                                 .foregroundStyle(MW.textPrimary)
-                                .padding(.horizontal, 6).padding(.vertical, 2)
-                                .overlay(Rectangle().stroke(MW.borderLight, lineWidth: MW.hairline))
+                                .padding(.horizontal, 9).padding(.vertical, 3)
+                                .background(
+                                    Capsule().fill(Color.white.opacity(0.08))
+                                        .overlay(Capsule().stroke(Color.white.opacity(0.14), lineWidth: 0.5))
+                                )
                         }
                         .buttonStyle(.plain)
                     }
@@ -358,10 +378,10 @@ struct MenuBarView: View {
                     active: coordinator.stage == .recording
                 )
             }
-            .buttonStyle(.plain)
+            .buttonStyle(HoverButtonStyle())
             .disabled(coordinator.stage == .processing || coordinator.stage == .postProcessing)
 
-            Rectangle().fill(MW.border).frame(width: MW.hairline)
+            Rectangle().fill(MW.border).frame(width: 0.5)
 
             Button {
                 coordinator.toggleWithTranslation()
@@ -373,55 +393,65 @@ struct MenuBarView: View {
                     active: coordinator.translateNext
                 )
             }
-            .buttonStyle(.plain)
+            .buttonStyle(HoverButtonStyle())
             .disabled(coordinator.stage == .processing || coordinator.stage == .postProcessing)
         }
-        .frame(height: 48)
+        .frame(height: 44)
         .overlay(Rectangle().fill(MW.border).frame(height: MW.hairline), alignment: .bottom)
     }
 
+    /// Action-grid button per design A: accent icon, label tracked, hotkey
+    /// badge right-aligned. Compact: padding 8×10, icon 11pt. Matches the old
+    /// 48pt-height action row height-wise; only chrome (accent icon, capsule
+    /// hotkey) is the Liquid Glass refresh.
     private func controlBtn(icon: String, label: String, hint: String, active: Bool) -> some View {
-        HStack(spacing: 5) {
-            Image(systemName: icon).font(.system(size: 10, weight: .medium))
-            Text(label).font(MW.label).tracking(0.5).lineLimit(1).fixedSize()
-            Spacer()
+        HStack(spacing: 6) {
+            Image(systemName: icon)
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(active ? .white : MW.accent)
+                .frame(width: 14, height: 14)
+            Text(label)
+                .font(MW.label).tracking(0.6).lineLimit(1).fixedSize()
+                .foregroundStyle(active ? .white : MW.textPrimary)
+            Spacer(minLength: 4)
             Keycap(text: hint).layoutPriority(1)
         }
-        .foregroundStyle(active ? .white : MW.textSecondary)
-        .padding(.horizontal, MW.sp8)
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .padding(.horizontal, 10)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
         .contentShape(Rectangle())
-        .background(active ? Color.white.opacity(0.04) : .clear)
+        .background(active ? Color.white.opacity(0.06) : .clear)
     }
 
     // MARK: - Footer
 
     private var footer: some View {
-        HStack {
+        HStack(spacing: 4) {
             Button { openMainWindow() } label: {
-                HStack(spacing: 4) {
-                    Image(systemName: "gear").font(.system(size: 9))
-                    Text("SETTINGS").font(MW.label).tracking(1)
+                HStack(spacing: 5) {
+                    Image(systemName: "gearshape").font(.system(size: 10, weight: .regular))
+                    Text("SETTINGS").font(MW.label).tracking(1.0)
                 }
+                .frame(maxWidth: .infinity)
                 .foregroundStyle(MW.textMuted)
+                .padding(.horizontal, 12).padding(.vertical, 6)
                 .contentShape(Rectangle())
             }
-            .buttonStyle(.plain)
-
-            Spacer()
+            .buttonStyle(HoverButtonStyle(radius: MW.rSmall))
 
             Button { NSApplication.shared.terminate(nil) } label: {
-                HStack(spacing: 4) {
-                    Image(systemName: "power").font(.system(size: 9))
-                    Text("QUIT").font(MW.label).tracking(1)
+                HStack(spacing: 5) {
+                    Image(systemName: "xmark").font(.system(size: 9, weight: .regular))
+                    Text("QUIT").font(MW.label).tracking(1.0)
                 }
+                .frame(maxWidth: .infinity)
                 .foregroundStyle(MW.textMuted)
+                .padding(.horizontal, 12).padding(.vertical, 6)
                 .contentShape(Rectangle())
             }
-            .buttonStyle(.plain)
+            .buttonStyle(HoverButtonStyle(radius: MW.rSmall))
         }
-        .padding(.horizontal, MW.sp16)
-        .padding(.vertical, MW.sp8)
+        .padding(.horizontal, 4)
+        .padding(.vertical, 3)
     }
 
     // MARK: - Helpers
@@ -634,6 +664,68 @@ private struct MeetingWaveform: View {
         .animation(.easeOut(duration: 0.06), value: bars)
         .frame(height: 32)
         .background(Color.red.opacity(0.04))
+    }
+}
+
+// MARK: - Pulsing Dot (status indicator)
+
+/// 7px circle with state-color glow + opacity pulse. Used in the status strip
+/// to mirror design's `.sdot.ok / .alert` animations (1.6s ok pulse, 1.0s alert).
+private struct PulsingDot: View {
+    let color: Color
+    let size: CGFloat
+    let period: Double
+
+    @State private var dim = false
+
+    var body: some View {
+        Circle()
+            .fill(color)
+            .frame(width: size, height: size)
+            .shadow(color: color.opacity(0.6), radius: 3)
+            .opacity(dim ? 0.55 : 1.0)
+            .onAppear {
+                withAnimation(.easeInOut(duration: period / 2).repeatForever(autoreverses: true)) {
+                    dim = true
+                }
+            }
+    }
+}
+
+// MARK: - Hover Button Style (action grid + footer hover bg)
+
+/// Plain button with hover-tinted background. Mirrors design's `.act:hover`
+/// and `.fbtn:hover` patterns. macOS-only — `.onHover` is the cheap path.
+private struct HoverButtonStyle: ButtonStyle {
+    var radius: CGFloat = 0
+
+    func makeBody(configuration: Configuration) -> some View {
+        HoverButtonBody(radius: radius, isPressed: configuration.isPressed) {
+            configuration.label
+        }
+    }
+
+    private struct HoverButtonBody<Label: View>: View {
+        let radius: CGFloat
+        let isPressed: Bool
+        @ViewBuilder let content: () -> Label
+
+        @State private var hovering = false
+
+        var body: some View {
+            content()
+                .background(
+                    Group {
+                        if hovering || isPressed {
+                            RoundedRectangle(cornerRadius: radius, style: .continuous)
+                                .fill(Color.white.opacity(isPressed ? 0.10 : 0.06))
+                        } else {
+                            Color.clear
+                        }
+                    }
+                )
+                .onHover { hovering = $0 }
+        }
     }
 }
 

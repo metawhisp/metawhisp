@@ -18,19 +18,46 @@ final class TextInsertionService {
         }
     }
 
-    /// Returns true if auto-paste worked, false if only clipboard was set.
+    /// Outcome of an `insert(text:)` call. Fine-grained so callers can
+    /// produce honest user-facing messages — `clipboardOnly` is "clipboard
+    /// has the text, paste manually" while `clipboardFailed` is "we
+    /// couldn't even put it on the clipboard, recover from History".
+    enum InsertOutcome {
+        case autoPasted          // clipboard verified + ⌘V CGEvent fired
+        case clipboardOnly       // clipboard verified; AX denied, no auto-paste
+        case clipboardFailed     // NSPasteboard write failed even after retries
+    }
+
+    /// Returns true if auto-paste worked, false otherwise. Kept for callers
+    /// that don't need the granular reason.
     @discardableResult
     func insert(text: String) -> Bool {
-        // Always copy to clipboard — text stays there for manual Cmd+V
-        let pasteboard = NSPasteboard.general
-        pasteboard.clearContents()
-        pasteboard.setString(text, forType: .string)
-        NSLog("[TextInserter] Copied %d chars to clipboard", text.count)
+        switch insertResult(text: text) {
+        case .autoPasted: return true
+        case .clipboardOnly, .clipboardFailed: return false
+        }
+    }
+
+    /// Granular variant. New 2026-05-01 to expose the `clipboardFailed` case
+    /// — root cause of the "ничего не вставляется ⌘V" bug. Previous
+    /// version called `pasteboard.setString` and discarded its Bool return.
+    /// macOS NSPasteboard ownership is racey: if another process
+    /// (Universal Clipboard sync, a clipboard-manager, or macOS itself)
+    /// calls `clearContents()` between OUR `clearContents()` and our
+    /// `setString`, the setString returns false and text never lands.
+    /// Symptom user hit: log said "Copied N chars", user presses ⌘V — nothing.
+    /// Verified write + retry catches this at the source.
+    func insertResult(text: String) -> InsertOutcome {
+        guard Self.writeToClipboardVerified(text) else {
+            NSLog("[TextInserter] ❌ clipboard write FAILED after retries — text NOT on clipboard")
+            return .clipboardFailed
+        }
+        NSLog("[TextInserter] ✅ Copied %d chars to clipboard (verified)", text.count)
 
         // Try auto-paste only if accessibility is granted
         guard AXIsProcessTrusted() else {
             NSLog("[TextInserter] No accessibility — text on clipboard, user pastes manually")
-            return false
+            return .clipboardOnly
         }
 
         // Restore focus to previous app before pasting
@@ -47,7 +74,39 @@ final class TextInsertionService {
                 self.simulatePaste()
             }
         }
-        return true
+        return .autoPasted
+    }
+
+    /// Write `text` to NSPasteboard.general and verify it landed. Retries up
+    /// to 3 times when:
+    ///   - `setString` returns false (ownership lost mid-write), OR
+    ///   - read-back doesn't match what we wrote (clipboard manager
+    ///     overwrote between our write and read).
+    /// Returns true only when the verified read-back matches `text`.
+    /// Static so tests can call without an instance.
+    static func writeToClipboardVerified(_ text: String, attempts: Int = 3) -> Bool {
+        let pb = NSPasteboard.general
+        for attempt in 1...attempts {
+            pb.clearContents()
+            let writeOK = pb.setString(text, forType: .string)
+            // Tiny breath so any racing process gets a chance to land before
+            // we read back. Empirically 5ms is enough on Apple Silicon — the
+            // Universal Clipboard / pasteboard-manager polls run on ~50ms
+            // cadence, so this either catches them on the same tick or our
+            // re-write wins on the next attempt.
+            usleep(5_000)
+            let readBack = pb.string(forType: .string)
+            if writeOK, readBack == text {
+                if attempt > 1 {
+                    NSLog("[TextInserter] clipboard write succeeded on attempt %d", attempt)
+                }
+                return true
+            }
+            NSLog("[TextInserter] clipboard write attempt %d failed (writeOK=%@, readBackLen=%d expected=%d)",
+                  attempt, writeOK ? "yes" : "no",
+                  readBack?.count ?? -1, text.count)
+        }
+        return false
     }
 
     private func simulatePaste() {

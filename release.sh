@@ -11,8 +11,13 @@ echo "==> Step 1: Building app..."
 bash build.sh --no-launch
 
 echo ""
-echo "==> Step 2: Creating DMG..."
-bash make-dmg.sh 2>/dev/null || bash make-dmg-clean.sh
+echo "==> Step 2: Creating DMG (TCC-safe via /tmp staging)..."
+# `make-dmg-manual.sh` stages in /tmp and uses plain hdiutil — survives in any
+# shell. Pre-step: kill running app — it holds the /Volumes/MetaWhisp mount-name
+# lock and would block hdiutil otherwise.
+pkill -x MetaWhisp 2>/dev/null || true
+sleep 1
+bash make-dmg-manual.sh
 
 DMG="$SCRIPT_DIR/MetaWhisp.dmg"
 if [ ! -f "$DMG" ]; then
@@ -22,6 +27,34 @@ fi
 
 DMG_SIZE=$(stat -f%z "$DMG")
 echo "    DMG size: $DMG_SIZE bytes"
+
+echo ""
+echo "==> Step 2a: Notarizing DMG with Apple (MANDATORY in prod)..."
+# WHY: Without notarization Gatekeeper shows "Apple cannot check for malicious
+# software" on first launch for fresh downloads from the website — a
+# conversion-killer for new users (auto-update via Sparkle bypasses Gatekeeper
+# and works without notarization, but the website-download path needs it).
+# Order matters: notarize + staple BEFORE the Sparkle EdDSA sign, because
+# stapling modifies the DMG bytes and the Sparkle hash must cover the FINAL,
+# stapled DMG that's actually shipped.
+APPLE_ID="maintainer@gmail.com"
+TEAM_ID="6D6948Z4MW"
+APP_SPECIFIC_PASS="fswz-qydu-csch-ocyp"
+
+xcrun notarytool submit "$DMG" \
+    --apple-id "$APPLE_ID" \
+    --team-id "$TEAM_ID" \
+    --password "$APP_SPECIFIC_PASS" \
+    --wait
+
+echo ""
+echo "==> Step 2b: Stapling notarization ticket to DMG..."
+xcrun stapler staple "$DMG"
+xcrun stapler validate "$DMG"
+
+# Re-stat after stapling — xattr write can shift size.
+DMG_SIZE=$(stat -f%z "$DMG")
+echo "    Stapled DMG size: $DMG_SIZE bytes"
 
 echo ""
 echo "==> Step 3: Signing for Sparkle..."

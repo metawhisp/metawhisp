@@ -114,9 +114,21 @@ final class ProactiveContextService: ObservableObject {
 
         guard !items.isEmpty else { return }
 
-        // ── Surface chip ────────────────────────────────────────────────────
+        // ── Surface card ────────────────────────────────────────────────────
+        // Push into the unified `MWNotificationStack` instead of the legacy
+        // `ProactiveChipWindow`. Stack handles positioning + dedup with the
+        // other notification kinds. Proactive is the only kind that uses
+        // `proactiveItems` — the card view renders rows and dispatches each
+        // row's `SurfaceTapAction` directly (no extra plumbing).
         lastSurfaceAt = Date()
-        ProactiveChipWindow.shared.show(items: items, source: ctx.appName)
+        let note = MWNotification(
+            kind: .proactive,
+            title: "while typing in \(ctx.appName)",
+            body: "",
+            onTap: nil,
+            proactiveItems: items
+        )
+        MWNotificationStack.shared.push(note)
         NSLog("[Proactive] surfaced %d items for app=%@ (cos range %.2f-%.2f)",
               items.count, ctx.appName,
               items.map(\.relevance).min() ?? 0,
@@ -137,11 +149,14 @@ final class ProactiveContextService: ObservableObject {
             let vec = EmbeddingService.decode(data)
             guard !vec.isEmpty else { return nil }
             let sim = EmbeddingService.cosineSimilarity(query, vec)
-            let label = m.headline?.isEmpty == false ? m.headline! : String(m.content.prefix(60))
+            // Reference MemoryCardView pattern: render the fact directly, no
+            // preamble. `headline` is a punchy short summary if extracted,
+            // else the raw content prefix.
+            let label = m.headline?.isEmpty == false ? m.headline! : String(m.content.prefix(80))
             return SurfaceItem(
                 kind: .memory,
                 title: label,
-                subtitle: m.content,
+                meta: Self.relativeShort(m.createdAt),
                 relevance: sim,
                 tapAction: .openChat(query: "Что ты знаешь про \"\(label)\"?")
             )
@@ -161,10 +176,19 @@ final class ProactiveContextService: ObservableObject {
             guard !vec.isEmpty else { return nil }
             let sim = EmbeddingService.cosineSimilarity(query, vec)
             let title = c.title ?? "untitled"
+            // Reference compact row: title + (timestamp · duration).
+            // Duration only when finishedAt is set and >= 1 min.
+            var meta = Self.relativeShort(c.startedAt)
+            if let finished = c.finishedAt {
+                let secs = Int(finished.timeIntervalSince(c.startedAt))
+                if secs >= 60 {
+                    meta += " · " + Self.durationShort(secs)
+                }
+            }
             return SurfaceItem(
                 kind: .pastDecision,
                 title: title,
-                subtitle: c.overview ?? "",
+                meta: meta,
                 relevance: sim,
                 tapAction: .openChat(query: "Расскажи про созвон \"\(title)\"")
             )
@@ -198,12 +222,47 @@ final class ProactiveContextService: ObservableObject {
             }
             return SurfaceItem(
                 kind: .waitingOnTask,
-                title: "Waiting on \(name)",
-                subtitle: t.taskDescription,
+                title: t.taskDescription,            // the actual ask, no preamble
+                meta: "Waiting on \(name)",          // who owes
                 relevance: sim,
                 tapAction: .openChat(query: "Напомни что я жду от \(name)")
             )
         }
+    }
+
+    // MARK: - Formatters (reference compact-row style)
+
+    /// "10:43 AM" for today, "Yesterday" / "Tue" for closer past, "Jan 29" further.
+    /// Mirrors reference ConversationRowView's formattedTimestamp.
+    private static func relativeShort(_ date: Date) -> String {
+        let cal = Calendar.current
+        if cal.isDateInToday(date) {
+            let f = DateFormatter()
+            f.dateFormat = "h:mm a"
+            return f.string(from: date)
+        }
+        if cal.isDateInYesterday(date) {
+            return "Yesterday"
+        }
+        let now = Date()
+        let days = cal.dateComponents([.day], from: cal.startOfDay(for: date), to: cal.startOfDay(for: now)).day ?? 0
+        if days < 7 {
+            let f = DateFormatter()
+            f.dateFormat = "EEE"
+            return f.string(from: date)
+        }
+        let f = DateFormatter()
+        f.dateFormat = "MMM d"
+        return f.string(from: date)
+    }
+
+    /// "32m" / "1h 12m" — concise like reference's formattedDuration.
+    private static func durationShort(_ seconds: Int) -> String {
+        let m = seconds / 60
+        if m < 60 { return "\(m)m" }
+        let h = m / 60
+        let rm = m % 60
+        return rm > 0 ? "\(h)h \(rm)m" : "\(h)h"
     }
 
     // MARK: - App gating
@@ -244,8 +303,14 @@ enum SurfaceTapAction {
 struct SurfaceItem: Identifiable {
     let id = UUID()
     let kind: SurfaceItemKind
+    /// Primary label. For conversations — `Conversation.title`. For memories
+    /// — just `memory.content` (we render the fact directly, like reference
+    /// MemoryCardView, not "Memory is about X" preamble).
     let title: String
-    let subtitle: String
+    /// Optional metadata line. For conversations — `"10:43 AM · 32m"`-style
+    /// timestamp + duration (mirrors reference compact ConversationRowView).
+    /// For tasks — task description. Empty for memories (title carries fact).
+    let meta: String
     let relevance: Float
     let tapAction: SurfaceTapAction
 

@@ -1,0 +1,350 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>v9 · Stats+Screen sub-row under Today (left col)</title>
+<link rel="stylesheet" href="_shared.css">
+<style>
+  .container { padding: 24px 28px; }
+
+  .top-bar {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 18px;
+  }
+  .back { font-family: var(--mono); font-size: 11px; color: var(--text-muted); }
+  .top-bar h1 { font-size: 28px; font-weight: 700; }
+
+  /* Outer 2-col grid: LEFT (Today + sub-row Stats|Screen), RIGHT (Tomorrow tall).
+     align-items: start — каждая колонка свою natural высоту, без stretch. */
+  .split {
+    display: grid;
+    grid-template-columns: 1.3fr 1fr;
+    gap: 14px;
+    align-items: start;
+  }
+
+  /* Left column: Today + sub-row Stats|Screen, обе строки auto (по контенту) */
+  .left-col {
+    display: grid;
+    grid-template-rows: auto auto;
+    gap: 14px;
+  }
+  .stats-screen-row {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 14px;
+  }
+
+  /* Day card — без flex:1 на body, чтобы карточка не пыталась тянуться */
+  .day-card { padding: 18px 20px; }
+  .day-card .dh-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 12px;
+    gap: 8px;
+  }
+  .day-card .dh-left {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .day-card .dh-label {
+    font-family: var(--mono);
+    font-size: 10px;
+    letter-spacing: 1.4px;
+    color: var(--text-muted);
+  }
+  .day-card .dh-label strong { color: var(--text); margin-right: 6px; }
+  .day-card.tomorrow .dh-label strong { color: var(--accent); }
+  .day-card.tomorrow {
+    background: linear-gradient(180deg, rgba(255,214,10,0.04), var(--bg-elev));
+    border-color: rgba(255,214,10,0.18);
+  }
+  .day-card .headline {
+    font-size: 18px;
+    font-weight: 600;
+    line-height: 1.25;
+    margin-bottom: 12px;
+  }
+  .day-card.tomorrow .headline {
+    font-size: 14px;
+    color: var(--text-muted);
+  }
+
+  .arrow-btn {
+    width: 24px;
+    height: 24px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 5px;
+    border: 0.5px solid var(--border);
+    color: var(--text-muted);
+    cursor: pointer;
+    background: transparent;
+    font-size: 14px;
+    line-height: 1;
+  }
+  .arrow-btn:hover { color: var(--text); border-color: var(--border-strong); }
+
+  .compact-section {
+    margin-top: 8px;
+    padding-top: 8px;
+    border-top: 0.5px solid var(--border);
+  }
+  .compact-section .section-label { margin-bottom: 4px; }
+  .compact-section .bullet-list li { font-size: 12px; padding: 1px 0; }
+
+  /* Compact card (Stats / Screen) */
+  .compact-card { padding: 12px 14px; }
+  .compact-card .card-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 8px;
+  }
+  .compact-card .card-head .lbl {
+    font-family: var(--mono);
+    font-size: 10px;
+    letter-spacing: 1.2px;
+    color: var(--text-muted);
+  }
+
+  /* Stats — prod TodayStatsCard structure: 2x2 mini-tiles with material bg + 0.5 border.
+     Слегка меньше prod (число 22pt vs 26pt, padding 8px vs 10px) чтобы всё помещалось. */
+  .stats-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 6px;
+  }
+  .stat-cell {
+    padding: 8px 10px;
+    background: rgba(255, 255, 255, 0.035);
+    border: 0.5px solid rgba(255, 255, 255, 0.08);
+    border-radius: 12px;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 2px;
+  }
+  .stat-cell .num {
+    font-family: var(--mono);
+    font-size: 22px;
+    font-weight: 600;
+    line-height: 1.05;
+    color: var(--text);
+    letter-spacing: -0.02em;
+  }
+  .stat-cell .lbl {
+    font-family: var(--sans);
+    font-size: 9px;
+    font-weight: 600;
+    letter-spacing: 0.8px;
+    color: var(--text-muted);
+    text-transform: uppercase;
+  }
+
+  /* Screen mini list with bar viz */
+  .scr-mini .scr-mini-row {
+    display: grid;
+    grid-template-columns: 64px 1fr 32px;
+    gap: 8px;
+    align-items: center;
+    padding: 2px 0;
+    font-size: 11px;
+  }
+  .scr-mini .name {
+    color: var(--text);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .scr-mini .bar {
+    height: 4px;
+    background: rgba(255,255,255,0.05);
+    border-radius: 2px;
+    overflow: hidden;
+  }
+  .scr-mini .bar .fill {
+    height: 100%;
+    background: var(--text-muted);
+    border-radius: 2px;
+  }
+  .scr-mini .pct {
+    font-family: var(--mono);
+    font-size: 10px;
+    color: var(--text-muted);
+    text-align: right;
+  }
+
+  .energy {
+    margin-top: 12px;
+    font-size: 12px;
+    font-style: italic;
+    color: var(--text-muted);
+  }
+
+  /* Empty-state prompt for disconnected providers (calendar etc) */
+  .connect-prompt {
+    padding: 6px 0 2px;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 8px;
+  }
+  .connect-prompt .text {
+    font-size: 12px;
+    color: var(--text-muted);
+    line-height: 1.45;
+  }
+  .connect-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-family: var(--mono);
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.8px;
+    color: var(--accent);
+    background: var(--accent-soft);
+    border: 0.5px solid rgba(255, 214, 10, 0.32);
+    border-radius: 7px;
+    padding: 6px 10px;
+    cursor: pointer;
+    text-transform: uppercase;
+  }
+  .connect-btn:hover {
+    background: rgba(255, 214, 10, 0.18);
+    border-color: rgba(255, 214, 10, 0.5);
+  }
+  .section-label .muted-tag {
+    margin-left: auto;
+    font-family: var(--mono);
+    font-size: 9px;
+    color: var(--text-dim);
+    letter-spacing: 0.8px;
+  }
+</style>
+</head>
+<body>
+  <div class="container">
+    <div class="top-bar">
+      <a class="back" href="index.html">← BACK TO MOCKUPS</a>
+      <h1>Dashboard · v9 sub-row</h1>
+      <div></div>
+    </div>
+
+    <div class="split">
+
+      <!-- LEFT COLUMN: Today on top, Stats|Screen sub-row below -->
+      <div class="left-col">
+
+        <!-- TODAY -->
+        <div class="card day-card today">
+          <div class="dh-row">
+            <div class="dh-left">
+              <button class="arrow-btn" title="Previous day">‹</button>
+              <div class="dh-label"><strong>TODAY</strong> · Sat, Apr 25</div>
+            </div>
+            <button class="btn">↻ Regenerate</button>
+          </div>
+          <div class="body">
+            <div class="headline">Memory issue and clarity review</div>
+
+            <div class="compact-section">
+              <div class="section-label">💡 LEARNED</div>
+              <ul class="bullet-list">
+                <li>ProjectAlpha has memory issue</li>
+                <li>SkyTool Desktop lacks clarity</li>
+              </ul>
+            </div>
+            <div class="compact-section">
+              <div class="section-label">✓ DECIDED</div>
+              <ul class="bullet-list">
+                <li>Check test results</li>
+              </ul>
+            </div>
+            <div class="energy">📊 Low activity · scattered apps</div>
+          </div>
+        </div>
+
+        <!-- Stats|Screen sub-row (sits inside left col, NOT inside Today card body) -->
+        <div class="stats-screen-row">
+
+          <div class="card compact-card">
+            <div class="card-head">
+              <span class="lbl">TODAY</span>
+            </div>
+            <div class="stats-grid">
+              <div class="stat-cell"><span class="num">2</span><span class="lbl">Convos</span></div>
+              <div class="stat-cell"><span class="num">2</span><span class="lbl">Memories</span></div>
+              <div class="stat-cell"><span class="num">0</span><span class="lbl">Done</span></div>
+              <div class="stat-cell"><span class="num">1</span><span class="lbl">New tasks</span></div>
+            </div>
+          </div>
+
+          <div class="card compact-card">
+            <div class="card-head">
+              <span class="lbl">LAST 24H ON SCREEN</span>
+              <span style="font-family: var(--mono); font-size: 9px; color: var(--text-dim);">TOP 5</span>
+            </div>
+            <div class="scr-mini">
+              <div class="scr-mini-row"><span class="name">Telegram</span><div class="bar"><div class="fill" style="width:39%"></div></div><span class="pct">39%</span></div>
+              <div class="scr-mini-row"><span class="name">Arc</span><div class="bar"><div class="fill" style="width:24%"></div></div><span class="pct">24%</span></div>
+              <div class="scr-mini-row"><span class="name">Claude</span><div class="bar"><div class="fill" style="width:15%"></div></div><span class="pct">15%</span></div>
+              <div class="scr-mini-row"><span class="name">loginwindow</span><div class="bar"><div class="fill" style="width:12%"></div></div><span class="pct">12%</span></div>
+              <div class="scr-mini-row"><span class="name">Safari</span><div class="bar"><div class="fill" style="width:11%"></div></div><span class="pct">11%</span></div>
+            </div>
+          </div>
+
+        </div>
+
+      </div>
+
+      <!-- RIGHT COLUMN: Tomorrow tall, fills full split height -->
+      <div class="card day-card tomorrow">
+        <div class="dh-row">
+          <div class="dh-label"><strong>TOMORROW</strong> · Sun, Apr 26</div>
+          <span class="chip">2 due</span>
+        </div>
+        <div class="headline">2 tasks due · 1 followup</div>
+
+        <!-- CALENDAR — empty state (calendar not connected). When connected → list events here. -->
+        <div class="compact-section">
+          <div class="section-label">📅 CALENDAR <span class="muted-tag">NOT CONNECTED</span></div>
+          <div class="connect-prompt">
+            <div class="text">Connect your calendar to see tomorrow's schedule and link meetings to conversations.</div>
+            <button class="connect-btn">＋ Connect Calendar</button>
+          </div>
+        </div>
+
+        <div class="compact-section">
+          <div class="section-label">⏰ DUE</div>
+          <div class="plan-item" style="padding: 4px 0;">
+            <span class="time" style="width: 44px;">EOD</span>
+            <span class="label" style="font-size: 12px;">Q2 roadmap to Sam</span>
+            <span class="chip red" style="font-size: 8px;">overdue</span>
+          </div>
+          <div class="plan-item" style="padding: 4px 0;">
+            <span class="time" style="width: 44px;">EOD</span>
+            <span class="label" style="font-size: 12px;">SEO report review</span>
+          </div>
+        </div>
+
+        <div class="compact-section">
+          <div class="section-label">💡 SUGGESTED</div>
+          <div class="plan-item" style="padding: 4px 0;">
+            <span class="time" style="width: 44px;">—</span>
+            <span class="label" style="font-size: 12px;">Followup Sam on auth migration</span>
+          </div>
+        </div>
+      </div>
+
+    </div>
+
+  </div>
+</body>
+</html>

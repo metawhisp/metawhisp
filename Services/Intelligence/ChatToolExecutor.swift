@@ -864,10 +864,47 @@ final class ChatToolExecutor: ObservableObject {
         return ToolCall(id: id, tool: name, args: argMap)
     }
 
+    /// Set of all callable tool names — used by the drift-tolerant parser
+    /// fallback below. Keep in sync with `executeTool(_:)` switch arms.
+    private static let allKnownTools: Set<String> = [
+        "dismissTask", "completeTask", "dismissMemory", "updateGoalProgress",
+        "addTask", "addMemory",
+        "searchTasks", "searchMemories", "searchConversations",
+    ]
+
     /// Extract the FIRST `<tool_call>{...}</tool_call>` block from text.
     /// Returns nil when no valid block present — chat then treats the output as plain text.
-    /// Tolerant to whitespace + code fences around the JSON.
+    /// Tolerant to whitespace + code fences around the JSON. Also tolerant to
+    /// the LLM-drift pattern `<toolName>{args}</toolName>` (Cerebras Qwen and
+    /// some Groq models emit this instead of the spec'd `<tool_call>` wrapper).
     static func parseToolCall(from text: String) -> ToolCall? {
+        // Drift fallback FIRST — if the model used `<searchTasks>{...}</searchTasks>`
+        // (etc) format, transform it into a regular ToolCall before the canonical
+        // parser would have failed and bubbled raw XML to the UI.
+        for tool in allKnownTools {
+            let pattern = "<\(tool)>([\\s\\S]*?)</\(tool)>"
+            guard let r = text.range(of: pattern, options: .regularExpression) else { continue }
+            var payload = String(text[r])
+            payload = payload
+                .replacingOccurrences(of: "<\(tool)>", with: "")
+                .replacingOccurrences(of: "</\(tool)>", with: "")
+                .replacingOccurrences(of: "```json", with: "")
+                .replacingOccurrences(of: "```", with: "")
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            guard let data = payload.data(using: .utf8),
+                  let argsObj = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+            else { continue }
+            var normArgs: [String: String] = [:]
+            for (k, v) in argsObj {
+                if let s = v as? String { normArgs[k] = s }
+                else if let n = v as? NSNumber { normArgs[k] = n.stringValue }
+                else if v is NSNull { /* skip */ }
+                else { normArgs[k] = String(describing: v) }
+            }
+            NSLog("[ChatTools] drift-format tool call detected: <%@> — recovered", tool)
+            return ToolCall(id: nil, tool: tool, args: normArgs)
+        }
+
         guard let range = text.range(of: #"<tool_call>([\s\S]*?)</tool_call>"#, options: .regularExpression) else {
             return nil
         }

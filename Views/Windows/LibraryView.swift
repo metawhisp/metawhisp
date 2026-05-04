@@ -10,12 +10,14 @@ import SwiftUI
 struct LibraryView: View {
     @State private var section: Section = .conversations
 
+    /// Liquid Glass design — TitleCase pill labels, not the legacy UPPERCASE.
+    /// Mirrors mockup §02 Library top section picker.
     enum Section: String, CaseIterable {
-        case conversations = "CONVERSATIONS"
-        case screen = "SCREEN"
-        case files = "FILES"
-        case memories = "MEMORIES"
-        case history = "HISTORY"
+        case conversations = "Conversations"
+        case screen = "Screen"
+        case files = "Files"
+        case memories = "Memories"
+        case history = "History"
     }
 
     var body: some View {
@@ -32,21 +34,25 @@ struct LibraryView: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        // openConversation deep-link: ensure CONVERSATIONS section is active
+        // so ConversationsView mounts and can pick up the same notification.
+        .onReceive(NotificationCenter.default.publisher(for: .openConversation)) { _ in
+            section = .conversations
+        }
     }
 
+    /// Liquid Glass design — pill-shaped chips per spec § 7 mapping table.
+    /// Active chip = `selectFill` background + `selectRim` border + primary text.
+    /// Inactive = ultraThin material + border + muted text. Radius 999 (pill).
     private var picker: some View {
         HStack(spacing: 8) {
             ForEach(Section.allCases, id: \.self) { s in
-                let isActive = section == s
-                Text(s.rawValue)
-                    .font(MW.label)
-                    .tracking(0.8)
-                    .foregroundStyle(isActive ? MW.textPrimary : MW.textMuted)
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 6)
-                    .background(isActive ? MW.elevated : .clear)
-                    .overlay(Rectangle().stroke(isActive ? MW.borderLight : MW.border, lineWidth: MW.hairline))
-                    .onTapGesture { section = s }
+                GlassChipButton(
+                    label: s.rawValue,
+                    isActive: section == s,
+                    radius: 999,
+                    action: { section = s }
+                )
             }
             Spacer()
         }

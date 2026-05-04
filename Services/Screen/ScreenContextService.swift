@@ -117,9 +117,19 @@ final class ScreenContextService: ObservableObject {
         // Get window title via Accessibility API (needed for both OCR and call detection)
         let windowTitle = getActiveWindowTitle(pid: frontApp.processIdentifier) ?? ""
 
-        // Call detection — runs BEFORE blacklist/whitelist/change guards so a Zoom call
-        // still fires the callback even if the user blacklisted Zoom from OCR capture.
-        // Fires on state transition only (nil→name or name→nil), so no external debounce needed.
+        // Call detection — ITER-026 v2: FRONTMOST-only. A call always starts
+        // when the user is actually LOOKING at the meeting window. A leftover
+        // Meet tab parked in some background browser does NOT count — that
+        // produced a false-positive auto-start (user report 2026-05-02:
+        // "почему сейчас созвон включился?", auto-start fired against a
+        // background Meet tab she'd opened earlier).
+        //
+        // The user CAN freely tab away mid-call without losing the recording
+        // — that's owned separately by `handleCallContext(nil)`'s no-auto-stop
+        // policy: once `meetingRecorder.isRecording` is true, window-loss
+        // does NOT stop recording. Only the audio-silence guard (10 min) or
+        // max-duration cap or manual STOP can stop. So detection can stay
+        // strict (frontmost-only) without sacrificing tab-switch tolerance.
         let currentCall = SystemAudioCaptureService.detectCallContext(
             bundleID: bundleID,
             appName: appName,

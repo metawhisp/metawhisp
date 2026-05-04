@@ -58,7 +58,7 @@
     <div class="grid">
       <a class="card preview" href="v1-feed.html">
         <div class="num">VARIANT 1</div>
-        <div class="title">Feed (Omi-style)</div>
+        <div class="title">Feed (single-stream)</div>
         <div class="desc">Single chronological scroll: today → yesterday → past. Каждый день — full card. Никакого picker'а.</div>
         <div class="pros"><strong>+</strong> No layout jump · <strong>+</strong> familiar timeline UX · <strong>+</strong> tomorrow в начале как pinned card</div>
       </a>
@@ -90,10 +90,31 @@
         <div class="desc">Today доминирует весь экран. Past 7 days — collapsed accordion внизу. Tomorrow — sticky banner сверху.</div>
         <div class="pros"><strong>+</strong> Maximum focus on today · <strong>+</strong> tomorrow always visible · <strong>+</strong> past — opt-in</div>
       </a>
+
+      <a class="card preview" href="v9-stats-leftcol.html">
+        <div class="num">VARIANT 9 — review</div>
+        <div class="title">Stats+Screen sub-row in left col under Today</div>
+        <div class="desc">Two cols: Today + (Stats|Screen 1:1 sub-row) слева, Tomorrow tall справа. Stats и Screen — две компактные карточки бок о бок, не full-width.</div>
+        <div class="pros"><strong>+</strong> Stats не растянуты · <strong>+</strong> под Today · <strong>+</strong> Tomorrow tall балансирует высоту</div>
+      </a>
+
+      <a class="card preview" href="v10-stats-stack-leftcol.html">
+        <div class="num">VARIANT 10 — review</div>
+        <div class="title">Stats+Screen vertical stack in left col</div>
+        <div class="desc">Левая колонка — 3 карточки stack: Today → Stats (4 inline pills horizontal) → Screen (5 horizontal app pills). Tomorrow tall справа.</div>
+        <div class="pros"><strong>+</strong> Каждая карточка тонкая · <strong>+</strong> Stats и Screen читаются как горизонтальные strip · <strong>+</strong> Today доминирует</div>
+      </a>
+
+      <a class="card preview" href="v11-rightcol-stack.html">
+        <div class="num">VARIANT 11 — review</div>
+        <div class="title">Today big left, right col stack: Tomorrow + Stats + Screen</div>
+        <div class="desc">Today доминирует слева (1.5fr). Правая колонка (1fr) — стек: Tomorrow → Stats 2×2 → Screen list. Все вспомогательное прижато к правому краю.</div>
+        <div class="pros"><strong>+</strong> Today max-focus · <strong>+</strong> Stats и Screen в одном узком потоке справа · <strong>+</strong> Никаких full-width блоков</div>
+      </a>
     </div>
 
     <p style="color: var(--text-dim); font-size: 12px; margin-top: 32px; max-width: 640px;">
-      Reference: Omi пользует <strong style="color:var(--text-muted)">single chronological feed</strong> для memory items —
+      Reference: a comparable assistant uses <strong style="color:var(--text-muted)">single chronological feed</strong> для memory items —
       нет calendar/picker концепции. v1 ближе всего к этому. Но я также сделал альтернативы (sidebar / split / 3-day / focus)
       на случай если для desktop хочется другой подход.
     </p>

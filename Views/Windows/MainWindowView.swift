@@ -51,14 +51,14 @@ struct MainWindowView: View {
 
     var body: some View {
         ZStack {
-            // Hero color wash — gives the glass materials something to refract.
-            // Without this the whole window reads as flat gray.
-            heroBackground
-                .ignoresSafeArea()
+            // Liquid Glass page wash — radial warm + cool stops on a vertical
+            // gradient. Mirrors `--bg-grad` in tokens.css. Hero materials
+            // (sidebar / cards) refract through this. See PageWash component.
+            PageWash()
 
             HStack(spacing: 0) {
                 sidebar
-                    .frame(width: 200)
+                    .frame(width: 220)
                     .padding(.leading, 12)
                     .padding(.vertical, 12)
 
@@ -75,21 +75,11 @@ struct MainWindowView: View {
         }
     }
 
-    private var heroBackground: some View {
-        LinearGradient(
-            colors: MW.isDark
-                ? [Color(w: 0.10), Color(w: 0.04)]
-                : [Color(w: 0.97), Color(w: 0.92)],
-            startPoint: .top,
-            endPoint: .bottom
-        )
-    }
-
-    // MARK: - Custom Sidebar (glass)
+    // MARK: - Custom Sidebar (glass-hero)
 
     private var sidebar: some View {
         VStack(alignment: .leading, spacing: 0) {
-            // Brand: real app icon + wordmark.
+            // Brand block: app icon + "MetaWhisp".
             HStack(spacing: 10) {
                 Image(nsImage: NSImage(named: "AppIcon") ?? NSApp.applicationIconImage)
                     .resizable()
@@ -97,7 +87,7 @@ struct MainWindowView: View {
                     .aspectRatio(contentMode: .fit)
                     .frame(width: 30, height: 30)
                 Text("MetaWhisp")
-                    .font(.system(size: 14, weight: .semibold))
+                    .font(.system(size: 13, weight: .semibold))
                     .foregroundStyle(MW.textPrimary)
                 Spacer()
             }
@@ -106,54 +96,40 @@ struct MainWindowView: View {
 
             GlassDivider().padding(.horizontal, 8).padding(.bottom, 6)
 
-            // Tab items
+            // Tab items via the SidebarItem primitive.
             VStack(spacing: 2) {
                 ForEach(SidebarTab.allCases) { tab in
-                    sidebarItem(tab)
+                    SidebarItem(
+                        title: tab.rawValue,
+                        icon: tab.icon,
+                        isActive: selectedTab == tab,
+                        action: { selectedTab = tab }
+                    )
                 }
             }
             .padding(.horizontal, 6)
 
             Spacer()
 
-            // Version
-            Text("v0.0.1")
-                .font(MW.monoSm)
-                .foregroundStyle(MW.textDim)
-                .padding(.horizontal, 14)
-                .padding(.vertical, 10)
-        }
-        .mwCard(radius: MW.rLarge, elevation: .hero)
-    }
-
-    private func sidebarItem(_ tab: SidebarTab) -> some View {
-        Button {
-            selectedTab = tab
-        } label: {
-            HStack(spacing: 10) {
-                Image(systemName: tab.icon)
-                    .font(.system(size: 13, weight: .medium))
-                    .frame(width: 18, height: 18)
-                Text(tab.rawValue)
-                    .font(.system(size: 13, weight: .medium))
+            // Version + on-device status pip — matches mockup footer.
+            HStack(spacing: 8) {
+                Text("v\(Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "?")")
+                    .font(MW.monoSm)
+                    .foregroundStyle(MW.textDim)
                 Spacer()
-            }
-            .foregroundStyle(selectedTab == tab ? MW.textPrimary : MW.textSecondary)
-            .padding(.horizontal, 12)
-            .padding(.vertical, 8)
-            .background {
-                if selectedTab == tab {
-                    RoundedRectangle(cornerRadius: MW.rSmall, style: .continuous)
-                        .fill(Color.primary.opacity(0.10))
-                        .overlay(
-                            RoundedRectangle(cornerRadius: MW.rSmall, style: .continuous)
-                                .strokeBorder(Color.primary.opacity(0.16), lineWidth: 0.5)
-                        )
+                HStack(spacing: 5) {
+                    Circle()
+                        .fill(MW.idle)
+                        .frame(width: 5, height: 5)
+                    Text("on-device")
+                        .font(.system(size: 10, weight: .medium))
+                        .foregroundStyle(MW.textMuted)
                 }
             }
-            .contentShape(Rectangle())
+            .padding(.horizontal, 14)
+            .padding(.vertical, 10)
         }
-        .buttonStyle(.plain)
+        .mwCard(radius: MW.rLarge, elevation: .hero)
     }
 
     @ViewBuilder

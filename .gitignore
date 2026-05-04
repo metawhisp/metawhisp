@@ -1,6 +1,12 @@
 # Build
 .build/
 dist/
+.dmg-staging/
+*.zip
+.wrangler/
+
+# Local design / handoff working dirs
+design-handoff/
 
 # macOS
 .DS_Store

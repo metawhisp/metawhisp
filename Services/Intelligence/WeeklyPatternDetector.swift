@@ -1,6 +1,6 @@
+import AppKit
 import Foundation
 import SwiftData
-import UserNotifications
 
 /// Weekly cross-conversation pattern detector (ITER-022 G5).
 ///
@@ -331,41 +331,43 @@ final class WeeklyPatternDetector: ObservableObject {
     }
 
     // MARK: - Notifications
+    //
+    // Both posters route through the unified `MWNotificationStack` (top-right
+    // in-app cards) instead of macOS-native `UNUserNotificationCenter`. The
+    // app is always running (menu-bar) so we don't lose anything by skipping
+    // OS-managed delivery.
 
     private func postRecapNotification(digest: PatternDigest) {
-        let content = UNMutableNotificationContent()
-        content.title = "Weekly patterns ready"
         var lines: [String] = []
         if !digest.themes.isEmpty { lines.append("Themes: \(digest.themes.count)") }
         if !digest.stuckLoops.isEmpty { lines.append("Stuck: \(digest.stuckLoops.count)") }
         if !digest.insights.isEmpty { lines.append("Insights: \(digest.insights.count)") }
-        content.body = lines.isEmpty
+        let body = lines.isEmpty
             ? "Quiet week — patterns recap saved."
             : lines.joined(separator: " · ") + " — open Insights"
-        content.sound = .default
-        content.userInfo = ["target": "tasks"]  // route via existing handler
-
-        let req = UNNotificationRequest(
-            identifier: "com.metawhisp.pattern.\(digest.id.uuidString)",
-            content: content, trigger: nil
-        )
-        UNUserNotificationCenter.current().add(req) { err in
-            if let err {
-                NSLog("[Pattern] ❌ Notification failed: %@", err.localizedDescription)
+        let note = MWNotification(
+            kind: .advice,
+            title: "Weekly patterns ready",
+            body: body,
+            onTap: {
+                NSApp.activate(ignoringOtherApps: true)
+                NotificationCenter.default.post(
+                    name: .switchMainTab,
+                    object: MainWindowView.SidebarTab.tasks
+                )
             }
-        }
+        )
+        Task { @MainActor in MWNotificationStack.shared.push(note) }
     }
 
     private func postQuietWeekNotification() {
-        let content = UNMutableNotificationContent()
-        content.title = "Quiet week"
-        content.body = "Fewer than \(minConversationsToRun) conversations — no patterns to analyse."
-        content.sound = nil
-        let req = UNNotificationRequest(
-            identifier: "com.metawhisp.pattern.quiet.\(UUID().uuidString)",
-            content: content, trigger: nil
+        let note = MWNotification(
+            kind: .advice,
+            title: "Quiet week",
+            body: "Fewer than \(minConversationsToRun) conversations — no patterns to analyse.",
+            onTap: nil
         )
-        UNUserNotificationCenter.current().add(req) { _ in }
+        Task { @MainActor in MWNotificationStack.shared.push(note) }
     }
 
     // MARK: - Data fetch

@@ -101,6 +101,57 @@ enum TaskExtractionFilters {
         return false
     }
 
+    /// ITER-032 — strict title validator. Mirrors reference TaskAssistant's
+    /// `validateTaskTitle` (`TaskAssistant.swift:807-833`) used for retry-loop
+    /// rejection. We don't have a tool-loop architecture, so the validator runs
+    /// post-LLM as an additional reject gate. Captures the same vague-title
+    /// classes (single-word / no-noun / banned-verb-alone) that reference fed
+    /// back into a retry. Returning a non-nil reason → drop the task.
+    static func validateTaskTitle(_ title: String) -> TitleRejectionReason? {
+        let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return .empty }
+
+        let words = trimmed.split { $0 == " " || $0 == "\t" }
+        let wordCount = words.count
+
+        // Reference floor: 6 words. We're slightly more permissive (4 words)
+        // because RU verbs can pack more meaning per token ("Отправить контракт Майку" = 3 words).
+        if wordCount < 4 {
+            return .tooShort(wordCount: wordCount)
+        }
+
+        // Single-verb actions with no object — straight reject pattern from
+        // production: "Investigate", "Check logs", "Look into auth".
+        let bannedSoloVerbs: Set<String> = [
+            "investigate", "research", "explore", "examine", "look",
+            "check", "verify", "review", "track", "monitor",
+            "respond", "reply", "follow", "handle", "manage", "process",
+            "fix", "update", "modify", "change", "edit",
+            "разобраться", "проверить", "посмотреть", "ответить", "поправить",
+            "обновить", "изменить", "написать",
+        ]
+        let firstWordLower = words.first.map { String($0).lowercased() } ?? ""
+        if wordCount <= 3 && bannedSoloVerbs.contains(firstWordLower) {
+            return .vagueVerb(verb: firstWordLower)
+        }
+
+        return nil
+    }
+
+    enum TitleRejectionReason: CustomStringConvertible {
+        case empty
+        case tooShort(wordCount: Int)
+        case vagueVerb(verb: String)
+
+        var description: String {
+            switch self {
+            case .empty: return "title is empty"
+            case .tooShort(let n): return "only \(n) words — need 4+ with named subject"
+            case .vagueVerb(let v): return "starts with vague solo verb '\(v)' — need concrete object"
+            }
+        }
+    }
+
     /// Minimum relevance score (0-100) for a screen-extracted task to be surfaced.
     /// Relevance reflects how concrete + addressed-to-user the signal is.
     /// 75 chosen after observing 18-task junk window: most false positives scored 40-65;

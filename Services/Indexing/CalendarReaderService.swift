@@ -51,6 +51,52 @@ final class CalendarReaderService: ObservableObject {
         timerTask = nil
     }
 
+    // MARK: - Live event helpers
+
+    /// ITER-026 v2 — returns a non-allday event whose `startDate` falls in
+    /// the window `(now - lookback, now]`. Used by the meeting auto-start
+    /// fast-tick loop to fire the countdown plashka the instant a calendar
+    /// event begins. `lookback` defaults to 65 sec so the 1-sec poll loop
+    /// catches every event boundary even if a tick was skipped, but events
+    /// older than that are not returned (no stale-event re-firing on launch).
+    func eventStartingNow(lookback: TimeInterval = 65) -> EKEvent? {
+        let status = EKEventStore.authorizationStatus(for: .event)
+        guard status == .fullAccess || status == .authorized else { return nil }
+        let now = Date()
+        let lookStart = now.addingTimeInterval(-lookback)
+        let lookEnd = now
+        let predicate = store.predicateForEvents(withStart: lookStart, end: lookEnd.addingTimeInterval(60), calendars: nil)
+        let candidates = store.events(matching: predicate).filter { ev in
+            if ev.isAllDay { return false }
+            if ev.status == .canceled { return false }
+            if let me = ev.attendees?.first(where: { $0.isCurrentUser }),
+               me.participantStatus == .declined { return false }
+            // Strictly: event must have started in the lookback window AND not yet ended.
+            return ev.startDate >= lookStart && ev.startDate <= lookEnd && ev.endDate >= now
+        }
+        // If multiple events qualify (overlapping calendars), pick the most recent start.
+        return candidates.sorted { $0.startDate > $1.startDate }.first
+    }
+
+    /// Returns the calendar event currently in progress (if any) — start ≤ now ≤ end.
+    /// Used by AppDelegate's meeting auto-stop to schedule a hard stop at
+    /// `event.endDate + buffer`. No-op if calendar access wasn't granted.
+    func currentEvent(at date: Date = Date()) -> EKEvent? {
+        let status = EKEventStore.authorizationStatus(for: .event)
+        guard status == .fullAccess || status == .authorized else { return nil }
+        let cal = Calendar.current
+        let dayStart = cal.startOfDay(for: date)
+        let dayEnd = cal.date(byAdding: .day, value: 1, to: dayStart) ?? date.addingTimeInterval(86400)
+        let predicate = store.predicateForEvents(withStart: dayStart, end: dayEnd, calendars: nil)
+        let events = store.events(matching: predicate)
+        // Pick the SHORTEST overlapping event — if user has an all-day "Holiday"
+        // overlapping a 30-min meeting, the meeting wins.
+        return events
+            .filter { $0.startDate <= date && date <= $0.endDate && !$0.isAllDay }
+            .sorted { ($0.endDate.timeIntervalSince($0.startDate)) < ($1.endDate.timeIntervalSince($1.startDate)) }
+            .first
+    }
+
     // MARK: - ITER-018 — Conversation ↔ EKEvent linker
 
     /// Link a single Conversation to the best-matching EKEvent in its time
@@ -108,6 +154,13 @@ final class CalendarReaderService: ObservableObject {
             if ev.status == .canceled { return false }
             if let me = ev.attendees?.first(where: { $0.isCurrentUser }),
                me.participantStatus == .declined { return false }
+            // ITER-026 — exclude all-day events. Holiday calendars (e.g.
+            // "Holidays in Serbia") emit 24h all-day rows that always
+            // overlap any conversation, scoring `timeOverlapFraction = 1.0`
+            // (= 0.6 score on its own → above 0.5 threshold). Result was
+            // every meeting on May 1/2 getting auto-titled "Labor Day
+            // Holiday". Real meetings are never all-day events.
+            if ev.isAllDay { return false }
             return true
         }
         guard !candidates.isEmpty else { return }
@@ -269,35 +322,14 @@ final class CalendarReaderService: ObservableObject {
 
         let ctx = ModelContext(container)
 
-        // 3. Create tasks for upcoming events that don't yet exist as TaskItem.
-        var taskCount = 0
-        let existingTaskSignatures = fetchRecentTaskSignatures(in: ctx, limit: 200)
-        for ev in events where ev.startDate >= now {
-            // Skip declined events.
-            if ev.status == .canceled { continue }
-            if let me = ev.attendees?.first(where: { $0.isCurrentUser }),
-               me.participantStatus == .declined {
-                continue
-            }
-            let title = (ev.title ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !title.isEmpty else { continue }
-            // Dedup signature: title lowercased + rounded hour of start.
-            let hourKey = Int(ev.startDate.timeIntervalSince1970 / 3600)
-            let sig = "\(title.lowercased())|\(hourKey)"
-            if existingTaskSignatures.contains(sig) { continue }
-
-            let taskDesc = shortenTaskDescription(title)
-            let task = TaskItem(
-                taskDescription: taskDesc,
-                dueAt: ev.startDate,
-                sourceTranscriptId: nil,
-                sourceApp: "Calendar",
-                conversationId: nil,
-                screenContextId: nil
-            )
-            ctx.insert(task)
-            taskCount += 1
-        }
+        // 3. Calendar events are NOT action items. Earlier versions bulk-
+        // created `TaskItem(sourceApp: "Calendar")` for every upcoming event,
+        // which produced ~10 fake tasks/day at the user's typical density —
+        // the same titles already shown in the dashboard's TOMORROW block,
+        // duplicated as "tasks" that never got auto-completed and rotted in
+        // chat context for weeks. Action items now come ONLY from `TaskExtractor`
+        // (LLM over conversation transcripts, with calendar context enrichment).
+        // spec://iterations/ITER-026
 
         // 4. Send last N events (both past + upcoming) to LLM for pattern memories.
         let recentEvents = events.suffix(maxEventsForLLM)
@@ -307,7 +339,7 @@ final class CalendarReaderService: ObservableObject {
         }
 
         try? ctx.save()
-        lastSummary = "Tasks: \(taskCount) new · Memories: \(memoryCount) · Scanned \(events.count) events"
+        lastSummary = "Memories: \(memoryCount) · Scanned \(events.count) events"
         NSLog("[Calendar] ✅ %@", lastSummary ?? "")
     }
 
@@ -419,29 +451,6 @@ final class CalendarReaderService: ObservableObject {
     }
 
     // MARK: - Helpers
-
-    private func shortenTaskDescription(_ raw: String) -> String {
-        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-        let words = trimmed.split(separator: " ")
-        if words.count <= 15 { return trimmed }
-        return words.prefix(15).joined(separator: " ")
-    }
-
-    private func fetchRecentTaskSignatures(in ctx: ModelContext, limit: Int) -> Set<String> {
-        var desc = FetchDescriptor<TaskItem>(
-            predicate: #Predicate { !$0.isDismissed && $0.sourceApp == "Calendar" },
-            sortBy: [SortDescriptor(\.createdAt, order: .reverse)]
-        )
-        desc.fetchLimit = limit
-        let items = (try? ctx.fetch(desc)) ?? []
-        var set = Set<String>()
-        for t in items {
-            guard let due = t.dueAt else { continue }
-            let hourKey = Int(due.timeIntervalSince1970 / 3600)
-            set.insert("\(t.taskDescription.lowercased())|\(hourKey)")
-        }
-        return set
-    }
 
     private func fetchRecentMemoryContents(in ctx: ModelContext, limit: Int) -> [String] {
         var desc = FetchDescriptor<UserMemory>(

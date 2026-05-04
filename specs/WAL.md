@@ -7,8 +7,394 @@
 **Shipped in session 2026-04-19 (summary):** Phases 0-3 end-to-end (Conversations, Screen pipeline, Readers), sidebar reorg 9→6 tabs, MetaChat brand + RAG + typing animation, Phase 6 voice questions (long-press Right ⌘ → TTS answer) with redesigned floating UI + STOP/Space/Esc controls. Phase 4/5/7/8 planned in BACKLOG. E4 Gmail + E5 unified runner deferred.
 
 **Shipped in session 2026-04-20 (summary so far):**
-- Cleanup: rewrote 2 pushed commits to scrub external-reference name from titles + bodies, renamed branch `omi-architecture-phase-1-3` → `architecture-phase-1-3` (force-push), scrub commit `96bd8e2` across 37 repo files (165+/215−).
+- Cleanup: rewrote 2 pushed commits to scrub external-reference name from titles + bodies, renamed branch to `architecture-phase-1-3` (force-push), scrub commit `96bd8e2` across 37 repo files (165+/215−).
 - Phase 6+ Premium TTS shipped: backend `/api/pro/tts` endpoint (OpenAI tts-1 proxy, 6 voices) + frontend dual-provider routing (cloud if Pro+enabled, else AVSpeech) + Settings Cloud Voice toggle gated on Pro. Awaiting user deploy of `api/` + `wrangler secret put OPENAI_API_KEY` before live test.
+
+**Shipped in session 2026-05-02 / 2026-05-03 (massive marathon — auto-record gate, calendar awareness, dictation pause, manual mode, back-to-back, 1.3.1 release with TSA-flake fix, GitHub Releases architecture for DMG distribution):**
+
+### ITER-026 v2 — meeting auto-start gate (root-cause fix for false-positive recordings)
+
+User report 2026-05-02: «у меня запись началась хотя я в Telegram сидел / Meet-вкладка лежала в фоне». Pre-fix logic: any single tick of frontmost-window scan that matched a call pattern (Meet/Zoom/Teams) → 5-sec countdown → auto-start. Failed in two directions: (a) leftover background Meet tabs caused random recordings, (b) tabbing away from Meet during a real call killed the recording via 180s callEnded debounce.
+
+- **`Services/Audio/MeetingAutoStartGate.swift` (NEW)** — singleton state holder. `evaluate(callName, isFullscreen, audioActive, calendarEventNow)` returns `.idle / .tracking(secondsLeft) / .fallbackReady(name) / .calendarReady(name, eventID)`. Two paths:
+  - **Strong (calendar):** non-allday EKEvent whose startDate is in `(now - 65s, now]` AND endDate >= now → fires immediately on first tick that sees the event boundary.
+  - **Weak (fallback):** call window must be FRONTMOST + FULLSCREEN sustained for 10 seconds straight before firing. Streak resets on signal drop.
+- **`App/AppDelegate.startMeetingAutoStartTickLoop()`** — 1-sec poll loop. Samples `NSWorkspace.frontmostApplication`, checks fullscreen via `kAXFullScreenAttribute` + bounds compare against `screen.frame`, queries calendar via new `CalendarReaderService.eventStartingNow()`. Skips entirely while a recording is active or a countdown is in flight.
+- **`runCountdownAndStartRecording(name:source:)`** — pushes a 5-sec countdown plashka into `MWNotificationStack`. Dismissal (×) cancels. Otherwise starts `meetingRecorder.start(manualMode: false)` and waits 3 seconds. If `audioLevel < 0.01` (silent room / AFK) → stops without persisting. Avoids "Quick note (empty)" rows clogging Library.
+- **`handleCallContext` rewritten** — old path (auto-start on first detect) gutted. Now only posts the `.call` MWNotification card. Auto-start is entirely owned by gate. The 180s callEnded debounce shrunk to a 60s session-end grace timer that ONLY resets `CallSessionMachine`; recording is NEVER stopped on window-loss anymore (per user spec: "то что в окне нет = не значит запись остановилась — другие сигналы говорят что идёт").
+- **`Services/Screen/ScreenContextService.captureIfChanged`** — call-detect reverted from multi-window scan back to FRONTMOST-ONLY (per user spec 2026-05-02: «созвон ВСЕГДА начинается с окна куда смотрит пользователь, не с какой-то 95-й вкладки в фоне»). The brief-lived multi-window scan caused background Meet tabs to falsely trigger recordings. The previous concern that frontmost-only would lose the signal during tab-switches is now solved differently: once recording started, window state doesn't matter — silence guard owns the stop decision.
+
+### ITER-026 v2 — dictation-during-meeting → pause + "End meeting?" card
+
+User feedback 2026-05-02: «если я диктую сразу после созвона, диктовка попадает в meeting transcript». Solution: when any dictation/voice-question/translate hotkey fires while a meeting is recording, pause the meeting mic stream and offer the user a one-tap option to end the meeting.
+
+- **`Services/Audio/MeetingRecorder.pauseMic() / resumeMic()`** — record `pauseStartedAt: Date?`. On `stop()`, accumulate pause windows (start/end seconds since `recordingStartedAt`) and zero out matching slices of the raw mic samples via `applyPauseMutes(to:)` before returning. System audio keeps recording during pause (other side may still be speaking).
+- **`AppDelegate.dictationDidStart()`** — called by `TranscriptionCoordinator.startRecording`. If `meetingRecorder.isRecording`, calls `pauseMic()` + pushes a `.recordingStopped`-kind card "Meeting recording in progress / Tap to end meeting now". Card's `onTap` calls `stopMeetingRecording()`.
+- **`AppDelegate.dictationDidEnd()`** — called from `TranscriptionCoordinator.stopAndTranscribe` right after `recorder.stop()`. Resumes meeting mic. Failed-start path (`catch` in startRecording) also calls dictationDidEnd to avoid dangling pause.
+- **Safety net**: `MeetingRecorder.stop()` checks `if pauseStartedAt != nil { resumeMic() }` so a meeting stopped mid-dictation still gets a closed pause window.
+
+### ITER-026 v2 — manual recording = no auto-stop
+
+User spec 2026-05-02: «если я нажал RECORD сам, то остановиться может только мной нажатой STOP. Через 2 часа покажи плашку что 2 часа уже идёт, но НЕ останавливай».
+
+- `MeetingRecorder.start(manualMode: Bool = false)` — flag stored as `private(set) var isManualMode`. When true, `armMaxDurationGuard` and `armSilenceGuard` are SKIPPED; instead `armManualHeartbeat()` runs (one-shot Task that fires `onManualHeartbeat` after 2h).
+- `AppDelegate.startMeetingRecording()` (menu-bar STOP/RECORD path) → `meetingRecorder.start(manualMode: true)`.
+- `runCountdownAndStartRecording` (gate auto-start path) → `meetingRecorder.start(manualMode: false)` — full guards apply.
+- `meetingRecorder.onManualHeartbeat = { [weak self] in ... }` in AppDelegate pushes a non-blocking `.recordingStopped`-kind card "Recording: 2 hours elapsed". One-shot for now (TODO: re-arm every 2h).
+
+### ITER-026 v2 — back-to-back meeting transition via callSignature
+
+User spec: «если митинг А до 15:00 и Б с 15:00, нужно проверять — открылся ли НОВЫЙ митинг (другая комната), или А затягивается». Solution: snapshot the frontmost window title at recording start; in fast-tick loop, compare against current title. Same → don't fire B's plashka (it's the same call). Different → stop A, let next tick fire B.
+
+- `AppDelegate.recordingFrontmostTitle: String?` captured in `runCountdownAndStartRecording` after `meetingRecorder.start` succeeds; cleared in `stopMeetingRecording`.
+- Fast-tick loop: if recording is active AND `!meetingRecorder.isManualMode` AND frontmost title is itself a call window AND it differs from `recordingFrontmostTitle` → call `stopMeetingRecording()`, continue tick. Next tick re-evaluates gate for new call.
+- `isManualMode` guard added 2026-05-03 after smoke check — without it, a manual recording started in (e.g.) Notion would be auto-stopped if the user later opened Meet, because Meet ≠ Notion's title. Manual recordings are user-controlled and ignore back-to-back transition logic entirely.
+
+### ITER-026 v2 — back-to-back guard hardened against non-call frontmost at auto-start (2026-05-04)
+
+User report 2026-05-04 (PID 21010, two sequential calendar-triggered Daily Sync recordings killed within 90 sec each): «не записывается созвон / начался 34 минуты назад и сейчас новый начался». Log evidence: `[CallDetect] back-to-back: live='Meet - Google Chrome - Andrew (projectalpha.com)' != recorded='‎⁨Ivan Smith⁩ – (24999)' → stopping current recording`. The recorded title was a Telegram chat (bidi-isolate Unicode marks `U+2068/2069` around the contact name + unread counter `(24999)` is a Telegram macOS window-title signature). Root cause: at calendar-strong auto-start, `recordingFrontmostTitle` was unconditionally set to whatever was frontmost — which was Telegram because user was reading messages while waiting for the meeting to start. As soon as user fronted the Meet tab, fast-tick saw `live (Meet) != recorded (Telegram)` and fired back-to-back stop — TWICE in 90 sec.
+
+- `AppDelegate.runCountdownAndStartRecording` — at auto-start, `recordingFrontmostTitle` is now set to the live title ONLY if `SystemAudioCaptureService.detectCallContext(...)` confirms the frontmost is itself a call window. Otherwise stays `nil`. Telegram / Notes / Slack frontmost → no spurious title captured.
+- `AppDelegate` fast-tick (`startMeetingAutoStartTickLoop`) — added a "lazy capture" branch: if `recordingFrontmostTitle == nil` and the current tick sees a real call frontmost, lock that title in as the canonical recordedTitle (logs `[CallDetect] back-to-back: lazy-captured recordedTitle='%@'`). The existing inequality branch (`live != recorded`) only fires after a real call title was canonicalized — so it can only stop on Meet→ZoomDifferentRoom, never on Telegram→Meet.
+- Tests: existing `CallSessionMachine` tests cover the announce-once / decline-stickiness invariants; this fix is in the AppDelegate orchestration layer, not the state machine. Smoke test: trigger a calendar event auto-start while sitting in a non-call app (Telegram/Notes/Slack) → recording must NOT be killed when fronting the Meet/Zoom tab.
+
+### ITER-026 v2 — silence guard 10 → 3 minutes + migration
+
+User spec 2026-05-02: «через 10 минут может начаться другой созвон уже и ты скажешь что этот тот же — нужно меньше». Lowered `meetingSilenceStopMinutes` default 10 → 3. With ITER-026 v2's no-auto-stop-on-window-loss policy, silence guard is now the SOLE auto-stop signal for gate-triggered recordings, so it needs to be tight enough that back-to-back calls don't merge.
+
+- `Models/AppSettings.swift` — `+@AppStorage("didMigrateSilenceStop_iter026") didMigrateSilenceStop: Bool = false`. Default for `meetingSilenceStopMinutes` lowered to 3.
+- `AppDelegate.migrateSilenceStopMinutesOnce()` runs at launch. If user's existing UserDefaults value is `>= 9.5` (legacy default), bump to 3. User-tweaked values stay as-is.
+
+### Calendar-task pipeline removed (ITER-026)
+
+Earlier in the session: `CalendarReaderService.scanNow()` was bulk-creating `TaskItem(taskDescription: shortenTaskDescription(event.title), dueAt: event.startDate, sourceApp: "Calendar")` for every upcoming non-cancelled non-declined calendar event in a 14-day window. ~10 fake "tasks"/day at this user's calendar density. Tasks like "Тех. интервью: Sam Smith — Marketing manager — AcmeWallet" rotted in the Tasks tab forever because nothing flipped them to completed when the meeting passed.
+
+- `CalendarReaderService.scanNow` task-creation loop deleted. Calendar memory-extraction (recurring patterns) preserved.
+- `Services/Intelligence/TaskExtractor.extractFromConversation` now passes a `CalendarMeetingContext` (title + start + end + attendees) to the LLM as enrichment context, so transcript-extracted tasks reference real attendee names ("Send draft to Sam" vs "Send draft to him"). System prompt extended with a `CALENDAR MEETING CONTEXT (when present, READ FIRST)` section.
+- `Models/AppSettings.swift` — `+@AppStorage("didMigrateCalendarTasks_iter026")`. `AppDelegate.migrateCalendarTasksOnce()` runs at launch and bulk-dismisses every TaskItem with `sourceApp == "Calendar"` plus orphans (no conversationId, has dueAt, empty/nil sourceApp). Soft delete only.
+- `CalendarReaderService.linkConversation` candidates now filter `if ev.isAllDay { return false }` — Holiday calendars (e.g. "Holidays in Serbia") emit 24h all-day rows that always overlap any conversation, scoring `timeOverlapFraction = 1.0` and hijacking meeting titles. Verified via direct EventKit query during the session: only `Holidays in Serbia` emits all-days; every real meeting is a bounded slot.
+
+### Dual-stream merger — per-utterance Whisper segments
+
+Garbled "Me: <5 min monologue> / Them: <5 min monologue>" recap symptom traced to `App/AppDelegate.transcribeStreamChunked` collapsing every audio chunk's text into a single `StreamSegment(startSec=chunkStart, endSec=chunkEnd)`. Fixed by iterating `result.segments` and emitting one `StreamSegment` per Whisper utterance with absolute timing = `chunkStartSec + whisperSeg.start`. Merger now interleaves at real-utterance grain — `Me: hi / Them: hello / Me: how are you / ...` like a real dialog.
+
+### StructuredGenerator title prompt hardened against generic single-noun titles
+
+User report 2026-05-02: «все вчерашние созвоны называются invoice». Confirmed no "invoice" calendar event exists — LLM was hallucinating from a single common transcript word. System prompt extended with HARD-FORBIDDEN list (single-noun generics: "Invoice", "Meeting", "Sync", "Call", "Discussion", "Standup", "Talk", "Update"; category words: "Work", "Project", "Business"). Requires ≥3 informative words OR proper noun + action noun.
+
+### ITER-026 v2 — unified notification stack (eliminated top-right overlap)
+
+Earlier in session: macOS-native `UNUserNotificationCenter` banners and the standalone `ProactiveChipWindow` both lived in the top-right corner without knowing about each other → visual collision.
+
+- **New unified system** in `Views/Notifications/`:
+  - `MWNotification.swift` — single struct + `Kind` enum (`.task | .call | .recordingStopped | .recap | .advice | .proactive`).
+  - `MWNotificationCard.swift` — Liquid Glass card layout, 344pt wide, header (kind icon + uppercase tracked label + relative time + close ×) + body (title + 3-line body, OR multi-row for `.proactive`).
+  - `MWNotificationStack.swift` — singleton state, `push(_)` inserts at index 0 with spring animation, hard cap 4 cards, FIFO drop, 6s default auto-dismiss, hover pauses + re-arms.
+  - `MWNotificationStackController.swift` — single `NonActivatingPanel` (level `.statusBar`, `.canJoinAllSpaces`, `becomesKey=false`), positioned top-right with 12pt edge inset.
+- `NotificationService.swift` rewritten — every `post*` method routes through `MWNotificationStack.shared.push(...)`. `import UserNotifications` + UN delegate dropped.
+- `postMeetingRecap` removed entirely — `MeetingRecapWindow` is the canonical surface for finished meetings.
+- `WeeklyPatternDetector.postRecapNotification` / `postQuietWeekNotification` rewritten to push `.advice` cards.
+- `Views/Proactive/` directory deleted — `ProactiveChipWindow` and `ProactiveChipView` removed. `.proactivePrefillChat` Notification.Name moved to `MWNotificationCard.swift`.
+
+### Dashboard — hover popovers on TODAY 4 counters
+
+`Views/Windows/DashboardView.swift:TodayStatsCard` — each of 4 stat cells (CONVOS / MEMORIES / DONE / NEW TASKS) now reveals a native macOS popover on hover with up to 10 lines from today's actual items + "and N more" overflow. Cells with `value == 0` stay inert.
+
+### ChatService — stale calendar-task pollution fix (root cause)
+
+Earlier in session, I shipped a `dueAt > now - 7d` filter as a symptom-fix. After identifying the calendar-task pipeline as the real source, **reverted** the filter: `fetchPendingTasksForQuery` predicate is back to `!isDismissed && !completed && status != staged`. Voice-extracted tasks with past dueAt now correctly surface with `(overdue Nd)` tag from `formatTaskLine`. `PendingTaskBundle` shape changed `[String]` → `[PendingTaskSnippet]` (id + description + dueAt) — no external callers.
+
+### ShrekPillView build break + alpha cleanup
+
+ShrekPillView.swift had been failing compile with `Bundle.module is internal` (collided with `swift-transformers/Hub.module`) plus 5 missing-type-context errors. Fixed via `Bundle(for: Coordinator.self)` (with `Bundle.main` fallback) and explicit type prefixes. Also: `shrek-pill.mov` was declared in Package.swift but NOT copied by `build.sh` — added to build.sh's resource copy block. Multiple attempts at fixing the alpha-channel halo around dancing Shrek (host CALayer isOpaque, AVPlayerLayer pixel format BGRA, TimelineView re-render forcing) all failed because the halo is BAKED into the source `.mov`'s alpha channel — not a rendering artifact. User accepted "оставим так".
+
+### 1.3.1 release pipeline (2026-05-03)
+
+End-to-end release of all the above:
+
+1. `Resources/Info.plist` — bumped `CFBundleShortVersionString` 1.3.0 → 1.3.1, `CFBundleVersion` 5 → 6.
+2. **`build.sh` — TSA-flake retry shipped permanently.** First release attempt failed Apple notarization with "signature of the binary is invalid" on Sparkle.framework/Sparkle (both x86_64 + arm64) and outer MetaWhisp binary. Root cause: Apple's TSA endpoint (`timestamp.apple.com`) silently dropped timestamps for some signing operations; `codesign` returned exit 0 anyway; Apple notarization rejected. Fix: every `codesign` call in build.sh now verifies `Timestamp=` in the resulting signature and retries up to 3 times with 8s sleep on missing timestamp. Applied to both `sign_target` (Sparkle nested) and the outer-bundle codesign.
+3. `release.sh` re-run after fix — Apple notarization Accepted, stapler validated, Sparkle EdDSA signed.
+4. **GitHub Release `v1.3.1` created** at `metawhisp/metawhisp` repo with `MetaWhisp.dmg` as asset (9,801,122 bytes, sha-256 `d7055253...`). Public download URL: `https://github.com/metawhisp/metawhisp/releases/download/v1.3.1/MetaWhisp.dmg`.
+5. **Cloudflare Page Rule** created on `metawhisp.com`: pattern `*metawhisp.com/downloads/MetaWhisp.dmg` → 302 → GitHub Release URL. Marketing site untouched. See `specs/RELEASE-PLAYBOOK.md` for full architecture diagram.
+
+### Cloudflare Pages atomic deploy near-disaster
+
+Mid-session: blindly ran `wrangler pages deploy _site --project-name=metawhisp` from local `_site/` (eleventy-built from `src/blog/`). Cloudflare Pages atomic deploy DELETED 6 blog posts (`dictation-for-doctors-hipaa`, `google-stitch-mcp`, `hate-voice-messages`, `microsoft-productivity-apps-mac`, `office-365-productivity-mac`, `private-voice-to-text-mac`) that had been written by an external automation directly to Pages without committing back to `src/blog/`. Recovered via `POST /pages/projects/metawhisp/deployments/{previous_id}/rollback` — instant restore. **Lesson codified in `specs/RELEASE-PLAYBOOK.md` "Pages deploy procedure (DANGEROUS)"** section: never deploy without first wget-mirroring live state.
+
+### NEW DOCS SHIPPED THIS SESSION
+
+- `specs/RELEASE-PLAYBOOK.md` — end-to-end release procedure, token requirements (no values), architecture diagram, lessons learned.
+- `specs/ROADMAP.md` — Phase 3-7 future work (voice-everywhere capture, Obsidian as second brain, chat as portal, MCP interop, polish/scale).
+
+### Open / next session
+
+- **Sparkle auto-update for existing 1.3.0 users.** `appcast.xml` still on Cloudflare Pages with old 1.3.0 entry; existing 1.3.0 users won't get auto-update notification until either (a) we move appcast.xml to GitHub Releases too with a Page Rule, or (b) we do a safe Pages deploy (wget mirror first). RELEASE-PLAYBOOK.md documents both paths. (a) is recommended.
+- **Page Rule destination is hard-coded to `v1.3.1`.** Needs manual update on each release. Better: change destination to `https://github.com/metawhisp/metawhisp/releases/latest/download/MetaWhisp.dmg` (GitHub auto-resolves). Test first.
+- **All compromised tokens to revoke** (appeared in chat logs during release session): 2x GitHub PATs, 4x Cloudflare API tokens (3 + 1 cfut). Listed in chat history, user acknowledged.
+- **`MetaWhisp.app` v1.3.1 currently running locally** as PID 21010 (replaced by hot-swap). Working tree has all uncommitted changes including this WAL update.
+- **DailySummaryService.tasksCompleted always returns 0** — pre-existing, separate hunt.
+- **Auto-complete tasks when their linked calendar event ends** — would close the loop so even voice-extracted "follow up after meeting X" gets cleared.
+- **Tasks tab UX**: stale `(overdue Nd)` badge + bulk-cleanup button.
+
+---
+
+**Shipped in session 2026-05-02 (Dashboard popovers + ITER-026 unified notifications + calendar-task root-cause fix):**
+
+### Dashboard — hover popovers on the 4 TODAY counters
+- `Views/Windows/DashboardView.swift:TodayStatsCard` — each of the 4 stat cells (CONVOS / MEMORIES / DONE / NEW TASKS) now reveals a native macOS popover on hover with up to 10 lines from today's actual items + "and N more" overflow. Cells with `value == 0` stay inert. Items: conversation calendar/title for CONVOS, content prefix for MEMORIES, taskDescription for DONE/NEW TASKS, sorted by createdAt/completedAt desc.
+- `stat()` factored out into a new `StatCell: View` with `@State var isHovered` (popover state can't live inside a `private func`). `StatPopover` helper view renders the bullet list with `MW.caption` rows.
+
+### ITER-026 — unified in-app notification stack (root-cause fix for top-right overlap)
+- User report 2026-05-02: two visually different notifications kept overlapping each other in the top-right corner. Investigation: macOS-native `UNUserNotificationCenter` banners (5 callers in `NotificationService.post*`) and the standalone `ProactiveChipWindow` both lived in the same corner without knowing about each other.
+- **New unified system** in `Views/Notifications/`:
+  - `MWNotification.swift` — single struct + `Kind` enum (`.task | .call | .recordingStopped | .recap | .advice | .proactive`), each kind with its own SF Symbol + accent color. `proactiveItems: [SurfaceItem]?` carried only by `.proactive` cards (multi-row content).
+  - `MWNotificationCard.swift` — one Liquid Glass card layout for every kind (`thinMaterial` + specular rim + shadow, 344pt wide, 14pt radius). Header: kind icon + uppercase tracked label + relative time + close (×). Body: title (semibold) + body (3-line) for single-row kinds; `proactiveRow(_:)` repeats for `.proactive`. Tap dispatch executes `SurfaceTapAction` directly (`openChat` posts `proactivePrefillChat`, `openTab` switches sidebar tab).
+  - `MWNotificationStack.swift` — `MWNotificationStack.shared` singleton (`@MainActor`, `@Published items`). `push(_)` inserts at index 0 with spring animation; `dismiss(id:)` removes with ease-out; `setHovering(_:id:)` cancels/re-arms per-card auto-fade. Hard cap **4** visible — pushing a 5th drops the oldest (FIFO). Default auto-dismiss **6s**, paused on hover.
+  - `MWNotificationStackController.swift` — single `NonActivatingPanel` (level `.statusBar`, `.canJoinAllSpaces`, `becomesKey=false`), positioned top-right with 12pt edge inset. Subscribes to `MWNotificationStack.shared.$items` — panel hides entirely when stack is empty so it never paints invisible chrome or steals clicks.
+- **`NotificationService.swift` rewritten** — every `post*` method routes through `MWNotificationStack.shared.push(...)`. UN imports + `UNUserNotificationCenterDelegate` extension dropped. Compatibility shims: `hasPermission` → `true`, `requestPermission()` → `true` (preserved so old callers compile). Rate-limit on `postAdvice` (1/min) and DND-during-meeting on task/advice posts preserved.
+- **`postMeetingRecap` removed entirely** — the loudest visual collision was that finished meetings produced BOTH a top-right banner AND a top-center `MeetingRecapWindow` (560×540 structured payload). The window is the canonical surface; banner was redundant. `AppDelegate.fireMeetingRecap` no longer calls into it.
+- **`WeeklyPatternDetector.postRecapNotification` / `postQuietWeekNotification` rewritten** — used to call `UNUserNotificationCenter.add` directly. Now push `.advice` cards into the stack via `Task { @MainActor in MWNotificationStack.shared.push(...) }` (the detector is non-isolated). `import UserNotifications` removed.
+- **`AppDelegate`** — added `let notificationStackController = MWNotificationStackController()` so the panel host is alive at launch. Removed the `UNUserNotificationCenter.notificationSettings()` permission probe + `import UserNotifications` (no OS permission needed for the in-app stack).
+- **`Views/Proactive/` directory deleted** — `ProactiveChipWindow.swift` and `ProactiveChipView.swift` removed. The `.proactivePrefillChat` `Notification.Name` extension that lived inside them is now declared at the bottom of `MWNotificationCard.swift`. Sole caller (`ProactiveContextService`) pushes a `.proactive` `MWNotification` with the items array directly.
+
+### ITER-026 — calendar-event-to-task pipeline removed (root-cause fix for "интервью давным-давно")
+- User report 2026-05-02: chat was citing weeks-old interview tasks ("Тех. интервью: Sam Smith — Marketing manager — AcmeWallet"). Earlier in the session I shipped a `dueAt > now - 7d` filter in `ChatService.fetchPendingTasksForQuery` — that masked the symptom. User pushed back: "Борись с причиной, а не со следствием — посмотри как у референса" — and they were right.
+- **Root cause located** in `Services/Indexing/CalendarReaderService.swift:scanNow()` — for every upcoming calendar event in a 14-day window, the service bulk-inserted a `TaskItem(taskDescription: shortenTaskDescription(event.title), dueAt: event.startDate, sourceApp: "Calendar")`. Bypassed `TaskExtractor` LLM entirely. Density ~10/day at this user's calendar load → endless rotting noise once events passed because nothing flipped them to `completed`.
+- **Reference comparison**: the reference action-item extractor NEVER turns calendar events into tasks. Calendar metadata is passed as **enrichment context** to the transcript-extraction LLM so attendee names land in extracted task descriptions ("Send draft to Sam" vs "Send draft to him"). One-way: voice → LLM → action item, with calendar metadata as side input.
+- **Fix:**
+  - `CalendarReaderService.scanNow` — bulk task-creation loop deleted (lines 296-321 in the old file). Memory-extraction for recurring patterns (lines 323-331) kept. `lastSummary` now reports `Memories: N · Scanned M events` (no `Tasks:` row). Helpers `fetchRecentTaskSignatures` and `shortenTaskDescription` removed (orphan after the loop).
+  - `TaskExtractor.extractFromConversation` — fetches `Conversation.calendarEvent*` fields (populated by ITER-018 `linkConversation`) into a new `CalendarMeetingContext` struct. `buildPrompt(...)` now takes `calendarContext: CalendarMeetingContext?` and prepends a `CALENDAR MEETING CONTEXT:` block (Title / Scheduled / Participants) BEFORE the transcript fragments.
+  - `TaskExtractor.systemPrompt` extended with a `CALENDAR MEETING CONTEXT (when present, READ FIRST)` section instructing the LLM to use participant names verbatim, never extract the meeting title itself as a task, and SKIP rather than guess when assignee is ambiguous.
+  - `Models/AppSettings.swift` — `+@AppStorage("didMigrateCalendarTasks_iter026") didMigrateCalendarTasks: Bool = false`.
+  - `AppDelegate.migrateCalendarTasksOnce()` runs at launch behind that flag. Dismisses every TaskItem with `sourceApp == "Calendar"` AND every orphan looking like calendar-pipe output (`conversationId == nil && dueAt != nil && sourceApp empty/nil`). Voice/meeting-extracted tasks all carry a `conversationId` so they survive. Soft-dismiss only (`isDismissed = true, status = "dismissed"`) — rows preserved for audit.
+- **Reverted** the earlier `ChatService.fetchPendingTasksForQuery` `staleCutoff` filter — predicate is back to `!isDismissed && !completed && status != staged && status != dismissed`. Voice tasks with past `dueAt` ("оплатить счёт во вторник, забыл") now correctly surface in chat with the `overdue Nd` tag from `formatTaskLine`. System-prompt bullet trimmed to drop the now-misleading "7-day cutoff" wording.
+- **Kept**: `formatTaskLine(_:)` enrichment (dueAt → human suffix), `PendingTaskSnippet` shape (id + description + dueAt) — both still useful and not the symptom-mask.
+
+### Calendar linker — `isAllDay` filter (root-cause fix for "Labor Day Holiday" titles)
+- User report 2026-05-02: «вчерашние созвоны называются Labor Day Holiday / invoice». Verified via direct EventKit query (osascript) that `Holidays in Serbia` calendar emits 24h `allday=true` rows for Labor Day (May 1) + Labor Day Holiday (May 2). Score path: `timeOverlapFraction = 1.0` (conv fully inside 24h window) × 0.6 = **0.60** > 0.5 threshold → every conversation matches.
+- `Services/Indexing/CalendarReaderService.swift:linkConversation` — added `if ev.isAllDay { return false }` to the candidate filter. Real meetings are never all-day. Confirmed against 9-day calendar dump: only `Holidays in Serbia` events are all-day; every actual meeting is a bounded slot.
+- Did **not** add an event-duration cap. Looked at the actual calendar data — every real meeting was ≤2h. A blanket cap would risk excluding legitimate long-form meetings and isn't necessary now that all-day rows are filtered.
+- For the «invoice» titles separately: confirmed no `invoice` event exists in the user's calendar over 9 days. That's `StructuredGenerator` LLM output, not a calendar match. Fix below.
+
+### Dual-stream merger — per-utterance `StreamSegment` (root-cause fix for "опять кривая хуйня")
+- User report: meeting transcripts read as garbled. Found that `App/AppDelegate.transcribeStreamChunked` was emitting ONE `StreamSegment` per audio CHUNK (5-min granularity) with `startSec=chunkStartSec`, `endSec=chunkEndSec`, ignoring Whisper's per-utterance timings inside `result.segments`.
+- Effect on rendered transcript:
+  ```
+  Me: <full 5 min of user's speech>
+  Them: <full 5 min of system audio>
+  Me: <next 5 min>
+  Them: <next 5 min>
+  ```
+  i.e. 5-MINUTE BLOCKS of monologue alternating, not real-time interleaving. Looks like garbage even though every word inside the block is correct.
+- `App/AppDelegate.transcribeStreamChunked` — now iterates `result.segments` (the WhisperKit / Cloud Whisper engine already populates them). Each Whisper segment becomes one `StreamSegment` with absolute timing = `chunkStartSec + whisperSeg.start`. The mergeStreams() output now interleaves per-utterance:
+  ```
+  Me: Привет, как дела?         (10s)
+  Them: Хорошо, а у тебя?       (13s)
+  Me: Тоже. Давай по делу.      (16s)
+  Them: Окей, начинаем.         (19s)
+  ```
+- Fallback: if `result.segments.isEmpty` (some engine doesn't fill them), falls back to old chunk-level segment (rare, but safe).
+
+### Call detection — multi-window scan + no auto-stop debounce (root-cause fix for «созвон обрезался / уведомления нет»)
+- User report 2026-05-02: «90% митинга сижу не в окне созвона, по другим вкладкам лажу. Запись обрывается». Root cause in `Services/Screen/ScreenContextService.captureIfChanged`: only the FRONTMOST window was scanned for call patterns. Tab away from Meet → frontmost is now Slack → `currentCall = nil` → 180s `callEndedDebounceTask` → recording auto-stops mid-meeting.
+- Two-part fix:
+  - **`ScreenContextService.detectCallAcrossAllWindows`** (new static helper) — fast path checks frontmost via the existing `SystemAudioCaptureService.detectCallContext`; slow path enumerates `CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements])`, resolving each window's `pid → bundleID` (cached per tick) and feeding owner+title+bundleID through `detectCallContext`. Returns the first hit. Now a Zoom tab parked behind Slack still keeps the call signal alive.
+  - **`AppDelegate.handleCallContext(nil)` rewritten** — removed the 180s `callEnded` auto-stop entirely. User explicit feedback: window-loss alone is NOT a stop signal, audio is. Now `nil` only arms a 60s session-end grace timer that resets `CallSessionMachine` (so a brand-new call with the same app name later isn't suppressed as duplicate). Recording stop is owned exclusively by `MeetingRecorder.armSilenceGuard` (10 min < 0.025 RMS) + `armMaxDurationGuard` (4h cap).
+
+### StructuredGenerator title prompt — reject generic single-noun titles
+- User report 2026-05-02: «все вчерашние созвоны называются invoice». Confirmed no `invoice` calendar event exists — this is the LLM titler hallucinating a single common keyword from transcripts.
+- `Services/Intelligence/StructuredGenerator.systemPrompt` extended with a HARD-FORBIDDEN block under the TITLE section:
+  - Rejects single-noun generics: `"Invoice", "Meeting", "Sync", "Call", "Discussion", "Standup", "Talk", "Update"`.
+  - Rejects category words: `"Work", "Project", "Business", "Marketing", "Sales"`.
+  - Requires ≥3 informative words OR a proper noun (project / person / product) + a verb-or-action noun.
+  - Even when "invoice" IS the dominant word, the title must specify WHICH invoicing topic (Stripe webhook bug, Q2 invoicing pipeline, dispute with vendor X). A bare `"Invoice"` tells the user nothing.
+
+### Bonus — fixed pre-existing ShrekPillView build break
+- `Views/Components/ShrekPillView.swift` was failing compile with `Bundle.module is internal` (collided with `swift-transformers/Hub.module`) plus 5 missing-type-context errors on `.resizeAspect / .none / .layerWidth/HeightSizable`. Anchored bundle via `Bundle(for: Coordinator.self)` (with `Bundle.main` fallback) and added explicit type prefixes (`AVPlayer.ActionAtItemEnd.none`, `AVLayerVideoGravity.resizeAspect`, `CAAutoresizingMask.*`). `swift build` clean after the fix — the user requested this as part of the same PR ("и одновременно туда шрека добавить").
+
+### Build status
+- `swift build` — **clean, 0 errors** at session end.
+- `swift test` — not run; user wanted to sleep. Should run on next session before pushing.
+
+### Open / next session
+- DailySummaryService.tasksCompleted always returns 0 — same as before, separate hunt.
+- Auto-complete tasks when their linked calendar event ends — would close the loop so even voice-extracted "follow up after meeting X" gets cleared instead of waiting for user's manual dismiss.
+- Tasks tab: stale `(overdue Nd)` badge + bulk-cleanup button (still useful even with the fix; voice tasks can also rot if user never dismisses).
+- `swift test` to confirm no test regressions before push (pair-locked Karpathy + TDD per project memory).
+- Live smoke test of the full flow per `specs/SMOKE-TEST.md` — especially M1 (call detected → MWNotificationStack card top-right, no UN banner) and M5 (meeting recap window only, no parallel banner).
+
+---
+
+**Shipped in session 2026-04-30 / 2026-05-01 (huge marathon — root-cause fixes + UX polish + voice/meeting reliability):**
+
+PIDs walked: 27515 → 29604 → 32180 → 36834 → 37195 → 39404 → **47365** (current).
+
+### Phase B transcription — pseudo-diarization
+- `Services/Intelligence/DualStreamMerger.swift` (NEW) — pure helper. `Speaker { .me, .them }` + `StreamSegment(text, startSec, endSec, speaker)` + `mergeStreams(mic:system:)` (sort by startSec) + `renderTranscript(_:)` (collapses consecutive same-speaker into single `Me:` / `Them:` line). 4 RED→GREEN tests in `Tests/MetaWhispTests/Services/Intelligence/DualStreamMergerTests.swift`.
+- `MeetingRecorder.stop()` returns `(mic: [Float], system: [Float])` raw, not the previous `Self.mix(...)` pre-summed buffer. mic and system never combined → the "AYA Google" cross-channel mix-in is physically impossible.
+- `App/AppDelegate.swift` `transcribeMeetingDualStream(mic:system:engine:)` replaces `transcribeMeetingChunked` — runs `transcribeStreamChunked` per channel (Phase A's silence-cuts + VAD trim preserved per-stream), produces labeled `[StreamSegment]`, `DualStreamMerger.mergeStreams` + `renderTranscript`. Sequential (engine.transcribe is shared, not parallel-safe). Cost ~2× the single-mix path — accepted.
+- `MeetingRecorder.mix` static helper retained for `assembleMeetingTranscriptFromLive` tail (live-reuse path — single-pass on ≤30s tail, mix-in not material).
+
+### Voice/meeting mic instance separation (root-cause fix for 3 cascading bugs)
+- `App/AppDelegate.swift:25-31` — `meetingMic = AudioRecordingService()` is now a SEPARATE instance from `recorder` (top-level dictation/voice question). Old: `MeetingRecorder(mic: recorder, …)` — both code paths shared one AVAudioEngine. New: `MeetingRecorder(mic: meetingMic, …)` — each owns its own engine.
+- Fixed three cascading bugs at the source: (a) voice question received the WHOLE meeting buffer (15+ min, ~950s of mic audio) because `recorder.start()` early-returned on `isRecording=true` and never cleared `samples`; (b) `recorder.stop()` killed the AVAudioEngine that the meeting mic stream depended on, so the rest of the meeting captured 0 mic samples; (c) MeetingCoach repeatedly emitted "Turn on microphone" advice because the channel was literally silent post-voice-question.
+
+### Voice popup multi-turn boundary (chat history scope for voice path)
+- `Services/UI/VoiceQuestionState.swift` — `+voiceSessionStartedAt: Date?`. Set on first `startListening()` of a session; subsequent listens within the open popup keep the same anchor (multi-turn). Cleared in `dismiss()` (Esc / auto-after-answered / X) → next `⌘ long-press` opens with `nil` → fresh.
+- `Services/Intelligence/ChatService.swift` — `+fetchVoiceSessionHistory(limit:)`: fetches `ChatMessage` rows where `createdAt >= anchor`. `send(_, source:)` picks `fetchVoiceSessionHistory` for `.voice` and the full `fetchChatHistory` for `.typed`. Voice popup gets multi-turn within session, typed chat keeps full history. Old voice popup sessions don't bleed into new ones.
+
+### Voice question screen-aware (live OCR per question)
+- `Services/Intelligence/ChatService.swift:80-95` — for `source == .voice`, `await screenContext.captureNow()` BEFORE building user prompt (~200-500ms ScreenCaptureKit + Vision OCR). Result threaded as `currentScreen: ScreenContextSnapshot?` into `buildUserPrompt`.
+- New `<current_screen>` block prepended to user prompt with `app: …`, `window: …`, `ocr_text: <prefix(4000)>`. System prompt updated to instruct LLM to treat this as primary source for "what's on my screen?" / "fill this form" / "translate this UI" — distinct from historical `<recent_screen_activity>` (24h cache).
+
+### Tool-call XML strip + drift recovery (Pro path)
+- `Services/Intelligence/ChatService.swift:stripToolCallXML(_:)` — shared helper covering canonical `<tool_call>{...}</tool_call>` AND drift `<toolName>{...}</toolName>` patterns (Cerebras/Qwen drift). Applied to `runAgenticLoop` no-tool-call exit, post-loop final aiText, and non-Pro path.
+- `runAgenticLoop` recovery: when `resp.toolCall == nil` but `txt` contains drift-format XML, parse via `ChatToolExecutor.parseToolCall` and continue the loop as if it were a native call. Stops raw `<searchMemories>{…}</searchMemories>` from leaking to the chat as METACHAT response.
+
+### Voice popup hang on short/silent long-press
+- `Services/System/TranscriptionCoordinator.swift:abortVoiceQuestionIfActive(reason:)` — pair-resets `voiceQuestionMode = false` AND `VoiceQuestionState.shared.failed(reason)`. Called from every early-return path in `stopAndTranscribe` + `transcribe`: too-short, too-quiet, engine-not-ready, empty result, hallucination filters, transcribe catch. Fixes the bug: hold ⌘ for 200ms with no audio → popup stuck in `.listening`/`.transcribing`; subsequent short-tap dictation routed to MetaChat instead of clipboard.
+
+### CallSession state machine (1 call = 1 notify + DND)
+- `Services/System/CallSession.swift` (NEW) — `struct CallSession { name, didAnnounce, userDeclinedRecording }`, `enum CallSessionDecision { fireNotify(name:armCountdown:), suppressDuplicate, suppressBecauseDeclined }`. `CallSessionMachine.onDetect / onUserStopped / onSessionEnd` are pure state transitions. 7 RED→GREEN tests in `CallSessionMachineTests.swift`.
+- `App/AppDelegate.handleCallContext` rewritten around the machine: same call name in same session → suppress. User manually stops mid-call → flag `userDeclinedRecording`, no auto-restart for the rest of session. 180s end-of-session debounce calls `onSessionEnd` → next detect of same name = brand-new session.
+- DND during recording: `NotificationService.postNewTask` + `postAdvice` early-return when `meetingRecorder.isRecording`. Tasks/advice still extracted, just don't ping; they show up in the post-meeting recap. **MetaWhisp-only DND** — never touches macOS Focus / system Do-Not-Disturb.
+- `postCallDetected` now uses deterministic identifier `com.metawhisp.call.<name.lowercased()>` for native macOS dedup belt-and-suspenders (replaces UUID-per-call which stacked banners).
+- `meetingSilenceStopMinutes` default 1 → 10 (calls have legit long quiet stretches; premature stops cost more than late ones).
+
+### dur=0 fix (recap popup duration gate)
+- `Services/Intelligence/ConversationGrouper.swift:assign(historyItem:callContext:meetingDurationSec:)` — new param. For fresh meeting: `startedAt = createdAt - duration`, `finishedAt = createdAt`, so `finishedAt - startedAt = duration` (was both = `Date()`). Recap popup's `durationSec >= 60` guard now sees real values.
+- `App/AppDelegate.persistMeetingTranscript` passes `meetingDurationSec: duration`.
+
+### Calendar title priority + link-before-LLM (root-cause fix for "Quick note (empty)")
+- `Services/Intelligence/StructuredGenerator.swift:generate` — `await calendarReader?.linkConversation(conversationId)` runs synchronously BEFORE the LLM call (was fire-and-forget after, racing the recap popup). After link, refresh `conv.calendarEvent*` fields from the new ctx.
+- Display: `displayTitle(for:)` in `ConversationsView` + same logic in `MainSettingsView`/`fireMeetingRecap` — `calendarEventTitle ?? title`. Library list and recap popup show calendar event name when matched.
+- `MeetingRecapView` removed redundant calendar chip below title (title itself IS the calendar name now).
+
+### StructuredGenerator transcript race — SwiftData cross-context fix
+- Initial fix: `static func fetchHistoryItems(conversationId:in:)` — replaced flaky `#Predicate { $0.conversationId == conversationId }` over Optional UUID with broad fetch + in-memory filter (3 retroactive RED tests).
+- Still hit "Quick note (empty)" placeholders in production — race was in `ModelContext` not seeing just-committed rows, not in the predicate. Real fix: `scheduleOnClose(for:knownTranscript:)` accepts the transcript at the call site (`assign()` already has it in memory), passes through to `generate(conversationId:knownTranscript:)`. New context skipped entirely on the meeting path. Backfill / manual paths fall back to DB fetch.
+- `assign()` returns of `activeOrNewConversation` widened to `(Conversation, isFreshMeeting: Bool)` — caller fires `scheduleOnClose` with the in-memory transcript only on fresh-meeting path.
+
+### Recap popup — render the 5 missing structured sections
+- `Services/Intelligence/MeetingRecapState.swift` — `Payload` gained `participants: [String]`, `decisions: [String]`, `nextSteps: [String]`. Data was always saved by StructuredGenerator (ITER-021 `participantsJSON` / `decisionsJSON` / `nextStepsJSON`) but recap UI only rendered ABOUT — leaving huge empty space and no answer to "с кем созвон / о чём договорились / что дальше".
+- `App/AppDelegate.fireMeetingRecap` — decodes the JSON arrays via new `decodeStringArray(_:)` helper. Participants prefer `calendarAttendeesJSON` (objective EKEvent attendees) when non-empty, else fall back to LLM-extracted `participantsJSON`.
+- `Views/MeetingRecap/MeetingRecapView` — added `WITH (N)`, `DECISIONS (N)`, `NEXT STEPS (N)` sections + `bulletList(_:)` helper. ScrollView max height 320 → 380. Empty sections hidden (no visual noise when not generated). Render order: ABOUT → WITH → DECISIONS → ACTION ITEMS → NEXT STEPS → MEMORIES.
+
+### Dashboard real-time + resize-lag fix
+- `Views/Windows/DashboardView.swift:TodayStatsCard` — 4 TODAY counters now compute live from `Conversation` / `UserMemory` / `TaskItem` `@Query`s + in-memory filter to today. Last-7-day chart same source. Was depending on `DailySummary.date == today` existing — that record only generates at the user's scheduled hour (default 22:00) or via manual GENERATE NOW. Symptom (2026-05-01 user report): "уже несколько дней по нулям" while the user had real activity (17 conv / 4 mem / 20 tasks today). DailySummary still owns the 4 LLM-narrative subsections (learned/decided/shipped/energy/headline) — those CAN'T be real-time.
+- Same file: outer `GeometryReader { geo in … }` replaced by `.onGeometryChange(for: CGFloat.self) … action: { width in if newWide != isWide { isWide = newWide } … }`. `isWide`/`isFullscreen` are `@State` Bool, flip ONLY on threshold cross (1240, 720). Per-pixel resize no longer invalidates the whole subtree. User report: "пиздец как тормозит на ресайзе".
+
+### Clipboard reliability — verified write + retry (root-cause fix for "ничего не вставляется ⌘V")
+- `Services/System/TextInsertionService.swift:writeToClipboardVerified(_:attempts:)` — calls `clearContents()` + `setString` and CHECKS the bool return, then 5ms `usleep` + read-back to confirm. Retries up to 3 times when either fails. Catches the race where another process (Universal Clipboard sync, Maccy/Paste/Raycast) clears or overwrites between OUR `clearContents()` and `setString`.
+- New `enum InsertOutcome { autoPasted, clipboardOnly, clipboardFailed }` returned from `insertResult(text:)`. Caller `TranscriptionCoordinator.transcribe` distinguishes:
+  - `.autoPasted` → silent
+  - `.clipboardOnly` → "Copied to clipboard — press ⌘V"
+  - `.clipboardFailed` → "Clipboard write failed — recover from Library → History"
+- 4 RED→GREEN tests in `TextInsertionClipboardTests.swift` (write/empty/unicode/sequential).
+
+### Dictation hallucination filter — recovery via clipboard + lastResult
+- `containsExcessivePhraseRepetition` moved from `isAlwaysHallucination` (always-discard) to `isHallucination` (silence-only, RMS<0.003). Real dictations with brief mid-speech pauses (Whisper hallucinates `"ну и комьюнити, ну и комьюнити, …"` to fill silence) no longer get the WHOLE result discarded — repetition is filtered only when the whole audio was actually quiet.
+- `TranscriptionCoordinator.transcribe` filter discard paths now: (a) `Self.saveSuspectToClipboard(trimmed)` puts text on clipboard, (b) `lastResult = result` so popover shows preview, (c) `lastError` flags red banner with recovery hint. Previous version silently lost 30-60s of speech to false-positive filter hits.
+- Empty-result branch surfaces `lastError = "Transcription returned empty — try again louder/closer."` (was silent return).
+- `saveSamplesAsWav(_:)` — on Cloud Whisper / on-device transcribe throw, raw 16kHz Float32 samples written as WAV to `~/Library/Application Support/MetaWhisp/Recovery/recording-YYYY-MM-DD-HH-mm-ss.wav`. Path in `lastError`. 3 RED→GREEN tests in `TranscriptionCoordinatorRecoveryTests.swift`.
+
+### Default window size + autosave
+- `Views/Windows/MainWindowController.swift` — `contentRect` 700×500 → 1440×1000, `minSize` 500×400 → 900×600, `+window.setFrameAutosaveName("MetaWhispMainWindow")`. First open is large; user resize sticks across launches.
+
+### MenuBar Variant A — Liquid Glass redesign
+- `Views/MenuBar/MenuBarView.swift` — full chrome rewrite per `mockups/voice-and-hotkeys.html` Variant A spec. Status `PulsingDot` (idle = green pulse 1.6s, recording = red pulse 1.0s, processing/translating = solid blue/accent). RECORD/STOP pills are `Capsule` not `Rectangle`. Action grid: accent-colored SF Symbol icons + tracked label + `Keycap` hotkey badge, `frame(height: 44)` (was fixed 48). Footer: `HoverButtonStyle` with hover-tinted bg, transparent base, padding 12×6. Top specular rim via top-down `LinearGradient` overlay + `.blendMode(.plusLighter)`. Width kept 300pt (compact pass after first iteration was visually too wide/tall).
+
+### FloatingVoiceView — Liquid Glass redesign
+- Full rewrite of voice popup in same Liquid Glass system. 4-phase chrome: header tinted by `MW.stateColor` (red listening / blue transcribing+thinking / green answered / red error). `FVPulsingDot` for state indicator. Q/A cards with avatar (👤 / ✨) + uppercase tracked label + body text, hairline dividers. STOP capsule + Esc Keycap when speaking. Width 380, ultraThinMaterial backdrop, specular rim, double shadow stack. Mockup `mockups/voice-and-hotkeys.html`.
+
+### Settings — Hotkey panel extended + Microphone picker
+- `Views/Windows/MainSettingsView.swift:hotkeySection` — 2 → 4 rows. Each: action name + description + TAP/HOLD badge + Keycap(s). New rows: VOICE QUESTION (HOLD ⌘ ≥0.5s), AUTO-TRANSLATE (input) (HOLD ⌥ ≥1.5s). HOLD badges in `MW.accent` color, TAP badges in muted.
+- New MICROPHONE section in Dictation tab (between Model and Language). Picker with "System default" + every input device returned by `AudioInputCatalog.availableInputDevices()` (CoreAudio enumerator). Refresh ↻ button re-pulls list. Selection persists in `AppSettings.preferredInputDeviceUID`.
+- `Services/Audio/AudioInputDevice.swift` (NEW) — `struct AudioInputDevice(uid, name, deviceID)` + `enum AudioInputCatalog { availableInputDevices(), device(forUID:), setInputDevice(_:on:) }`. CoreAudio HAL — `AudioObjectGetPropertyData(kAudioHardwarePropertyDevices)` for enumeration, `kAudioOutputUnitProperty_CurrentDevice` set on `engine.inputNode.audioUnit` to bind. Default device put first in list. Unplugged devices → silent fallback to system default.
+- `Services/Audio/AudioRecordingService.start()` applies preferred device BEFORE `installTap` (switching after a tap is undefined).
+
+### TDD discipline catch-up (retroactive coverage)
+- `Tests/MetaWhispTests/Services/Intelligence/StructuredGeneratorFetchTests.swift` (3 cases) — in-memory filter for the fetch helper.
+- `Tests/MetaWhispTests/Services/System/TranscriptionCoordinatorRecoveryTests.swift` (3 cases) — `saveSamplesAsWav` empty/valid/path-in-recovery-folder.
+- `Tests/MetaWhispTests/Services/System/TextInsertionClipboardTests.swift` (4 cases) — clipboard verified write happy-path/empty/unicode/sequential.
+- `Tests/MetaWhispTests/Services/System/CallSessionMachineTests.swift` (7 cases) — full state-machine coverage.
+- `Tests/MetaWhispTests/Services/Intelligence/DualStreamMergerTests.swift` (4 cases) — pure merge/render.
+- `specs/SMOKE-TEST.md` (NEW) — 18 critical user stories, run before every `swift build` + `bash hot-swap.sh`. 5 categories (Dictation / Voice / Meeting / Dashboard / Settings / MetaChat) + diagnostic playbook per failure mode.
+
+### Memories updated
+- `feedback_never_build_without_ask.md` (NEW) — `swift build` / `swift test` / `bash hot-swap.sh` / `bash build.sh` fire ONLY on explicit user ask. Cold builds 5-15 min were burning 90% of session time. Edits-on-disk-only is the default state.
+
+### Open / next session
+- DailySummaryService.tasksCompleted always returns 0 — not picking up `TaskItem.completedAt`. Separate root-cause hunt.
+- ScreenContext call detection latency — currently 30s polling tick. Enhancement: subscribe to `NSWorkspace.didActivateApplicationNotification` for instant detect on app focus change.
+- ProjectAggregator clutter — 52 alias rows of which 46 are 1-conv noise (VoiceTool/VoiceTool dup, Island/Island Expand/Island Expend typos, Atomic-zoo). Plan: threshold ≥2 conv before showing in Projects view + delete-button per row.
+- Phase B chunk overlap (35s with 5s overlap, dedupe at merge boundary) — original Phase B plan, deprioritized while addressing user's bigger pain points. Revisit.
+- Phase C Deepgram streaming WebSocket — still budget-pending.
+
+**Shipped in session 2026-04-28/29 (massive marathon — 1.3.0 release + transcription quality Phase A):**
+
+### 1.3.0 release (notarized + on metawhisp.com)
+- Bumped `Info.plist` 1.2.0→1.3.0 / 4→5
+- DMG 9.26MB (`uHYXZ0t...DuDg==`), notarized + stapled, deployed via Cloudflare Pages to `metawhisp.com/downloads/MetaWhisp.dmg` + `appcast.xml`. Existing 1.2.0 users will auto-update via Sparkle.
+- **Notarization is now MANDATORY in `release.sh`** (memory `project_distribution.md`). Required fixes to ship: (1) `cp -R Sparkle.framework` → `ditto` (cp was breaking framework symlinks), (2) Sparkle moved `Contents/MacOS/Sparkle.framework` → `Contents/Frameworks/Sparkle.framework` (Apple notary rejected ambiguous bundle), (3) added `install_name_tool -add_rpath @executable_path/../Frameworks` to main exec, (4) `--timestamp` flag on every codesign call (Apple requires).
+
+### Major features delivered in 1.3.0
+- **Meeting Copilot Overlay** — floating panel during meetings with live LLM suggestions. 5-level depth scale prompt (L1 platitudes banned, L5 cross-meeting connections preferred). Long-context: ALL partials + rolling LLM-summary every 4 ticks, plus UserMemory injection by `subject` substring match. Files: `Services/Intelligence/MeetingCoachService.swift`, `MeetingCoachState.swift`, `Views/MeetingCoach/*`.
+- **Per-meeting Recap popup** — floating card 8 sec after meeting stop with title + emoji + overview + checkable action items + memories + Copy + Open in Library + Dismiss. UNIFIED guard blocks BOTH this popup and macOS recap notification when: duration < 60s OR (fallback title "Quick note"/"Meeting" + no real content). Files: `Services/Intelligence/MeetingRecapState.swift`, `Views/MeetingRecap/*`, `App/AppDelegate.fireMeetingRecap`.
+- **About Me view** — Library → Conversations header has "About me" button (replaced the redundant `total` counter); opens sheet with sections (Projects / Preferences / Decisions / Facts) sourced from non-dismissed UserMemory. EXCLUDES `kind="person"` (those are about other humans). `UserProfileService.buildSections` is pure-tested. Files: `Services/Intelligence/UserProfileService.swift`, `Views/Windows/AboutMeView.swift`.
+- **Obsidian outbound sync** — append-only `<vault>/MetaWhisp/Journal.md` for new memories every 12h, plus per-meeting `<vault>/MetaWhisp/Meetings/YYYY-MM-DD · title.md` with summary/transcript/actions/memories at conversation close. EKEvent.notes patched with `obsidian://open?...` link when meeting matched a calendar event. Settings → "Obsidian Sync" section with vault picker + SYNC NOW. Files: `Services/Indexing/ObsidianSyncService.swift`, `MeetingObsidianWriter.swift`.
+- **Structured memory fields** — `UserMemory` has `kind` ("person"/"project"/"decision"/"preference"/"fact") + `subject` + `characterization`. MemoryExtractor prompt asks for these. ChatService renders `PERSON · Sam Smith — community partner` as clean lines in `<user_facts>` block, replacing noisy quoting of raw transcripts.
+- **Anti-hallucination prompt rule** in ChatService: never quote suspicious ASR fragments verbatim, paraphrase or say "mentioned in N meetings, no clean details". Plus `containsExcessivePhraseRepetition` detector in `TranscriptionCoordinator.isAlwaysHallucination` — catches Whisper repetition-loop hallucinations (3-gram ≥3×, 2-gram ≥4×, single word ≥5× consecutive).
+- **Tool-XML drift fix** in MetaChat: `ChatToolExecutor.parseToolCall` now tolerates `<searchTasks>{...}</searchTasks>` drift format (Cerebras/Qwen sometimes emits this instead of canonical `<tool_call>`). Strip-regex on display text covers both formats.
+
+### TDD infrastructure (shipped 2026-04-29)
+- `Package.swift` test target `MetaWhispTests`. `Tests/MetaWhispTests/` with `SmokeTests.swift` (`MeetingRecorder.mix`, `containsExcessivePhraseRepetition`) + `Services/Intelligence/UserProfileServiceTests.swift` (6 tests). `swift test` cold ~5-7 min, incremental ~30 sec.
+- `specs/TDD.md` — protocol document. `specs/BOOT.md` updated to require reading TDD.md alongside KARPATHY.md at session start.
+- Memory `feedback_tdd_karpathy.md` — pair-locked, with HARD BAN (added 2026-04-29): writing GREEN production code before RED test exists is forbidden. Every code task on TodoWrite splits into TWO todos: `[RED]` then `[GREEN]`. User has authority to interrupt with «тест написан до этого?»
+- **TDD violation in Phase A** acknowledged honestly — split-chunks/trim-silence helpers got GREEN-first. Retro tests added in `Tests/MetaWhispTests/App/AppDelegateAudioChunkingTests.swift` (8 cases). Going forward: Phase B/C strictly TDD.
+
+### Zoom/Teams strict-detect REVERTED (2026-04-29 late)
+- Phase A's title-required detection for Zoom/Teams was missing real calls (titles like "Sam's Personal Meeting Room", "Waiting for host" don't contain "Zoom Meeting"). User reported missing calls multiple times.
+- Reverted: Zoom (`us.zoom.xos`) + Teams (`com.microsoft.teams[2]`) moved BACK to `alwaysCallBundleIDs` — bundle match alone fires detection.
+- Slack (`com.tinyspeck.slackmacgap`) + Discord (`com.discord.Discord`) STAYED in `dualModeCallBundleIDs` (require title indicator: "Huddle" / "Voice Connected").
+- Trade-off acknowledged: clicking idle Zoom Workplace home triggers a 5-sec countdown. User can dismiss. Better than missing real calls.
+- TESTS WRITTEN FIRST THIS TIME — `Tests/MetaWhispTests/Services/Audio/CallContextDetectionTests.swift` covers 11 cases including the Zoom-anyTitle behavior.
+- **Currently running:** PID 75318 (debug binary in `/Applications/MetaWhisp.app`, signed with Developer ID).
+
+### Phase A — transcription quality (just shipped 2026-04-29)
+PID 43564 was Phase A first ship. PID 75318 = Phase A + Zoom revert.
+Items addressed from 7-point reference-parity gap:
+- **Lid-bounce conversation merge** — `ConversationGrouper` learned to RESUME a meeting that closed <10 min ago for the same `callContext` (set on auto-start path). Schema +`Conversation.callContext: String?`. Fixes user's "5 одинаковых митингов в Tasks при крышке lid".
+- **callEnded debounce 60s → 180s** — covers bathroom break / lid bounce / network blip. Per `App/AppDelegate.handleCallContext` else-branch.
+- **#4 Smart silence-boundary chunk cuts** in `transcribeMeetingChunked`: searches ±15 sec around target for the quietest 500ms window, cuts there. Lands cuts on natural pauses, not mid-word. Pure-tested.
+- **#7 VAD edge trim** per chunk: strips leading/trailing silence (RMS<0.005 over 100ms windows). Less material for Whisper to hallucinate over. Pure-tested.
+- **#5 smart_format** — Groq Whisper Large V3 Turbo via `verbose_json` already returns punctuation. No code change needed.
+- **Strict Zoom/Teams/Slack/Discord detection** — `dualModeCallBundleIDs` now requires title contains call indicator (e.g. "Zoom Meeting", "Huddle", "Voice Connected"). Just clicking Zoom tab without an active call no longer triggers "Recording in 5s".
+
+### Hot-swap signing (shipped 2026-04-28)
+- `bash hot-swap.sh` is the canonical fast-path: build debug → cp into `~/Applications/MetaWhisp.app` → install_name_tool rpath → ditto into `/Applications/MetaWhisp.app` (rm + ditto pair gets past TCC) → re-sign outer with Developer ID Application identity (NOT ad-hoc — that resets TCC mic/screen/calendar grants every launch). Memory `feedback_hot_swap_signing.md`.
+
+### Open / next session
+- **Phase B (transcription)** — chunk overlap (35s with 5s overlap, dedupe at merge) + parallel mic/system streams (pseudo-diarize). Strictly TDD this time. ~3-4h.
+- **Phase C (transcription)** — Deepgram streaming WebSocket (no chunks at all). Requires direct Deepgram account (~$0.0043/min) — budget decision pending. ~6-8h.
+- **MeetingCoach 3-stage pipeline** (Gate → Generate → Critic) per the reference `proactive_notification.py` — would dramatically reduce L1 platitude noise. Open.
+- **Action item push notifications with due_at** (reference FCM pattern) — we have macOS banners with counts only. Open.
+- **Goal progress auto-update** in conversation extraction. Open.
+
+**Shipped in session 2026-04-27 (release + meeting transcribe dedup):**
+- 1.2.0 release: bumped `Info.plist` 1.1.1→1.2.0 / 3→4, rebuilt + signed via `release.sh`, hit a TCC wall on `hdiutil create -srcfolder` (copy-helper writes into `/Volumes/MetaWhisp` which TCC blocks for non-FDA shells like Cursor / Claude Code). Worked around in `make-dmg-manual.sh` by mounting via `-mountroot /tmp/mw-mount` and `ditto`-ing in instead of `srcfolder`. DMG 11.1MB signed (Sparkle edSig: `WEGL...CCA==`), copied to `website/src/downloads/`, `appcast.xml` 1.2.0 entry added. Awaiting `cd website && npm run deploy`. Memory updated: `project_distribution.md` (TCC mountroot workaround) + `feedback_dont_jump_to_tcc.md` reused.
+- Hardcoded `v0.0.1` in `Views/MenuBar/MenuBarView.swift:83` → reads `CFBundleShortVersionString` from Info.plist now (correct version surfaces post-rebuild).
+- Cloud quota diagnosis: prod user hit 502 «Transcription failed on all providers». Root cause via `wrangler tail`: Cloudflare Workers AI free tier (10K neurons/day, ~6min audio) exhausted by single user's 61min/day. Deepgram 429s, Groq fallback usually saves but blipped during a tick. Memory `project_distribution.md` will note this; recommendation is Workers Paid ($5/mo).
+- ITER-019.1 — **Meeting transcribe dedup (50% cloud cost reduction):**
+  - **Symptom:** 30-min meeting → 60min cloud-billed because `LiveMeetingAdvisor` (every-30s partial transcribes for live advice) AND `AppDelegate.stopMeetingRecording` (full chunked re-transcribe) hit the cloud over the SAME audio.
+  - **Root cause:** `LiveMeetingAdvisor` discarded its partials (only kept `lastPartial` for UI). On stop the full recording was re-transcribed from scratch — duplicate work.
+  - **Fix at owner-layer (advisor owns partials):**
+    - `Services/Intelligence/LiveMeetingAdvisor.swift` — `+private var collectedPartials: [String]`. Append after the existing hallucination filters (so "live experience" matches "final transcript"). Reset on `arm()`, NOT `disarm()` (preserves data across the Combine isRecording=false race vs the explicit close path). `disarm()` no longer touches offsets/partials. `+func finalize() -> FinalizationResult?` — cancels timer, sets `isActive=false`, returns `(text, partialCount, micOffsetAtFinalize, sysOffsetAtFinalize)` or nil if advisor was off / nothing collected.
+    - `App/AppDelegate.swift` `stopMeetingRecording` restructured: call `liveMeetingAdvisor.finalize()` BEFORE `meetingRecorder.stop()`, snapshot tail samples via `mic.peekSamples(from: live.micOffsetAtFinalize)` while buffers still hot. After `stop()`, in async Task: if `liveResult` non-nil → `assembleMeetingTranscriptFromLive(...)` (single `engine.transcribe` over the ≤30s tail, append to partials text); else → `transcribeMeetingChunked(...)` (existing 5-min chunked path, unchanged behavior). Downstream `persistMeetingTranscript(...)` extracted as shared helper for both paths (history save, conversation grouping, recap, advice).
+  - **Cost:** before — 60min cloud per 30min meeting. After — 30min (live) + ≤30s (tail) ≈ 30.5min. ~49% reduction.
+  - **Behavior preserved when `liveMeetingAdviceEnabled=false`:** advisor never arms → `finalize()` returns nil → fallback path runs (= current code). Zero behavior change for that flag.
+  - **Files touched:** `Services/Intelligence/LiveMeetingAdvisor.swift`, `App/AppDelegate.swift`. Build clean.
 
 **Shipped in session 2026-04-23 (resumed):**
 - ITER-010-A — UserMemory enrichment fields (`headline`, `reasoning`, `tagsCSV`); MemoryExtractor prompt + parser updated; ChatService renders memories with headline/reasoning/tags so MetaChat can quote both the fact and why it was stored.
@@ -76,6 +462,114 @@
     - Threshold 0.5 calibrated empirically — may misss meetings with very generic titles ("Meeting") and few common tokens. Acceptable: time-overlap alone (no title similarity) gets 0.6 × overlap_fraction; full overlap = 0.6 score → just on threshold.
     - Multiple events in same time window → highest score wins. Edge: back-to-back meetings could grab the wrong one, but score formula prefers earlier-overlap when both 100% temporal-fit.
     - Privacy: only event TITLE + attendee NAMES snapshotted, no description/location/notes. Surfaced only inside MetaChat prompts (Pro proxy).
+
+- ITER-034 Pills redesign — 4 stage-aware variants (2026-04-26):
+  - **Trigger:** Liquid Glass spec § 8 + design-handoff/pills.jsx + MetaWhisp Pills.html. Deferred from ITER-033 base sweep per user.
+  - **`MW.stateColor` mapping remap.** Per spec STAGE_META: idle→ok green, recording→alert red, processing→**info blue** (was orange), postProcessing→**accent** (was blue). Reflects semantic: recording = user action (red), transcribing = waiting on Whisper (blue/info), translating = producing user's voice in another language (their accent). `Helpers/DesignSystem.swift:197-216`.
+  - **CapsulePillView.** Full rewrite. Layout: [colored dot] [bars (recording only)] [LABEL]. Dot pulses on recording (1.18 scale). Specular rim — top-down white gradient (0.22 dark / 0.85 light → 0.04/0.25 → 0). Two-shadow stack: raised black shadow + state-coloured 28px halo when active. Replaces prior monoLg label + Rectangle hairline + AngularGradient processing border + processingGlow shadow. Labels uppercase tracked: READY / RECORDING / TRANSCRIBING / TRANSLATING.
+  - **IslandAuraPillView.** Collapsed 5 blur layers → 2: outer soft bloom (360x140, blur 28, opacity * 0.6) + inner crisper bloom (250x80, blur 12, opacity * 0.9). Voice drives SCALE (1 → 1.18) not opacity wobble per spec. Status badge moved BELOW notch (offset y = notchH + 6) — never inside Apple's reserved sensor zone. Removed ContourSnakeCanvas + edge stroke layers. Stage colour from `MW.stateColor`.
+  - **IslandPillView (Island Expand).** Notch geometry: idle 200×32, expanded notchW+80×notchH+12 (≥260×38 baseline). Aura geometry DERIVED from current notch (auraW = currentW + 140, auraH = currentH * 4 + 40, top centred). Two aura layers (outer blur 28 + inner blur 14) replacing 3 ContourSnakeCanvas/ContourDualSnakeCanvas/ContourVoicePulseCanvas. Content panel BELOW expanded notch (offset = currentH + 6) with bars+label for recording, spinner+label for processing/translating. Expanded radius = MW.rLarge / 2.
+  - **GlowStripPillView (Edge Glow).** Voice-reactive on EVERY active stage (not just recording). Strip thickness 4→9px, falloff depth 90→140px, hot-spot width 80→200px — all driven by `voiceLevel = sqrt(audioLevel) * 1.5`. Multi-layer shadow stack (4×) creates the cinematic halo. Two voice-driven hotspots at 15% / 85% width via RadialGradient. Cinematic shimmer sweep (LinearGradient highlight, location -0.3 → 1.3, 2.4s linear repeat, blendMode plusLighter) ALWAYS on when active. Removed prior processing-only shimmer + per-stage hardcoded colors.
+  - **Files touched:** `Helpers/DesignSystem.swift`, `Views/Components/PillVariants.swift`.
+  - **Build:** all 4 incremental builds clean (2.7-6.5s). Final relaunched signed.
+  - **Visual impact:** all 4 variants now use the new state-color mapping (translating becomes accent — when user picks Warm Orange, translating pill is warm orange). Capsule has full state-coloured halo. Aura has cleaner 2-layer bloom + below-notch badge. Expand has below-notch content panel. Edge Glow has continuous shimmer sweep + voice-reactive hotspots.
+
+- ITER-033.1 Dashboard refinements + Library mockup match (2026-04-26):
+  - **Trigger:** user feedback after ITER-033 base sweep — (a) cards have unequal heights despite Grid + maxHeight, (b) Library don't match canvas mockup, (c) empty space in TodayCard / Stats card on fullscreen but should NOT split when window compressed.
+  - **Equal-height fix.** Root cause: `.frame(maxHeight: .infinity)` applied OUTSIDE the card (on the wrapper) — outer frame stretched but inner card content stayed at natural height, leaving the card's own background shorter than the grid cell. Fix: moved `maxHeight: .infinity` INSIDE each card (TodayCard, TomorrowCard, TodayStatsCard, ScreenActivityCard) so the `.padding().frame(...).mwCard(...)` chain correctly stretches background + content together. `Views/Windows/DashboardView.swift:180/314/460/565` — replace_all on the `.frame(maxWidth: .infinity, alignment: .topLeading) → .mwCard(...)` pattern.
+  - **Library mockup match.** `LibraryView.Section` rawValues: UPPERCASE → TitleCase ("CONVERSATIONS" → "Conversations" etc.) per mockup §02. `ConversationsView.Filter` enum same. Page header rebuilt: 28pt bold "Conversations" + monospace "N total" right (was MW.monoLg UPPERCASE). Filter chips replaced with `GlassChipButton` pills (radius 999). **Date-grouped rows now wrap in single rounded glass card per group** with hairline-separated rows inside — was per-row card chrome that read as a stack of plates. Row redesigned: waveform icon + title + LIVE pip (red dot + "LIVE" tracked label when status==inProgress) + category chip + meta + chevron, flush inside group card.
+  - **Empty-space refinements (responsive).**
+    - **TodayCard** content split into 2 columns when window ≥ `Self.fullscreenThreshold = 1240`: LEARNED + SHIPPED on left, DECIDED on right (headline + energy stay full-width). Below 1240 → dense single-column. New `var isFullscreen: Bool = false` parameter threaded from `DashboardView.body` GeometryReader.
+    - **TodayStatsCard** at fullscreen: 2x2 stats grid LEFT + `last7Chart` RIGHT (7-day total-activity bar chart, today bar = `MW.accent`, past = `MW.textDim.opacity(0.55)`, weekday letter labels). Below threshold → stats grid alone. Same `isFullscreen` flag.
+    - **ScreenActivityCard** top-4 → top-5 (Grid manages heights so the extra row no longer breaks alignment).
+  - **`TodayTomorrowSection` API:** added `isFullscreen: Bool` alongside existing `isWide: Bool`. Both threaded from `DashboardView.body`'s GeometryReader (`isFullscreen = geo.size.width >= 1240`).
+  - **Files touched:** `Views/Windows/DashboardView.swift`, `Views/Windows/LibraryView.swift`, `Views/Windows/ConversationsView.swift`.
+  - **Build:** all incremental builds clean (3-6s). Final relaunched signed Developer ID bundle.
+  - **Visual confirmed by user:** «хорошо стало вроде» — heights match, Library matches mockup, fullscreen fills space without empty zones, narrow windows stay dense.
+  - **Deferred (still ITER-034):** PillVariants.swift redesign (4 stage-aware variants).
+
+- ITER-033 Liquid Glass design sweep — Steps 1–5 except Pills (2026-04-26):
+  - **Trigger:** design handoff package `design-handoff/MetaWhisp Design Spec.html` + tokens.css. User explicitly deferred PillVariants.swift to a follow-up iteration. Mantra «дырок нет» — equal-height card rows on Dashboard.
+  - **Step 1 — DesignSystem.swift tokens.** New tokens: `hairlineColor` (primary.opacity(0.06)), `selectFill` (0.10) / `selectRim` (0.16), `rimInner` (theme-aware specular), `accentSoft` (accent.opacity(0.16)) / `accentRim` (0.45). Status colors → точные spec hex (idle #34C759, processing #FF9F0A, recording/live #FF453A, postProcess #5AC8FA). 5 accent presets: `mono` (default, Color.primary), `warmOrange` (#E08948), `electric`, `mint`, `violet`. `MW.accent` теперь computed dynamic из `AppSettings.shared.accentColor`. `Models/AppSettings.swift:23` — добавлен `@AppStorage("accentColor") String = "mono"`.
+  - **Step 2 — MWCardModifier.** Removed legacy single-shadow extension. New `GlassShadowsModifier` применяет per-elevation shadow stack из tokens.css: flat = single, raised = dual (24px halo + 6px tight), hero = dual (60px + 16px). Theme-aware opacity (dark heavier чем light). Specular gradient values (0.30/0.04/0) уже совпадали — без изменений.
+  - **Step 3 — `Views/Components/GlassPrimitives.swift` (NEW, ~280 lines).** 7 reusable components: `SidebarItem` (glass-flat selectFill active state), `GlassChipButton` (pill / segmented chip с accent variant), `StatusPill` + `StatusPillState` enum (Ready/Recording/Processing/PostProcessing с per-state fill/rim/label color), `PageHeader<Right: View>` (28pt bold с тrack -0.4 + right slot), `SegmentedGlass<T: Hashable>` (pill segmented control с .thinMaterial active), `AccentSwatch` (для Settings picker — circle + selection ring), `PageWash` (radial+linear gradient, accent-aware warm corner).
+  - **Step 5 — MainWindowView.** `heroBackground` linear-only заменён на `PageWash()`. Sidebar: width 200→220, использует `SidebarItem` примитив, brand block теперь `M | MetaWhisp / Liquid Glass` (subtitle), footer стал `v0.0.1 ... ● on-device` с idle-зелёным дотом.
+  - **Step 4a — MainSettingsView accent picker.** Добавлен ACCENT row под THEME row: 5 `AccentSwatch` рядом — mono / warmOrange / electric / mint / violet. Tap → `AppSettings.accentColor = preset.id` → live-updates по всему app через `MW.accent` computed.
+  - **Step 4b — DashboardView no-holes layout.** Главный фикс: `TodayTomorrowSection` перестроен — 2 stacked HStack (top row TODAY|TOMORROW, bottom STATS|SCREEN), каждая HStack с `.frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)` на siblings + `.fixedSize(vertical: true)` на парент → match heights без растягивания. `TodayStatsCard.stat()` — убраны material/border на каждой ячейке, теперь plain text 36pt + caption (per mockup). `ScreenActivityCard.appRow()` — добавлен accent-tinted progress bar (Capsule fill MW.accent, ширина = `percent / topMax * available`). При accent=mono бар читается как primary text; при warmOrange — оранжевый strip как в mockup.
+  - **Step 4c — LibraryView pill chips.** Старые квадратные чипы с `Rectangle().stroke` заменены на `GlassChipButton` (radius 999, ultraThin material inactive / selectFill active).
+  - **Step 4d — ProjectsView 2-col grid.** `LazyVGrid` columns: `.adaptive(minimum: 280, maximum: 360)` → fixed 2-column flexible, spacing 14 (per spec § 7).
+  - **Step 4e — ChatView accent bubbles.** User bubble: `MW.accentSoft` fill + `MW.accentRim` border. AI bubble: `.ultraThinMaterial` + `MW.border`. Radius 14 для обоих.
+  - **Step 4f — DictionaryView tab pills.** Старые black-on-white inverted tabs → Capsule pills с selectFill active / ultraThinMaterial inactive. Counts теперь не в скобках а отдельным monoSm после label.
+  - **Pills (PillVariants.swift) — ОТЛОЖЕНЫ** на ITER-034. Per user: «во вторую итерацию мы потом сделаем».
+  - **Files touched:** `Models/AppSettings.swift`, `Helpers/DesignSystem.swift`, `Views/Components/GlassPrimitives.swift` (NEW), `Views/Windows/MainWindowView.swift`, `Views/Windows/MainSettingsView.swift`, `Views/Windows/DashboardView.swift`, `Views/Windows/LibraryView.swift`, `Views/Windows/ProjectsView.swift`, `Views/Windows/ChatView.swift`, `Views/Windows/DictionaryView.swift`.
+  - **Build:** all 9 incremental builds clean (3-10s each). Final `./build.sh` produced signed Developer ID bundle, installed `~/Applications/MetaWhisp.app`, launched.
+  - **Visual impact:** default accent=mono → текущие view-surfaces визуально не изменились (по дизайну). User opt-in coloring через Settings → Accent (5 swatches). Status pills получили точные Apple system hex (вместо `Color.red/.orange/.green`). Dashboard rows match heights → no holes. ScreenActivity bars — accent-tinted (mono = textPrimary stripe, warmOrange = orange). User bubbles в MetaChat — accent-soft.
+  - **Deferred:** PillVariants redesign (4 stage-aware variants: Capsule, Island Aura, Island Expand, Edge Glow) — ITER-034 follow-up. Spec § 8.
+
+- ITER-024…032 Prompt-audit re-alignment sweep (2026-04-26):
+  - **Trigger:** аудит `specs/audit/PROMPT-AUDIT-2026-04-26.md` показал drift из-за выборочного копирования reference. 9 итераций по Карпати — каждая копирует референс ПОЛНОСТЬЮ, фиксирует 1 gap, build green, переходит дальше.
+  - **ITER-024 MemoryExtractor** — восстановлены 8 NEVER-EXTRACT категорий (NEWS / GENERAL KNOWLEDGE / PRODUCT DOCS / CUSTOMER FACTS / INTERNAL METRICS / ORG RESTRUCTURING / COLLEAGUE FACTS WITHOUT RELATIONSHIP / GENERIC RELATIONSHIPS), добавлены IDENTITY RULES (4 правила про family/nicknames/spelling), LOGIC CHECK (sanity на возраст/локации/family), CONSOLIDATION CHECK, WORKFLOW step framing. Banned-language расширен filler-фразами + org-change verbs. `headline` cap 6w → 5w. `Services/Intelligence/MemoryExtractor.swift:149-280`.
+  - **ITER-025 TaskExtractor** — добавлено REFERENCE_TIME правило: если `started_at` >7d before `current_time`, anchor due-date math at `current_time` (reprocess path). Surface в user-prompt: started_at + current_time + reference hint. + 4 bullet'а про real-time-exchange exclusion. `Services/Intelligence/TaskExtractor.swift:280-303`.
+  - **ITER-026 ChatService** — два новых блока в systemPrompt: `<response_style>` (length budget per question type: voice 1-3 lines, default 2-8, "I don't know" 1-2 max, complex unlimited) + `<critical_accuracy_rules>` (7 banned robotic phrases: "in the logs"/"in your captured calls"/etc., 4 правила про empty results без fabrication). `Services/Intelligence/ChatService.swift:271-323`.
+  - **ITER-027 StructuredGenerator** — на каждом из 5 ITER-021 полей (decisions / action_items / participants / key_quotes / next_steps) добавлены 3-5 GOOD + 3-4 BAD примера (RU+EN). LANGUAGE RULE: items в языке транскрипта, имена не транслитерируются. `Services/Intelligence/StructuredGenerator.swift:374-465`.
+  - **ITER-028 RealtimeScreenReactor — главный gap fixed.** Добавлен PATTERN-1 USER COMMITMENT detector (30+ сигналов RU+EN: "Sure"/"Will do"/"договорились"/"сделаю"/etc.) — extractит таск который ДРУГОЙ человек попросил, ПОСЛЕ user'ского agreement. Рядом старый PATTERN-2 UNADDRESSED REQUEST. + chat-direction reading rules (right=outgoing/USER, left=incoming/OTHER). + IGNORE OVERVIEW/SIDEBAR rules заменили blanket-skip messengers. + 11 real BAD examples + 7 GOOD examples из production. + SPECIFICITY + FORGETTABILITY checks. `Services/Intelligence/RealtimeScreenReactor.swift:228-330`.
+  - **ITER-029 AdviceService** — schema: `AdviceItem.headline: String?` (lightweight migration) + parser/AdviceJSON consumes. Prompt: WORKFLOW (4 steps) + CORE QUESTION в начале standard. Headline guidelines с 5 GOOD + 3 BAD примерами. Coach mode тоже расширен. `Models/AdviceItem.swift:24-41`, `Services/Intelligence/AdviceService.swift:158-340`.
+  - **ITER-030 AppleNotesReader** — copy-1:1 reference's `classifierNoise` (6 шумовых паттернов: "Document Documents Papers..." и т.п.) + `isLikelyAttachment` heuristic (SQLite metadata SOLITE/kMDItem/exec, file extensions .png/.jpg/.heic/.pdf/.mov/.mp4/.gif, prefixes cleanshot/image/screenshot, scan+document combo, tiny content). Применяются в `parseAppleScriptOutput` ДО создания payload — Notes-attachments больше не идут в LLM, нет junk memories. `Services/Indexing/AppleNotesReaderService.swift:209-275`.
+  - **ITER-031 DailySummary** — schema: `unresolvedQuestionsJSON: String?` + `dayEmoji: String?` (lightweight migration). Pipeline теперь fan-outит 6 параллельных агентов вместо 4: + `unresolvedAgent` (≤3 punchy questions snappy ≤15w, language-matched, "?" ending) + `dayEmojiAgent` (1 Unicode emoji semantic к дню, fallback 🌙). Два новых system-prompts с GOOD/BAD examples. **Conversation_ids back-pointers per item** — отложены на ITER-031b: требуют numbered conversation list в input, output schema change для всех 5 агентов, + UI clickthrough в DashboardView. `Models/DailySummary.swift:39-48`, `Services/Intelligence/DailySummaryService.swift:165-228, 372-422, 736-790`.
+  - **ITER-032 ScreenExtractor + RealtimeReactor — title-rejection validator.** Reference TaskAssistant (`TaskAssistant.swift:807-833`) использует tool-loop architecture: vague title → feed rejection back → retry. У нас single-shot JSON, поэтому substitute: `TaskExtractionFilters.validateTaskTitle(_:) -> TitleRejectionReason?` — strict post-LLM gate. Reasons: `.empty` / `.tooShort(wordCount:)` (<4 words) / `.vagueVerb(verb:)` (single-verb starts: investigate/check/look/respond + RU аналоги). Wired в ScreenExtractor + RealtimeScreenReactor сразу после `isGenericNoise` reject. `Services/Intelligence/TaskExtractionFilters.swift:104-155`.
+  - **Build:** all 9 iterations compiled clean. Final binary signed Developer ID, installed `~/Applications/MetaWhisp.app`, launched.
+  - **Re-audit cadence:** через 2 недели или после крупного refactor — повторить через 2 параллельных агента. Diff vs `specs/audit/PROMPT-AUDIT-2026-04-26.md` baseline покажет новый drift.
+  - **Deferred (для отдельной итерации ITER-031b):** conversation_ids back-pointers per DailySummary item + clickthrough в UI.
+
+- ITER-023.2 Calendar CONNECT button actually wires through (2026-04-26):
+  - **Symptom (user report):** CONNECT CALENDAR button «doesn't work, probably mock». Click — ничего не происходит, dialog не появляется, события не подтягиваются.
+  - **Root causes (двa silent fail):**
+    1. `connectCalendar()` дёргал `calendarReader.scanNow()`, а у того guard `hasLLMAccess` (требует `activeAPIKey` или `LicenseService.shared.isPro`) — abort-выход ДО request permission. На race-conditions при загрузке Pro license click уходил в дыру. Plus calendar permission и LLM access — ортогональные concerns, не должны быть связаны.
+    2. macOS 14+ `requestFullAccessToEvents()` НЕ показывает dialog повторно если user отказал ранее — молча возвращает false. У нашего юзера TCC Authorization Cache содержал только Microphone (логи `log show --predicate 'process == "MetaWhisp"'`) — никакой попытки calendar request не доходило до TCC.
+  - **Fixes — `Views/Windows/DashboardView.swift` (TomorrowCard only):**
+    - **`+import AppKit`** — для `NSWorkspace` (deep-link на System Settings).
+    - **Decouple from scanNow:** `connectCalendar()` теперь делает `EKEventStore().requestFullAccessToEvents()` напрямую. На grant — пишет `calendarReaderEnabled = true`, bumps `permissionTick`, calls `loadEvents()`, и в фоне `Task.detached { calendarReader.scanNow() }` для tasks/memories — non-blocking. На deny — лог в NSLog без UI freeze.
+    - **3-state auth model:** `enum CalendarAuthState { granted, notDetermined, denied }` через `EKEventStore.authorizationStatus(for: .event)`. macOS 14+: `.fullAccess` → granted, `.notDetermined` → notDetermined, `.denied/.restricted/.writeOnly` → denied (writeOnly нам недостаточно — нужно read events). Legacy: `.authorized` → granted и т.п.
+    - **Adaptive button:** в connectPrompt button label/icon/action меняются по state:
+      - `.notDetermined` → "CONNECT CALENDAR" + `calendar.badge.plus` icon → fires `requestFullAccessToEvents`.
+      - `.denied` → "OPEN SETTINGS" + `gear` icon + другой текст ("Calendar access is currently denied. Open System Settings → Privacy & Security → Calendars…") → calls `openCalendarSettings()` → `NSWorkspace.shared.open(URL("x-apple.systempreferences:com.apple.preference.security?Privacy_Calendars"))`. Единственный способ восстановить permission после deny.
+    - **`loadEvents()` теперь passive:** только проверяет `EKEventStore.authorizationStatus`, НЕ делает request. Раньше при view appear был второй `requestFullAccessToEvents` параллельно с button click → двойной race-условный dialog. Теперь request живёт ровно в `connectCalendar()`.
+  - **Files touched:** `Views/Windows/DashboardView.swift` only (TomorrowCard struct).
+  - **Build:** clean (`swift build` 6.40s, 2 pre-existing warnings only).
+  - **Verify:**
+    - Dashboard → if status `.notDetermined` → CONNECT button → tap → OS dialog «MetaWhisp would like to access your calendar» → grant → events list появляется немедленно (loadEvents отрабатывает после permission).
+    - If user отказал раньше → CONNECT превращается в OPEN SETTINGS → tap открывает Privacy & Security → Calendars пейн → user включает MetaWhisp → relaunch app для подцепки grant'а (или Dashboard re-render через permissionTick если grant произошёл при app live).
+    - scanNow крутится в фоне после grant → в течение секунд появляются TaskItem rows для upcoming events, memories для recurring patterns (если LLM available — иначе skip pattern memories).
+  - **Risks:** scanNow background task при отсутствии LLM access exits silently на guard hasLLMAccess — events/UI всё равно работают, просто не создаются TaskItem mirrors. Acceptable — UI показывает реальные EventKit events, дублирование в TaskItem — bonus feature.
+
+- ITER-023.1 Tomorrow card empty-state fix (2026-04-26):
+  - **Triggers (user feedback after first ITER-023 ship):** (a) CONNECT CALENDAR button не появляется хотя реальный EventKit permission не дан — `calendarReaderEnabled` уже стоял `true` от старого тестирования E3, поэтому первая версия пошла в ветку «No events scheduled for tomorrow.» вместо CONNECT prompt. (b) гигантская дыра справа когда CALENDAR пустой и нет tasks tomorrow — карточка коллапсировала до 1 строки рядом с высокой левой колонкой (Today + Stats|Screen sub-row).
+  - **Fixes — `Views/Windows/DashboardView.swift` (TomorrowCard only):**
+    - **Auth-aware CONNECT:** добавлен computed `calendarPermissionGranted` через `EKEventStore.authorizationStatus(for: .event)`. macOS 14+ → требует `.fullAccess`, legacy → `.authorized`. Новый computed `showsConnectPrompt = !settings.calendarReaderEnabled || !calendarPermissionGranted`. Покрывает кейс «toggle on but never approved system dialog».
+    - **`permissionTick: Int` @State** — bumped после `connectCalendar()` и `loadEvents()` чтобы SwiftUI re-render и `calendarPermissionGranted` re-evaluate. `EKEventStore.authorizationStatus` re-reads system state на каждый call, но без state change нет re-render. Tick — minimal trigger.
+    - **Beefier CONNECT button:** `calendar.badge.plus` icon + `CONNECT CALENDAR` label с tracking 1.0, padding 14×8, ultraThinMaterial bg + border. Description text вырос (12pt → 13pt, secondary text). Заменил `glassChip` на explicit RoundedRectangle для контроля размера.
+    - **PENDING section (anti-hole):** новый `@Query pendingNoDate` — `task.dueAt == nil && !task.completed && !task.isDismissed`, sorted by createdAt desc. Computed `visibleSuggested` filters committed/nil status, prefix(5). Render `pendingSection` под dueSection с label `PENDING · no due date` + bullet list. Главный анти-дыра fix — карточка всегда несёт ценность пока есть open tasks без дат.
+    - **Body spacing:** `MW.sp12 → MW.sp16` между секциями для воздуха.
+    - **DUE label:** `DUE` → `DUE TOMORROW` для clarity.
+  - **Files touched:** `Views/Windows/DashboardView.swift` only (TomorrowCard struct).
+  - **Build:** clean (`swift build` 6.47s, 2 pre-existing warnings only). `./build.sh` signed + installed + launched.
+  - **Verify:** Dashboard → if EventKit permission not granted → TOMORROW card now shows `· NOT CONNECTED` tag + descriptive copy + sized CONNECT CALENDAR button. Tap → toggles enabled + scanNow + reloads events; if user grants permission → events list (or "No events scheduled" empty state without prompt). PENDING section всегда там пока есть un-dated open tasks → fills card.
+
+- ITER-023 Dashboard Today+Tomorrow split (2026-04-26):
+  - **Trigger:** mockup v9 (`mockups/dashboard-v3/v9-stats-leftcol.html`) approved — replace 14-day carousel + standalone Stats|Screen HStack with a 2-column split: LEFT = Today recap + Stats|Screen sub-row, RIGHT = Tomorrow plans (CALENDAR with CONNECT button when reader off, DUE list from TaskItem). 14-day picker removed; single ‹/› arrows in TodayCard navigate while DailySummary data exists.
+  - **Plan A — clean replacement:** new split section ЗАМЕНЯЕТ `DailySummaryCarousel` + `HStack(TodayStatsCard, ScreenActivityCard)`. `StatisticsView` (All Time / Today / This Week / Month) внизу нетронут. Title row + statusStrip (READY / RECORD) сверху нетронут.
+  - **DashboardView — `Views/Windows/DashboardView.swift`:**
+    - `+import EventKit`.
+    - Body: removed `DailySummaryCarousel()` and the wide/narrow `HStack(TodayStatsCard, ScreenActivityCard)` branch — replaced both with single call `TodayTomorrowSection(isWide: isWide)`. `StatisticsView()` оставлен под ним.
+    - **Removed (dead after carousel kill):** `DailySummaryCarousel` (h-scroll picker + ScrollViewReader), `MiniDayTile` (80×80 square), `DetailCard` (full-width selected-day render). `DailySummaryCard` ITER-009 — оставлен, был уже unused (отдельный cleanup-track).
+    - **Added — `TodayTomorrowSection`:** wide → HStack(leftColumn, TomorrowCard) с `.frame(maxWidth: .infinity)` обе → 1:1 ratio; narrow → VStack. `leftColumn` = `VStack(TodayCard(), HStack(TodayStatsCard, ScreenActivityCard))`.
+    - **Added — `TodayCard`:** `@State dayOffset: Int = 0`. Header: ‹ button (disabled когда `summaries.last?.date >= selectedDate`) + › button (видна только при `dayOffset < 0`) + dh-label `TODAY / YESTERDAY / N DAYS AGO` + dateLabel `EEE, MMM d` + `GENERATE / REGENERATE` chip. Body — same shape как old DetailCard: title 18pt + LEARNED / DECIDED / SHIPPED / energy. Empty state inline (today вариант references `dailySummaryEnabled`, past — «Tap GENERATE to build one»).
+    - **Added — `TomorrowCard`:** queries `TaskItem` predicate `dueAt != nil && dueAt >= tomStart && dueAt < tomEnd` (init-time computed window) → computed `visibleDue` filters `!completed && !isDismissed && status in {committed, nil}`. Calendar section branches on `settings.calendarReaderEnabled`: off → CONNECT prompt + glassChip-styled CONNECT CALENDAR button; on → loads tomorrow's events via local `EKEventStore` (macOS 14+ `requestFullAccessToEvents`, fallback `requestAccess(to:)`), filters cancelled / declined, sorted by startDate. DUE section renders only когда `!visibleDue.isEmpty`. Header chip = `N events` if calendar populated else `N due` if tasks else nothing.
+    - **CONNECT CALENDAR action:** flips `AppSettings.shared.calendarReaderEnabled = true` → fires `await AppDelegate.shared?.calendarReader.scanNow()` → reloads local events. Permission prompt comes from EventKit on first scan.
+    - **Day rollover bug (known):** `dueTomorrow` predicate captured at init, `events` reloaded via `.task` — if user keeps app open past midnight, "tomorrow" becomes "today" in the predicate. Acceptable for v1; restart fixes.
+  - **Files touched:** `Views/Windows/DashboardView.swift` only.
+  - **Build:** clean (`swift build` 8.97s, only 2 pre-existing warnings: EmbeddingService dedupThreshold + LicenseService kIOMasterPortDefault). `./build.sh` produced signed Developer ID bundle, installed to `~/Applications/MetaWhisp.app`, launched.
+  - **Verify (live):** Dashboard tab → title row READY / RECORD untouched. Below: TODAY card with ‹ arrow (› hidden at offset 0), Stats|Screen sub-row под ним. RIGHT: TOMORROW card — if `calendarReaderEnabled` off → "NOT CONNECTED" tag + CONNECT CALENDAR button. Click → toggles setting, requests EventKit permission, fetches events. StatisticsView (All Time / Today / This Week / Month) внизу как было. ‹ tap → previous-day summary (or empty + GENERATE for past day).
 
 - ITER-022 G_dashboard v2 — Square day-picker + click-driven detail (2026-04-25):
   - **Trigger:** v1 swipe-carousel rejected by user: «карточки должны быть квадратные и переключаться по клику не по свайпу».

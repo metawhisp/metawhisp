@@ -121,12 +121,24 @@ final class AudioRecordingService: ObservableObject, AudioSource {
         }
     }
 
-    /// Start recording from the default input device.
+    /// Start recording from the user's preferred input device, or system
+    /// default when none is configured.
     func start() throws {
         guard !isRecording else { return }
 
         // Reuse existing engine or create new
         let engine = self.engine ?? AVAudioEngine()
+
+        // Apply user-picked input device (Settings → Microphone) BEFORE
+        // touching the input node. If the picked device was unplugged we
+        // silently fall back to whatever macOS has as default.
+        let preferredUID = AppSettings.shared.preferredInputDeviceUID
+        if !preferredUID.isEmpty,
+           let dev = AudioInputCatalog.device(forUID: preferredUID) {
+            let ok = AudioInputCatalog.setInputDevice(dev, on: engine)
+            NSLog("[AudioRecording] input device → %@ (%@)", dev.name, ok ? "OK" : "FAIL")
+        }
+
         let inputNode = engine.inputNode
         let inputFormat = inputNode.outputFormat(forBus: 0)
 

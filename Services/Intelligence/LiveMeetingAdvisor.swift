@@ -33,6 +33,14 @@ final class LiveMeetingAdvisor: ObservableObject {
     @Published private(set) var lastPartial: String = ""
     @Published private(set) var lastFireAt: Date?
 
+    /// All non-empty, non-hallucinated partials collected during the meeting,
+    /// in arrival (= sample) order. Reset on `arm()` for a fresh meeting,
+    /// kept across `disarm()` so `finalize()` can return them after the
+    /// recorder's `isRecording = false` Combine signal.
+    /// Used by `AppDelegate.stopMeetingRecording` to skip a 2nd transcription
+    /// pass over the same audio (saves 50% of cloud transcribe minutes).
+    private var collectedPartials: [String] = []
+
     private weak var meetingRecorder: MeetingRecorder?
     private weak var coordinator: TranscriptionCoordinator?
     private weak var adviceService: AdviceService?
@@ -78,6 +86,11 @@ final class LiveMeetingAdvisor: ObservableObject {
         micOffset = 0
         sysOffset = 0
         lastPartial = ""
+        // Reset accumulator — previous meeting's partials must not leak into this one.
+        collectedPartials = []
+        // Show the meeting copilot overlay & reset its rolling LLM window.
+        MeetingCoachState.shared.arm()
+        MeetingCoachService.shared.reset()
         let interval = max(10, min(120, chunkSeconds))
         timerTask?.cancel()
         timerTask = Task { @MainActor [weak self] in
@@ -93,13 +106,71 @@ final class LiveMeetingAdvisor: ObservableObject {
     }
 
     private func disarm() {
+        // ALWAYS hide the overlay — even if `isActive` is already false because
+        // `finalize()` (called from `AppDelegate.stopMeetingRecording`) flipped
+        // it before this Combine-driven sink fired. Without the unconditional
+        // call here, the overlay was getting stuck visible after a stop and
+        // the next user click on the overlay's STOP button would `toggle` to
+        // a NEW recording instead of dismissing the stale overlay.
+        MeetingCoachState.shared.disarm()
         guard isActive else { return }
         isActive = false
         timerTask?.cancel()
         timerTask = nil
-        micOffset = 0
-        sysOffset = 0
+        // Note: do NOT reset `micOffset`/`sysOffset`/`collectedPartials` here.
+        // `AppDelegate.stopMeetingRecording` may call `finalize()` AFTER this
+        // (Combine sink races with the explicit close path), and it needs the
+        // accumulated state. Offsets/partials reset on next `arm()`.
         NSLog("[LiveAdvise] ⏹ disarmed")
+    }
+
+    // MARK: - Finalization (consumed by AppDelegate.stopMeetingRecording)
+
+    /// Snapshot of the advisor's state at meeting close. Caller uses
+    /// `micOffsetAtFinalize` / `sysOffsetAtFinalize` to peek the tail audio
+    /// (between the last successful tick and the moment the user clicked
+    /// stop) BEFORE calling `meetingRecorder.stop()` — at which point the
+    /// recorder buffers are wiped.
+    struct FinalizationResult {
+        let text: String
+        let partialCount: Int
+        let micOffsetAtFinalize: Int
+        let sysOffsetAtFinalize: Int
+    }
+
+    /// Stop ticking and return accumulated partials. Caller is responsible
+    /// for transcribing the residual tail audio (≤ chunkSeconds worth) using
+    /// the offsets returned here.
+    ///
+    /// Returns nil if the advisor wasn't running (e.g. `liveMeetingAdviceEnabled`
+    /// disabled, never armed) or collected zero partials — in that case the
+    /// caller MUST fall back to a full re-transcribe of the raw samples.
+    func finalize() -> FinalizationResult? {
+        timerTask?.cancel()
+        timerTask = nil
+        let wasActive = isActive
+        isActive = false
+        // Hide the overlay immediately on the explicit close path. The
+        // Combine-driven `disarm()` will run too (idempotently) when the
+        // recorder publishes `isRecording = false`, but doing it here means
+        // the overlay disappears the moment we begin teardown, not later.
+        MeetingCoachState.shared.disarm()
+
+        guard wasActive, !collectedPartials.isEmpty else {
+            NSLog("[LiveAdvise] finalize → nil (active=%@, partials=%d)",
+                  wasActive ? "true" : "false", collectedPartials.count)
+            return nil
+        }
+
+        let text = collectedPartials.joined(separator: "\n\n")
+        NSLog("[LiveAdvise] finalize → %d partials, %d chars, micOff=%d sysOff=%d",
+              collectedPartials.count, text.count, micOffset, sysOffset)
+        return FinalizationResult(
+            text: text,
+            partialCount: collectedPartials.count,
+            micOffsetAtFinalize: micOffset,
+            sysOffsetAtFinalize: sysOffset
+        )
     }
 
     // MARK: - Chunk processing
@@ -154,6 +225,16 @@ final class LiveMeetingAdvisor: ObservableObject {
 
             lastPartial = text
             lastFireAt = Date()
+            // Accumulate for later reuse as the FINAL meeting transcript — skips the
+            // 2nd cloud transcription pass that `AppDelegate.stopMeetingRecording`
+            // used to do over the same audio (was 50% of all cloud minutes per meeting).
+            collectedPartials.append(text)
+            // Drive the floating Meeting Copilot overlay (ITER-019.2). The service
+            // owns its own concurrency guard so a still-running LLM call doesn't
+            // stack with the next 30s tick — it just skips that cycle.
+            Task { await MeetingCoachService.shared.process(partialText: text) }
+            // Standard advice path stays — it posts the macOS notification and
+            // populates Insights. Meeting Copilot adds the live overlay on TOP of that.
             adviceService?.triggerOnTranscription(text: text, source: "meeting-live")
             NSLog("[LiveAdvise] 🎯 partial fired (%d chars, rms=%.4f)", text.count, rms)
         } catch {

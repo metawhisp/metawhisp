@@ -22,14 +22,16 @@ struct ConversationsView: View {
     /// ITER-021 — when non-nil, the list is replaced by `ConversationDetailView`
     /// for that conversation. Tap row to push, click BACK to pop.
     @State private var openedDetailId: UUID?
+    /// 2026-04-29 — About Me sheet trigger.
+    @State private var showingAboutMe: Bool = false
 
     @Environment(\.modelContext) private var modelContext
 
     enum Filter: String, CaseIterable {
-        case all = "ALL"
-        case starred = "STARRED"
-        case meetings = "MEETINGS"
-        case dictations = "DICTATIONS"
+        case all = "All"
+        case starred = "Starred"
+        case meetings = "Meetings"
+        case dictations = "Dictations"
     }
 
     var body: some View {
@@ -56,6 +58,17 @@ struct ConversationsView: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .sheet(isPresented: $showingAboutMe) {
+            AboutMeView()
+        }
+        // openConversation deep-link from Dashboard calendar event rows.
+        // Posted after a brief delay so this view has time to mount under
+        // the Library tab switch.
+        .onReceive(NotificationCenter.default.publisher(for: .openConversation)) { notification in
+            if let convId = notification.object as? UUID {
+                openedDetailId = convId
+            }
+        }
     }
 
     /// Header for the detail mode — BACK button + breadcrumb. Replaces the
@@ -82,40 +95,57 @@ struct ConversationsView: View {
 
     // MARK: - Header
 
+    /// Liquid Glass spec: big page title. Right side shows an "About me"
+    /// button (replaced the redundant `total/shown` counter pair on
+    /// 2026-04-29 — `shown` counter survives in the filter bar below).
+    /// Click → opens the About Me sheet with sections built from UserMemory.
     private var header: some View {
-        HStack {
-            Text("CONVERSATIONS")
-                .font(MW.monoLg)
+        HStack(alignment: .firstTextBaseline) {
+            Text("Conversations")
+                .font(.system(size: 28, weight: .bold))
+                .tracking(-0.4)
                 .foregroundStyle(MW.textPrimary)
-                .tracking(2)
             Spacer()
-            Text("\(conversations.count) total")
-                .font(MW.monoSm)
-                .foregroundStyle(MW.textMuted)
+            Button {
+                showingAboutMe = true
+            } label: {
+                HStack(spacing: 5) {
+                    Image(systemName: "person.crop.circle")
+                        .font(.system(size: 11))
+                    Text("About me")
+                        .font(.system(size: 11, weight: .semibold))
+                        .tracking(0.3)
+                }
+                .foregroundStyle(MW.textPrimary)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 5)
+                .glassChip(selected: false, radius: 999)
+            }
+            .buttonStyle(.plain)
         }
         .padding(.horizontal, 20)
-        .padding(.vertical, 14)
+        .padding(.top, 14)
+        .padding(.bottom, 10)
     }
 
     // MARK: - Filter chips
 
+    /// Pill chips per mockup §02: All / Starred / Meetings / Dictations.
+    /// TitleCase, ultraThin material inactive, selectFill active.
+    /// "N shown" counter stays right-aligned.
     private var filterBar: some View {
         HStack(spacing: 8) {
             ForEach(Filter.allCases, id: \.self) { f in
-                let isActive = selectedFilter == f
-                Text(f.rawValue)
-                    .font(MW.label)
-                    .tracking(0.8)
-                    .foregroundStyle(isActive ? MW.textPrimary : MW.textMuted)
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 4)
-                    .background(isActive ? MW.elevated : .clear)
-                    .overlay(Rectangle().stroke(isActive ? MW.borderLight : MW.border, lineWidth: MW.hairline))
-                    .onTapGesture { selectedFilter = f }
+                GlassChipButton(
+                    label: f.rawValue,
+                    isActive: selectedFilter == f,
+                    radius: 999,
+                    action: { selectedFilter = f }
+                )
             }
             Spacer()
             Text("\(filtered.count) shown")
-                .font(MW.monoSm)
+                .font(MW.dataSmall)
                 .foregroundStyle(MW.textMuted)
         }
         .padding(.horizontal, 20)
@@ -161,69 +191,92 @@ struct ConversationsView: View {
         return bucketsOrdered.map { ($0, buckets[$0] ?? []) }
     }
 
+    /// Liquid Glass §02 mockup: each date-group rendered as a SINGLE rounded
+    /// glass card containing all rows for that day. Section header sits above
+    /// the card. Inner rows are flush — no per-row card chrome (which previously
+    /// made the page look like a stack of small chips). Hairlines separate rows.
     private var conversationList: some View {
         ScrollView {
-            LazyVStack(alignment: .leading, spacing: 0) {
+            LazyVStack(alignment: .leading, spacing: 18) {
                 ForEach(grouped, id: \.label) { group in
-                    sectionHeader(group.label)
-                    ForEach(group.items) { conv in
-                        conversationRow(conv)
+                    VStack(alignment: .leading, spacing: 8) {
+                        sectionHeader(group.label)
+                        VStack(spacing: 0) {
+                            ForEach(Array(group.items.enumerated()), id: \.element.id) { idx, conv in
+                                conversationRow(conv)
+                                if idx < group.items.count - 1 {
+                                    Rectangle()
+                                        .fill(MW.hairlineColor)
+                                        .frame(height: 0.5)
+                                        .padding(.horizontal, 12)
+                                }
+                            }
+                        }
+                        .background {
+                            RoundedRectangle(cornerRadius: MW.rMedium, style: .continuous)
+                                .fill(.ultraThinMaterial)
+                        }
+                        .overlay(
+                            RoundedRectangle(cornerRadius: MW.rMedium, style: .continuous)
+                                .strokeBorder(MW.border, lineWidth: 0.5)
+                        )
                     }
                 }
             }
-            .padding(16)
+            .padding(20)
         }
     }
 
     private func sectionHeader(_ label: String) -> some View {
         Text(label)
             .font(MW.label)
-            .tracking(1.0)
+            .tracking(1.2)
             .foregroundStyle(MW.textMuted)
-            .padding(.top, 12)
-            .padding(.bottom, 6)
+            .padding(.horizontal, 4)
     }
 
     @ViewBuilder
     private func conversationRow(_ conv: Conversation) -> some View {
-        // ITER-021 — primary tap pushes to ConversationDetailView (full transcript
-        // + structured summary + linked items). Inline expand kept for option-click
-        // as a quick peek; users who don't know about it just go to detail.
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(alignment: .top, spacing: 10) {
-                Image(systemName: conv.emoji ?? fallbackIcon(for: conv))
-                    .font(.system(size: 14))
-                    .foregroundStyle(MW.textSecondary)
-                    .frame(width: 20, height: 20, alignment: .center)
-                    .padding(.top, 2)
+        // Liquid Glass §02 row: flush inside the date-group glass card.
+        // Drop the per-row card chrome — wrapper provides it. Inline LIVE pip
+        // when status == "inProgress" per mockup.
+        let isLive = conv.status == "inProgress"
+        return HStack(alignment: .center, spacing: 10) {
+            Image(systemName: conv.emoji ?? fallbackIcon(for: conv))
+                .font(.system(size: 14))
+                .foregroundStyle(MW.textSecondary)
+                .frame(width: 20, height: 20)
 
-                VStack(alignment: .leading, spacing: 4) {
-                    HStack(spacing: 6) {
-                        Text(conv.title ?? (conv.status == "inProgress" ? "In progress…" : "Untitled"))
-                            .font(MW.mono)
-                            .foregroundStyle(MW.textPrimary)
-                            .lineLimit(1)
-                        if let category = conv.category, !category.isEmpty, category != "other" {
-                            categoryChip(category)
-                        }
-                        Spacer()
-                        meta(conv)
-                        // Affordance hint — tells the user the row is clickable.
-                        Image(systemName: "chevron.right")
-                            .font(.system(size: 10))
-                            .foregroundStyle(MW.textMuted)
-                    }
-                    if let overview = conv.overview, !overview.isEmpty {
-                        Text(overview)
-                            .font(MW.monoSm)
-                            .foregroundStyle(MW.textSecondary)
-                            .lineLimit(2)
-                    }
+            Text(displayTitle(for: conv, isLive: isLive))
+                .font(.system(size: 13, weight: .medium))
+                .foregroundStyle(MW.textPrimary)
+                .lineLimit(1)
+
+            if isLive {
+                HStack(spacing: 4) {
+                    Circle()
+                        .fill(MW.live)
+                        .frame(width: 5, height: 5)
+                        .shadow(color: MW.live.opacity(0.6), radius: 4)
+                    Text("LIVE")
+                        .font(.system(size: 9, weight: .bold))
+                        .tracking(0.6)
+                        .foregroundStyle(MW.live)
                 }
             }
+
+            if let category = conv.category, !category.isEmpty, category != "other" {
+                categoryChip(category)
+            }
+
+            Spacer()
+            meta(conv)
+            Image(systemName: "chevron.right")
+                .font(.system(size: 10))
+                .foregroundStyle(MW.textMuted)
         }
-        .padding(12)
-        .mwCard(radius: MW.rSmall, elevation: .flat)
+        .padding(.horizontal, 14)
+        .padding(.vertical, 11)
         .contentShape(Rectangle())
         .onTapGesture {
             openedDetailId = conv.id
@@ -247,6 +300,16 @@ struct ConversationsView: View {
                 .font(MW.monoSm)
                 .foregroundStyle(MW.textMuted)
         }
+    }
+
+    /// Title priority: calendar event name first (when CalendarReader linked
+    /// the meeting), else LLM summary title (`conv.title`), else placeholder.
+    private func displayTitle(for conv: Conversation, isLive: Bool) -> String {
+        if let cal = conv.calendarEventTitle?.trimmingCharacters(in: .whitespaces),
+           !cal.isEmpty {
+            return cal
+        }
+        return conv.title ?? (isLive ? "In progress…" : "Untitled")
     }
 
     /// Icon shown before StructuredGenerator sets a specific SF Symbol.

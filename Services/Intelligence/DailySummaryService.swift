@@ -162,24 +162,33 @@ final class DailySummaryService: ObservableObject {
             charsPerConv: 600
         )
 
-        async let learnedItems   = learnedAgent(memoriesAdded, conversations: conversations,
-                                                 excerpts: convExcerpts, licenseKey: licenseKey)
-        async let decidedItems   = decidedAgent(conversations, excerpts: convExcerpts,
-                                                 tasksCreated: tasksCreated, licenseKey: licenseKey)
-        async let shippedItems   = shippedAgent(tasksCompleted, conversations: conversations,
-                                                 excerpts: convExcerpts, licenseKey: licenseKey)
-        async let energyLine     = energyAgent(topApps: topApps,
-                                                conversationCount: conversations.count,
-                                                memoryCount: memoriesAdded.count,
-                                                tasksDone: tasksCompleted.count,
-                                                tasksNew: tasksCreated.count,
-                                                goals: goalsForDay,
-                                                licenseKey: licenseKey)
+        async let learnedItems    = learnedAgent(memoriesAdded, conversations: conversations,
+                                                  excerpts: convExcerpts, licenseKey: licenseKey)
+        async let decidedItems    = decidedAgent(conversations, excerpts: convExcerpts,
+                                                  tasksCreated: tasksCreated, licenseKey: licenseKey)
+        async let shippedItems    = shippedAgent(tasksCompleted, conversations: conversations,
+                                                  excerpts: convExcerpts, licenseKey: licenseKey)
+        async let energyLine      = energyAgent(topApps: topApps,
+                                                 conversationCount: conversations.count,
+                                                 memoryCount: memoriesAdded.count,
+                                                 tasksDone: tasksCompleted.count,
+                                                 tasksNew: tasksCreated.count,
+                                                 goals: goalsForDay,
+                                                 licenseKey: licenseKey)
+        // ITER-031 — extra parallel agents for unresolved-questions list and day emoji.
+        async let unresolvedItems = unresolvedAgent(conversations, excerpts: convExcerpts,
+                                                     licenseKey: licenseKey)
+        async let dayEmojiChar    = dayEmojiAgent(conversations: conversations,
+                                                   excerpts: convExcerpts,
+                                                   energyHint: nil,
+                                                   licenseKey: licenseKey)
 
-        let learned = await learnedItems
-        let decided = await decidedItems
-        let shipped = await shippedItems
-        let energy  = await energyLine
+        let learned    = await learnedItems
+        let decided    = await decidedItems
+        let shipped    = await shippedItems
+        let energy     = await energyLine
+        let unresolved = await unresolvedItems
+        let dayEmoji   = await dayEmojiChar
 
         // Final headline synth — small follow-up LLM call that sees all section
         // outputs and writes 1 line theme. Doing this AFTER the agents means
@@ -208,11 +217,13 @@ final class DailySummaryService: ObservableObject {
         summary.decidedJSON = DailySummary.encodeStringArray(decided)
         summary.shippedJSON = DailySummary.encodeStringArray(shipped)
         summary.energy = energy
+        summary.unresolvedQuestionsJSON = unresolved.isEmpty ? nil : DailySummary.encodeStringArray(unresolved)
+        summary.dayEmoji = dayEmoji.isEmpty ? nil : dayEmoji
         ctx.insert(summary)
         try? ctx.save()
 
-        NSLog("[DailySummary] ✅ Generated: %@ · L=%d D=%d S=%d", headline,
-              learned.count, decided.count, shipped.count)
+        NSLog("[DailySummary] ✅ Generated: %@ · L=%d D=%d S=%d Q=%d emoji=%@",
+              headline, learned.count, decided.count, shipped.count, unresolved.count, dayEmoji)
 
         if postNotification {
             postDeliveryNotification(title: headline, overview: energy)
@@ -355,6 +366,55 @@ final class DailySummaryService: ObservableObject {
             userPrompt: parts.joined(separator: "\n"),
             licenseKey: licenseKey,
             key: "energy"
+        )
+    }
+
+    /// ITER-031 — surfaces ≤3 questions raised but not resolved during the day.
+    /// Punchy + language-matched. Empty array when nothing genuinely open.
+    private func unresolvedAgent(_ conversations: [Conversation], excerpts: [UUID: String],
+                                  licenseKey: String) async -> [String] {
+        guard !conversations.isEmpty else { return [] }
+        var parts: [String] = []
+        parts.append("CONVERSATION OVERVIEWS + EXCERPTS (look for unresolved questions / open asks):")
+        for c in conversations.prefix(15) {
+            let title = c.title ?? "(untitled)"
+            let ov = c.overview ?? ""
+            let excerpt = excerpts[c.id] ?? ""
+            parts.append("- \(title)")
+            if !ov.isEmpty { parts.append("    overview: \(ov)") }
+            if !excerpt.isEmpty { parts.append("    excerpt: \(excerpt.prefix(300))") }
+        }
+        return await runAgent(
+            systemPrompt: Self.unresolvedSystemPrompt,
+            userPrompt: parts.joined(separator: "\n"),
+            licenseKey: licenseKey,
+            arrayKey: "unresolved"
+        )
+    }
+
+    /// ITER-031 — picks ONE Unicode emoji that captures the day's theme.
+    /// Empty string on parse failure → caller stores nil (UI falls back to text-only header).
+    private func dayEmojiAgent(conversations: [Conversation], excerpts: [UUID: String],
+                                energyHint: String?, licenseKey: String) async -> String {
+        guard !conversations.isEmpty else { return "" }
+        var parts: [String] = []
+        parts.append("CONVERSATION TITLES + OVERVIEWS:")
+        for c in conversations.prefix(15) {
+            let title = c.title ?? "(untitled)"
+            let ov = c.overview ?? ""
+            parts.append("- \(title)")
+            if !ov.isEmpty { parts.append("    \(ov)") }
+        }
+        if let hint = energyHint, !hint.isEmpty {
+            parts.append("")
+            parts.append("ENERGY: \(hint)")
+        }
+        // Reuse runStringAgent — it returns whichever single string the JSON {"emoji":"..."} parses to.
+        return await runStringAgent(
+            systemPrompt: Self.dayEmojiSystemPrompt,
+            userPrompt: parts.joined(separator: "\n"),
+            licenseKey: licenseKey,
+            key: "emoji"
         )
     }
 
@@ -717,6 +777,56 @@ final class DailySummaryService: ObservableObject {
     - If input is empty or near-empty → "Quiet day".
 
     CRITICAL: respond with ONLY the JSON object. No markdown, no preamble.
+    """
+
+    static let unresolvedSystemPrompt = """
+    You extract UNRESOLVED QUESTIONS from a single user's day — questions the user
+    or someone in their conversations raised but DID NOT resolve. Surface ≤3
+    short, punchy questions that the user might want to revisit tomorrow.
+
+    Return ONLY this JSON:
+    {"unresolved": ["question 1", "question 2", "question 3"]}
+
+    RULES:
+    - Each question ≤15 words. Snappy. End with `?`.
+    - Match the language of the source content (RU input → RU questions, EN → EN).
+    - Only questions that REMAIN OPEN — if the conversation already answered it, skip.
+    - No corporate fluff. No vague generic philosophical asks.
+
+    GOOD examples:
+    ✅ "Когда поднимаем цены на Pro?"
+    ✅ "Should we ship Phase 6 before or after the Apple deadline?"
+    ✅ "What's blocking the Q2 hiring round?"
+
+    BAD examples (will be rejected):
+    ❌ "What is the meaning of life?" (philosophical, not from the data)
+    ❌ "How was your day?" (greeting, not a real open question)
+    ❌ "Discussed pricing" (statement, not a question)
+    ❌ "User decided to ship" (already resolved → not unresolved)
+
+    If there are NO genuinely open questions across the day's conversations →
+    {"unresolved": []}. Empty is BETTER than fabricated.
+
+    CRITICAL: respond with ONLY the JSON. No markdown, no preamble.
+    """
+
+    static let dayEmojiSystemPrompt = """
+    You pick ONE emoji that captures the THEME of the user's day from the
+    conversation titles + overviews + energy hint. NOT a generic productivity
+    emoji.
+
+    Return ONLY this JSON:
+    {"emoji": "🎯"}
+
+    RULES:
+    - Single Unicode emoji. NOT an SF Symbol name. NOT multiple emojis.
+    - Specific to the day, not "✨" / "👍" / "📝" generics.
+    GOOD: 🚀 (shipping day), 🐛 (debugging day), 💸 (finance review), 🎯 (focused goal day),
+          🤝 (lots of collabs), 🔬 (research/exploration), ⚡️ (high-energy short bursts).
+    BAD: 😀 (no semantic), 🆗 (corporate), 📅 (mechanical "calendar day"), 🌟 (clichéd).
+    - If the day genuinely had no theme → "🌙" (quiet day).
+
+    CRITICAL: respond with ONLY the JSON. No markdown, no preamble.
     """
 
     static let headlineSystemPrompt = """

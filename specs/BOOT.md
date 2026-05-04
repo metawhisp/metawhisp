@@ -6,10 +6,11 @@
 
 ## Первые шаги (ВСЕГДА)
 1. **Прочитай `specs/KARPATHY.md`** — 4 принципа, нарушение = баг поведения
-2. Прочитай `specs/WAL.md` — текущее состояние и следующий TODO
-3. Прочитай `specs/common/main.md` — архитектурный контекст
-4. Запусти: `swift build`
-5. Если не компилируется — сообщи ДО начала работы
+2. **Прочитай `specs/TDD.md`** — TDD-протокол парно с Karpathy. Pair-locked: один без другого = баг.
+3. Прочитай `specs/WAL.md` — текущее состояние и следующий TODO
+4. Прочитай `specs/common/main.md` — архитектурный контекст
+5. Запусти: `swift build`
+6. Если не компилируется — сообщи ДО начала работы
 
 ## Критические напоминания из Karpathy
 
@@ -27,7 +28,9 @@
 
 ## Сборка и тесты
 - **Dev build:** `swift build` (быстрая компиляция, нет .app)
+- **Tests:** `swift test` — TDD-loop, см. `specs/TDD.md`. Запускать на КАЖДЫЙ save во время работы над logic-кодом.
 - **Release build + install + launch:** `./build.sh` (полный цикл)
+- **Hot-swap (debug binary in running app, no TCC reset):** `bash hot-swap.sh`
 - **Где живёт app:** `~/Applications/MetaWhisp.app` (НЕ `/Applications`)
 
 ## Протокол коммуникации

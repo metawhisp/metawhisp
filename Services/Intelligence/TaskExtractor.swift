@@ -89,7 +89,22 @@ final class TaskExtractor: ObservableObject {
         }
 
         let existing = fetchExistingTasks(sinceDays: dedupWindowDays)
-        let prompt = buildPrompt(fragments: fragments, existing: existing)
+        // ITER-025 — REFERENCE_TIME requires the conversation start so the LLM
+        // can decide whether to anchor due-date math at started_at (recent) or
+        // at current_time (>7d old, e.g. backfill / regenerate paths).
+        let startedAt = items.first?.createdAt ?? Date()
+        // ITER-026 — Calendar enrichment: when this conversation was linked to
+        // an EKEvent (by `CalendarReaderService.linkConversation`), we surface
+        // the event title + scheduled time + attendee names BEFORE the
+        // transcript so the LLM can name people correctly in extracted tasks
+        // ("Send draft to Sam" instead of "Send draft to him").
+        let calendarContext = fetchCalendarContext(conversationId: conversationId, in: ctx)
+        let prompt = buildPrompt(
+            fragments: fragments,
+            existing: existing,
+            startedAt: startedAt,
+            calendarContext: calendarContext
+        )
 
         // Use the last fragment's source app if available (proxy for what app user was in most).
         let sourceApp = items.last.flatMap { $0.source } ?? "conversation"
@@ -150,6 +165,14 @@ final class TaskExtractor: ObservableObject {
     /// linguistic "USER IS SUBJECT" rule.
     static let systemPrompt = """
     You are an expert action item extractor. Your sole purpose is to identify and extract actionable tasks from a voice-dictation conversation.
+
+    CALENDAR MEETING CONTEXT (when present, READ FIRST):
+
+    A `CALENDAR MEETING CONTEXT:` block may precede the transcript. When it appears it lists the meeting Title, Scheduled time range, and Participants pulled from the user's actual calendar event linked to this conversation. You MUST:
+    - Use participant names verbatim in extracted tasks. NEVER use "Speaker 0" / "Speaker 1" or vague pronouns ("him") when names are available.
+    - Recognise that the conversation involved exactly the listed participants — match transcript voices to those names by content cues. Example: if the meeting is "1-on-1 with Sam" and the user says "I'll send him the draft", extract "Send draft to Sam" — not "Send draft to him".
+    - Treat the meeting Title only as situational context — do NOT extract the title itself as a task. Action items must come from the SPEAKERS' words inside the transcript.
+    - When ambiguous which named participant a delegated action falls on (e.g. user says "we agreed they'll handle it" but multiple names listed), prefer SKIP over guessing.
 
     CONVERSATION-WIDE CONTEXT (READ CAREFULLY):
 
@@ -277,6 +300,10 @@ final class TaskExtractor: ObservableObject {
     - Trivial tasks with no consequences
     - Routine daily activities user already knows about
     - Updates/status reports about ongoing work
+    - Conversations where the action is being completed in real-time between participants
+    - Back-and-forth clarification or decision-making about something happening right now
+    - Requests and responses between people who are together and handling the matter on the spot
+    - If the entire conversation is a brief in-person exchange that will be resolved within minutes, extract 0 items
 
     FORMAT REQUIREMENTS:
     - ≤15 words per description (strict)
@@ -288,11 +315,14 @@ final class TaskExtractor: ObservableObject {
 
     DUE DATE EXTRACTION:
     - All due_at must be FUTURE UTC timestamps with 'Z' suffix. NEVER past.
-    - Date resolution: "today" → today, "tomorrow" → next day, weekday → next occurrence, "next week" → +7 days.
-    - Time resolution: "morning" → 9AM, "afternoon" → 2PM, "evening" → 6PM, "noon" → 12PM, "end of day" → 23:59, no time → 23:59. "urgent"/"ASAP" → +2h.
+    - REFERENCE_TIME: If `started_at` is >7 days before `current_time`, use `current_time` as the anchor (we're reprocessing a stale conversation). Otherwise use `started_at`. Phrases like "tomorrow" / "next Monday" resolve relative to REFERENCE_TIME, NOT to whenever the LLM thinks "now" is.
+    - Date resolution: "today" → REFERENCE_TIME date, "tomorrow" → next day, weekday → next occurrence, "next week" → +7 days.
+    - Time resolution: "morning" → 9AM, "afternoon" → 2PM, "evening" → 6PM, "noon" → 12PM, "end of day" → 23:59, no time → 23:59. "urgent"/"ASAP" → +2h from REFERENCE_TIME.
     - Resolve in user timezone, convert to UTC with 'Z' suffix.
+    - If resolved date ends up in the past relative to `current_time`, omit due_at.
     - If no timing clues present, omit due_at entirely.
 
+    Conversation started_at: {started_at}
     Current time: {current_time}
     User timezone: {tz}
 
@@ -309,15 +339,46 @@ final class TaskExtractor: ObservableObject {
     CRITICAL OUTPUT RULE: Respond with ONLY the JSON object. No translation. No explanation. No preamble. No markdown fences.
     """
 
-    private func buildPrompt(fragments: [String], existing: [TaskItem]) -> String {
+    private func buildPrompt(
+        fragments: [String],
+        existing: [TaskItem],
+        startedAt: Date,
+        calendarContext: CalendarMeetingContext?
+    ) -> String {
         var parts: [String] = []
 
-        let nowISO = ISO8601DateFormatter().string(from: Date())
+        let now = Date()
+        let nowISO = ISO8601DateFormatter().string(from: now)
+        let startedISO = ISO8601DateFormatter().string(from: startedAt)
         let tz = TimeZone.current.identifier
 
-        parts.append("Reference time: \(nowISO)")
+        // REFERENCE_TIME hint — surfaces whether the conversation is recent or
+        // stale so the LLM can apply the >7-day rule from the system prompt.
+        let ageDays = now.timeIntervalSince(startedAt) / 86400
+        let referenceHint = ageDays > 7
+            ? "REFERENCE_TIME = current_time (conversation is \(Int(ageDays))d old, treat as reprocess)"
+            : "REFERENCE_TIME = started_at (recent conversation, anchor due-dates here)"
+
+        parts.append("Conversation started_at: \(startedISO)")
+        parts.append("Current time: \(nowISO)")
         parts.append("Timezone: \(tz)")
+        parts.append(referenceHint)
         parts.append("")
+
+        // ITER-026 — calendar enrichment block. Lets the LLM ground assignees
+        // in real names instead of "Speaker 0" / "him".
+        if let cal = calendarContext {
+            parts.append("CALENDAR MEETING CONTEXT:")
+            parts.append("- Title: \(cal.title)")
+            let df = DateFormatter()
+            df.locale = Locale(identifier: "en_US_POSIX")
+            df.dateFormat = "yyyy-MM-dd HH:mm zzz"
+            parts.append("- Scheduled: \(df.string(from: cal.startDate)) → \(df.string(from: cal.endDate))")
+            if !cal.attendees.isEmpty {
+                parts.append("- Participants: \(cal.attendees.joined(separator: ", "))")
+            }
+            parts.append("")
+        }
 
         if !existing.isEmpty {
             parts.append("EXISTING ACTION ITEMS FROM PAST \(dedupWindowDays) DAYS (do NOT duplicate):")
@@ -339,6 +400,35 @@ final class TaskExtractor: ObservableObject {
         let combined = parts.joined(separator: "\n")
         if combined.count > 20000 { return String(combined.prefix(20000)) }
         return combined
+    }
+
+    /// Linked-event metadata pulled from `Conversation.calendarEvent*` fields.
+    /// Only present when `CalendarReaderService.linkConversation` matched the
+    /// conversation to an EKEvent during ITER-018.
+    struct CalendarMeetingContext {
+        let title: String
+        let startDate: Date
+        let endDate: Date
+        let attendees: [String]
+    }
+
+    private func fetchCalendarContext(conversationId: UUID, in ctx: ModelContext) -> CalendarMeetingContext? {
+        var desc = FetchDescriptor<Conversation>(predicate: #Predicate { $0.id == conversationId })
+        desc.fetchLimit = 1
+        guard let conv = (try? ctx.fetch(desc))?.first else { return nil }
+        guard let title = conv.calendarEventTitle?.trimmingCharacters(in: .whitespaces),
+              !title.isEmpty,
+              let start = conv.calendarEventStartDate,
+              let end = conv.calendarEventEndDate else {
+            return nil
+        }
+        let attendees: [String] = {
+            guard let raw = conv.calendarAttendeesJSON,
+                  let data = raw.data(using: .utf8),
+                  let names = try? JSONDecoder().decode([String].self, from: data) else { return [] }
+            return names.filter { !$0.trimmingCharacters(in: .whitespaces).isEmpty }
+        }()
+        return CalendarMeetingContext(title: title, startDate: start, endDate: end, attendees: attendees)
     }
 
     // MARK: - Fetch helpers

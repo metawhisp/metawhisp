@@ -204,6 +204,15 @@ final class ScreenExtractor: ObservableObject {
                     NSLog("[ScreenExtractor] Generic noise, skipping: %@", trimmedDesc)
                     continue
                 }
+                // ITER-032 — strict title validator (replaces reference's tool-loop
+                // retry). Drops single-verb / too-short / vague-verb titles before
+                // they hit the DB. Reference would feed these back to the LLM and
+                // ask for a retry; we drop in code (single-shot architecture).
+                if let reason = TaskExtractionFilters.validateTaskTitle(trimmedDesc) {
+                    NSLog("[ScreenExtractor] Title rejected (%@): %@",
+                          String(describing: reason), trimmedDesc)
+                    continue
+                }
                 // Fuzzy dedup — 60% word overlap counts as a duplicate.
                 if TaskExtractionFilters.isNearDuplicate(trimmedDesc, against: existingTasks) {
                     NSLog("[ScreenExtractor] Near-duplicate task, skipping: %@", String(trimmedDesc.prefix(60)))

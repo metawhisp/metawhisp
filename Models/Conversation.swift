@@ -113,6 +113,14 @@ final class Conversation {
     /// Snapshotted at link time. Empty array if event was solo or attendees unavailable.
     var calendarAttendeesJSON: String?
 
+    /// Display name of the call context at recording start (e.g. "Google Meet",
+    /// "Zoom"). Nil for dictations and manually-started meetings without
+    /// detected call context. Set 2026-04-29 — used by `ConversationGrouper`
+    /// to RESUME the same conversation when a lid-bounce / wake from sleep
+    /// produces a quick "callEnded then callDetected" sequence for the same
+    /// app, instead of fragmenting one real meeting into 3-5 conversations.
+    var callContext: String?
+
     init(source: String, startedAt: Date = Date()) {
         self.id = UUID()
         self.startedAt = startedAt

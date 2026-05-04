@@ -1,0 +1,131 @@
+<!doctype html>
+<html lang="en" class="theme-dark">
+<head>
+<meta charset="utf-8" />
+<title>MetaWhisp · Shrek Pill mockup</title>
+<link rel="stylesheet" href="../design-handoff/tokens.css" />
+<style>
+  html, body { margin: 0; padding: 0; background: var(--bg-0); color: var(--text-primary); font-family: var(--font-sans); -webkit-font-smoothing: antialiased; }
+  body { background-image: var(--bg-grad); min-height: 100vh; padding: 32px 24px; }
+  h1 { margin: 0 0 4px; font: 700 26px/1.1 var(--font-sans); letter-spacing: -0.4px; }
+  .lede { color: var(--text-secondary); margin: 0 0 24px; font: 400 13px/1.55 var(--font-sans); max-width: 680px; }
+
+  /* State controls */
+  .state-bar {
+    display: inline-flex; gap: 4px; padding: 4px;
+    border-radius: var(--r-pill);
+    background: var(--glass-flat);
+    backdrop-filter: var(--glass-blur);
+    border: 0.5px solid var(--rim-outer);
+    margin-bottom: 28px;
+  }
+  .state-bar button {
+    background: transparent; border: 0; color: var(--text-secondary);
+    cursor: pointer; padding: 8px 14px;
+    border-radius: var(--r-pill);
+    font: 600 11px var(--font-sans); letter-spacing: 0.6px; text-transform: uppercase;
+    transition: all .2s var(--ease-out);
+  }
+  .state-bar button.active { color: var(--text-primary); background: var(--rim-inner); }
+
+  /* Stages — show pill + caption */
+  .row { display: flex; flex-wrap: wrap; gap: 36px; margin-top: 16px; align-items: flex-start; }
+  .panel { display: flex; flex-direction: column; gap: 10px; align-items: center; }
+  .label-block { font: 600 9.5px var(--font-mono); letter-spacing: 1.4px; text-transform: uppercase; color: var(--text-muted); }
+
+  /* Just Shrek. <video> + playbackRate gives real speed control (browser
+     <img> can't change GIF timing). MP4 generated from GIF via ffmpeg. */
+  .shrek-pill {
+    /* Filter drives color: idle grey, recording full, transcribing red, answered bright. */
+    filter: var(--shrek-filter, none);
+    transition: filter 800ms cubic-bezier(.2,.7,.2,1);
+  }
+  .shrek-pill video {
+    display: block;
+    height: 200px;
+    width: auto;
+  }
+
+  /* ── State variants — controlled via <body data-state="..."> ── */
+  body[data-state="idle"]        { --shrek-filter: grayscale(0.85) brightness(0.7); }
+  body[data-state="recording"]   { --shrek-filter: none; }
+  body[data-state="transcribing"]{ --shrek-filter: sepia(1) saturate(8) hue-rotate(-50deg) brightness(0.85); }
+  body[data-state="answered"]    { --shrek-filter: none brightness(1.05); }
+
+  /* notes section */
+  .notes {
+    margin-top: 56px;
+    padding: 18px 22px;
+    border-radius: var(--r-md);
+    background: var(--glass-flat);
+    border: 0.5px solid var(--rim-outer);
+    max-width: 720px;
+  }
+  .notes h4 { margin: 0 0 6px; font: 600 11px var(--font-sans); letter-spacing: 1.2px; text-transform: uppercase; color: var(--text-muted); }
+  .notes ul { margin: 0; padding-left: 18px; font: 400 12.5px/1.65 var(--font-sans); color: var(--text-secondary); }
+  .notes ul li::marker { color: var(--accent); }
+  .notes code { font: 600 11px var(--font-mono); color: var(--accent); padding: 1px 5px; background: rgba(255,255,255,0.05); border-radius: 4px; }
+</style>
+</head>
+<body data-state="idle">
+
+<h1>Shrek pill — animated avatar variant</h1>
+<p class="lede">
+  New pill option. Center is a dancing Shrek (animated GIF / video frames). Color and dance speed bind to recording stage.
+  Click a state below to preview. Drop your dancing-Shrek GIF at <code>mockups/shrek-pill.gif</code> — the avatar slot picks it up automatically.
+</p>
+
+<div class="state-bar">
+  <button id="b-idle"        class="active" onclick="setState('idle')">Idle</button>
+  <button id="b-recording"   onclick="setState('recording')">Recording</button>
+  <button id="b-transcribing" onclick="setState('transcribing')">Transcribing</button>
+  <button id="b-answered"    onclick="setState('answered')">Answered</button>
+</div>
+
+<div class="row">
+  <div class="panel">
+    <div class="shrek-pill">
+      <video id="shrek-vid" src="shrek-pill.mov" autoplay loop muted playsinline></video>
+    </div>
+  </div>
+</div>
+
+<div class="notes">
+  <h4>Stage → animation map (per user spec)</h4>
+  <ul>
+    <li><strong>Recording</strong> — Shrek dances at <code>1.0×</code>, full color.</li>
+    <li><strong>Transcribing</strong> — slows to <code>0.4×</code>, fades to red over 800 ms.</li>
+    <li><strong>Answered / done</strong> — speeds back up to <code>2.0×</code>, color back to normal.</li>
+    <li><strong>Idle</strong> (added) — desaturated, slow gentle wobble, lets user know which app the pill belongs to.</li>
+  </ul>
+  <h4 style="margin-top: 14px;">Implementation notes (Swift port)</h4>
+  <ul>
+    <li>HTML <code>&lt;img&gt;</code> can't change GIF playback speed — speed in this mockup is faked via CSS keyframe wobble. In SwiftUI, swap to <code>AVPlayer</code> on a <code>.mp4</code>/<code>.webm</code> conversion of the GIF — set <code>player.rate = 0.4</code> / <code>1.0</code> / <code>2.0</code> per stage. Smooth, frame-accurate.</li>
+    <li>Color transition: <code>filter</code> here is CSS. Swift port: <code>.colorMultiply(...)</code> or <code>CIFilter.colorMonochrome</code> with animatable <code>red</code> intensity. 800 ms <code>.easeInOut</code> matches the CSS curve.</li>
+    <li>Pill chrome (capsule, specular rim, glass-flat backdrop, shadow) reuses existing <code>MW.bg / rim-inner / shadow-raised</code> tokens — no new design system work needed.</li>
+    <li>Add as 5th option in <code>AppSettings.pillStyle</code>: <code>"capsule" | "dotglow" | "island" | "glow" | "shrek"</code>. Picker lives in Settings → Appearance.</li>
+  </ul>
+</div>
+
+<script>
+  // Real playback-rate control on the video element. Per spec:
+  // recording 1.0× / transcribing 0.1× / answered 2.0× / idle slow 0.4×.
+  const rates = { idle: 0.4, recording: 1.0, transcribing: 0.35, answered: 2.0 };
+
+  function setState(name) {
+    document.body.dataset.state = name;
+    document.querySelectorAll('.state-bar button').forEach(b => b.classList.remove('active'));
+    document.getElementById('b-' + name).classList.add('active');
+    const v = document.getElementById('shrek-vid');
+    if (v) v.playbackRate = rates[name] ?? 1.0;
+  }
+
+  // Initial sync — autoplay starts at 1.0× by default; immediately apply
+  // the current state's rate so opening on a non-recording state feels right.
+  document.getElementById('shrek-vid')?.addEventListener('loadedmetadata', () => {
+    setState(document.body.dataset.state || 'idle');
+  });
+</script>
+
+</body>
+</html>

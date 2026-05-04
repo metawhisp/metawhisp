@@ -366,7 +366,7 @@ struct TasksView: View {
                 .foregroundStyle(MW.textMuted)
             Text("No tasks yet")
                 .font(MW.monoLg).foregroundStyle(MW.textSecondary)
-            Text("Say \"Напомни мне X\" or mention a deadline — MetaWhisp will capture it. Tasks also auto-appear from screen activity (Library → Screen).")
+            Text("Say \"Remind me to X\" or mention a deadline — MetaWhisp will capture it. Tasks also auto-appear from screen activity (Library → Screen).")
                 .font(MW.mono).foregroundStyle(MW.textMuted)
                 .multilineTextAlignment(.center)
                 .frame(maxWidth: 380)

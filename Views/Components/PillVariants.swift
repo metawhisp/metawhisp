@@ -58,119 +58,116 @@ struct BlocksShimmerText: View {
 
 // MARK: - 1. Capsule Pill
 
+/// Default floating recording pill — Liquid Glass spec § 8 Capsule.
+/// Glass pill with specular rim + state-coloured outer glow when active.
+/// Layout: [colored dot] [bars (recording only)] [LABEL].
 struct CapsulePillView: View {
     let stage: PillStage
     let isTranslating: Bool
     let audioLevel: Float
     let bars: [Float]
+
     @State private var appeared = false
-    @State private var pulse = false
-    @State private var borderRotation: Double = 0
-    @State private var processingGlow = false
-
-    private var isProcessing: Bool { stage == .processing || stage == .postProcessing }
-
+    @State private var pulseDot = false
     @State private var displayedStage: PillStage = .idle
 
+    private var isActive: Bool { displayedStage != .idle }
+    /// Per-stage signal color (matches `MW.stateColor` mapping):
+    /// recording=red, processing=blue, postProcessing=accent, idle=green.
+    private var stageColor: Color { MW.stateColor(displayedStage.rawValue) }
+    /// Stage-coloured halo opacity. Idle = 0 (no halo), active = 0.55/0.45.
+    /// Animated as a single Double to avoid the trail artefact of switching
+    /// shadow color to `.clear` mid-transition.
+    private var haloOpacity: Double {
+        guard isActive else { return 0 }
+        return MW.isDark ? 0.55 : 0.45
+    }
+
     var body: some View {
-        HStack(spacing: MW.sp12) {
-            stageIndicator(for: displayedStage)
-            Rectangle().fill(MW.border).frame(width: MW.hairline, height: 16)
-            if displayedStage == .processing || displayedStage == .postProcessing {
-                BlocksShimmerText(text: stageLabel(displayedStage))
-            } else {
-                Text(stageLabel(displayedStage).uppercased())
-                    .font(MW.monoLg).foregroundStyle(MW.textPrimary).tracking(1)
-            }
+        HStack(spacing: 10) {
+            // Pulsing colored dot — pulses on recording, steady otherwise.
+            Circle()
+                .fill(stageColor)
+                .frame(width: 8, height: 8)
+                .shadow(color: stageColor.opacity(0.55), radius: 4)
+                .scaleEffect(displayedStage == .recording && pulseDot ? 1.18 : 1.0)
+                .opacity(displayedStage == .recording && pulseDot ? 0.85 : 1.0)
+
+            // Voice-reactive bars — recording only.
             if displayedStage == .recording {
                 BarVisualizer(bars: bars, height: 14)
             }
+
+            // Stage label — uppercase tracked.
+            Text(stageLabel(displayedStage))
+                .font(.system(size: 10.5, weight: .semibold))
+                .tracking(1)
+                .foregroundStyle(MW.textPrimary)
         }
-        .padding(.horizontal, 20).padding(.vertical, 10)
-        .mwCard(radius: MW.rSmall, elevation: .flat)
-        .overlay(
-            Capsule()
-                .stroke(displayedStage == .recording ? MW.textPrimary.opacity(pulse ? 0.4 : 0.15) : MW.border,
-                        lineWidth: displayedStage == .recording ? 1 : MW.hairline)
-        )
+        .padding(.horizontal, 14).padding(.vertical, 8)
+        .background {
+            Capsule(style: .continuous)
+                .fill(.regularMaterial)
+        }
         .overlay {
-            if displayedStage == .processing || displayedStage == .postProcessing {
-                Capsule()
-                    .stroke(
-                        AngularGradient(
-                            stops: [
-                                .init(color: .clear, location: 0),
-                                .init(color: .clear, location: 0.35),
-                                .init(color: MW.textPrimary.opacity(0.6), location: 0.65),
-                                .init(color: MW.textPrimary.opacity(0.2), location: 1.0),
-                            ],
-                            center: .center,
-                            angle: .degrees(borderRotation)
-                        ),
-                        lineWidth: 1.5
-                    )
-            }
+            // Specular rim — top-down white gradient for the glass look.
+            Capsule(style: .continuous)
+                .strokeBorder(
+                    LinearGradient(
+                        colors: [
+                            Color.white.opacity(MW.isDark ? 0.22 : 0.85),
+                            Color.white.opacity(MW.isDark ? 0.04 : 0.25),
+                            Color.white.opacity(0)
+                        ],
+                        startPoint: .top, endPoint: .center
+                    ),
+                    lineWidth: 1
+                )
+                .blendMode(.overlay)
         }
-        .clipShape(Capsule())
-        .shadow(color: isProcessing ? MW.textPrimary.opacity(processingGlow ? 0.15 : 0.03) : .clear,
-                radius: isProcessing ? (processingGlow ? 12 : 4) : 0)
+        .overlay(Capsule(style: .continuous).strokeBorder(MW.border, lineWidth: 0.5))
+        .clipShape(Capsule(style: .continuous))
+        // Two-shadow stack: black raised + state-coloured halo. Halo radius
+        // is FIXED at 28; the visibility is animated via opacity only (NOT
+        // by switching color to .clear or animating radius). That kept the
+        // halo "trailing" during stage→idle transitions because color/radius
+        // animated separately and could read as a half-faded ghost.
+        .shadow(color: .black.opacity(MW.isDark ? 0.45 : 0.18), radius: 24, x: 0, y: 8)
+        .shadow(color: stageColor.opacity(haloOpacity), radius: 28)
         .scaleEffect(appeared ? 1 : 0.85)
         .animation(.spring(response: 0.5, dampingFraction: 0.82), value: displayedStage)
+        .animation(.easeOut(duration: 0.25), value: haloOpacity)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .onAppear {
             displayedStage = stage
             withAnimation(.spring(response: 0.4, dampingFraction: 0.75)) { appeared = true }
-            startStageAnimations(stage)
+            startDotPulse(stage)
         }
         .onChange(of: stage) { _, newStage in
             withAnimation(.spring(response: 0.5, dampingFraction: 0.82)) {
                 displayedStage = newStage
             }
-            startStageAnimations(newStage)
-        }
-    }
-
-    @ViewBuilder
-    private func stageIndicator(for s: PillStage) -> some View {
-        switch s {
-        case .recording:
-            Circle().fill(MW.live).frame(width: 6, height: 6)
-                .shadow(color: .red.opacity(0.6), radius: 4)
-        case .processing:
-            Image(systemName: "brain").font(.system(size: 12, weight: .light)).foregroundStyle(MW.textSecondary)
-        case .postProcessing:
-            Image(systemName: "globe").font(.system(size: 12, weight: .light)).foregroundStyle(MW.textSecondary)
-        case .idle:
-            Image(systemName: "checkmark").font(.system(size: 11, weight: .light)).foregroundStyle(MW.textSecondary)
+            startDotPulse(newStage)
         }
     }
 
     private func stageLabel(_ s: PillStage) -> String {
         switch s {
-        case .idle: "Done"
-        case .recording: "Recording"
-        case .processing: "Transcribing"
-        case .postProcessing: isTranslating ? "Translating" : "Processing"
+        case .idle: "READY"
+        case .recording: "RECORDING"
+        case .processing: "TRANSCRIBING"
+        case .postProcessing: isTranslating ? "TRANSLATING" : "PROCESSING"
         }
     }
 
-    private func startStageAnimations(_ s: PillStage) {
+    private func startDotPulse(_ s: PillStage) {
         if s == .recording {
-            pulse = false
-            withAnimation(.easeInOut(duration: 1.0).repeatForever(autoreverses: true)) { pulse = true }
-        }
-        if s == .processing || s == .postProcessing {
-            borderRotation = 0
-            processingGlow = false
-            withAnimation(.linear(duration: 2.0).repeatForever(autoreverses: false)) {
-                borderRotation = 360
-            }
-            withAnimation(.easeInOut(duration: 1.2).repeatForever(autoreverses: true)) {
-                processingGlow = true
-            }
+            pulseDot = false
+            withAnimation(.easeInOut(duration: 1.2).repeatForever(autoreverses: true)) { pulseDot = true }
+        } else {
+            pulseDot = false
         }
     }
-
 }
 
 // MARK: - Island Contour Builder
@@ -515,8 +512,12 @@ private struct ContourVoicePulseCanvas: View {
     }
 }
 
-// MARK: - 2. Island Aura Pill (Concept A — replaces Dot Glow)
-// Notch stays original size. Red aura glow for recording, snake for processing/translating.
+// MARK: - 2. Island Aura Pill — Liquid Glass spec § 8 Island Aura
+//
+// Notch UNCHANGED. Halo blooms in the bezel AROUND it. Status badge sits
+// BELOW the notch (never inside Apple's reserved sensor zone). Spec asks
+// for 2-3 blur layers (was 5) — voice drives SCALE not opacity, so even a
+// quiet pill remains readable. Stage colour comes from `MW.stateColor`.
 
 struct IslandAuraPillView: View {
     let stage: PillStage
@@ -525,146 +526,113 @@ struct IslandAuraPillView: View {
     let bars: [Float]
 
     @State private var appeared = false
-    @State private var auraPulse: CGFloat = 0
+    @State private var pulseDot = false
     @ObservedObject private var notch = NotchDetector.shared
 
-    private let trueBlack = Color(red: 0, green: 0, blue: 0)
-    private var notchW: CGFloat { notch.notchWidth }
-    private var notchH: CGFloat { notch.notchHeight }
-    private var notchR: CGFloat { notch.notchRadius }
+    private var notchW: CGFloat { notch.notchWidth > 0 ? notch.notchWidth : 200 }
+    private var notchH: CGFloat { notch.notchHeight > 0 ? notch.notchHeight : 32 }
+    private var isActive: Bool { stage != .idle }
+    private var stageColor: Color { MW.stateColor(stage.rawValue) }
 
-    // Amplify audio level: raw value 0..1 is often low, boost it so aura reacts visibly
-    private var voiceLevel: CGFloat {
-        let raw = CGFloat(audioLevel)
-        // Apply power curve: sqrt makes quiet sounds more visible, *1.5 boosts range
-        return min(1.0, sqrt(raw) * 1.5)
-    }
-
-    private var stageColor: Color {
-        switch stage {
-        case .recording: Color(red: 1.0, green: 0.14, blue: 0.06)
-        case .processing: isTranslating ? Color(red: 0.14, green: 0.82, blue: 0.39) : Color(red: 0.27, green: 0.53, blue: 1.0)
-        case .postProcessing: Color(red: 0.14, green: 0.82, blue: 0.39)
-        case .idle: .clear
-        }
-    }
-
-    private var notchShape: UnevenRoundedRectangle {
-        UnevenRoundedRectangle(cornerRadii: .init(
-            topLeading: 0, bottomLeading: notchR,
-            bottomTrailing: notchR, topTrailing: 0
-        ))
-    }
+    /// 0..1 voice level with a sqrt power curve so quiet input still reads.
+    private var voiceLevel: CGFloat { min(1.0, sqrt(CGFloat(audioLevel)) * 1.5) }
+    /// Voice-driven scale (1 → 1.18) per spec — replaces the prior opacity wobble.
+    private var auraScale: CGFloat { 1 + voiceLevel * 0.18 }
+    private var auraOpacity: Double { isActive ? 0.85 + Double(voiceLevel) * 0.15 : 0 }
 
     var body: some View {
         VStack(spacing: 0) {
             ZStack(alignment: .top) {
-                // Layer 1: Aura glow (recording — intense blurred glow around notch)
-                if stage == .recording && appeared {
-                    // Voice is the primary driver: 0.3 base + 0.7 from voice
-                    let vl = voiceLevel
-                    let pulse = auraPulse * 0.1  // subtle background pulse
-                    let intensity = 0.3 + vl * 0.7 + pulse
-
-                    // Hot core — always visible, brighter with voice
-                    notchShape
-                        .fill(stageColor.opacity(0.5 + vl * 0.5))
-                        .frame(width: notchW + 40, height: notchH + 20)
-                        .blur(radius: 60)
-                    // Inner glow — scales with voice
-                    notchShape
-                        .fill(stageColor.opacity(intensity * 0.9))
-                        .frame(width: notchW + 20, height: notchH + 10)
-                        .blur(radius: 120)
-                    // Tight spread — appears with voice
-                    notchShape
-                        .fill(stageColor.opacity(intensity * 0.8))
-                        .frame(width: notchW, height: notchH)
-                        .blur(radius: 200)
-                    // Medium spread — voice-driven expansion
-                    notchShape
-                        .fill(stageColor.opacity(intensity * 0.6))
-                        .frame(width: notchW, height: notchH)
-                        .blur(radius: 320)
-                    // Wide ambient — only visible when speaking loudly
-                    notchShape
-                        .fill(stageColor.opacity(max(0, vl - 0.3) * 0.7))
-                        .frame(width: notchW, height: notchH)
-                        .blur(radius: 480)
-                }
-
-                // Layer 2: Aura glow for processing/translating (blue/green)
-                if (stage == .processing || stage == .postProcessing) && appeared {
-                    let procColor = isTranslating ? Color(red: 0.14, green: 0.82, blue: 0.39) : Color(red: 0.27, green: 0.53, blue: 1.0)
-                    // Core
-                    notchShape
-                        .fill(procColor.opacity(0.9))
-                        .frame(width: notchW, height: notchH)
-                        .blur(radius: 40)
-                    // Medium spread
-                    notchShape
-                        .fill(procColor.opacity(0.6))
-                        .frame(width: notchW, height: notchH)
-                        .blur(radius: 90)
-                    // Wide ambient
-                    notchShape
-                        .fill(procColor.opacity(0.35))
-                        .frame(width: notchW, height: notchH)
-                        .blur(radius: 150)
-
-                    // Snake animation on top of glow
-                    ContourSnakeCanvas(
-                        color: procColor,
-                        bounceSpeed: 5.0,
-                        isInner: false,
-                        notchW: notchW,
-                        notchH: notchH,
-                        notchR: notchR
-                    )
-                    .allowsHitTesting(false)
-                }
-
-                // Layer 3: Subtle edge glow line (recording)
-                if stage == .recording && appeared {
-                    notchShape
-                        .stroke(
-                            LinearGradient(
-                                colors: [.clear, stageColor.opacity(0.05),
-                                         stageColor.opacity(0.3 + voiceLevel * 0.4),
-                                         stageColor.opacity(0.05), .clear],
-                                startPoint: .top, endPoint: .bottom
-                            ),
-                            lineWidth: 1
+                // Layer 1 — outer soft bloom (large + heavy blur)
+                if isActive && appeared {
+                    Ellipse()
+                        .fill(
+                            RadialGradient(
+                                colors: [stageColor.opacity(0.7), .clear],
+                                center: .center,
+                                startRadius: 0, endRadius: 180
+                            )
                         )
-                        .frame(width: notchW, height: notchH)
+                        .frame(width: 360, height: 140)
+                        .blur(radius: 28)
+                        .opacity(auraOpacity * 0.6)
+                        .scaleEffect(auraScale * 1.4)
+                        .offset(y: -50)
+                }
+                // Layer 2 — inner crisper bloom (smaller + lighter blur, hugs the notch)
+                if isActive && appeared {
+                    Ellipse()
+                        .fill(
+                            RadialGradient(
+                                colors: [stageColor.opacity(0.85), .clear],
+                                center: .center,
+                                startRadius: 0, endRadius: 125
+                            )
+                        )
+                        .frame(width: 250, height: 80)
+                        .blur(radius: 12)
+                        .opacity(auraOpacity * 0.9)
+                        .scaleEffect(auraScale)
+                        .offset(y: -20)
                 }
 
-                // Camera dot (not drawn — real camera is behind the notch)
-                // No true-black shape — the real notch IS black already
+                // Status badge — BELOW the notch, never inside it.
+                if isActive && appeared {
+                    HStack(spacing: 6) {
+                        Circle()
+                            .fill(stageColor)
+                            .frame(width: 5, height: 5)
+                            .shadow(color: stageColor.opacity(0.55), radius: 5)
+                            .scaleEffect(stage == .recording && pulseDot ? 1.2 : 1.0)
+                        Text(stageLabel(stage))
+                            .font(.system(size: 8.5, weight: .semibold))
+                            .tracking(0.8)
+                            .foregroundStyle(MW.textPrimary.opacity(0.85))
+                    }
+                    .padding(.horizontal, 10).padding(.vertical, 4)
+                    .background(Capsule().fill(.ultraThinMaterial))
+                    .overlay(Capsule().strokeBorder(MW.border, lineWidth: 0.5))
+                    .offset(y: notchH + 6)
+                }
             }
+            .frame(width: notchW, height: notchH)
+
             Spacer()
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .animation(.easeOut(duration: 0.12), value: audioLevel)
         .onAppear {
             withAnimation(.easeIn(duration: 0.3)) { appeared = true }
-            startAnimations(stage)
+            startDotPulse(stage)
         }
         .onChange(of: stage) { _, newStage in
-            startAnimations(newStage)
+            startDotPulse(newStage)
         }
     }
 
-    private func startAnimations(_ s: PillStage) {
-        auraPulse = 0
+    private func stageLabel(_ s: PillStage) -> String {
+        switch s {
+        case .idle: "READY"
+        case .recording: "RECORDING"
+        case .processing: "TRANSCRIBING"
+        case .postProcessing: isTranslating ? "TRANSLATING" : "PROCESSING"
+        }
+    }
+
+    private func startDotPulse(_ s: PillStage) {
+        pulseDot = false
         if s == .recording {
-            withAnimation(.easeInOut(duration: 1.5).repeatForever(autoreverses: true)) { auraPulse = 1 }
+            withAnimation(.easeInOut(duration: 1.2).repeatForever(autoreverses: true)) { pulseDot = true }
         }
     }
 }
 
-// MARK: - 3. Island Expand Pill (Concept B)
-// Notch expands. Voice pulse for recording, snake inside for processing/translating.
+// MARK: - 3. Island Expand Pill — Liquid Glass spec § 8 Island Expand
+//
+// The notch ITSELF grows wider/taller AND hosts the content inside it.
+// Spec ask: «вся анимация внутри челки» — the dot, voice bars, and label
+// render directly on the expanded black notch surface, no separate pill
+// below. Aura blooms around the expanded shape and tracks its spring anim.
 
 struct IslandPillView: View {
     let stage: PillStage
@@ -673,259 +641,296 @@ struct IslandPillView: View {
     let bars: [Float]
 
     @State private var appeared = false
-    @State private var contentVisible = false
-    @State private var pulseGlow: CGFloat = 0
+    @State private var pulseDot = false
     @ObservedObject private var notch = NotchDetector.shared
 
     private var isActive: Bool { stage != .idle }
     private let trueBlack = Color(red: 0, green: 0, blue: 0)
 
-    private let seedW: CGFloat = 120
-    private let seedH: CGFloat = 8
     private var notchW: CGFloat { notch.notchWidth > 0 ? notch.notchWidth : 200 }
     private var notchH: CGFloat { notch.notchHeight > 0 ? notch.notchHeight : 32 }
-    private var expandedW: CGFloat { max(notchW * 1.7, 340) }
-    private let expandedH: CGFloat = 70
-    private let expandedR: CGFloat = 20
+    /// Expanded geometry — wide enough for dot + 24-bar visualizer + label,
+    /// tall enough for the content (≈28pt) plus comfortable padding.
+    private var expandedW: CGFloat { max(notchW + 160, 340) }
+    private var expandedH: CGFloat { max(notchH + 22, 52) }
+    /// Match expanded radius to `--r-lg` (MW.rLarge) per spec ask.
+    private var expandedR: CGFloat { MW.rLarge / 2 }
 
-    private var voiceLevel: CGFloat { min(1.0, CGFloat(audioLevel)) }
+    /// Live geometry — at idle stays at the OS notch, otherwise expands.
+    private var currentW: CGFloat { isActive ? expandedW : notchW }
+    private var currentH: CGFloat { isActive ? expandedH : notchH }
+    private var currentR: CGFloat { isActive ? expandedR : (notch.notchRadius > 0 ? notch.notchRadius : 12) }
 
-    private var currentW: CGFloat {
-        if !appeared { return seedW }
-        return isActive ? expandedW : notchW
-    }
-    private var currentH: CGFloat {
-        if !appeared { return seedH }
-        return isActive ? expandedH : notchH
-    }
-    private var currentRadius: CGFloat {
-        if !appeared { return 4 }
-        return isActive ? expandedR : 12
-    }
+    private var stageColor: Color { MW.stateColor(stage.rawValue) }
+    private var voiceLevel: CGFloat { min(1.0, sqrt(CGFloat(audioLevel)) * 1.5) }
+    private var auraScale: CGFloat { 1 + voiceLevel * 0.12 }
 
-    private var stageColor: Color {
-        switch stage {
-        case .recording: Color(red: 1.0, green: 0.12, blue: 0.08)
-        case .processing: isTranslating ? Color(red: 0.1, green: 0.85, blue: 0.4) : Color(red: 0.3, green: 0.55, blue: 1.0)
-        case .postProcessing: Color(red: 0.1, green: 0.85, blue: 0.4)
-        case .idle: .clear
-        }
-    }
-
-    private var edgeIntensity: CGFloat {
-        switch stage {
-        case .recording: 0.3 + voiceLevel * 0.5
-        case .processing: 0.2 + pulseGlow * 0.3
-        case .postProcessing: 0.25 + pulseGlow * 0.25
-        case .idle: 0
-        }
-    }
+    /// Aura geometry derived from notch. Width capped to fit inside the 520pt
+    /// host window (520 - 40pt safety = 480 max outer aura width).
+    private var auraW: CGFloat { min(currentW + 80, 440) }
+    private var auraH: CGFloat { currentH * 3 + 30 }
 
     var body: some View {
-        VStack(spacing: 0) {
-            ZStack(alignment: .top) {
-                // Island shape — true black
-                UnevenRoundedRectangle(cornerRadii: .init(
-                    topLeading: 0, bottomLeading: currentRadius,
-                    bottomTrailing: currentRadius, topTrailing: 0
-                ))
-                .fill(trueBlack)
-                .frame(width: currentW, height: currentH)
-
-                // Edge glow line
-                if isActive && contentVisible {
-                    UnevenRoundedRectangle(cornerRadii: .init(
-                        topLeading: 0, bottomLeading: currentRadius,
-                        bottomTrailing: currentRadius, topTrailing: 0
-                    ))
-                    .stroke(
-                        LinearGradient(
-                            colors: [.clear, stageColor.opacity(0.05), stageColor.opacity(edgeIntensity),
-                                     stageColor.opacity(0.05), .clear],
-                            startPoint: .top, endPoint: .bottom
-                        ),
-                        lineWidth: 1.5
+        // Critical: ZStack frame is pinned to the NOTCH size (not the aura's
+        // natural size). Aura ellipses .offset render OUTSIDE this frame but
+        // don't enlarge it — so the ZStack stays anchored at the very top of
+        // the host window. Without this pin, when the aura appears the ZStack
+        // grows to fit it and the whole layout slides downward (the symptom
+        // user reported as "челка появляется снизу и едет наверх").
+        ZStack(alignment: .top) {
+            // Aura around the expanded notch. Two layers: outer soft bloom +
+            // inner crisper halo. Modifier order matters — we `.scaleEffect`
+            // BEFORE `.blur` so the blur kernel is applied to the final pixel
+            // size (otherwise the soft edge gets stretched/compressed and
+            // creates a visible hard ring at the falloff). Three-stop gradient
+            // gives a smooth fade-to-clear instead of a hard edge.
+            if isActive && appeared {
+                // Outer soft bloom — centered on the notch's vertical center.
+                // Frame height for outer is `auraH + 50`. ZStack alignment .top
+                // places this frame's TOP at y=0, so the natural center is
+                // at frame_h/2. To re-center on the notch midpoint we offset
+                // by `currentH/2 - frame_h/2` (negative — moves the aura UP).
+                Ellipse()
+                    .fill(
+                        RadialGradient(
+                            stops: [
+                                .init(color: stageColor.opacity(0.7), location: 0),
+                                .init(color: stageColor.opacity(0.18), location: 0.55),
+                                .init(color: .clear, location: 1)
+                            ],
+                            center: .center, startRadius: 0, endRadius: auraW / 1.6
+                        )
                     )
-                    .frame(width: currentW, height: currentH)
-                    .shadow(color: stageColor.opacity(edgeIntensity * 0.5), radius: 8, y: 2)
-                }
-
-                // Camera indicator dot
-                Circle().fill(Color(white: 0.10)).frame(width: 7, height: 7)
-                    .padding(.top, 10)
-                    .opacity(appeared ? 1 : 0)
-
-                // Content: contour-based visualizations
-                if isActive && contentVisible {
-                    islandVisualization
-                        .frame(width: currentW, height: currentH)
-                        .transition(.opacity)
-                }
+                    .frame(width: auraW + 80, height: auraH + 50)
+                    .opacity(0.55)
+                    .scaleEffect(auraScale * 1.12)
+                    .blur(radius: 32)
+                    .offset(y: currentH / 2 - (auraH + 50) / 2)
+                // Inner crisper bloom — same centering trick with its own frame.
+                Ellipse()
+                    .fill(
+                        RadialGradient(
+                            stops: [
+                                .init(color: stageColor.opacity(0.85), location: 0),
+                                .init(color: stageColor.opacity(0.25), location: 0.5),
+                                .init(color: .clear, location: 1)
+                            ],
+                            center: .center, startRadius: 0, endRadius: auraW / 2
+                        )
+                    )
+                    .frame(width: auraW + 30, height: auraH + 20)
+                    .opacity(0.85)
+                    .scaleEffect(auraScale)
+                    .blur(radius: 16)
+                    .offset(y: currentH / 2 - (auraH + 20) / 2)
             }
-            .animation(.spring(response: 0.35, dampingFraction: 0.8), value: appeared)
-            .animation(.spring(response: 0.3, dampingFraction: 0.8), value: isActive)
-            .animation(.spring(response: 0.3, dampingFraction: 0.8), value: stage)
 
-            Spacer()
+            // The expanded notch — black shape grows wider AND taller via spring,
+            // hosts content as an overlay. ZStack alignment .top + ZStack's explicit
+            // notch-sized frame keep this rectangle pinned to the very top edge.
+            UnevenRoundedRectangle(cornerRadii: .init(
+                topLeading: 0, bottomLeading: currentR,
+                bottomTrailing: currentR, topTrailing: 0
+            ))
+            .fill(trueBlack)
+            .frame(width: currentW, height: currentH)
+            .shadow(color: isActive ? stageColor.opacity(0.5) : .clear, radius: isActive ? 16 : 0, y: 4)
+            .overlay(alignment: .bottom) {
+                    // Content lives INSIDE the black notch, anchored to the bottom
+                    // edge — the top zone of the notch is occluded by the display
+                    // bezel/camera hardware, so content reads cleanly only in the
+                    // expanded region (below the OS notch baseline).
+                    if isActive && appeared {
+                        HStack(spacing: 10) {
+                            Circle()
+                                .fill(stageColor)
+                                .frame(width: 7, height: 7)
+                                .shadow(color: stageColor.opacity(0.7), radius: 5)
+                                .scaleEffect(stage == .recording && pulseDot ? 1.25 : 1.0)
+                            if stage == .recording {
+                                BarVisualizer(bars: bars, height: 14)
+                                Text(stageLabel(stage))
+                                    .font(.system(size: 9.5, weight: .semibold))
+                                    .tracking(1)
+                                    .foregroundStyle(.white.opacity(0.9))
+                            } else {
+                                // Spinner for processing / translating — inside the notch.
+                                Circle()
+                                    .trim(from: 0, to: 0.7)
+                                    .stroke(stageColor, style: StrokeStyle(lineWidth: 1.5, lineCap: .round))
+                                    .frame(width: 12, height: 12)
+                                    .rotationEffect(.degrees(pulseDot ? 360 : 0))
+                                    .animation(.linear(duration: 0.9).repeatForever(autoreverses: false), value: pulseDot)
+                                Text(stageLabel(stage))
+                                    .font(.system(size: 9.5, weight: .semibold))
+                                    .tracking(1)
+                                    .foregroundStyle(.white.opacity(0.92))
+                            }
+                        }
+                        .padding(.horizontal, 14)
+                        .padding(.bottom, 7)
+                        // Just opacity — combining .scale on top of the parent's
+                        // size spring caused visible jitter on appear.
+                        .transition(.opacity.animation(.easeOut(duration: 0.22)))
+                    }
+                }
+            .animation(.spring(response: 0.7, dampingFraction: 0.88), value: isActive)
         }
+        // Pin to the OS notch slot at the very top edge — frame matches the
+        // notch's expanded size so the ZStack doesn't drift when aura is added.
+        .frame(width: currentW, height: currentH, alignment: .top)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .onAppear {
-            withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) { appeared = true }
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                withAnimation(.easeIn(duration: 0.15)) { contentVisible = true }
-            }
-            startAnimations(stage)
+            withAnimation(.spring(response: 0.4, dampingFraction: 0.78)) { appeared = true }
+            startDotPulse(stage)
         }
         .onChange(of: stage) { _, newStage in
-            if newStage == .idle {
-                contentVisible = false
-            } else if !contentVisible {
-                withAnimation(.easeIn(duration: 0.1)) { contentVisible = true }
-            }
-            startAnimations(newStage)
+            startDotPulse(newStage)
         }
     }
 
-    @ViewBuilder
-    private var islandVisualization: some View {
-        switch stage {
-        case .recording:
-            // Voice pulse expanding from center along inner contour
-            ContourVoicePulseCanvas(
-                audioLevel: audioLevel,
-                notchW: expandedW,
-                notchH: expandedH,
-                notchR: expandedR
-            )
-            .allowsHitTesting(false)
-        case .processing, .postProcessing:
-            // Dual snakes moving in opposite directions along contour
-            let snakeColor = isTranslating ? Color(red: 0.1, green: 0.85, blue: 0.4) : Color(red: 0.3, green: 0.55, blue: 1.0)
-            ContourDualSnakeCanvas(
-                color: snakeColor,
-                bounceSpeed: 3.0,
-                notchW: expandedW,
-                notchH: expandedH,
-                notchR: expandedR
-            )
-            .allowsHitTesting(false)
-        case .idle:
-            EmptyView()
-        }
-    }
-
-    private func startAnimations(_ s: PillStage) {
-        pulseGlow = 0
+    private func stageLabel(_ s: PillStage) -> String {
         switch s {
-        case .recording:
-            withAnimation(.easeInOut(duration: 1.0).repeatForever(autoreverses: true)) { pulseGlow = 1 }
-        case .processing, .postProcessing:
-            withAnimation(.easeInOut(duration: 1.2).repeatForever(autoreverses: true)) { pulseGlow = 1 }
-        case .idle:
-            break
+        case .idle: "READY"
+        case .recording: "RECORDING"
+        case .processing: "TRANSCRIBING"
+        case .postProcessing: isTranslating ? "TRANSLATING" : "PROCESSING"
+        }
+    }
+
+    private func startDotPulse(_ s: PillStage) {
+        pulseDot = false
+        if s != .idle {
+            withAnimation(.easeInOut(duration: 1.2).repeatForever(autoreverses: true)) { pulseDot = true }
         }
     }
 }
 
-// MARK: - 4. Top Edge Glow Pill
+// MARK: - 4. Top Edge Glow Pill — Liquid Glass spec § 8 Edge Glow
+//
+// Glow runs along the FULL TOP EDGE of the screen. Voice-reactive on EVERY
+// active stage (not just recording) — thickness, brightness, falloff, and
+// hot-spot bloom all pulse with input level. Shimmer sweep travels across
+// the strip continuously when active. Notch stays normal.
 
 struct GlowStripPillView: View {
     let stage: PillStage
     let audioLevel: Float
 
-    @State private var pulse: CGFloat = 0
-    @State private var shimmerX: CGFloat = -0.2
     @State private var visible: CGFloat = 0
+    @State private var sweepX: CGFloat = -0.3
 
-    private var color: Color {
-        switch stage {
-        case .recording: Color(red: 1.0, green: 0.15, blue: 0.1)
-        case .processing: Color(red: 0.3, green: 0.55, blue: 1.0)
-        case .postProcessing: Color(red: 0.1, green: 0.9, blue: 0.4)
-        case .idle: .clear
-        }
-    }
+    private var color: Color { MW.stateColor(stage.rawValue) }
+    private var glow: Color { color.opacity(0.7) }
+    private var isActive: Bool { stage != .idle }
 
-    private var voiceLevel: CGFloat { min(1.0, CGFloat(audioLevel)) }
-
-    private var intensity: CGFloat {
-        switch stage {
-        case .recording:    0.5 + voiceLevel * 0.5
-        case .processing:   0.3 + pulse * 0.4
-        case .postProcessing: 0.35 + pulse * 0.35
-        case .idle:         0
-        }
-    }
-
-    private var glowDepth: CGFloat {
-        switch stage {
-        case .recording:    25 + voiceLevel * 55
-        case .processing:   40 + pulse * 25
-        case .postProcessing: 35 + pulse * 20
-        case .idle:         0
-        }
-    }
+    /// Voice 0..1 with sqrt curve so quiet input still moves things.
+    private var voiceLevel: CGFloat { min(1.0, sqrt(CGFloat(audioLevel)) * 1.5) }
+    /// Strip thickness — 4 at silence, 9 at peak voice.
+    private var stripH: CGFloat { 4 + voiceLevel * 5 }
+    /// Falloff gradient depth — 90 at silence, 140 at peak.
+    private var falloffH: CGFloat { 90 + voiceLevel * 50 }
+    private var falloffOpacity: Double { 0.7 + Double(voiceLevel) * 0.3 }
+    private var stripOpacity: Double { 0.95 + Double(voiceLevel) * 0.05 }
+    /// Hot-spot width — bloom blob at left+right that grows with voice.
+    private var hotspotW: CGFloat { 80 + voiceLevel * 120 }
+    private var hotspotOpacity: Double { 0.6 + Double(voiceLevel) * 0.4 }
 
     var body: some View {
-        VStack(spacing: 0) {
-            Rectangle()
-                .fill(color.opacity(min(1, intensity * 2.0)))
-                .frame(height: 2.5)
+        ZStack(alignment: .top) {
+            if isActive && visible > 0 {
+                // Main strip — solid bright line at the top, with multi-layer glow shadow.
+                Rectangle()
+                    .fill(color)
+                    .frame(height: stripH)
+                    .opacity(stripOpacity)
+                    .shadow(color: glow, radius: 18)
+                    .shadow(color: glow, radius: 36)
+                    .shadow(color: glow, radius: 56)
+                    .shadow(color: glow, radius: 80)
 
-            ZStack {
-                LinearGradient(
-                    colors: [color.opacity(intensity * 0.8), color.opacity(intensity * 0.25), .clear],
-                    startPoint: .top, endPoint: .bottom
-                )
+                // Falloff into the screen — voice-reactive.
+                LinearGradient(colors: [glow, .clear], startPoint: .top, endPoint: .bottom)
+                    .frame(height: falloffH)
+                    .opacity(falloffOpacity)
+                    .allowsHitTesting(false)
 
-                if stage == .processing {
-                    LinearGradient(
-                        stops: [
-                            .init(color: .clear, location: max(0, shimmerX - 0.12)),
-                            .init(color: color.opacity(intensity * 0.6), location: shimmerX),
-                            .init(color: .clear, location: min(1, shimmerX + 0.12)),
-                        ],
-                        startPoint: .leading, endPoint: .trailing
-                    )
-                    .mask(
-                        LinearGradient(colors: [.white, .clear],
-                                      startPoint: .top, endPoint: .bottom)
-                    )
+                // Secondary inner falloff — richer color, screen blend mode.
+                LinearGradient(colors: [color, .clear], startPoint: .top, endPoint: .bottom)
+                    .frame(height: falloffH * 0.4)
+                    .opacity(0.35 + Double(voiceLevel) * 0.25)
+                    .blendMode(.screen)
+                    .allowsHitTesting(false)
+
+                // Voice-driven hotspots — left and right.
+                GeometryReader { geo in
+                    ZStack(alignment: .top) {
+                        Capsule()
+                            .fill(
+                                RadialGradient(
+                                    colors: [color, .clear],
+                                    center: .center, startRadius: 0, endRadius: hotspotW / 1.5
+                                )
+                            )
+                            .frame(width: hotspotW, height: stripH * 1.8)
+                            .opacity(hotspotOpacity)
+                            .blur(radius: 2)
+                            .position(x: geo.size.width * 0.15, y: stripH / 2)
+                        Capsule()
+                            .fill(
+                                RadialGradient(
+                                    colors: [color, .clear],
+                                    center: .center, startRadius: 0, endRadius: hotspotW / 1.5
+                                )
+                            )
+                            .frame(width: hotspotW, height: stripH * 1.8)
+                            .opacity(hotspotOpacity)
+                            .blur(radius: 2)
+                            .position(x: geo.size.width * 0.85, y: stripH / 2)
+
+                        // Cinematic shimmer sweep — linear-gradient highlight that
+                        // travels from -0.3 to 1.3 across full width, ALWAYS on.
+                        LinearGradient(
+                            stops: [
+                                .init(color: .clear, location: max(0, sweepX - 0.15)),
+                                .init(color: Color.white.opacity(0.95), location: sweepX),
+                                .init(color: .clear, location: min(1, sweepX + 0.15)),
+                            ],
+                            startPoint: .leading, endPoint: .trailing
+                        )
+                        .frame(height: stripH)
+                        .blendMode(.plusLighter)
+                    }
                 }
+                .frame(height: stripH)
             }
-            .frame(height: max(1, glowDepth * visible))
-            .animation(.easeOut(duration: 0.1), value: audioLevel)
-
-            Spacer()
         }
         .opacity(Double(visible))
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .ignoresSafeArea()
+        .animation(.easeOut(duration: 0.08), value: audioLevel)
         .onAppear {
-            if stage != .idle {
-                withAnimation(.easeIn(duration: 1.0)) { visible = 1 }
-            }
-            startAnimations()
-        }
-        .onChange(of: stage) { old, new in
-            if new == .idle {
-                withAnimation(.easeOut(duration: 1.5)) { visible = 0 }
-            } else if visible < 1 {
+            if isActive {
                 withAnimation(.easeIn(duration: 0.6)) { visible = 1 }
             }
-            startAnimations()
+            startSweep()
+        }
+        .onChange(of: stage) { _, new in
+            if new == .idle {
+                withAnimation(.easeOut(duration: 0.8)) { visible = 0 }
+            } else if visible < 1 {
+                withAnimation(.easeIn(duration: 0.4)) { visible = 1 }
+            }
+            startSweep()
         }
     }
 
-    private func startAnimations() {
-        pulse = 0; shimmerX = -0.2
-        switch stage {
-        case .processing:
-            withAnimation(.easeInOut(duration: 1.4).repeatForever(autoreverses: true)) { pulse = 1 }
-            withAnimation(.linear(duration: 1.8).repeatForever(autoreverses: false)) { shimmerX = 1.2 }
-        case .postProcessing:
-            withAnimation(.easeInOut(duration: 1.5).repeatForever(autoreverses: true)) { pulse = 1 }
-        default: break
+    /// Sweep travels left → right continuously when active. 2.4s cycle per spec.
+    private func startSweep() {
+        sweepX = -0.3
+        guard isActive else { return }
+        withAnimation(.linear(duration: 2.4).repeatForever(autoreverses: false)) {
+            sweepX = 1.3
         }
     }
 }

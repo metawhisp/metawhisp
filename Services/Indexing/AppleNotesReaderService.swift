@@ -215,15 +215,80 @@ final class AppleNotesReaderService: ObservableObject {
             let parts = trimmed.components(separatedBy: "|||")
             guard parts.count >= 5 else { continue }
             let id = parts[0].trimmingCharacters(in: .whitespacesAndNewlines)
-            let title = parts[1].trimmingCharacters(in: .whitespacesAndNewlines)
-            let body = parts[2]
+            let rawTitle = parts[1].trimmingCharacters(in: .whitespacesAndNewlines)
+            let rawBody = parts[2]
             let folder = parts[3].trimmingCharacters(in: .whitespacesAndNewlines)
             let modStr = parts[4].trimmingCharacters(in: .whitespacesAndNewlines)
             guard !id.isEmpty else { continue }
+
+            // ITER-030 — strip Apple's auto-classifier noise tokens that bleed
+            // into title/summary when a note is just an attachment (PDF/image/scan).
+            // Without this, the LLM sees "Document Documents Papers Written Document"
+            // as legitimate content and creates junk memories.
+            let title = Self.stripClassifierNoise(rawTitle)
+            let body = Self.stripClassifierNoise(rawBody)
+
+            // Drop notes that are essentially attachment wrappers — image scans,
+            // PDFs, screen captures with no meaningful textual content.
+            guard !Self.isLikelyAttachment(title: title, summary: body) else {
+                NSLog("[AppleNotes] skip attachment-only note '%@'", title)
+                continue
+            }
+
             let modDate = parseAppleScriptDate(modStr)
             result.append(AppleNotePayload(id: id, title: title, body: body, folder: folder, modifiedAt: modDate))
         }
         return result
+    }
+
+    /// Apple Notes classifier writes these tokens to title/summary when content is
+    /// essentially an attached image/scan/diagram. Mirrors reference filter list 1:1.
+    private static let classifierNoise: [String] = [
+        "Document Documents Papers Written Document Written Documents",
+        "Chart Charts Graph Graphs",
+        "Machine Apparatus Machines",
+        "Consumer Electronics Electronic Device Electronic Devices Electronics",
+        "Computer Computers Computing Device Computing Devices Computing Machine Computing Machines",
+        "Electronic Computer Electronic Computers",
+    ]
+
+    private static func stripClassifierNoise(_ value: String) -> String {
+        var out = value
+        for noise in classifierNoise {
+            out = out.replacingOccurrences(of: noise, with: "")
+        }
+        // Collapse whitespace runs left behind by the substitutions.
+        out = out.replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
+        return out.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    /// Heuristic: title is an image/scan/PDF filename, or content contains the
+    /// SQLite/spotlight metadata strings (`SOLITE`, `kMDItem*`, `exec`), or both
+    /// title and body are basically empty after noise stripping.
+    private static func isLikelyAttachment(title: String, summary: String) -> Bool {
+        let combined = "\(title) \(summary)".trimmingCharacters(in: .whitespacesAndNewlines)
+        if combined.isEmpty { return true }
+
+        if combined.contains("SOLITE") || combined.contains("kMDItem") || combined.contains("exec") {
+            return true
+        }
+
+        let lowerTitle = title.lowercased()
+        let attachmentExtensions = [".png", ".jpg", ".jpeg", ".heic", ".pdf", ".mov", ".mp4", ".gif"]
+        if attachmentExtensions.contains(where: { lowerTitle.hasSuffix($0) }) {
+            return true
+        }
+
+        if lowerTitle.hasPrefix("cleanshot ") || lowerTitle.hasPrefix("image ") || lowerTitle.hasPrefix("screenshot ") {
+            return true
+        }
+
+        if lowerTitle.contains("scan") && lowerTitle.contains("document") {
+            return true
+        }
+
+        // Tiny / sparse content — not worth an LLM call.
+        return title.count < 3 && summary.count < 12
     }
 
     private static func parseAppleScriptDate(_ raw: String) -> Date? {

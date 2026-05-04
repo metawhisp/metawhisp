@@ -75,9 +75,14 @@ struct ProjectsView: View {
             emptyState
         } else {
             ScrollView {
+                // Spec § 7: 2-column grid, 14 px gap. Each project = small card
+                // (rSmall radius), 18 px padding, count in top-right corner.
                 LazyVGrid(
-                    columns: [GridItem(.adaptive(minimum: 280, maximum: 360), spacing: 12)],
-                    spacing: 12
+                    columns: [
+                        GridItem(.flexible(), spacing: 14),
+                        GridItem(.flexible(), spacing: 14),
+                    ],
+                    spacing: 14
                 ) {
                     ForEach(summaries) { project in
                         projectCard(project)

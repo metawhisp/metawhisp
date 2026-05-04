@@ -155,8 +155,26 @@ final class AdviceService: ObservableObject {
     }
 
     /// Standard prompt (default). Insight-only. Anti-coach by design.
+    /// ITER-029: re-aligned with reference InsightAssistantSettings 2026-04-26 —
+    /// added WORKFLOW + CORE QUESTION framing and `headline` field.
     static let systemPromptStandard = """
-    You find ONE specific, high-value insight the user would NOT figure out on their own. The goal is to IMPRESS the user.
+    You analyze the user's screen + recent voice context to find ONE specific,
+    high-value insight the user would NOT figure out on their own. Goal: IMPRESS
+    the user — they should think "wow, I'm glad I have this."
+
+    ── WORKFLOW ──
+    1. Read the SCREEN CONTEXT and TRANSCRIPT blocks to understand what the user is doing.
+    2. Apply the CORE QUESTION (below). If the answer isn't a confident YES → no_advice.
+    3. If you find something insightful → produce ONE advice ≤120 chars + a ≤5-word headline.
+    4. Verify against BAD-EXAMPLES list before returning. If your draft matches a BAD pattern → no_advice.
+
+    ── CORE QUESTION ──
+    "Is the user about to make a mistake, or is there a non-obvious shortcut/tool/risk
+    that would significantly help with EXACTLY what they're doing right now?"
+
+    Call type="advice" ONLY when you can answer YES to BOTH:
+    1. The advice is SPECIFIC to what's on screen (not generic wisdom).
+    2. The user likely does NOT already know this (non-obvious).
 
     WHEN TO GIVE ADVICE:
     - User doing something the slow way AND there is a specific shortcut (name it)
@@ -227,10 +245,29 @@ final class AdviceService: ObservableObject {
     Return JSON. Two possible shapes:
 
     If you have valuable advice:
-    {"type": "advice", "content": "under 100 chars", "category": "<one of the 11 above>", "confidence": 0.0-1.0}
+    {"type": "advice",
+     "headline": "≤5-word punchy preview, e.g. 'Wrong year, double-check'",
+     "content": "under 120 chars, the actionable advice itself",
+     "category": "<one of the 11 above>",
+     "confidence": 0.0-1.0}
 
     If nothing worth saying:
     {"type": "no_advice", "reason": "short explanation"}
+
+    HEADLINE GUIDELINES (≤5 words):
+    - Subject-led, action-led, or risk-led — whichever fits.
+    - Specific noun > generic verb. "Wrong year — 2026" beats "Date check".
+    - Match content language (RU advice → RU headline).
+    GOOD examples:
+    ✓ "Wrong year — 2026"
+    ✓ "Token expires tomorrow"
+    ✓ "Replying to group, not DM"
+    ✓ "git stash pop pending"
+    ✓ "Stripe webhook hits prod"
+    BAD examples:
+    ✗ "Important advice" (vague)
+    ✗ "You should check this thing" (>5 words, vague)
+    ✗ "Reminder" (single generic word)
     """
 
     /// ITER-022 G4 — Coach mode prompt. Switched in via setting `adviceCoachMode`.
@@ -287,10 +324,16 @@ final class AdviceService: ObservableObject {
     CONFIDENCE — same scale as standard.
 
     Return JSON:
-    {"type": "advice", "content": "under 100 chars", "category": "<one of 11>", "confidence": 0.0-1.0}
+    {"type": "advice",
+     "headline": "≤5-word punchy preview matching content language",
+     "content": "under 120 chars, the accountability nudge itself",
+     "category": "<one of 11>",
+     "confidence": 0.0-1.0}
 
     OR if nothing concrete to push on:
     {"type": "no_advice", "reason": "short explanation"}
+
+    HEADLINE — same rules as standard mode (≤5w, specific, language-matched).
     """
 
     /// ITER-022 — Whitelisted categories. LLM may emit any of these; anything else
@@ -560,9 +603,10 @@ final class AdviceService: ObservableObject {
 
         guard let data = cleaned.data(using: .utf8) else { return nil }
 
-        // New shape: {"type": "advice", "content", "category", "confidence"}
+        // ITER-029 shape: {"type", "headline"?, "content", "category", "reasoning"?, "confidence"?}
         struct AdviceJSON: Decodable {
             let type: String?
+            let headline: String?
             let content: String
             let category: String
             let reasoning: String?
@@ -589,12 +633,20 @@ final class AdviceService: ObservableObject {
             return Self.validCategories.contains(candidate) ? candidate : "other"
         }()
 
+        // Headline — trim, drop if empty / too long. Cap to 60 chars (≤5 words ≈ 30-40 chars).
+        let normalizedHeadline: String? = {
+            guard let raw = parsed.headline?.trimmingCharacters(in: .whitespacesAndNewlines),
+                  !raw.isEmpty else { return nil }
+            return raw.count > 60 ? String(raw.prefix(60)) : raw
+        }()
+
         return AdviceItem(
             content: truncated,
             category: normalizedCategory,
             reasoning: parsed.reasoning,
             sourceApp: contexts.last?.appName,
-            confidence: parsed.confidence ?? 0.5
+            confidence: parsed.confidence ?? 0.5,
+            headline: normalizedHeadline
         )
     }
 }

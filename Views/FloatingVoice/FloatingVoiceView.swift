@@ -1,47 +1,89 @@
 import SwiftUI
 
-/// Floating UI for voice-question flow — the AI dialogue overlay.
-/// Visually distinct from the dictation pill: larger, rounded, "conversation" metaphor
-/// (sparkles + bubble icons) instead of a thin recording strip.
+/// Floating UI for voice-question flow. Liquid Glass redesign 2026-05-01:
+/// material backdrop + specular rim + phase-tinted header + Q/A cards.
+/// Mirrors MenuBar Variant A chrome system. Mockup at
+/// `mockups/voice-and-hotkeys.html`.
 ///
 /// spec://BACKLOG#Phase6
 struct FloatingVoiceView: View {
     @ObservedObject var state: VoiceQuestionState
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(spacing: 0) {
             header
 
+            // Q card — show user's transcript whenever we have one (transcribing/
+            // thinking/answered) plus a "Listening…" placeholder while recording.
             if !state.transcript.isEmpty {
-                speechBlock(label: "YOU", icon: "person.fill", text: state.transcript, isUser: true)
-            }
-
-            if case .answered(let text) = state.phase {
-                speechBlock(label: "METACHAT", icon: "sparkles", text: text, isUser: false)
-            } else if case .error(let text) = state.phase {
-                errorBlock(text)
-            }
-        }
-        .padding(18)
-        .frame(minWidth: 420, idealWidth: 520, maxWidth: 620, alignment: .topLeading)
-        .background(
-            ZStack {
-                // Base surface, slightly lifted vs main window for "above the page" feel.
-                MW.elevated.opacity(0.98)
-                // Very subtle top highlight hinting at AI / active state.
-                LinearGradient(
-                    colors: [Color.white.opacity(0.04), .clear],
-                    startPoint: .top,
-                    endPoint: .center
+                qaCard(
+                    label: "YOU",
+                    iconSF: "person.fill",
+                    body: state.transcript,
+                    dim: false
+                )
+            } else if case .listening = state.phase {
+                qaCard(
+                    label: "YOU",
+                    iconSF: "person.fill",
+                    body: "Listening… release ⌘ to send.",
+                    dim: true
+                )
+            } else if case .transcribing = state.phase {
+                qaCard(
+                    label: "YOU",
+                    iconSF: "person.fill",
+                    body: "Transcribing your question…",
+                    dim: true
                 )
             }
-        )
+
+            // A card — METACHAT response.
+            if case .thinking = state.phase {
+                qaCard(
+                    label: "METACHAT",
+                    iconSF: "sparkles",
+                    body: "Composing answer…",
+                    dim: true
+                )
+            } else if case .answered(let text) = state.phase {
+                qaCard(
+                    label: "METACHAT",
+                    iconSF: "sparkles",
+                    body: text,
+                    dim: false
+                )
+            } else if case .error(let text) = state.phase {
+                qaCard(
+                    label: "ERROR",
+                    iconSF: "exclamationmark.triangle.fill",
+                    body: text,
+                    dim: false,
+                    accentOverride: .red
+                )
+            }
+        }
+        .frame(width: 380)
+        .background(.ultraThinMaterial)
+        .background(Color.black.opacity(0.45))
+        .overlay(alignment: .top) {
+            // Specular rim — top-down bright→dim white.
+            LinearGradient(
+                colors: [Color.white.opacity(0.18), Color.white.opacity(0.04), .clear],
+                startPoint: .top, endPoint: .bottom
+            )
+            .frame(height: 100)
+            .allowsHitTesting(false)
+            .blendMode(.plusLighter)
+            .opacity(0.6)
+        }
         .overlay(
-            RoundedRectangle(cornerRadius: 14)
-                .stroke(MW.borderLight.opacity(0.5), lineWidth: MW.hairline)
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .stroke(Color.white.opacity(0.10), lineWidth: 0.5)
         )
-        .clipShape(RoundedRectangle(cornerRadius: 14))
-        .shadow(color: .black.opacity(0.35), radius: 24, x: 0, y: 8)
+        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .shadow(color: .black.opacity(0.45), radius: 24, x: 0, y: 12)
+        .shadow(color: .black.opacity(0.30), radius: 6, x: 0, y: 2)
     }
 
     // MARK: - Header
@@ -49,94 +91,94 @@ struct FloatingVoiceView: View {
     @ViewBuilder
     private var header: some View {
         HStack(spacing: 10) {
-            headerIcon
-                .frame(width: 24, height: 24)
-
-            VStack(alignment: .leading, spacing: 2) {
-                Text("METACHAT")
-                    .font(MW.monoSm).tracking(2).foregroundStyle(MW.textMuted)
-                Text(title)
-                    .font(MW.monoLg).tracking(1.0).foregroundStyle(MW.textPrimary)
-            }
-
-            Spacer()
-
-            statusChip
-        }
-    }
-
-    @ViewBuilder
-    private var headerIcon: some View {
-        switch state.phase {
-        case .listening:
-            // Pulsing mic + waveform ring — makes "now talking" obvious.
-            ZStack {
-                PulseRing()
-                Image(systemName: "waveform")
-                    .font(.system(size: 14, weight: .medium))
-                    .foregroundStyle(MW.textPrimary)
-            }
-        case .transcribing:
-            Image(systemName: "waveform.path")
-                .font(.system(size: 16, weight: .medium))
-                .foregroundStyle(MW.textSecondary)
-                .symbolEffect(.variableColor.iterative, options: .repeating)
-        case .thinking:
-            Image(systemName: "sparkles")
-                .font(.system(size: 16, weight: .medium))
-                .foregroundStyle(MW.textSecondary)
-                .symbolEffect(.pulse, options: .repeating)
-        case .answered:
-            Image(systemName: state.isSpeaking ? "speaker.wave.2.fill" : "bubble.left.and.bubble.right.fill")
-                .font(.system(size: 14, weight: .medium))
-                .foregroundStyle(MW.textPrimary)
-        case .error:
-            Image(systemName: "exclamationmark.bubble")
-                .font(.system(size: 14, weight: .medium))
-                .foregroundStyle(.red.opacity(0.85))
-        case .idle:
-            Image(systemName: "sparkles")
-                .font(.system(size: 14))
+            phaseDot
+            Text("METACHAT")
+                .font(MW.monoSm).tracking(1.4)
                 .foregroundStyle(MW.textMuted)
-        }
-    }
+            Text(phaseLabel)
+                .font(.system(size: 12, weight: .bold))
+                .tracking(0.4)
+                .foregroundStyle(MW.textPrimary)
 
-    @ViewBuilder
-    private var statusChip: some View {
-        HStack(spacing: 6) {
+            Spacer(minLength: 6)
+
             if state.isSpeaking {
                 Button {
                     AppDelegate.shared?.ttsService.stop()
                     VoiceQuestionState.shared.isSpeaking = false
                 } label: {
                     HStack(spacing: 4) {
-                        Image(systemName: "stop.fill").font(.system(size: 9))
-                        Text("STOP").font(MW.label).tracking(0.8)
+                        Image(systemName: "stop.fill").font(.system(size: 8))
+                        Text("STOP").font(.system(size: 10, weight: .bold)).tracking(0.8)
                     }
-                    .foregroundStyle(MW.textPrimary)
-                    .padding(.horizontal, 7).padding(.vertical, 3)
-                    .background(MW.surface.opacity(0.8))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 4)
-                            .stroke(MW.borderLight, lineWidth: MW.hairline)
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 9)
+                    .padding(.vertical, 4)
+                    .background(
+                        Capsule().fill(MW.live)
                     )
-                    .clipShape(RoundedRectangle(cornerRadius: 4))
                 }
                 .buttonStyle(.plain)
                 .help("Stop speaking (Space)")
             }
-            Text("Esc")
-                .font(MW.label).tracking(0.6)
-                .foregroundStyle(MW.textMuted)
-                .padding(.horizontal, 5).padding(.vertical, 2)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 4)
-                        .stroke(MW.border, lineWidth: MW.hairline)
-                )
+
+            Keycap(text: "Esc")
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 12)
+        .background(headerTint)
+        .overlay(Rectangle().fill(MW.border).frame(height: MW.hairline), alignment: .bottom)
+    }
+
+    /// Subtle phase-color glaze on header background. Same idea as the
+    /// MeetingCoach overlay's state strip — matches `MW.stateColor` palette.
+    @ViewBuilder
+    private var headerTint: some View {
+        switch state.phase {
+        case .listening:
+            LinearGradient(
+                colors: [MW.live.opacity(0.18), MW.live.opacity(0.0)],
+                startPoint: .top, endPoint: .bottom
+            )
+        case .transcribing, .thinking:
+            LinearGradient(
+                colors: [MW.processing.opacity(0.18), MW.processing.opacity(0.0)],
+                startPoint: .top, endPoint: .bottom
+            )
+        case .answered:
+            LinearGradient(
+                colors: [MW.idle.opacity(0.14), MW.idle.opacity(0.0)],
+                startPoint: .top, endPoint: .bottom
+            )
+        case .error:
+            LinearGradient(
+                colors: [Color.red.opacity(0.18), Color.red.opacity(0.0)],
+                startPoint: .top, endPoint: .bottom
+            )
+        case .idle:
+            Color.clear
         }
     }
 
-    private var title: String {
+    @ViewBuilder
+    private var phaseDot: some View {
+        switch state.phase {
+        case .listening:
+            FVPulsingDot(color: MW.live, period: 1.0)
+        case .transcribing, .thinking:
+            Circle().fill(MW.processing).frame(width: 8, height: 8)
+                .shadow(color: MW.processing.opacity(0.6), radius: 4)
+        case .answered:
+            FVPulsingDot(color: MW.idle, period: 1.6)
+        case .error:
+            Circle().fill(Color.red).frame(width: 8, height: 8)
+                .shadow(color: Color.red.opacity(0.6), radius: 4)
+        case .idle:
+            Circle().fill(MW.textDim).frame(width: 8, height: 8)
+        }
+    }
+
+    private var phaseLabel: String {
         switch state.phase {
         case .idle: return "READY"
         case .listening: return "LISTENING"
@@ -147,85 +189,64 @@ struct FloatingVoiceView: View {
         }
     }
 
-    // MARK: - Speech blocks
+    // MARK: - Q/A card
 
-    private func speechBlock(label: String, icon: String, text: String, isUser: Bool) -> some View {
-        HStack(alignment: .top, spacing: 10) {
-            Image(systemName: icon)
-                .font(.system(size: 11, weight: .medium))
-                .foregroundStyle(isUser ? MW.textMuted : MW.textSecondary)
-                .frame(width: 18, height: 18, alignment: .center)
-                .padding(.top, 2)
-
-            VStack(alignment: .leading, spacing: 3) {
+    private func qaCard(label: String, iconSF: String, body: String, dim: Bool, accentOverride: Color? = nil) -> some View {
+        HStack(alignment: .top, spacing: 12) {
+            Image(systemName: iconSF)
+                .font(.system(size: 14, weight: .medium))
+                .foregroundStyle(accentOverride ?? MW.accent)
+                .frame(width: 22, height: 22, alignment: .center)
+                .padding(.top, 1)
+            VStack(alignment: .leading, spacing: 4) {
                 Text(label)
-                    .font(MW.label).tracking(0.9)
-                    .foregroundStyle(isUser ? MW.textMuted : MW.textSecondary)
-                Text(text)
-                    .font(MW.mono)
-                    .foregroundStyle(MW.textPrimary)
+                    .font(MW.label).tracking(1.4)
+                    .foregroundStyle(MW.textMuted)
+                Text(body)
+                    .font(.system(size: 13))
+                    .foregroundStyle(dim ? MW.textSecondary : MW.textPrimary)
+                    .italic(dim)
                     .textSelection(.enabled)
                     .fixedSize(horizontal: false, vertical: true)
             }
             Spacer(minLength: 0)
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 10)
-        .background(
-            isUser
-                ? MW.surface.opacity(0.5)
-                : MW.surface.opacity(0.9)
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 8)
-                .stroke(isUser ? MW.border : MW.borderLight, lineWidth: MW.hairline)
-        )
-        .clipShape(RoundedRectangle(cornerRadius: 8))
-    }
-
-    private func errorBlock(_ text: String) -> some View {
-        HStack(alignment: .top, spacing: 10) {
-            Image(systemName: "exclamationmark.triangle.fill")
-                .font(.system(size: 11))
-                .foregroundStyle(.red.opacity(0.85))
-                .frame(width: 18, height: 18, alignment: .center)
-                .padding(.top, 2)
-            Text(text)
-                .font(MW.monoSm).foregroundStyle(.red.opacity(0.9))
-                .textSelection(.enabled)
-                .fixedSize(horizontal: false, vertical: true)
-            Spacer(minLength: 0)
-        }
-        .padding(.horizontal, 12).padding(.vertical, 10)
-        .overlay(
-            RoundedRectangle(cornerRadius: 8)
-                .stroke(Color.red.opacity(0.4), lineWidth: MW.hairline)
-        )
-        .clipShape(RoundedRectangle(cornerRadius: 8))
+        .padding(.horizontal, 16)
+        .padding(.vertical, 13)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .overlay(Rectangle().fill(MW.border).frame(height: MW.hairline), alignment: .bottom)
     }
 }
 
-// MARK: - Pulse ring (listening indicator)
+// MARK: - Phase pulse dot
 
-private struct PulseRing: View {
-    @State private var scale: CGFloat = 0.8
-    @State private var opacity: Double = 0.8
+/// File-private pulse dot — same animation pattern as MenuBarView's variant
+/// (kept duplicated here to avoid a shared module-internal dependency for one
+/// trivial view).
+private struct FVPulsingDot: View {
+    let color: Color
+    let period: Double
+    @State private var dim = false
 
     var body: some View {
-        ZStack {
-            Circle()
-                .stroke(Color.red.opacity(opacity), lineWidth: 1.2)
-                .frame(width: 22, height: 22)
-                .scaleEffect(scale)
-            Circle()
-                .fill(Color.red.opacity(0.85))
-                .frame(width: 6, height: 6)
-        }
-        .onAppear {
-            withAnimation(.easeOut(duration: 1.1).repeatForever(autoreverses: false)) {
-                scale = 1.35
-                opacity = 0.0
+        Circle()
+            .fill(color)
+            .frame(width: 8, height: 8)
+            .shadow(color: color.opacity(0.7), radius: 4)
+            .opacity(dim ? 0.55 : 1.0)
+            .onAppear {
+                withAnimation(.easeInOut(duration: period / 2).repeatForever(autoreverses: true)) {
+                    dim = true
+                }
             }
-        }
+    }
+}
+
+// MARK: - SwiftUI compat shim
+
+private extension View {
+    @ViewBuilder
+    func italic(_ on: Bool) -> some View {
+        if on { self.italic() } else { self }
     }
 }

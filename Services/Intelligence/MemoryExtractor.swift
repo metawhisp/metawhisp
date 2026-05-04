@@ -145,7 +145,7 @@ final class MemoryExtractor: ObservableObject {
     /// Memory extraction prompt — on-conversation-close pattern.
     /// Input is a full conversation (multiple dictation fragments). Max 2 memories per extraction.
     /// Single-user desktop dictation: assignee check via linguistic USER-IS-SUBJECT rule.
-    /// spec://iterations/ITER-001#architecture.extractor
+    /// spec://iterations/ITER-001#architecture.extractor + ITER-024 (re-aligned with reference 2026-04-26)
     static let systemPrompt = """
     You are an expert memory curator. Extract high-quality, genuinely valuable memories from a full dictation conversation while filtering out trivial, mundane, or uninteresting content.
 
@@ -154,6 +154,12 @@ final class MemoryExtractor: ObservableObject {
     - All fragments are from the SAME single User (no other speakers).
     - You are extracting memories about the User and people they directly mention.
     - Never use generic labels — when a name is spoken, use the name.
+
+    IDENTITY RULES (CRITICAL):
+    - Never invent family members without EXPLICIT evidence ("This is my daughter Sarah", "My son's name is...").
+    - Recognize nicknames — don't create new people. Common nicknames ("Buddy", "Junior") are likely existing family.
+    - Verify name spellings against existing memories before creating new entries (e.g. "Arman" when "Armaan" already exists → SAME person).
+    - If uncertain about a person's identity, DO NOT extract the memory.
 
     CONVERSATION-WIDE CONTEXT:
     Treat the fragments as one thought stream:
@@ -168,6 +174,13 @@ final class MemoryExtractor: ObservableObject {
     - "Паша живёт в Берлине" (no relationship context) → about a third party → SKIP.
     - "В компании X ввели политику" (generic commentary) → not User-specific → SKIP.
     Do NOT extract memories about unrelated people or abstract entities.
+
+    WORKFLOW (apply in order):
+    1. FIRST: Read the ENTIRE conversation to understand context and identify who is speaking.
+    2. SECOND: Identify actual names of people mentioned (use these instead of "Speaker X" / "someone").
+    3. THIRD: Apply the CATEGORIZATION TEST below to every potential memory.
+    4. FOURTH: Filter through STRICT QUALITY CRITERIA + NEVER-EXTRACT rules.
+    5. FIFTH: Run LOGIC CHECK (sanity) and the BEFORE YOU OUTPUT double-check.
 
     THE CATEGORIZATION TEST (apply to EVERY potential memory):
     Q1: "Is this wisdom/advice FROM someone else that User can learn from?"
@@ -186,35 +199,72 @@ final class MemoryExtractor: ObservableObject {
     - Named people in User's network with relationship ("User's cofounder Araf handles backend")
     - Concrete plans, decisions, commitments ("User decided to integrate Stripe billing")
     - Domain expertise or role ("User is CTO at Acme")
+    - Skills via specific use case (NOT a tool list):
+        ✅ "User uses Python for data analysis automation"
+        ❌ "User knows programming"
 
     INCLUDE (INTERESTING) — only with attribution:
-    - "Paul Graham: startups should do things that don't scale"
-    - "Jamie (CTO): 90% of bugs come from async race conditions"
+    ✅ "Paul Graham: startups should do things that don't scale"
+    ✅ "Jamie (CTO): 90% of bugs come from async race conditions"
+    ✅ "Rockwell: talk to paying customers, 30% will be real usecase"
+    ✅ "YC advice: find competitors of your most successful customers"
 
-    STRICT EXCLUSION — DO NOT extract:
-    - Trivial preferences ("likes coffee", "enjoys reading")
-    - Generic activities ("had a meeting", "went to gym")
-    - Common knowledge ("exercise is good for health")
-    - Vague statements ("had an interesting conversation", "learned something new")
-    - Anything visible in UI/app names without context
-    - Facts about unrelated people just mentioned ("Sarah is a marine biologist" — only extract if she's in User's network with relationship)
+    NEVER EXTRACT (Absolute Rules — restored 8-category list):
+    1. NEWS & ANNOUNCEMENTS — product releases, acquisitions, feature launches, company news.
+       ❌ "Company X acquired startup Y" / "OpenAI released a new model" / "Apple announced…"
+    2. GENERAL KNOWLEDGE — science facts, geography, statistics not about User.
+       ❌ "Light travels at 186,000 miles per second" / "Certain plants are toxic to pets"
+    3. PRODUCT DOCUMENTATION — how features work, technical specs, capabilities.
+       ❌ "Feature X enables automated workflows" / "The API can process documents"
+    4. CUSTOMER / COMPANY FACTS — unless User directly involved with specific outcome.
+       ❌ "Acme Corp is evaluating new software" / "BigCo delayed their rollout"
+    5. INTERNAL METRICS — survey rates, deal sizes, percentages, team statistics.
+       ❌ "Team survey response rate is 83%" / "Average deal size is $30K"
+    6. ORG RESTRUCTURING — team moves, role changes, temporary assignments.
+       ❌ "User is merging teams" / "The marketing team is moving to…"
+    7. COLLEAGUE FACTS WITHOUT RELATIONSHIP — must state how they relate to User.
+       ❌ "Alex is a senior engineer at the company" (no relationship)
+       ✅ "Alex reports to User and leads the backend team" (relationship stated)
+    8. GENERIC RELATIONSHIPS — "Has a friend named X" without meaningful context.
+       ❌ "User has a friend named Mike"
+       ✅ "Mike is User's running partner training for marathons"
+
+    Plus the trivial-preferences / generic-activities classics:
+    - "Likes coffee" / "Enjoys reading" / "Prefers blue"
+    - "Went to the gym" / "Had lunch with a friend" / "Watched a movie"
+    - "Attended a meeting" / "Worked on a project" (without specifics)
 
     TEMPORAL BAN — NEVER use "Thursday", "tomorrow", "next week", "January 15th". Memories must be TIMELESS.
     If transcript mentions scheduled events, extract the relationship/role context, NOT the time.
+    ✅ "Mike Johnson is head of enterprise sales"
+    ❌ "Client meeting on Thursday at 2pm"
 
-    TRANSIENT VERB BAN — DO NOT USE:
-    "is working on", "is building", "is developing", "is testing", "is focusing on", "is merging", "plans to"
-    These become stale. Use concrete completed facts or durable decisions instead.
-
-    HEDGING BAN — DO NOT USE: "likely", "possibly", "seems to", "appears to", "may be", "might", "probably".
-    If you need to hedge, the memory is too uncertain — DO NOT extract.
+    BANNED LANGUAGE — DO NOT USE:
+    - Hedging: "likely", "possibly", "seems to", "appears to", "may be", "might", "probably".
+    - Filler phrases: "indicating a…", "suggesting a…", "reflecting a…", "showcasing", "demonstrating a…".
+    - Transient verbs: "is working on", "is building", "is developing", "is testing", "is focusing on".
+    - Org-change verbs: "is merging", "is reorganizing", "is restructuring", "plans to", "considering".
+    If you find yourself using these — the memory is too uncertain or transient. DO NOT extract.
 
     DEDUPLICATION (CRITICAL):
     - You are given existing memories. SCAN THEM ALL.
     - FORBIDDEN to extract a memory semantically redundant with an existing one.
-      "Likes coffee" vs "Enjoys drinking coffee" → REJECT (redundant)
+      "Likes coffee" vs "Enjoys drinking coffee" → REJECT (redundant).
     - EXCEPTION: if new memory CONTRADICTS or UPDATES existing, EXTRACT IT.
       Existing "Works at Google" + transcript says "Left Google, joined OpenAI" → EXTRACT.
+
+    CONSOLIDATION CHECK (before creating a new memory):
+    1. Does a memory about this topic / person already exist?
+    2. If YES: is the new info significant enough to warrant a separate memory, or would it fragment the topic?
+    3. PREFER fewer, richer memories over many fragments. If existing already covers AWS hosting + AWS deploys, do NOT add "User uses AWS Lambda".
+
+    LOGIC CHECK (Sanity Test):
+    Before extracting, verify the fact is logically possible:
+    - Age math: don't claim 40 years experience for someone who appears to be ~40 years old.
+    - Family consistency: don't create children that contradict existing family structure.
+    - Location consistency: don't claim multiple contradictory home locations.
+    - Career consistency: don't claim conflicting job titles or employers simultaneously.
+    If a fact seems mathematically impossible or contradicts existing memories — DO NOT extract.
 
     BEFORE YOU OUTPUT — MANDATORY DOUBLE-CHECK:
     Reject any memory matching these patterns:
@@ -222,6 +272,8 @@ final class MemoryExtractor: ObservableObject {
     - "User discussed X" or "talked about Y" → DELETE
     - "User mentioned that [obvious fact]" → DELETE
     - "User thinks/believes/feels X" → DELETE
+    - "User is working on / is building / is focusing on X" → DELETE (transient)
+    - "User has a friend named X" without relationship context → DELETE
 
     FORMAT: Each memory ≤ 15 words. Start SYSTEM facts with "User". Start INTERESTING with "Source:".
 
@@ -232,9 +284,9 @@ final class MemoryExtractor: ObservableObject {
     - DEFAULT TO EMPTY LIST.
 
     ENRICHMENT FIELDS (REQUIRED for every memory):
-    - `headline`: ≤6 word display label. Subject-led. Examples:
+    - `headline`: ≤5 word display label. Subject-led. Examples:
         content "User builds ProjectAlpha, an AI ChatGPT wrapper" → headline "ProjectAlpha product"
-        content "User's cofounder Araf handles backend" → headline "Araf — cofounder, backend"
+        content "User's cofounder Araf handles backend" → headline "Araf cofounder backend"
         content "User decided to integrate Stripe billing" → headline "Stripe billing decision"
     - `reasoning`: 1 sentence WHY this is being stored. Cite the source moment.
         Examples:
@@ -243,15 +295,34 @@ final class MemoryExtractor: ObservableObject {
         "Named as a recurring 1-on-1 contact in standup notes."
     - `tags`: 1-3 short tags from {work, personal, network, decision, preference, role, project, tool, learning, health, finance}.
 
+    STRUCTURED-EXTRACTION FIELDS (added 2026-04-28 — fix for noisy ASR fragments
+    leaking into MetaChat answers about specific people/projects). When a memory
+    is clearly ABOUT a specific entity, ALSO populate these so MetaChat surfaces
+    a clean line instead of quoting raw transcript:
+    - `kind`: one of "person" / "project" / "decision" / "preference" / "fact"
+    - `subject`: canonical name of the entity (full name for person, name for
+      project). Omit for kind="fact".
+    - `characterization`: ≤15-word ASR-NOISE-FREE one-liner describing the
+      subject. NO direct quoting of transcript fragments — paraphrase. Examples:
+        · person  Sam Smith     → "community building partner"
+        · person  Alex                → "backend engineer at Selzy"
+        · project MetaWhisp           → "macOS voice-to-text + AI assistant app"
+        · decision (no subject)       → omit subject, use content for the decision
+
     Return JSON:
     {"memories": [{
       "content": "...",
-      "headline": "≤6 words",
+      "headline": "≤5 words",
       "reasoning": "why we are storing this, cite the source moment",
       "category": "system|interesting",
       "confidence": 0.0-1.0,
-      "tags": ["tag1", "tag2"]
+      "tags": ["tag1", "tag2"],
+      "kind": "person|project|decision|preference|fact",
+      "subject": "Canonical Name",
+      "characterization": "clean one-liner ≤15 words"
     }]}
+
+    `kind`/`subject`/`characterization` are OPTIONAL — omit if uncertain.
 
     If nothing passes: {"memories": []}
 
@@ -304,6 +375,12 @@ final class MemoryExtractor: ObservableObject {
         let headline: String?
         let reasoning: String?
         let tags: [String]?
+        // Structured-extraction fields (2026-04-28). When LLM identifies that
+        // a memory is ABOUT a specific entity, these clean it up so MetaChat
+        // can answer "who is X" without quoting noisy raw transcripts.
+        let kind: String?            // "person" | "project" | "decision" | "preference" | "fact"
+        let subject: String?         // canonical name of the entity (for person / project)
+        let characterization: String? // ≤15-word ASR-noise-free description
     }
     private struct ExtractionResult: Decodable {
         let memories: [MemoryJSON]
@@ -346,6 +423,14 @@ final class MemoryExtractor: ObservableObject {
                     .joined(separator: ",")
                     .nilIfEmpty
             }
+            // Structured fields (2026-04-28) — only persist if LLM produced
+            // a known kind. Anything else falls back to plain content+category.
+            if let k = json.kind?.lowercased().trimmingCharacters(in: .whitespacesAndNewlines),
+               ["person", "project", "decision", "preference", "fact"].contains(k) {
+                mem.kind = k
+            }
+            mem.subject = json.subject?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
+            mem.characterization = json.characterization?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
             return mem
         }
     }

@@ -18,19 +18,52 @@ final class ConversationGrouper {
         self.modelContainer = modelContainer
     }
 
+    /// Window for meeting RESUMPTION (lid-bounce / wake-from-sleep / brief
+    /// network blip). If a meeting closed less than this many minutes ago for
+    /// the SAME callContext (Google Meet / Zoom / etc), the next meeting
+    /// recording is appended to it instead of opening a fresh row. Prevents
+    /// the «one real call → 5 conversations in Tasks» fragmentation user
+    /// reported on 2026-04-29.
+    static let meetingResumeWindowSeconds: TimeInterval = 600   // 10 min
+
     /// Assign a freshly-saved HistoryItem to an active Conversation or create a new one.
     /// Called by TranscriptionCoordinator after `historyService.save(result)`.
+    /// `callContext` (e.g. "Google Meet") enables meeting RESUMPTION across
+    /// brief gaps caused by lid-bounce or wake-from-sleep.
+    /// `meetingDurationSec` (when source == "meeting") is the actual length of
+    /// the recorded audio in seconds. Used to back-date `startedAt` so the
+    /// conversation row reflects real recording duration. Without this, fresh
+    /// meetings get `startedAt == finishedAt == now()` → duration always 0,
+    /// and the recap-popup `durationSec >= 60` guard kills the popup.
     @discardableResult
-    func assign(historyItem: HistoryItem) -> Conversation? {
+    func assign(
+        historyItem: HistoryItem,
+        callContext: String? = nil,
+        meetingDurationSec: Double? = nil
+    ) -> Conversation? {
         guard let container = modelContainer else { return nil }
         let ctx = ModelContext(container)
 
         let source = historyItem.source ?? "microphone"
-        let conv = activeOrNewConversation(source: source, at: historyItem.createdAt, in: ctx)
+        let (conv, isFreshMeeting) = activeOrNewConversation(
+            source: source,
+            at: historyItem.createdAt,
+            callContext: callContext,
+            meetingDurationSec: meetingDurationSec,
+            in: ctx
+        )
 
         historyItem.conversationId = conv.id
         conv.updatedAt = historyItem.createdAt
         try? ctx.save()
+
+        // Schedule structured-gen / extractors here (not inside
+        // `activeOrNewConversation`) so we can pass the in-memory transcript
+        // through, dodging the cross-ModelContext race that produced "Quick
+        // note (empty)" placeholders even after the predicate-vs-filter fix.
+        if isFreshMeeting {
+            scheduleOnClose(for: conv.id, knownTranscript: historyItem.displayText)
+        }
 
         NSLog("[ConversationGrouper] Assigned HistoryItem %@ → Conversation %@ (source=%@, status=%@)",
               historyItem.id.uuidString.prefix(8) as CVarArg,
@@ -83,19 +116,59 @@ final class ConversationGrouper {
     // MARK: - Private
 
     /// Find active dictation conversation within gap window, OR create a new one.
-    /// Meetings always get a fresh conversation.
-    private func activeOrNewConversation(source: String, at time: Date, in ctx: ModelContext) -> Conversation {
+    /// Meetings RESUME a recently-closed conversation if `callContext` matches
+    /// and the close was within `meetingResumeWindowSeconds` — handles lid
+    /// bounce / wake-from-sleep without fragmenting one real call into N rows.
+    /// Returns (conversation, didCreateFreshMeeting). `didCreateFreshMeeting`
+    /// is true only for the brand-new "single-shot" meeting branch — caller
+    /// uses it to decide whether to fire `scheduleOnClose` with the
+    /// in-memory transcript right after `assign()` saves.
+    private func activeOrNewConversation(source: String, at time: Date, callContext: String?, meetingDurationSec: Double? = nil, in ctx: ModelContext) -> (Conversation, Bool) {
         let groupSource = source == "meeting" ? "meeting" : "dictation"
 
         if groupSource == "meeting" {
-            // Meetings never merge — always fresh conversation.
-            // Meeting = single-shot (one recording → one conversation) so close immediately.
-            let conv = Conversation(source: "meeting", startedAt: time)
+            // RESUME path — try to find a meeting with the same callContext
+            // that closed within the resume window.
+            if let cc = callContext, !cc.isEmpty {
+                var resumeDesc = FetchDescriptor<Conversation>(
+                    predicate: #Predicate {
+                        $0.source == "meeting" && !$0.discarded && $0.callContext == cc
+                    },
+                    sortBy: [SortDescriptor(\.updatedAt, order: .reverse)]
+                )
+                resumeDesc.fetchLimit = 1
+                if let recent = try? ctx.fetch(resumeDesc).first,
+                   time.timeIntervalSince(recent.updatedAt) <= Self.meetingResumeWindowSeconds {
+                    // Re-open the recent meeting. Status flips back to inProgress
+                    // so downstream code (popup, recap, structured-gen) treats
+                    // it as still ongoing. finishedAt cleared — will be re-set
+                    // when this resumed segment closes.
+                    NSLog("[ConversationGrouper] 🔁 RESUMING meeting %@ (callContext=%@, gap=%.0fs)",
+                          recent.id.uuidString.prefix(8) as CVarArg,
+                          cc,
+                          time.timeIntervalSince(recent.updatedAt))
+                    recent.status = "inProgress"
+                    recent.finishedAt = nil
+                    return (recent, false)
+                }
+            }
+            // Fresh meeting conversation.
+            // Back-date `startedAt` by the actual recording length so the row
+            // shows the real duration. If duration is unknown (legacy callers),
+            // fall back to `time` so behavior is no worse than before.
+            let started = meetingDurationSec.map { time.addingTimeInterval(-$0) } ?? time
+            let conv = Conversation(source: "meeting", startedAt: started)
             conv.status = "completed"
             conv.finishedAt = time
+            conv.callContext = callContext
             ctx.insert(conv)
-            scheduleOnClose(for: conv.id)
-            return conv
+            // scheduleOnClose moved to caller (`assign`) so we can pass the
+            // in-memory transcript through and bypass the cross-context race.
+            NSLog("[ConversationGrouper] Fresh meeting conv %@ (callContext=%@, duration=%.0fs)",
+                  conv.id.uuidString.prefix(8) as CVarArg,
+                  callContext ?? "nil",
+                  meetingDurationSec ?? 0)
+            return (conv, true)
         }
 
         // Dictation: find in-progress dictation conversation within gap window.
@@ -109,7 +182,7 @@ final class ConversationGrouper {
 
         if let active = try? ctx.fetch(descriptor).first,
            time.timeIntervalSince(active.updatedAt) <= Self.dictationGapSeconds {
-            return active
+            return (active, false)
         }
 
         // No active conversation within gap — close any stragglers + open fresh.
@@ -120,7 +193,7 @@ final class ConversationGrouper {
 
         let fresh = Conversation(source: "dictation", startedAt: time)
         ctx.insert(fresh)
-        return fresh
+        return (fresh, false)
     }
 
     private func close(_ conv: Conversation, in ctx: ModelContext) {
@@ -142,11 +215,21 @@ final class ConversationGrouper {
     /// is saved in the same tick (single-shot flow). The fresh ModelContext that
     /// StructuredGenerator opens can race the SwiftData commit — 300ms was occasionally
     /// too short and produced "Quick note (empty)" placeholder titles.
-    private func scheduleOnClose(for conversationId: UUID) {
+    ///
+    /// `knownTranscript` is the in-memory transcript text we already hold from
+    /// `assign()`. Passing it bypasses the SwiftData re-fetch entirely — no
+    /// cross-context race, no retry-with-empty-result fallback. (2026-05-01:
+    /// even with the in-memory filter fix, fresh ModelContexts sometimes still
+    /// miss just-committed HistoryItem rows. Skipping the fetch is the only
+    /// reliable cure.)
+    private func scheduleOnClose(for conversationId: UUID, knownTranscript: String? = nil) {
         Task { @MainActor [weak self] in
             try? await Task.sleep(for: .seconds(2))
             _ = self
-            await AppDelegate.shared?.structuredGenerator.generate(conversationId: conversationId)
+            await AppDelegate.shared?.structuredGenerator.generate(
+                conversationId: conversationId,
+                knownTranscript: knownTranscript
+            )
             AppDelegate.shared?.memoryExtractor.triggerOnConversationClose(conversationId: conversationId)
             AppDelegate.shared?.taskExtractor.triggerOnConversationClose(conversationId: conversationId)
         }

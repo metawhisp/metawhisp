@@ -93,10 +93,13 @@ final class RecordingOverlayController {
     private var panelSize: (width: CGFloat, height: CGFloat) {
         let screenW = NSScreen.main?.frame.width ?? 1440
         switch pillStyle {
-        case "dotglow": return (1200, 800)  // Island Aura — notch + massive 5x aura glow
-        case "island":  return (360, 80)   // Island Expand — wider expanded notch
-        case "glow":    return (screenW, 80)
-        default:        return (280, 54)
+        case "dotglow": return (1200, 800)  // Island Aura — notch + 2-layer aura bloom
+        case "island":  return (720, 240)   // Island Expand — notch + aura, window roomy enough so aura fades smoothly without clipping at panel edges
+        case "glow":    return (screenW, 240) // Edge Glow — full width + falloff depth + voice-reactive headroom
+        case "shrek":   return (220, 220)   // Dancing-Shrek video — tight square around 200pt content + small breathing room
+        // Capsule default: 360×120 — wider so the 28px state-coloured halo + 24px raised shadow
+        // sit fully inside panel bounds. Previous 280×54 clipped the glow on top/bottom.
+        default:        return (360, 120)
         }
     }
 
@@ -190,6 +193,8 @@ struct PillRouterView: View {
             IslandPillView(stage: state.stage, isTranslating: state.isTranslating, audioLevel: state.audioLevel, bars: state.bars)
         case "glow":
             GlowStripPillView(stage: state.stage, audioLevel: state.audioLevel)
+        case "shrek":
+            ShrekPillView(stage: state.stage, isTranslating: state.isTranslating)
         default:
             CapsulePillView(stage: state.stage, isTranslating: state.isTranslating, audioLevel: state.audioLevel, bars: state.bars)
         }

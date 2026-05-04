@@ -37,6 +37,13 @@ final class DailySummary {
     var shippedJSON: String?
     var energy: String?
 
+    // ITER-031 — additional surfacing fields ported from reference daily-summary.
+    /// JSON-encoded `[String]` — short questions the user discussed but didn't resolve.
+    /// Punchy, ≤15 words each. Max 3. nil when LLM produced none.
+    var unresolvedQuestionsJSON: String?
+    /// Single emoji or SF Symbol name reflecting the day's vibe. nil for legacy rows.
+    var dayEmoji: String?
+
     init(
         date: Date,
         title: String,
@@ -80,6 +87,7 @@ final class DailySummary {
     var learned: [String] { decodeStringArray(learnedJSON) }
     var decided: [String] { decodeStringArray(decidedJSON) }
     var shipped: [String] { decodeStringArray(shippedJSON) }
+    var unresolvedQuestions: [String] { decodeStringArray(unresolvedQuestionsJSON) }
 
     private func decodeStringArray(_ json: String?) -> [String] {
         guard let json, let data = json.data(using: .utf8) else { return [] }

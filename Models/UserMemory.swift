@@ -56,6 +56,18 @@ final class UserMemory {
     var reasoning: String?
     var tagsCSV: String?
 
+    /// Structured-extraction fields (2026-04-28). When the LLM identifies
+    /// that a memory is ABOUT a person / project / decision, it fills these
+    /// so MetaChat can surface clean entries (e.g. `PERSON · Sam Smith
+    /// — community building partner`) instead of quoting noisy raw transcripts.
+    /// Nil for legacy rows and for facts without a clear subject.
+    /// `kind`: "person" | "project" | "decision" | "preference" | "fact"
+    /// `subject`: canonical name (for person — full name; for project — name)
+    /// `characterization`: clean one-liner, ASR-noise-free, ≤15 words
+    var kind: String?
+    var subject: String?
+    var characterization: String?
+
     init(
         content: String,
         category: String,

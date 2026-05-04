@@ -41,7 +41,7 @@ final class ChatService: ObservableObject {
     func send(_ userText: String, source: Source = .typed) async {
         guard !isSending else { return }
         guard hasLLMAccess else {
-            lastError = "Нет доступа к LLM (нужен Pro или API key)"
+            lastError = "No LLM access (Pro license or API key required)"
             return
         }
         let trimmed = userText.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -64,7 +64,29 @@ final class ChatService: ObservableObject {
         // memories + tasks by cosine similarity. Legacy rows without embeddings
         // fall back to recency-based retrieval.
         let queryVector = await embedQueryIfPossible(trimmed)
-        let history = fetchChatHistory(limit: 20)
+        // Voice questions get a SCOPED history (current popup session only).
+        // Typed chat keeps full history. See `fetchVoiceSessionHistory` for
+        // why — popup-bound multi-turn without bleed across closures.
+        let history = (source == .voice)
+            ? fetchVoiceSessionHistory(limit: 20)
+            : fetchChatHistory(limit: 20)
+
+        // Voice questions: capture the screen RIGHT NOW so the LLM can answer
+        // "what's on my screen?" / "fill this form" against fresh OCR, not
+        // 30-sec-stale historical snapshots. ScreenCaptureKit + Vision OCR
+        // ≈ 200-500ms — adds latency but enables a class of use cases the
+        // background screen-context polling can't (form-filling, current-tab
+        // questions, ad-hoc screen reading). 2026-05-01 user request.
+        var freshScreen: ScreenContextService.ScreenContextSnapshot? = nil
+        if source == .voice, let svc = screenContext {
+            freshScreen = await svc.captureNow()
+            if let fs = freshScreen {
+                NSLog("[ChatService] 📸 voice: fresh screen capture (%@ · %d chars OCR)",
+                      fs.appName, fs.ocrText.count)
+            } else {
+                NSLog("[ChatService] 📸 voice: no fresh screen (perm denied / blacklisted)")
+            }
+        }
         let memories = fetchMemoriesForQuery(queryVector: queryVector, limit: 20)
         // Dictations and meetings live in separate blocks now — meetings are long
         // and structured (have a title + overview), dictations are short fragments.
@@ -101,7 +123,8 @@ final class ChatService: ObservableObject {
             projects: activeProjects,
             screenSnippets: screenSnippets,
             relevantFiles: relevantFiles,
-            history: history
+            history: history,
+            currentScreen: freshScreen
         )
 
         do {
@@ -126,7 +149,11 @@ final class ChatService: ObservableObject {
                     licenseKey: licenseKey,
                     maxRounds: 5
                 )
-                aiText = outcome.text
+                // Defence-in-depth: strip any leftover XML before display.
+                // The loop already cleans on the no-tool-call exit, but the
+                // round-cap path or tool-result paths can still surface text
+                // with drift-format XML embedded.
+                aiText = Self.stripToolCallXML(outcome.text)
                 nativeToolCall = outcome.pendingMutation
                 NSLog("[ChatService] loop done rounds=%d text=%d pending=%@",
                       outcome.roundsUsed, aiText.count, nativeToolCall?.tool ?? "—")
@@ -150,13 +177,14 @@ final class ChatService: ObservableObject {
                 // ITER-016 v1 — text-extracted tool_call (regex).
                 if let executor = toolExecutor,
                    let call = ChatToolExecutor.parseToolCall(from: rawText) {
-                    aiText = rawText.replacingOccurrences(
-                        of: #"<tool_call>[\s\S]*?</tool_call>"#,
-                        with: "",
-                        options: .regularExpression
-                    ).trimmingCharacters(in: .whitespacesAndNewlines)
+                    // Strip the wrapper / drift pattern via shared helper.
+                    aiText = Self.stripToolCallXML(rawText)
                     nativeToolCall = call
                 }
+                // Defence-in-depth: even when there's no parseable tool call,
+                // strip any stray XML (e.g. malformed tool tag the parser
+                // refused to recover but the LLM still emitted).
+                aiText = Self.stripToolCallXML(aiText)
             }
 
             // Single validate/queue path for both transports — keeps confirm UI consistent.
@@ -268,6 +296,51 @@ final class ChatService: ObservableObject {
     - DO NOT pretend you did it. Claiming an action you didn't take is a SEVERE failure.
     </capabilities>
 
+    <response_style>
+    Write like a real human texting — not an AI writing an essay.
+
+    Length:
+    - Default: 2-8 lines, conversational.
+    - Voice questions (answer will be spoken aloud via TTS): 1-3 lines max — short, direct, no list of bullets.
+    - Quick replies (yes/no, confirmations, "ок", short follow-ups): 1-3 lines.
+    - "I don't have that" / "I don't know" responses: 1-2 lines MAX. Just say it and stop.
+    - Complex/detailed questions (plans, analyses, lists, step-by-step): as long as needed, never truncate mid-list.
+
+    Format:
+    - NO essays summarizing what the user just said.
+    - NO headers like "What you did:", "How you felt:", "Next steps:" (unless user asked for that structure).
+    - NO corporate praise ("Great question!", "Wonderful reflection!").
+    - Just talk like you're texting a friend who you respect.
+    - Lowercase + casual is fine where it fits the conversation.
+    </response_style>
+
+    <critical_accuracy_rules>
+    NEVER MAKE UP INFORMATION. When tools / context return empty:
+
+    1. Empty results → SHORT 1-2 line "I don't have that" and stop.
+       Don't generate plausible-sounding details. Don't offer to "reconstruct".
+       Don't speculate "maybe it wasn't recorded" / "maybe it was bundled in another convo" — keep it simple.
+
+    2. Questions about people: never fabricate traits, relationships, past interactions, personality
+       unless found verbatim in the context blocks. For "what should I know about X?" with no results
+       just say: "I don't have anything about X." Don't invent "they're emotionally tuned-in",
+       "you trust them" etc.
+
+    3. Sound like a human, NOT a robotic database. BANNED phrases (do not use any of these):
+       - "in the logs"
+       - "in your captured calls"
+       - "in your recorded conversations"
+       - "in the data" / "in the available data"
+       - "according to the tools"
+       - "based on the available memories"
+       - "from the retrieved conversations"
+       Instead say: "I don't remember that", "nothing comes up for that", "from what I remember",
+       "last time you mentioned this", "I don't have anything on that yet".
+
+    4. General rule: if you don't know, say "I don't know" / "I don't have that" in 1-2 lines max.
+       Better a short honest "I don't have that" than a paragraph explaining why.
+    </critical_accuracy_rules>
+
     <available_tools>
     Emit EXACTLY this format when — and ONLY when — the user explicitly asks for an
     action. Put it at the END of your reply (after a plain-text one-line preamble
@@ -347,7 +420,8 @@ final class ChatService: ObservableObject {
     - <waiting_on> — items grouped by person; the user is waiting for THAT person to deliver
     - <active_projects> — recurring projects/products detected across conversations, with per-cluster counts (e.g. "ProjectAlpha · 7 conv · 3 pending")
     - <active_goals> — persistent targets the user is tracking (booleans, scales, numeric counters)
-    - <recent_screen_activity> — OCR excerpts from apps viewed in last 24h
+    - <current_screen> — OCR captured RIGHT NOW for this voice question (only present in voice mode). Highest-priority signal for "what's on my screen?" / "fill this form" / "translate this UI" questions.
+    - <recent_screen_activity> — OCR excerpts from apps viewed in last 24h (historical, may be 30 sec to 24h stale)
     - <relevant_files> — excerpts from user's notes / Obsidian vault matching the question
     - <previous_messages> — this chat thread
     </task>
@@ -362,12 +436,23 @@ final class ChatService: ObservableObject {
       Never reply "I don't understand 'го'" — that means you skipped the resolution step.
     - It is EXTREMELY IMPORTANT to answer directly. No padding. No "based on the available memories" phrasing.
     - If you don't know, say so honestly. Don't fabricate.
+    - **ASR-NOISE RULE — DO NOT QUOTE GARBAGE VERBATIM**: voice transcripts come from Whisper and contain
+      occasional hallucinations (the same short phrase repeats 2-3 times, choppy fragments, mid-sentence
+      topic shifts that make no semantic sense, sudden code-switching to filler words like "ну и…, ну и…").
+      When you cite a transcript:
+        · NEVER reproduce a fragment verbatim if it shows ANY of these signs of ASR error.
+        · INSTEAD paraphrase the gist in plain language. Example: instead of `"Сэмом именно обсуждали, что да, solo Сделать комьюнити, ну и комьюнити"` say `"discussed community-building with Sam"`.
+        · If a person/thing is ONLY referenced through suspicious fragments and you have no clean
+          context, say so directly: `"X mentioned in N meetings — no clean details extracted yet."`
+        · NEVER pad an answer by quoting a noisy fragment just to look authoritative.
     - **NEVER ask the user to clarify or "ask a clearer question".** Voice questions are auto-transcribed and may contain ASR noise (a stray phrase before or after the real question). Identify the most plausible real question in the transcript and answer it using the available context. If the entire question is genuinely unintelligible, give a brief honest "couldn't make out the question — heard: '<quote>'" instead of asking the user to repeat.
     - **MEETINGS / CALLS / СОЗВОН**: when the user asks about a call, meeting, созвон, or asks to "transcribe / summarize / кратко о последнем созвоне / транскрибируй", consult <recent_meetings>. For "transcribe"-type requests, reproduce the transcript text from the relevant meeting (the newest one if unspecified). For "summarize"-type requests, give a structured summary using the overview + transcript. Meetings are the ONLY source for calls/созвоны — do NOT confuse them with dictations or tasks. **Calendar lookup**: when the user references a meeting by its CALENDAR EVENT NAME ("о чём говорили на standup в среду", "что обсуждали на 1-on-1 с Alex?"), match against the `calendar:` line of each meeting — that's the actual event title from the user's calendar (with attendees). When a meeting has both a `calendar:` line AND a structured title, prefer citing the calendar name (the user knows their calendar event names better).
     - **PROJECTS / ПРОЕКТЫ / РАБОТА**: when asked about projects, work, what user does, "что я делаю в жизни / какие у меня проекты / что у меня с X" — START from <active_projects> (that block is the aggregated truth across all conversations). Quote the canonical name, counts, and last-activity verbatim. Use <user_facts> and <recent_meetings> overviews to add one-line context per project. When the user asks about a SPECIFIC project ("что у меня с ProjectAlpha"), find that cluster in <active_projects> and answer with its stats + the most recent conversation overviews tagged to it.
-    - When the user asks about what they were reading / working on / viewing — consult <recent_screen_activity>. Quote concrete text from OCR when it directly answers the question. Do NOT invent details the OCR doesn't contain.
+    - **CURRENT SCREEN (voice questions)**: when `<current_screen>` is present, it's a fresh OCR snapshot taken at the moment of THIS question — treat it as the primary source for "что сейчас на экране", "what am I looking at", "fill this form for me", "translate this", "answer for the field". For form-fill requests, return the values the user should paste, organized field by field. For "what's on my screen", summarize what's visible (app + main content). Quote OCR text when relevant — do NOT invent details the snapshot doesn't contain.
+    - When the user asks about what they were reading / working on / viewing in the past — consult <recent_screen_activity>. Quote concrete text from OCR when it directly answers the question. Do NOT invent details the OCR doesn't contain.
     - **GOALS / ЦЕЛИ / ПРОГРЕСС**: when the user asks about goals, targets, progress ("how am I doing on my goals?", "как мои цели?", "сколько отжиманий осталось"), consult <active_goals>. Quote the title and progress label verbatim ("3/10 push-ups", "Done", "Pending") so the user sees the exact tracked value. If a goal is at 0 or behind expected pace, surface that bluntly. If <active_goals> is empty, say so honestly — do NOT invent goals.
     - **TASKS — MY vs WAITING-ON**: <my_tasks> = what the user owes themselves. <waiting_on> = what someone OWES the user (grouped by person). When user asks "what's on my plate" / "what should I do" / "что у меня в работе" → answer from <my_tasks>. When user asks "what am I waiting on" / "what does Sam owe me" / "от кого я что жду" → answer from <waiting_on>. NEVER mix the two: a task in <waiting_on Sam> is Sam's job, not the user's, do not tell the user to do it.
+    - **TASK DUE DATES**: each task line may end with `(due: today / tomorrow / in Nd / overdue Nd / yyyy-mm-dd)`. Treat `overdue` tasks as live work to surface ("ты так и не сделал X, оно опаздывает на N дней"). When the user asks "what's open" — lead with `today` and `overdue` rows; mention later-dated rows after.
     - When the user asks about their notes / writing / project docs ("в какой заметке я писал про X", "what did I note about Y") — consult <relevant_files>. Reference the filename when citing. Do NOT pretend a file exists if the block says "(no matching notes)".
     - OCR text and file content are raw and may contain markdown syntax, frontmatter, or UI noise. Ignore obvious chrome, extract the meaningful content.
     - If <recent_voice_transcripts>, <recent_meetings>, <user_facts>, <my_tasks>, <waiting_on>, <active_goals>, <active_projects>, <recent_screen_activity>, and <relevant_files> are ALL empty, answer from general knowledge — but clarify you have no personal context.
@@ -604,7 +689,8 @@ final class ChatService: ObservableObject {
         projects: [ProjectSummary],
         screenSnippets: [ScreenSnippet],
         relevantFiles: [FileSnippet],
-        history: [ChatMessage]
+        history: [ChatMessage],
+        currentScreen: ScreenContextService.ScreenContextSnapshot? = nil
     ) -> String {
         // QUESTION SANDWICH — prepend AND append the question so it's anchored at
         // both ends of the prompt. Previously the question was only at the end,
@@ -620,6 +706,22 @@ final class ChatService: ObservableObject {
         parts.append("")
         parts.append("--- CONTEXT BELOW ---")
 
+        // <current_screen> — fresh OCR captured at the moment of THIS voice
+        // question. Highest signal for "what's on my screen?" / "fill this
+        // form" / "translate this UI" questions. Comes BEFORE historical
+        // <recent_screen_activity> so the LLM prioritizes the live frame.
+        if let cs = currentScreen {
+            parts.append("")
+            parts.append("<current_screen>")
+            parts.append("app: \(cs.appName)")
+            if !cs.windowTitle.isEmpty { parts.append("window: \(cs.windowTitle)") }
+            parts.append("ocr_text:")
+            // Cap at 4000 chars — typical screen has 500-2000 chars OCR;
+            // dense PDF/code can exceed but 4000 is plenty for any answer.
+            parts.append(String(cs.ocrText.prefix(4000)))
+            parts.append("</current_screen>")
+        }
+
         parts.append("")
         parts.append("<user_facts>")
         parts.append(memories.isEmpty ? "(none stored)" : memories)
@@ -633,7 +735,7 @@ final class ChatService: ObservableObject {
         if tasks.myTasks.isEmpty {
             parts.append("(none)")
         } else {
-            for t in tasks.myTasks { parts.append("- \(t)") }
+            for t in tasks.myTasks { parts.append("- \(Self.formatTaskLine(t))") }
         }
         parts.append("</my_tasks>")
 
@@ -644,7 +746,7 @@ final class ChatService: ObservableObject {
         } else {
             for group in tasks.waitingOn {
                 parts.append("\(group.name):")
-                for t in group.items { parts.append("  - \(t)") }
+                for t in group.items { parts.append("  - \(Self.formatTaskLine(t))") }
             }
         }
         parts.append("</waiting_on>")
@@ -838,6 +940,24 @@ final class ChatService: ObservableObject {
                                       embedding: { $0.embedding },
                                       limit: limit)
         return ordered.map { mem -> String in
+            // 2026-04-28 — when structured fields (kind/subject/characterization)
+            // exist, render a CLEAN structured prefix the LLM can preferentially
+            // cite for "who is X" / "what is project Y" questions, instead of
+            // falling back to noisy raw transcripts. Format:
+            //   - PERSON · Sam Smith — community building partner [id:UUID]
+            //   - PROJECT · MetaWhisp — macOS voice-to-text + AI assistant [id:UUID]
+            // Memories without these fields fall through to the legacy line shape.
+            if let kind = mem.kind, !kind.isEmpty,
+               let charact = mem.characterization, !charact.isEmpty {
+                let kindLabel = kind.uppercased()
+                let subjectPart = (mem.subject?.isEmpty == false) ? "\(mem.subject!) — " : ""
+                var line = "- \(kindLabel) · \(subjectPart)\(charact) [id:\(mem.id.uuidString)]"
+                if let r = mem.reasoning, !r.isEmpty { line += "  (why: \(r))" }
+                if let tags = mem.tagsCSV, !tags.isEmpty {
+                    line += "  #\(tags.replacingOccurrences(of: ",", with: " #"))"
+                }
+                return line
+            }
             // ITER-016 — include UUID so LLM can target this memory via `dismissMemory`.
             var line = "- [id:\(mem.id.uuidString)] \(mem.content)"
             if let h = mem.headline, !h.isEmpty {
@@ -1162,9 +1282,14 @@ final class ChatService: ObservableObject {
     /// ITER-013 — pending tasks split by ownership for separate prompt blocks.
     /// MyTasks: assignee == nil (user owes themselves).
     /// WaitingOn: grouped by assignee name (someone owes the user).
+    struct PendingTaskSnippet {
+        let id: UUID
+        let description: String
+        let dueAt: Date?
+    }
     struct PendingTaskBundle {
-        let myTasks: [String]
-        let waitingOn: [(name: String, items: [String])]
+        let myTasks: [PendingTaskSnippet]
+        let waitingOn: [(name: String, items: [PendingTaskSnippet])]
         var totalCount: Int {
             myTasks.count + waitingOn.reduce(0) { $0 + $1.items.count }
         }
@@ -1182,7 +1307,14 @@ final class ChatService: ObservableObject {
             sortBy: [SortDescriptor(\.createdAt, order: .reverse)]
         )
         let all = (try? ctx.fetch(desc)) ?? []
-        let committed = all.filter { $0.status != "staged" && $0.status != "dismissed" }
+        // No staleness filter — root cause of "interviews from weeks ago in
+        // chat" was the calendar bulk-task pipeline (ITER-026 fix), not voice
+        // extraction. Voice-extracted tasks with past due dates ("оплатить
+        // счёт во вторник", forgot) SHOULD surface with the `overdue Nd` tag
+        // produced by `formatTaskLine` so the user gets reminded.
+        let committed = all.filter {
+            $0.status != "staged" && $0.status != "dismissed"
+        }
         // Rank ALL committed by relevance to the query, then partition into MY vs
         // waiting-on AFTER ranking — so the top-K both lists draw from is the most
         // relevant slice of the user's whole task surface, not two independent ranks.
@@ -1190,22 +1322,45 @@ final class ChatService: ObservableObject {
                                       queryVector: queryVector,
                                       embedding: { $0.embedding },
                                       limit: limit)
-        // ITER-016 — prefix each line with the task UUID so LLM can reference it
-        // in a `<tool_call>` block (dismissTask / completeTask need `args.id`).
-        var my: [String] = []
-        var waitingMap: [String: [String]] = [:]
+        var my: [PendingTaskSnippet] = []
+        var waitingMap: [String: [PendingTaskSnippet]] = [:]
         var waitingOrder: [String] = []
         for t in ordered {
-            let line = "[\(t.id.uuidString)] \(t.taskDescription)"
+            let snippet = PendingTaskSnippet(id: t.id, description: t.taskDescription, dueAt: t.dueAt)
             if t.isMyTask {
-                my.append(line)
+                my.append(snippet)
             } else if let name = t.assignee?.trimmingCharacters(in: .whitespacesAndNewlines), !name.isEmpty {
                 if waitingMap[name] == nil { waitingOrder.append(name) }
-                waitingMap[name, default: []].append(line)
+                waitingMap[name, default: []].append(snippet)
             }
         }
-        let waitingOn: [(String, [String])] = waitingOrder.map { ($0, waitingMap[$0] ?? []) }
+        let waitingOn: [(String, [PendingTaskSnippet])] = waitingOrder.map { ($0, waitingMap[$0] ?? []) }
         return PendingTaskBundle(myTasks: my, waitingOn: waitingOn)
+    }
+
+    /// One line per task in `<my_tasks>` / `<waiting_on>`. UUID prefix lets the LLM
+    /// target the row in `dismissTask` / `completeTask` tool calls. dueAt suffix
+    /// gives the LLM enough signal to flag overdue work without us pre-filtering
+    /// so aggressively that a task due tomorrow at noon hides from the morning
+    /// "what's on my plate" question.
+    fileprivate static func formatTaskLine(_ t: PendingTaskSnippet) -> String {
+        var line = "[\(t.id.uuidString)] \(t.description)"
+        guard let due = t.dueAt else { return line }
+        let df = DateFormatter()
+        df.locale = Locale(identifier: "en_US_POSIX")
+        df.dateFormat = "yyyy-MM-dd"
+        let cal = Calendar.current
+        let startOfToday = cal.startOfDay(for: Date())
+        let startOfDue = cal.startOfDay(for: due)
+        let dayDelta = cal.dateComponents([.day], from: startOfToday, to: startOfDue).day ?? 0
+        let when: String
+        if dayDelta < 0 { when = "overdue \(-dayDelta)d" }
+        else if dayDelta == 0 { when = "today" }
+        else if dayDelta == 1 { when = "tomorrow" }
+        else if dayDelta <= 7 { when = "in \(dayDelta)d" }
+        else { when = df.string(from: due) }
+        line += " (due: \(when))"
+        return line
     }
 
     /// Compact representation of a tracked goal for the LLM prompt.
@@ -1284,10 +1439,53 @@ final class ChatService: ObservableObject {
     }
 
     /// Last N chat messages (oldest first for prompt readability).
+    /// Strip both the canonical `<tool_call>...</tool_call>` block and the
+    /// drift pattern `<toolName>{...}</toolName>` from text. Defensive — any
+    /// path that surfaces text to the user / TTS should funnel through here
+    /// so raw XML never leaks to the UI (the bug user hit on 2026-05-01:
+    /// `<searchMemories>{"query": "Сэм Кашелтов", "limit": 10}</searchMemories>`
+    /// shown verbatim as a METACHAT response).
+    static func stripToolCallXML(_ text: String) -> String {
+        var out = text.replacingOccurrences(
+            of: #"<tool_call>[\s\S]*?</tool_call>"#,
+            with: "",
+            options: .regularExpression
+        )
+        out = out.replacingOccurrences(
+            of: #"<(?:dismissTask|completeTask|dismissMemory|updateGoalProgress|addTask|addMemory|searchTasks|searchMemories|searchConversations)>[\s\S]*?</(?:dismissTask|completeTask|dismissMemory|updateGoalProgress|addTask|addMemory|searchTasks|searchMemories|searchConversations)>"#,
+            with: "",
+            options: .regularExpression
+        )
+        return out.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
     private func fetchChatHistory(limit: Int) -> [ChatMessage] {
         guard let container = modelContainer else { return [] }
         let ctx = ModelContext(container)
         var desc = FetchDescriptor<ChatMessage>(
+            sortBy: [SortDescriptor(\.createdAt, order: .reverse)]
+        )
+        desc.fetchLimit = limit
+        let items = (try? ctx.fetch(desc)) ?? []
+        return items.reversed()
+    }
+
+    /// Voice path variant — `<previous_messages>` for the voice popup is bound
+    /// to the CURRENT popup session. Lifecycle:
+    ///   - `VoiceQuestionState.startListening()` anchors `voiceSessionStartedAt`
+    ///   - subsequent ⌘ long-presses while popup is open keep the same anchor
+    ///     (multi-turn — LLM sees Q1+A1 when answering Q2)
+    ///   - `dismiss()` (Esc / auto / X) clears anchor → next popup opens fresh
+    /// When anchor is nil OR no messages exist after it → return empty history,
+    /// so a brand-new voice session never sees the previous one.
+    private func fetchVoiceSessionHistory(limit: Int) -> [ChatMessage] {
+        guard let container = modelContainer else { return [] }
+        guard let anchor = VoiceQuestionState.shared.voiceSessionStartedAt else {
+            return []
+        }
+        let ctx = ModelContext(container)
+        var desc = FetchDescriptor<ChatMessage>(
+            predicate: #Predicate { $0.createdAt >= anchor },
             sortBy: [SortDescriptor(\.createdAt, order: .reverse)]
         )
         desc.fetchLimit = limit
@@ -1362,9 +1560,25 @@ final class ChatService: ObservableObject {
             let txt = resp.text.trimmingCharacters(in: .whitespacesAndNewlines)
             if !txt.isEmpty { lastText = txt }
 
-            guard let call = resp.toolCall else {
-                // Plain text — end of chain.
-                return AgenticOutcome(text: lastText, pendingMutation: nil, roundsUsed: rounds)
+            // Some models still emit a DRIFT-format text tool call
+            // (`<searchMemories>{"query":"..."}</searchMemories>`) inside the
+            // assistant content even when a native `tool_calls` slot is
+            // available. Recover the call text-side and run it like a normal
+            // read-only step so user doesn't see raw XML in the popup.
+            var effectiveCall: ChatToolExecutor.ToolCall? = resp.toolCall
+            if effectiveCall == nil, let driftCall = ChatToolExecutor.parseToolCall(from: txt) {
+                NSLog("[ChatService] loop: recovered drift-format tool call <%@>", driftCall.tool)
+                effectiveCall = driftCall
+            }
+
+            guard let call = effectiveCall else {
+                // Plain text — end of chain. Strip any leftover XML before
+                // returning (defence-in-depth — should be empty after parse path).
+                return AgenticOutcome(
+                    text: Self.stripToolCallXML(lastText),
+                    pendingMutation: nil,
+                    roundsUsed: rounds
+                )
             }
 
             if ChatToolExecutor.isReadOnly(call.tool) {

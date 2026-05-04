@@ -1,143 +1,86 @@
 import AppKit
 import Foundation
-import UserNotifications
+import SwiftUI
 
-/// Posts macOS system notifications for AdviceItems.
-/// Handles click → open Insights tab.
+/// Routes app-side notifications into `MWNotificationStack` (single in-app
+/// design, top-right, max 4 visible). Replaces macOS-native UN banners — those
+/// were stacked separately by the OS and overlapped our `ProactiveChipWindow`,
+/// producing two visually distinct notifications fighting for the same corner.
 ///
-/// Implements spec://intelligence/FEAT-0003#notifications
+/// We're a menu-bar app, always running, so dropping system banners costs us
+/// nothing: the user sees our card immediately or never (we never need
+/// "background delivery" semantics that UN provides).
+///
+/// spec://iterations/ITER-026-notification-unification
 @MainActor
 final class NotificationService: NSObject, ObservableObject {
     static let shared = NotificationService()
 
-    /// Category for advice notifications (enables custom action handling)
-    private static let adviceCategoryID = "com.metawhisp.advice"
+    /// Rate limit on advice cards (which can fire frequently when AI keeps
+    /// surfacing things) — same 1-per-minute behaviour as before.
+    private var lastAdviceAt: Date?
+    private static let adviceMinInterval: TimeInterval = 60
 
-    /// Advice items mapped by notification identifier for click handling.
-    private var adviceMap: [String: UUID] = [:]
+    override private init() { super.init() }
 
-    /// Rate limit: timestamp of last sent notification.
-    private var lastSentAt: Date?
-    private static let minInterval: TimeInterval = 60 // 1 per minute
+    /// Compatibility shim: previously returned UN authorization. Always true now —
+    /// in-app stack doesn't need OS permission.
+    var hasPermission: Bool { true }
 
-    @Published var authorizationStatus: UNAuthorizationStatus = .notDetermined
-
-    override private init() {
-        super.init()
-        UNUserNotificationCenter.current().delegate = self
-        setupCategories()
-        refreshAuthorizationStatus()
-    }
-
-    // MARK: - Setup
-
-    private func setupCategories() {
-        let category = UNNotificationCategory(
-            identifier: Self.adviceCategoryID,
-            actions: [],
-            intentIdentifiers: [],
-            options: [.customDismissAction]
-        )
-        UNUserNotificationCenter.current().setNotificationCategories([category])
-    }
-
-    private func refreshAuthorizationStatus() {
-        UNUserNotificationCenter.current().getNotificationSettings { [weak self] settings in
-            Task { @MainActor in
-                self?.authorizationStatus = settings.authorizationStatus
-            }
-        }
-    }
-
-    // MARK: - Permission
-
-    /// Request notification permission. Returns true if granted.
+    /// Compatibility shim — old onboarding flow called this. Now a no-op.
     @discardableResult
-    func requestPermission() async -> Bool {
-        do {
-            let granted = try await UNUserNotificationCenter.current()
-                .requestAuthorization(options: [.alert, .sound, .badge])
-            refreshAuthorizationStatus()
-            NSLog("[Notifications] Permission granted: %@", granted ? "YES" : "NO")
-            return granted
-        } catch {
-            NSLog("[Notifications] Permission request failed: %@", error.localizedDescription)
-            return false
-        }
-    }
+    func requestPermission() async -> Bool { true }
 
-    var hasPermission: Bool {
-        authorizationStatus == .authorized || authorizationStatus == .provisional
-    }
+    // MARK: - Posters
 
-    // MARK: - Post Advice
-
-    /// Post a notification for a newly-extracted task. Copied from reference
-    /// `TaskPromotionService.swift:84-90` — one notification per task, immediate delivery,
-    /// no rate limit. Click opens Tasks tab (same handler as advice).
-    ///
-    /// `source` labels where the task came from (e.g. "Screen", "Voice") — shown as title.
-    /// Implements spec://iterations/ITER-005-task-notifications#scope
+    /// Notification for a freshly-extracted task. `source` labels the origin
+    /// ("Voice", "Screen") so the user knows where the suggestion came from.
     func postNewTask(_ task: TaskItem, source: String) {
-        guard hasPermission else {
-            NSLog("[Notifications] No permission — skipping task notification (still in Tasks tab)")
+        // DND while a meeting is recording — task lands in the post-meeting
+        // recap popup, not a live banner. MetaWhisp-only DND, never touches
+        // macOS Focus.
+        if AppDelegate.shared?.meetingRecorder.isRecording == true {
+            NSLog("[Notifications] DND — meeting active, deferring task notify (will land in recap)")
             return
         }
-
-        let content = UNMutableNotificationContent()
-        content.title = source.isEmpty ? "New task" : "New task from \(source)"
-        content.body = String(task.taskDescription.prefix(200))
-        content.sound = .default
-        content.categoryIdentifier = Self.adviceCategoryID  // reuse — same click → Tasks behavior
-
-        let id = "com.metawhisp.task.\(task.id.uuidString)"
-        let request = UNNotificationRequest(identifier: id, content: content, trigger: nil)
-        UNUserNotificationCenter.current().add(request) { err in
-            if let err {
-                NSLog("[Notifications] ❌ Task notification failed: %@", err.localizedDescription)
-            } else {
-                NSLog("[Notifications] ✅ Posted task notification: %@", String(task.taskDescription.prefix(60)))
+        let title = source.isEmpty ? "New task" : "New task from \(source)"
+        let note = MWNotification(
+            kind: .task,
+            title: title,
+            body: String(task.taskDescription.prefix(200)),
+            onTap: {
+                NSApp.activate(ignoringOtherApps: true)
+                NotificationCenter.default.post(
+                    name: .switchMainTab,
+                    object: MainWindowView.SidebarTab.tasks
+                )
             }
-        }
+        )
+        MWNotificationStack.shared.push(note)
+        NSLog("[Notifications] ✅ Posted task: %@", String(task.taskDescription.prefix(60)))
     }
 
-    /// Post a call-detection notification. Not rate-limited — call events are
-    /// already debounced at source (fire only on state change in ScreenContextService).
-    ///
-    /// Implements spec://iterations/ITER-002-call-detection#notification
+    /// Call detection — fires once per session per app (CallSessionMachine
+    /// dedups upstream, so we don't repeat ourselves here).
     func postCallDetected(appName: String, autoStart: Bool) {
-        guard hasPermission else {
-            NSLog("[Notifications] No permission — skipping call notification")
-            return
-        }
-
-        let content = UNMutableNotificationContent()
-        content.title = "\(appName) detected"
-        content.body = autoStart
+        let body = autoStart
             ? "Recording starts in 5 seconds…"
             : "Tap the menu bar to start recording."
-        content.sound = .default
-
-        let request = UNNotificationRequest(
-            identifier: "com.metawhisp.call.\(UUID().uuidString)",
-            content: content,
-            trigger: nil
-        )
-        UNUserNotificationCenter.current().add(request) { err in
-            if let err {
-                NSLog("[Notifications] ❌ Call notification failed: %@", err.localizedDescription)
-            } else {
-                NSLog("[Notifications] ✅ Call notification posted: %@ (autoStart=%@)",
-                      appName, autoStart ? "YES" : "NO")
+        let note = MWNotification(
+            kind: .call,
+            title: "\(appName) detected",
+            body: body,
+            onTap: {
+                NSApp.activate(ignoringOtherApps: true)
             }
-        }
+        )
+        MWNotificationStack.shared.push(note)
+        NSLog("[Notifications] ✅ Posted call: %@ (autoStart=%@)", appName, autoStart ? "YES" : "NO")
     }
 
-    /// Notification fired when MeetingRecorder auto-stops itself (ITER-012).
-    /// Reasons: call window closed, prolonged silence, or max-duration cap.
-    /// User-facing copy explains WHY so the recording vanishing isn't surprising.
+    /// Meeting recorder auto-stopped — explain WHY so the recording vanishing
+    /// isn't a surprise (silence timeout / max-duration / call ended).
     func postMeetingAutoStopped(reason: MeetingRecorder.AutoStopReason) {
-        guard hasPermission else { return }
         let (title, body): (String, String) = {
             switch reason {
             case .callEnded:
@@ -150,165 +93,49 @@ final class NotificationService: NSObject, ObservableObject {
                 return ("Recording stopped", "Hit \(hrs)h max duration — saving transcript.")
             }
         }()
-        let content = UNMutableNotificationContent()
-        content.title = title
-        content.body = body
-        content.sound = .default
-        let req = UNNotificationRequest(
-            identifier: "com.metawhisp.meeting.autostop.\(UUID().uuidString)",
-            content: content,
-            trigger: nil
+        let note = MWNotification(
+            kind: .recordingStopped,
+            title: title,
+            body: body,
+            onTap: nil  // informational only
         )
-        UNUserNotificationCenter.current().add(req) { err in
-            if let err {
-                NSLog("[Notifications] ❌ Auto-stop notif failed: %@", err.localizedDescription)
-            }
-        }
+        MWNotificationStack.shared.push(note)
     }
 
-    /// Post the per-meeting recap notification (ITER-012). Sent after extractors
-    /// finish so body counts of tasks/memories are accurate. Click → Library tab.
-    /// `conversationId` lets future iterations deep-link to the specific row.
-    func postMeetingRecap(title: String, overview: String, taskCount: Int,
-                          memoryCount: Int, conversationId: UUID) {
-        guard hasPermission else { return }
-        let content = UNMutableNotificationContent()
-        content.title = "Meeting recap: \(title.isEmpty ? "untitled" : title)"
-        var body = String(overview.prefix(140))
-        var counts: [String] = []
-        if taskCount > 0  { counts.append("\(taskCount) task\(taskCount == 1 ? "" : "s")") }
-        if memoryCount > 0 { counts.append("\(memoryCount) memor\(memoryCount == 1 ? "y" : "ies")") }
-        if !counts.isEmpty {
-            if !body.isEmpty { body += "\n" }
-            body += counts.joined(separator: " · ")
-        }
-        if body.isEmpty { body = "Transcript saved." }
-        content.body = body
-        content.sound = .default
-        content.userInfo = ["conversationId": conversationId.uuidString,
-                            "target": "library"]
-        // Reuse advice category so click routing → tab switch works through existing handler.
-        content.categoryIdentifier = Self.adviceCategoryID
-
-        let req = UNNotificationRequest(
-            identifier: "com.metawhisp.meeting.recap.\(conversationId.uuidString)",
-            content: content,
-            trigger: nil
-        )
-        UNUserNotificationCenter.current().add(req) { err in
-            if let err {
-                NSLog("[Notifications] ❌ Recap notif failed: %@", err.localizedDescription)
-            } else {
-                NSLog("[Notifications] ✅ Recap posted: '%@' (%d tasks, %d memories)",
-                      title, taskCount, memoryCount)
-            }
-        }
-    }
-
-    /// Post a notification for a newly-generated advice item.
-    /// Rate-limited to 1 per minute.
+    /// Advice item — rate-limited (1/min) AND DND-suppressed during meetings.
     func postAdvice(_ advice: AdviceItem) {
-        // Rate limit
-        if let last = lastSentAt, Date().timeIntervalSince(last) < Self.minInterval {
-            NSLog("[Notifications] Rate limited — skipping (last sent %.0fs ago)",
+        if let last = lastAdviceAt, Date().timeIntervalSince(last) < Self.adviceMinInterval {
+            NSLog("[Notifications] Rate limited — skipping advice (last sent %.0fs ago)",
                   Date().timeIntervalSince(last))
             return
         }
-
-        guard hasPermission else {
-            NSLog("[Notifications] No permission — skipping notification (advice still in Insights tab)")
+        if AppDelegate.shared?.meetingRecorder.isRecording == true {
+            NSLog("[Notifications] DND — meeting active, suppressing advice notify")
             return
         }
-
-        let content = UNMutableNotificationContent()
-        content.title = advice.category.capitalized
-        content.body = String(advice.content.prefix(200))
-        content.sound = .default
-        content.categoryIdentifier = Self.adviceCategoryID
-
-        let id = UUID().uuidString
-        let request = UNNotificationRequest(identifier: id, content: content, trigger: nil)
-
-        adviceMap[id] = advice.id
-
-        UNUserNotificationCenter.current().add(request) { [weak self] error in
-            Task { @MainActor in
-                if let error {
-                    NSLog("[Notifications] ❌ Post failed: %@", error.localizedDescription)
-                    self?.adviceMap.removeValue(forKey: id)
-                } else {
-                    NSLog("[Notifications] ✅ Posted advice notification: %@", advice.category)
-                    self?.lastSentAt = Date()
-                }
-            }
-        }
-    }
-}
-
-// MARK: - UNUserNotificationCenterDelegate
-
-extension NotificationService: UNUserNotificationCenterDelegate {
-    /// Show notification banner even when app is in foreground.
-    nonisolated func userNotificationCenter(
-        _ center: UNUserNotificationCenter,
-        willPresent notification: UNNotification,
-        withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void
-    ) {
-        completionHandler([.banner, .sound, .badge])
-    }
-
-    /// Handle click / dismiss.
-    nonisolated func userNotificationCenter(
-        _ center: UNUserNotificationCenter,
-        didReceive response: UNNotificationResponse,
-        withCompletionHandler completionHandler: @escaping () -> Void
-    ) {
-        let id = response.notification.request.identifier
-
-        Task { @MainActor in
-            let adviceID = self.adviceMap[id]
-            self.adviceMap.removeValue(forKey: id)
-
-            switch response.actionIdentifier {
-            case UNNotificationDefaultActionIdentifier:
-                // User clicked the notification — bring app to foreground.
+        let adviceID = advice.id
+        let note = MWNotification(
+            kind: .advice,
+            title: advice.category.capitalized,
+            body: String(advice.content.prefix(200)),
+            onTap: {
                 NSApp.activate(ignoringOtherApps: true)
-
-                // Route to the right tab based on notification's userInfo.
-                // Default: Tasks (advice/task/legacy). Meeting recap: Library.
-                let userInfo = response.notification.request.content.userInfo
-                let target = userInfo["target"] as? String ?? ""
-                let destinationTab: MainWindowView.SidebarTab = {
-                    switch target {
-                    case "library": return .library
-                    case "dashboard": return .dashboard
-                    default: return .tasks
-                    }
-                }()
                 NotificationCenter.default.post(
                     name: .switchMainTab,
-                    object: destinationTab
+                    object: MainWindowView.SidebarTab.tasks
                 )
-
-                // Signal to AdviceService / InsightsView to mark this item as read
-                if let adviceID {
-                    NotificationCenter.default.post(
-                        name: .markAdviceAsRead,
-                        object: adviceID
-                    )
-                }
-
-            case UNNotificationDismissActionIdentifier:
-                // User swiped away — no action needed
-                break
-
-            default:
-                break
+                NotificationCenter.default.post(name: .markAdviceAsRead, object: adviceID)
             }
-
-            completionHandler()
-        }
+        )
+        MWNotificationStack.shared.push(note)
+        lastAdviceAt = Date()
+        NSLog("[Notifications] ✅ Posted advice: %@", advice.category)
     }
+
+    // NOTE: `postMeetingRecap` was deliberately removed. The recap is shown
+    // by `MeetingRecapWindow` (top-center, full structured payload) — adding
+    // a parallel banner double-notified the user and was the most visible
+    // overlap in the top-right corner. spec://iterations/ITER-026
 }
 
 // MARK: - Notification.Name

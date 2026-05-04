@@ -7,6 +7,13 @@ final class AppSettings: ObservableObject {
 
     @AppStorage("selectedModel") var selectedModel: String = "large-v3-turbo"
     @AppStorage("transcriptionLanguage") var transcriptionLanguage: String = "ru"
+
+    /// Audio input device override. Empty string = follow macOS default
+    /// (whichever input device the system has selected). Otherwise persists
+    /// the device's stable UID — `AudioInputCatalog.device(forUID:)` resolves
+    /// it back to a runtime device on each `AudioRecordingService.start()`.
+    /// If the picked device was unplugged, falls back to system default.
+    @AppStorage("preferredInputDeviceUID") var preferredInputDeviceUID: String = ""
     @AppStorage("hotkeyMode") var hotkeyMode: String = "toggle" // toggle, pushToTalk
     @AppStorage("soundEnabled") var soundEnabled: Bool = true
     @AppStorage("autoSubmit") var autoSubmit: Bool = true
@@ -17,8 +24,31 @@ final class AppSettings: ObservableObject {
     @AppStorage("transcriptionEngine") var transcriptionEngine: String = "ondevice" // ondevice, cloud
     @AppStorage("cloudTranscriptionProvider") var cloudTranscriptionProvider: String = "groq" // groq, openai
     @AppStorage("hasCompletedOnboarding") var hasCompletedOnboarding: Bool = false
+
+    /// One-time migration flag (ITER-026): on first launch after the unified
+    /// notification work, dismiss every TaskItem still flagged
+    /// `sourceApp == "Calendar"`. Those rows came from the old bulk pipeline
+    /// in `CalendarReaderService.scanNow` — calendar event titles posing as
+    /// action items. The pipeline is gone; this flag ensures the existing
+    /// rows don't keep haunting the chat context.
+    @AppStorage("didMigrateCalendarTasks_iter026") var didMigrateCalendarTasks: Bool = false
+
+    /// One-time migration: lower stale `meetingSilenceStopMinutes` (default
+    /// was 10 in 2026-04-30 build, now 3 in ITER-026 v2 — see field doc).
+    /// Without this, users who launched the older build retain the 10 min
+    /// stale default in their UserDefaults and back-to-back calls keep
+    /// merging into one recording.
+    @AppStorage("didMigrateSilenceStop_iter026") var didMigrateSilenceStop: Bool = false
     @AppStorage("weekStartsOn") var weekStartsOn: Int = 2 // 1=Sunday, 2=Monday
     @AppStorage("appTheme") var appTheme: String = "dark" // dark, light, auto
+
+    /// Liquid Glass design — accent color preset.
+    /// Read by `MW.accent` (Helpers/DesignSystem.swift). Default `mono` keeps the
+    /// existing monochrome look so adopting the new design system doesn't tint
+    /// any existing UI element. User can switch to a colored preset in
+    /// Settings → Appearance once that surface ships.
+    /// Allowed values: "mono" | "warmOrange" | "electric" | "mint" | "violet".
+    @AppStorage("accentColor") var accentColor: String = "mono"
 
     // Text style (Pro only)
     @AppStorage("textStyle_lowercaseStart") var textStyleLowercaseStart: Bool = false
@@ -36,12 +66,22 @@ final class AppSettings: ObservableObject {
     /// Layered defense for the "7-hour zombie recording" bug (ITER-012). Default 4h.
     @AppStorage("meetingMaxDurationMinutes") var meetingMaxDurationMinutes: Double = 240
     /// Silence backstop. If `MeetingRecorder.audioLevel` stays below threshold for N minutes
-    /// consecutively, auto-stop. Catches "Chrome tab still open after meeting ended" case.
-    /// Default 3 min — enough to span natural conversation pauses without false-stopping.
+    /// consecutively, auto-stop. With ITER-026 the silence guard is now the SOLE auto-stop
+    /// signal (window-loss no longer stops recording), so this needs to be tight enough
+    /// that back-to-back calls don't get merged into one zombie recording. User report
+    /// 2026-05-02: "через 10 минут может начаться другой созвон уже и ты скажешь что этот
+    /// тот же — нужно меньше". Lowered 10 → 3 min. Real calls rarely have ≥3 min of
+    /// total silence (system-audio counts toward audioLevel — as long as ANYONE is
+    /// speaking, including the other side over Meet/Zoom, we're not silent).
     @AppStorage("meetingSilenceStopMinutes") var meetingSilenceStopMinutes: Double = 3
     /// When ON: post a notification ~8s after meeting stops, summarising title + extracted
     /// tasks/memories. Click → opens Library tab.
     @AppStorage("meetingRecapNotifications") var meetingRecapNotifications: Bool = true
+    /// In-app Recap popup that appears ~8s after a meeting stops (2026-04-29).
+    /// Shows title/summary/action items/memories with Copy + Open in Library
+    /// buttons. Independent of the macOS notification banner above — both can
+    /// be on simultaneously.
+    @AppStorage("meetingRecapPopupEnabled") var meetingRecapPopupEnabled: Bool = true
 
     /// ITER-019 — Live advice during meeting recording. Periodically transcribes
     /// the last 30s of audio and feeds it to AdviceService for realtime hints
@@ -125,6 +165,21 @@ final class AppSettings: ObservableObject {
     @AppStorage("ttsCloudEnabled") var ttsCloudEnabled: Bool = false
     /// Cloud voice id (alloy / echo / fable / onyx / nova / shimmer). Default "nova" (warm female).
     @AppStorage("ttsCloudVoice") var ttsCloudVoice: String = "nova"
+
+    // Obsidian outbound sync (spec://BACKLOG, 2026-04-28). When enabled, the app
+    // appends each new UserMemory to a single Markdown journal file inside the
+    // user's Obsidian vault. Lets memories spread out of MetaWhisp into the rest
+    // of the user's knowledge graph (other Obsidian plugins, mobile, etc).
+    @AppStorage("obsidianSyncEnabled") var obsidianSyncEnabled: Bool = false
+    /// Absolute path to the Obsidian vault folder (must be writable).
+    @AppStorage("obsidianVaultPath") var obsidianVaultPath: String = ""
+    /// Periodic sync interval. Default 12h — picks up any memory created since
+    /// last run that wasn't already appended (we track a "last synced" mark).
+    /// Twice-a-day is enough since memories accumulate slowly.
+    @AppStorage("obsidianSyncInterval") var obsidianSyncInterval: Double = 43200
+    /// ISO-8601 timestamp of the last successful sync (oldest memory NOT yet
+    /// appended must have createdAt > this). Empty on first run.
+    @AppStorage("obsidianLastSyncedAt") var obsidianLastSyncedAt: String = ""
 
     // Daily Summary (spec://iterations/ITER-009-daily-summary)
     @AppStorage("dailySummaryEnabled") var dailySummaryEnabled: Bool = true
