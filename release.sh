@@ -37,9 +37,26 @@ echo "==> Step 2a: Notarizing DMG with Apple (MANDATORY in prod)..."
 # Order matters: notarize + staple BEFORE the Sparkle EdDSA sign, because
 # stapling modifies the DMG bytes and the Sparkle hash must cover the FINAL,
 # stapled DMG that's actually shipped.
-APPLE_ID="maintainer@gmail.com"
-TEAM_ID="6D6948Z4MW"
-APP_SPECIFIC_PASS="fswz-qydu-csch-ocyp"
+#
+# Credentials live in macOS Keychain — NEVER hardcode them here.
+# This file is in a public GitHub repo; anything written below is leaked.
+# One-time setup:
+#   security add-generic-password -s metawhisp-apple-id      -a "$USER" -w '<your-apple-id-email>'
+#   security add-generic-password -s metawhisp-apple-notary  -a "$USER" -w '<app-specific-password from appleid.apple.com>'
+APPLE_ID="$(security find-generic-password -s metawhisp-apple-id -w 2>/dev/null || true)"
+TEAM_ID="6D6948Z4MW"   # Not secret — visible in any signed .app's codesign output.
+APP_SPECIFIC_PASS="$(security find-generic-password -s metawhisp-apple-notary -w 2>/dev/null || true)"
+
+if [ -z "${APPLE_ID:-}" ] || [ -z "${APP_SPECIFIC_PASS:-}" ]; then
+    echo "ERROR: Apple notarization credentials missing from Keychain."
+    echo ""
+    echo "One-time setup:"
+    echo "  security add-generic-password -s metawhisp-apple-id     -a \"\$USER\" -w 'your-apple-id@example.com'"
+    echo "  security add-generic-password -s metawhisp-apple-notary -a \"\$USER\" -w '<app-specific-password>'"
+    echo ""
+    echo "Generate the app-specific password at https://appleid.apple.com → Sign-In and Security → App-Specific Passwords."
+    exit 1
+fi
 
 xcrun notarytool submit "$DMG" \
     --apple-id "$APPLE_ID" \
