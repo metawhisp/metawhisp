@@ -213,8 +213,8 @@ final class RealtimeScreenReactor: ObservableObject {
     }
 
     /// True if a near-duplicate non-dismissed TaskItem exists from the last 24h.
-    /// Uses word-overlap fuzzy match (threshold 0.6) so "Fix Atomicbot SEO" and
-    /// "Fix ProjectAlpha SEO issue" are recognized as the same task.
+    /// Uses word-overlap fuzzy match (threshold 0.6) so "Fix exampleproject SEO" and
+    /// "Fix Example Project SEO issue" are recognized as the same task.
     private func isDuplicate(description: String) -> Bool {
         guard let container = modelContainer else { return false }
         let ctx = ModelContext(container)

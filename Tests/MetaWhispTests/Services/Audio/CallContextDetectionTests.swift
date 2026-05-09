@@ -20,7 +20,7 @@ final class CallContextDetectionTests: XCTestCase {
         XCTAssertEqual(
             SystemAudioCaptureService.detectCallContext(
                 bundleID: "us.zoom.xos", appName: "Zoom",
-                windowTitle: "Sam's Personal Meeting Room"
+                windowTitle: "User's Personal Meeting Room"
             ), "Zoom"
         )
         XCTAssertEqual(

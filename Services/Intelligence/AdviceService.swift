@@ -17,7 +17,7 @@ final class AdviceService: ObservableObject {
     private var modelContainer: ModelContainer?
     /// ITER-022 G3 — memory-weave. When wired, advice prompt includes top-N
     /// memories ranked by cosine similarity to the current screen context.
-    /// Lets LLM connect "user opens Stripe" + stored fact "user runs ProjectAlpha
+    /// Lets LLM connect "user opens Stripe" + stored fact "user runs ChatApp
     /// which uses Stripe billing" → category-specific advice referencing prior
     /// context. Fallback: most-recent N memories when no embedding available.
     weak var embeddingService: EmbeddingService?
@@ -228,9 +228,9 @@ final class AdviceService: ObservableObject {
     MEMORY-WEAVE (USER MEMORIES block):
     - The USER MEMORIES section lists durable facts the user told you previously.
     - Reference a memory ONLY when it MATERIALLY changes the advice. e.g.:
-      User memory: "User runs ProjectAlpha, an AI ChatGPT wrapper using Stripe billing"
+      User memory: "User runs ChatApp, an AI ChatGPT wrapper using Stripe billing"
       Current screen: Stripe webhook test mode
-      → "Stripe webhook test mode hits ProjectAlpha prod Customer table — switch to test customers"
+      → "Stripe webhook test mode hits ChatApp prod Customer table — switch to test customers"
         (memory turned a generic warning into a specific one tied to the user's product)
     - DO NOT shoehorn an irrelevant memory just to mention one. Most advice should
       NOT reference memory. If the connection feels strained, leave the memory out.

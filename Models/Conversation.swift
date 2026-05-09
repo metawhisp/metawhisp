@@ -57,14 +57,14 @@ final class Conversation {
 
     /// ITER-014 — primary project/product label extracted by StructuredGenerator on close.
     /// `nil` = no clear project (personal chats, mixed topics). Non-nil = the most concrete
-    /// brand/product/codename mentioned ("ProjectAlpha", "MetaWhisp", "ProjectAlpha launch").
+    /// brand/product/codename mentioned ("ChatApp", "MetaWhisp", "Example Project launch").
     /// NOT a category (work/personal/etc) — that's `category`. NOT a topic — that's `topicsJSON`.
-    /// Canonicalized via `ProjectAlias` table so "ProjectAlpha"/"ProjectAlpha"/"ProjectAlphaAI" merge.
+    /// Canonicalized via `ProjectAlias` table so "ChatApp"/"ЧатЭп"/"ChatAppAI" merge.
     /// spec://iterations/ITER-014-project-clustering
     var primaryProject: String?
 
     /// JSON-encoded `[String]` — secondary topics extracted from this conversation
-    /// (e.g. ["pricing", "infra"] for a call about ProjectAlpha pricing & infra). 0-3 items.
+    /// (e.g. ["pricing", "infra"] for a call about ChatApp pricing & infra). 0-3 items.
     /// Used by ProjectAggregator + MetaChat for cross-cutting topic queries.
     /// spec://iterations/ITER-014-project-clustering
     var topicsJSON: String?

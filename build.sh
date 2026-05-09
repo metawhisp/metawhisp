@@ -127,8 +127,14 @@ if [ -d "$SPARKLE" ]; then
         # silently accepts that with exit 0, and Apple's notarization later
         # rejects with "signature of the binary is invalid". Verify after each
         # sign and retry up to 3 times on missing timestamp.
+        # Retry budget bumped 3 → 10 with exponential-ish backoff after a
+        # 2026-05-09 release where Apple TSA was returning "OK but no
+        # timestamp" for 5+ minutes straight, blowing through the old 3×2s
+        # window in 8 seconds. Real outages last minutes; we need to wait it
+        # out, not give up.
         local attempt
-        for attempt in 1 2 3; do
+        local sleep_sec=5
+        for attempt in 1 2 3 4 5 6 7 8 9 10; do
             codesign --force --sign "$SIGN_IDENTITY" \
                 --options runtime \
                 --timestamp \
@@ -137,11 +143,12 @@ if [ -d "$SPARKLE" ]; then
             if codesign -dvvv "$target" 2>&1 | grep -q "^Timestamp="; then
                 return 0
             fi
-            echo "==> ⚠️  No timestamp on $(basename "$target") (attempt $attempt/3) — TSA flake, retrying..."
-            sleep 2
+            echo "==> ⚠️  No timestamp on $(basename "$target") (attempt $attempt/10) — TSA flake, sleeping ${sleep_sec}s..."
+            sleep "$sleep_sec"
+            sleep_sec=$((sleep_sec < 60 ? sleep_sec + 10 : 60))
             codesign --remove-signature "$target" 2>/dev/null || true
         done
-        echo "==> ❌ Failed to attach timestamp to $target after 3 retries"
+        echo "==> ❌ Failed to attach timestamp to $target after 10 retries (TSA outage > 5 min — try again later)"
         return 1
     }
     sign_target "$SPARKLE/Versions/B/XPCServices/Downloader.xpc"  "org.sparkle-project.Downloader"
@@ -157,7 +164,9 @@ fi
 # `--timestamp` is MANDATORY for notarization (Apple verifies timestamp via
 # their TSA) and required for the app to open on other Macs.
 # Retry on missing timestamp — same TSA-flake guard as sign_target above.
-for attempt in 1 2 3; do
+# Bumped 3 → 10 with longer sleeps for real TSA outages (2026-05-09).
+outer_sleep=5
+for attempt in 1 2 3 4 5 6 7 8 9 10; do
     codesign --force --sign "$SIGN_IDENTITY" \
         --options runtime \
         --timestamp \
@@ -167,8 +176,9 @@ for attempt in 1 2 3; do
     if codesign -dvvv "$APP_DIR" 2>&1 | grep -q "^Timestamp="; then
         break
     fi
-    echo "==> ⚠️  No timestamp on outer bundle (attempt $attempt/3) — TSA flake, retrying..."
-    sleep 2
+    echo "==> ⚠️  No timestamp on outer bundle (attempt $attempt/10) — TSA flake, sleeping ${outer_sleep}s..."
+    sleep "$outer_sleep"
+    outer_sleep=$((outer_sleep < 60 ? outer_sleep + 10 : 60))
     codesign --remove-signature "$APP_DIR" 2>/dev/null || true
 done
 
@@ -197,9 +207,16 @@ INSTALLED_APP="$INSTALL_DIR/MetaWhisp.app"
 pkill -f "MetaWhisp.app" 2>/dev/null || true
 sleep 0.5
 
-# Copy to stable location
+# Copy to stable location.
+# `ditto` (NOT `cp -r`) — `cp -r` on macOS dereferences symlinks, which
+# destroys the symlink structure inside Sparkle.framework (Versions/Current,
+# Sparkle, Headers, Resources etc are all symlinks). Once symlinks become
+# real files, the codesign hashes computed in `--sign` above stop matching
+# the on-disk content and Apple notary rejects with
+# "The signature of the binary is invalid". Discovered 2026-05-09 after 4
+# failed releases — ship blocker for v1.3.2.
 rm -rf "$INSTALLED_APP"
-cp -r "$APP_DIR" "$INSTALLED_APP"
+ditto "$APP_DIR" "$INSTALLED_APP"
 echo "==> Installed to: $INSTALLED_APP"
 
 # Launch from stable location (skip with --no-launch)

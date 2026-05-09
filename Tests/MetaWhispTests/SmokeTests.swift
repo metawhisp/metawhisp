@@ -66,7 +66,7 @@ final class SmokeTests: XCTestCase {
 
     /// Healthy speech with normal repetition → NOT flagged.
     func test_repetition_normalSpeech_isNotHallucination() {
-        let text = "We discussed the deadline and Sam will deliver the backend by Friday."
+        let text = "We discussed the deadline and Alex will deliver the backend by Friday."
         XCTAssertFalse(TranscriptionCoordinator.containsExcessivePhraseRepetition(text))
     }
 

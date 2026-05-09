@@ -156,7 +156,7 @@ final class MemoryExtractor: ObservableObject {
     - Never use generic labels — when a name is spoken, use the name.
 
     IDENTITY RULES (CRITICAL):
-    - Never invent family members without EXPLICIT evidence ("This is my daughter Sarah", "My son's name is...").
+    - Never invent family members without EXPLICIT evidence ("This is my daughter Jordan", "My son's name is...").
     - Recognize nicknames — don't create new people. Common nicknames ("Buddy", "Junior") are likely existing family.
     - Verify name spellings against existing memories before creating new entries (e.g. "Arman" when "Armaan" already exists → SAME person).
     - If uncertain about a person's identity, DO NOT extract the memory.
@@ -170,8 +170,8 @@ final class MemoryExtractor: ObservableObject {
     USER-IS-SUBJECT CHECK:
     Only extract memories where the USER is the subject, or someone directly in the User's network:
     - "Я живу в Берлине" / "I'm the CTO at Acme" → about User → EXTRACT.
-    - "Мой друг Паша живёт в Берлине" → Паша in User's network with relationship → can EXTRACT.
-    - "Паша живёт в Берлине" (no relationship context) → about a third party → SKIP.
+    - "Мой друг Сэм живёт в Берлине" → Сэм in User's network with relationship → can EXTRACT.
+    - "Сэм живёт в Берлине" (no relationship context) → about a third party → SKIP.
     - "В компании X ввели политику" (generic commentary) → not User-specific → SKIP.
     Do NOT extract memories about unrelated people or abstract entities.
 
@@ -285,7 +285,7 @@ final class MemoryExtractor: ObservableObject {
 
     ENRICHMENT FIELDS (REQUIRED for every memory):
     - `headline`: ≤5 word display label. Subject-led. Examples:
-        content "User builds ProjectAlpha, an AI ChatGPT wrapper" → headline "ProjectAlpha product"
+        content "User builds ChatApp, an AI ChatGPT wrapper" → headline "ChatApp product"
         content "User's cofounder Araf handles backend" → headline "Araf cofounder backend"
         content "User decided to integrate Stripe billing" → headline "Stripe billing decision"
     - `reasoning`: 1 sentence WHY this is being stored. Cite the source moment.
@@ -305,7 +305,7 @@ final class MemoryExtractor: ObservableObject {
     - `characterization`: ≤15-word ASR-NOISE-FREE one-liner describing the
       subject. NO direct quoting of transcript fragments — paraphrase. Examples:
         · person  Sam Smith     → "community building partner"
-        · person  Alex                → "backend engineer at Selzy"
+        · person  Alex                → "backend engineer at Acme"
         · project MetaWhisp           → "macOS voice-to-text + AI assistant app"
         · decision (no subject)       → omit subject, use content for the decision
 

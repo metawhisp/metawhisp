@@ -17,7 +17,7 @@ final class ScreenObservation {
     /// Window title snippet (can change within a visit — we record the last).
     var windowTitle: String?
     /// 1-2 sentence description of what the user was doing.
-    /// "User reviewing ProjectAlpha analytics in GA4."
+    /// "User reviewing ChatApp analytics in GA4."
     var contextSummary: String
     /// Specific current activity verb-phrase.
     /// "Analyzing traffic decline", "Writing documentation", "Reviewing PR".

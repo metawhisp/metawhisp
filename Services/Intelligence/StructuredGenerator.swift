@@ -253,7 +253,12 @@ final class StructuredGenerator: ObservableObject {
 
         guard transcript.count >= minTranscriptChars else {
             // Too short — give a placeholder so UI has something to show.
-            conv.title = "Quick note"
+            // Calendar event name still wins if linked (preserve user's
+            // naming even on a sub-300-char meeting).
+            conv.title = ConversationTitleResolver.resolve(
+                calendarEventTitle: conv.calendarEventTitle,
+                llmTitle: "Quick note"
+            )
             conv.overview = transcript.isEmpty ? "(empty)" : String(transcript.prefix(80))
             conv.category = "other"
             conv.emoji = "bubble.left"  // SF Symbol, monochrome
@@ -293,7 +298,15 @@ final class StructuredGenerator: ObservableObject {
                 return
             }
 
-            conv.title = parsed.title
+            // Calendar event name has priority over LLM-generated title —
+            // user's own naming ("Standup C") beats LLM theme
+            // inference ("Discussing Project Updates And Marketing").
+            // 2026-05-07 user report. Fix scoped to new conversations only;
+            // pre-existing rows keep their LLM-generated titles per user spec.
+            conv.title = ConversationTitleResolver.resolve(
+                calendarEventTitle: conv.calendarEventTitle,
+                llmTitle: parsed.title
+            )
             conv.overview = parsed.overview
             conv.category = parsed.category
             conv.emoji = validateSFSymbol(parsed.icon)
@@ -373,7 +386,7 @@ final class StructuredGenerator: ObservableObject {
     GOOD examples (specific, ≥3 informative words):
     ✅ "Stripe Webhook Bug — 5XX on PaymentIntent"
     ✅ "Sam Aligns Marketing on Q2 Roadmap"
-    ✅ "Tech Interview With Sam Ziborov (AcmeWallet)"
+    ✅ "Tech Interview With Maya Lee (Acme Wallet)"
     BAD examples (will be rejected):
     ❌ "Invoice" / "Sync" / "Meeting" / "Standup"
     ❌ "Marketing Sync" (still too generic — pick a specific topic discussed)
@@ -391,7 +404,7 @@ final class StructuredGenerator: ObservableObject {
     GOOD examples:
     - "Redesigned Today summary card with arrow navigation and stats sub-row."
     - "Decided to ship Phase 6 voice questions; deferred premium TTS to Phase 6+."
-    - "Sam + Sam aligned on Q2 budget; revisit headcount after week 3."
+    - "Sam + Alex aligned on Q2 budget; revisit headcount after week 3."
     BAD examples (will be rejected):
     - "The conversation is about redesigning the Today summary card."
     - "The team discusses Q2 budget and headcount."
@@ -418,7 +431,7 @@ final class StructuredGenerator: ObservableObject {
     personal, education, health, finance, legal, philosophy, spiritual, science, entrepreneurship, parenting, romantic, travel, inspiration, technology, business, social, work, sports, politics, literature, history, architecture, music, weather, news, entertainment, psychology, real, design, family, economics, environment, other
 
     For the PROJECT: Extract the PRIMARY product/project/codename this conversation is about.
-    - GOOD: "ProjectAlpha", "MetaWhisp", "ProjectAlpha", "Q2 Roadmap", "Migration to Postgres"
+    - GOOD: "ChatApp", "MetaWhisp", "Example Project", "Q2 Roadmap", "Migration to Postgres"
     - BAD: "work" (too generic — that's category), "discussion", "the team", "my company"
     - This is the most CONCRETE recurring entity — a specific product or initiative the user
       is building, planning, or operating. Not the employer / department / category.
@@ -473,7 +486,7 @@ final class StructuredGenerator: ObservableObject {
     - Match transcript language for casing/orthography.
     - Skip the speaker themselves (they're implicit).
     GOOD examples:
-    ✅ ["Sam", "Sam", "Sarah from marketing"]
+    ✅ ["Sam", "Alex", "Jordan from marketing"]
     ✅ ["Майк", "Вася", "Ольга (CTO Acme)"]
     BAD examples:
     ❌ ["the team"] (generic, not a name)
@@ -502,7 +515,7 @@ final class StructuredGenerator: ObservableObject {
     GOOD examples:
     ✅ "Pricing tier breakdown for Pro plan"
     ✅ "Feedback from beta users on onboarding"
-    ✅ "Q3 hiring plan with Sarah"
+    ✅ "Q3 hiring plan with Jordan"
     ✅ "Сравнение Postgres vs Mongo для следующего созвона"
     BAD examples:
     ❌ "Send invite" (that's an action item, not a next-meeting topic)
@@ -516,7 +529,7 @@ final class StructuredGenerator: ObservableObject {
 
     Return JSON:
     {"title": "...", "overview": "...", "icon": "sf.symbol.name", "category": "...",
-     "project": "ProjectAlpha" or null, "topics": ["pricing", "infra"],
+     "project": "ChatApp" or null, "topics": ["pricing", "infra"],
      "decisions": [], "action_items": [], "participants": [], "key_quotes": [], "next_steps": []}
 
     CRITICAL OUTPUT RULE: Respond with ONLY the JSON object. No translation. No explanation. No preamble. No markdown fences. The "icon" value MUST be a valid SF Symbol name (lowercase with dots), NOT a Unicode emoji character.
@@ -525,8 +538,22 @@ final class StructuredGenerator: ObservableObject {
     private func buildPrompt(transcript: String, startedAt: Date) -> String {
         let isoFormatter = ISO8601DateFormatter()
         let started = isoFormatter.string(from: startedAt)
+
+        // ITER-032.1 (2026-05-08) — supply existing project canonicals so
+        // the LLM reuses established names instead of inventing variants.
+        // `ProjectAggregator.listProjects(includeSingletons: false)` already
+        // filters convCount ≥ 2, which is exactly the qualifying threshold
+        // for the catalog hint. Empty hint when no established projects.
+        var projectHint = ""
+        if let pa = projectAggregator {
+            let rows = pa.listProjects(includeSingletons: false)
+                .map { (canonical: $0.canonicalName, convCount: $0.conversationCount) }
+            projectHint = ExistingProjectCatalog.promptHint(from: rows)
+        }
+        let projectHintBlock = projectHint.isEmpty ? "" : "\n\n\(projectHint)\n"
+
         return """
-        Started at: \(started)
+        Started at: \(started)\(projectHintBlock)
 
         Transcript:
         ```

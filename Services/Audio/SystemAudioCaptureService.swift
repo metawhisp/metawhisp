@@ -246,7 +246,7 @@ final class SystemAudioCaptureService: NSObject, ObservableObject, AudioSource {
 
     /// Apps treated as call-only (bundle match alone fires call detection).
     /// Includes Zoom + Teams since user reported strict title-matching kept
-    /// missing real calls (titles like "Sam's Personal Meeting Room" or
+    /// missing real calls (titles like "User's Personal Meeting Room" or
     /// "Waiting for host" don't contain "Zoom Meeting"). Trade-off: clicking
     /// the Zoom Workplace home window in idle state still fires a 5s
     /// countdown — false positive, user can dismiss. Better than missing
@@ -287,7 +287,7 @@ final class SystemAudioCaptureService: NSObject, ObservableObject, AudioSource {
     /// Window-title keywords that indicate an active video call (matched case-insensitive).
     /// Observed title formats (2026-04-21 missed a Meet call because we required "Google Meet"
     /// but Chrome shows "Meet – <name>..."):
-    ///   Chrome in-meeting:  "Meet – Daily Standup — Trouble..."        (em-dash)
+    ///   Chrome in-meeting:  "Meet – Standup A..."        (em-dash)
     ///   Chrome pre-join:    "Meet - Google Chrome - <profile>"     (hyphen, tab title just "Meet")
     ///   Chrome direct URL:  "<name> - Google Meet" / "meet.google.com/..."
     ///   Arc:                "gpq-mmkq-iaz" (room code only)

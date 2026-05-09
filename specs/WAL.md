@@ -10,6 +10,173 @@
 - Cleanup: rewrote 2 pushed commits to scrub external-reference name from titles + bodies, renamed branch to `architecture-phase-1-3` (force-push), scrub commit `96bd8e2` across 37 repo files (165+/215−).
 - Phase 6+ Premium TTS shipped: backend `/api/pro/tts` endpoint (OpenAI tts-1 proxy, 6 voices) + frontend dual-provider routing (cloud if Pro+enabled, else AVSpeech) + Settings Cloud Voice toggle gated on Pro. Awaiting user deploy of `api/` + `wrangler secret put OPENAI_API_KEY` before live test.
 
+**Shipped in session 2026-05-08 night (ITER-032.2 — curative pass + canonical-by-conv-count + free-form rename):**
+
+### Why ITER-032.2: ITER-032.1 stopped the bleed but didn't clean existing mess
+
+ITER-032.1 prevented FUTURE hallucinations (LLM now sees existing canonicals in prompt) and shipped manual UI controls (MAKE CANONICAL / SPLIT OUT). User pushback: «борешься со следствием а надо с причиной — у всех пользователей тоже должна быть такая история, их не должно быть ничего про HallucinatedName». Manual UI fix-up doesn't scale; the auto-curative pass should heal existing data automatically for every user.
+
+### ITER-032.2 components
+
+- **`Services/Intelligence/AliasCanonicalPicker.swift` (NEW, ~30 LOC pure func)** — `pickByConversationCount(variants:counts:) -> String`. Replaces the old "winner = most variants" heuristic with "winner = most conversation references". Case-insensitive count lookup, alphabetical tie-break. 6 RED→GREEN tests in `AliasCanonicalPickerTests.swift`.
+- **`Services/Intelligence/ProjectAggregator.swift`** — four new methods:
+  - `curativePass(generator:) async` — orchestrates the three-step migration
+  - `reclassifySuspiciousConversations(generator:) async` — for each conversation whose `primaryProject` is NOT in the established-canonicals set (alias with conv count ≥ 2), null out structured fields and re-run `StructuredGenerator.generate(...)`. The new prompt (ITER-032.1) injects the canonicals list, so LLM is encouraged to reuse `Example Project` over inventing `HallucinatedName`. 300ms throttle between calls so it doesn't hammer the proxy.
+  - `recanonicalizeAll() -> Int` — for every alias, tally conversation counts per variant, then `AliasCanonicalPicker.pickByConversationCount(...)` to set `canonicalName`. Updates `updatedAt` only when the pick differs from current.
+  - `pruneOrphanAliases() -> Int` — delete alias rows whose every variant has 0 conversation references. Cleans up after `reclassifySuspicious` migrated conversations away.
+  - `renameCanonical(currentCanonical:newName:) -> Bool` — free-form rename. Unlike `setCanonical`, accepts ANY string; adds it to `aliases` if missing, then promotes to canonical. Used by the new ProjectDetailView rename input.
+- **`App/AppDelegate.swift`** — one-shot startup migration gated by `@AppStorage("didCurativePass_iter032_2")`. Runs once after the existing `backfillProjects` + `mergeAliases` pipeline. Flag flips to `true` after success; future launches no-op.
+- **`Models/AppSettings.swift`** — `didCurativePass_iter032_2: Bool = false` flag. Suffix bumps when shipping a future curative sweep.
+- **`Views/Windows/ProjectsView.swift` ProjectDetailView** — gained a `RENAME` section: text field + `RENAME` button. Disabled when input is empty/whitespace-only. Calls `renameCanonical(currentCanonical:newName:)` and refreshes local state on success. Lets the user override the auto-pick or invent a brand-new display name.
+
+### Effect for shipped users (every Pro account)
+
+- First launch after ITER-032.2 hot-swap: `[ProjectAggregator] curative pass — first run after upgrade` log line.
+- `[ProjectAggregator] reclassify: N suspect conversations` followed by N × LLM calls (~300ms apart).
+- `[ProjectAggregator] recanonicalize: 'HallucinatedName' → 'Example Project'` for any alias where the highest-count variant differs from current canonical.
+- `[ProjectAggregator] prune: '<empty alias>' (0 conversations across N variants)` for orphans.
+- After this pass, `HallucinatedName`-style hallucinations either:
+  - Get re-tagged onto a real cluster (if LLM matches the conversation to an established canonical), OR
+  - Become 1-conversation singletons (hidden by `≥2` filter in Projects view), OR
+  - Get pruned entirely (if conversation gets re-tagged elsewhere and alias goes to 0 references).
+- User never sees `HallucinatedName` in Projects view again unless it's a real project they keep mentioning.
+
+**Shipped in session 2026-05-08 evening (ITER-034 — calendar-end-aware auto-stop + Pro proxy quota raise):**
+
+### ITER-034 — calendar-end auto-stop using `EKEvent.endDate`
+
+User report 2026-05-08: «созвон не выключается». Manual stops at 09:45 (15 min into 9:30-10:00 event) and 10:41 (41 min into 10:00-10:30 event) — recordings overran calendar end by ~10 min on average. silence guard (3 min) was the only auto-signal but ANY continued audio (people lingering, music playing, dictation nearby) reset it.
+
+- **`Services/System/CalendarEndStopDecision.swift` (NEW, ~75 LOC pure func + Equatable enum)** — `evaluate(now:eventEnd:audioRMSLastNSec:notifyAttemptsSoFar:graceSeconds:extensionSeconds:quietRMSThreshold:maxNotifyAttempts:) -> .keepRunning | .stopNow | .notifyAndExtend(newDeadline:) | .hardStop`. Defaults: 60s grace, 5min extension, 0.005 RMS threshold, 3 max notify attempts. 8 RED→GREEN tests in `CalendarEndStopDecisionTests.swift` covering: keepRunning before end, keepRunning within grace, stopNow when quiet past grace, notifyAndExtend on active audio (1st + 2nd attempts), hardStop after maxAttempts, custom quiet threshold, custom grace.
+- **`Services/Indexing/CalendarReaderService.swift`** — added `event(forIdentifier:) -> EKEvent?` so AppDelegate can resolve the EKEvent from the eventID it already stores (`recordingCalendarEventID`). Returns nil if access not granted or event deleted.
+- **`App/AppDelegate.swift`**:
+  - `calendarEndNotifyAttempts: Int` — counter for `notifyAndExtend` rounds, reset on each new recording.
+  - `armCalendarEndStopTask(eventID:eventEnd:)` — schedules a `Task` that sleeps until `eventEnd + grace`, then calls `CalendarEndStopDecision.evaluate(...)` and acts on the outcome:
+    - `.keepRunning` (rare at fire time) — re-arm in 60s as safety
+    - `.stopNow` — `stopMeetingRecording(reason: "calendar-end-grace:<eventID>")`
+    - `.notifyAndExtend(newDeadline)` — push `MWNotification` "Meeting overrunning — Tap to stop now or it will re-check in 5 min", increment attempts, re-arm to fire at `newDeadline`
+    - `.hardStop` — `stopMeetingRecording(reason: "calendar-end-hard-stop:<eventID>")`
+  - `runCountdownAndStartRecording(...)` — after `meetingRecorder.start(...)`, if `calendarEventID != nil`, resolves the EKEvent, snapshots `endDate`, and arms the task. Skips when event duration > 6h (heuristic: all-day events are not normal meetings) — falls back to silence guard.
+  - `stopMeetingRecording(...)` — already cancels `calendarHardStopTask` on every entry (existing slot was reserved but never used; ITER-034 fills it). Also handles the post-start audio-sniff cancel path.
+
+### Pro proxy quota — raised 60→180 min/day, 1800→5400 cap (api Worker deploy)
+
+User report 2026-05-08: dictations + meetings hit the 1800-min cumulative cap on the Pro tier (60 min/day accrual). LiveAdvise partials every 30s during meeting recording compounded the consumption — typical workday consumes 100-180 min audio across dictations + meeting transcribe + LiveAdvise overhead.
+
+- **`api/src/index.js`** — `dailyAllowance: 60 → 180`, `maxBalance: 1800 → 5400`. Error message text + docstring synced. Effect for license >30 days old: previously earned cap = 1800 (likely all spent), now earned cap = 5400 → effective balance jumps by ~3600 min instantly.
+- Deployed via `wrangler deploy` to `api.metawhisp.com/*` (Worker `metawhisp-api`, version `7d502d45`). User-visible immediately.
+- 4 Cloudflare API tokens were inadvertently pasted in chat during the deploy negotiation and remain compromised — user committed to revoking all four via dash.cloudflare.com/profile/api-tokens. Future deploys to use `security find-generic-password -s metawhisp-cf -w` (per `RELEASE-PLAYBOOK.md` convention) so the secret stays out of chat transcripts.
+
+**Shipped in session 2026-05-08 later (ITER-032.1 — revert Lev auto-merge + LLM canonical-aware prompt + Rename/Split UI):**
+
+### Why a follow-up: HallucinatedName regression
+
+Auto-merge from morning ITER-032 ship absorbed `ExampleProject.ai`, `ExampleProject`, `Example Project` under `HallucinatedName` (LLM hallucination from a single past session). Lev distance between `atomicbata` ↔ `atomicbot` is 2 with shared length ≥ 5, so the rule fired — but the WINNER was the garbage variant because winner-pick was by `aliases.count`, not conversation count or "name quality". Same risk would exist for every shipped user. User explicitly: «HallucinatedName — такого проекта нет, ты почему контекст не читаешь». Right call.
+
+### ITER-032.1 fix
+
+- **`Services/Intelligence/ProjectClusterDecision.swift`** — Lev branch removed. Auto-merge now ONLY collapses canonical-equality (case fold + translit + emoji + punctuation + whitespace differences). Typo merges (`Island Expand` ↔ `Island Expend`) are NOT auto-decided — they go through user-approval UI. `Levenshtein.swift` retained (file + tests) for future LLM-curated cleanup pass / second-brain validation, but no longer wired into `canMerge`.
+- **Tests updated** in `Tests/MetaWhispTests/Services/Intelligence/ProjectClusterDecisionTests.swift`:
+  - `test_singleTypo_isNotAutoMerged` — regression guard pinning typos to user-approval path
+  - `test_atomicBataNotMergedWithExampleProject` — explicit guard against the production false positive
+  - `test_punctuationOnly_merges` — uses `ChatApp.` ↔ `ChatApp,` (both canonicalize to `chatapp`)
+- **`Services/Intelligence/ExistingProjectCatalog.swift` (NEW, pure func, ~50 LOC)** — `promptHint(from:minCount:maxRows:)`. Builds an "EXISTING PROJECTS (use these EXACT names if conversation matches; do NOT invent variants like 'HallucinatedName' when 'Example Project' already exists)" block listing canonical names + conv counts, sorted desc, capped at 30 rows. Singletons excluded by default (convCount ≥ 2). 5 RED→GREEN tests in `ExistingProjectCatalogTests.swift`.
+- **`Services/Intelligence/StructuredGenerator.swift`** — `buildPrompt(transcript:startedAt:)` now also fetches established canonicals via `projectAggregator?.listProjects(includeSingletons: false)` and embeds the catalog hint into the user prompt. Empty-string fallback when no projectAggregator wired or no qualifying projects. ~15 LOC. Effect: LLM sees user's real project list with conv counts → reuses exact names instead of inventing variants. Stops the bleed for future conversations.
+- **`Services/Intelligence/ProjectAggregator.swift`** — three new methods:
+  - `aliasVariants(for canonicalName:) -> [String]` — fetch all known variant strings under a cluster
+  - `setCanonical(currentCanonical:newCanonical:) -> Bool` — promote an existing variant to canonical (variant must already be in the aliases list; preserves exact original casing)
+  - `splitAlias(currentCanonical:variantToSplit:) -> Bool` — extract a variant out into its own ProjectAlias row (handles edge case of splitting the canonical itself by promoting another variant first; refuses if cluster has only 1 alias)
+- **`Views/Windows/ProjectsView.swift` ProjectDetailView** — gained an `ALIASES` section (visible when cluster has ≥2 variants) with one row per variant. Each row shows a star indicator (filled for current canonical), the variant text, and two action buttons: `MAKE CANONICAL` (greyed for current canonical, replaced by `CANONICAL` tag) and `SPLIT OUT` (orange). Fetched on `.task` via `aliasVariants(for:)`. Mutations refresh local state immediately. Lets the user fix any auto-merge mistake in seconds — exactly the escape valve the Lev-merge approach was missing.
+
+### Behaviour change for shipped users
+
+- Old behavior: `HallucinatedName` swallows `Example Project` cluster automatically.
+- New behavior: those stay as separate `ProjectAlias` rows. `HallucinatedName` is a singleton (convCount=1) — hidden from Projects view by default (display threshold from morning ITER-032). User sees only `Example Project (24 conversations)` in the grid. LLM future classification reuses `Example Project` because the canonical list is in the prompt.
+- For users who already shipped with bad merges (e.g. dev test): open ProjectDetailView → ALIASES → MAKE CANONICAL on the right variant → SPLIT OUT the garbage one. ~10 seconds.
+
+**Shipped in session 2026-05-08 (ITER-032 — Projects auto-dedup with translit + Levenshtein + digit-token guards):**
+
+### ITER-032 — Projects auto-merge on creation + curative pass + display threshold
+
+User report 2026-05-08: «у меня в проектах какая-то грязь — ~52 alias rows, реально проектов десяток. Голосок/VoiceSnack дублируется, Island/Island Expand/Island Expend (typo), Atomic-zoo. Нужно чтобы он сам анализировал и адаптировал — мы же делаем второй мозг.» Pre-fix `ProjectAggregator.resolveCanonical` did `localizedCaseInsensitiveCompare` only — no transliteration, no typo tolerance, no length/digit guards. Every LLM-hallucinated variant became a new alias row.
+
+- **`Services/Intelligence/ProjectAliasNormalizer.swift` (NEW, ~30 LOC)** — pure func `canonicalize(_:) -> String`. Pipeline: Apple's `.toLatin` ICU transliteration (`Голосок → Golosok`, `й → j`, `ц → c`) → lowercase → strip non-alphanumeric except space → collapse whitespace → trim. Original variant preserved unchanged in `ProjectAlias.aliasesJSON`; canonical is comparison-only.
+- **`Services/Intelligence/Levenshtein.swift` (NEW, ~35 LOC)** — Wagner-Fischer minimum edit distance, single-row DP (O(m·n) time, O(n) space). Symmetric. Used for typo tolerance in cluster decision.
+- **`Services/Intelligence/ProjectClusterDecision.swift` (NEW, ~75 LOC)** — pure func `canMerge(_:_:) -> Bool` combining everything in priority order:
+  1. Either input empty → false
+  2. Canonical forms equal → true (case / translit / emoji / punctuation only)
+  3. Digit-token guard: if either side has digit tokens AND tokens differ (or asymmetric presence) → false. Catches `Q3` ≠ `Q4`, `CryptoWallet 2.0` ≠ `CryptoWallet 3.0`, `ChatApp 2026` ≠ `ChatApp`. Versions / quarters / years stay separate.
+  4. Length guard: shorter canonical ≥ 5 chars before Lev applies (prevents `API` ↔ `AWS` collision via Lev=2).
+  5. Levenshtein distance on canonicals ≤ 2 → true. `Island Expand` ↔ `Island Expend` (1 char) merges.
+- **22 RED→GREEN unit tests** in `Tests/MetaWhispTests/Services/Intelligence/{ProjectAliasNormalizerTests,LevenshteinTests,ProjectClusterDecisionTests}.swift`. All green at `0.005s` total. Honest documented limitation: free-form translit (e.g. LLM `VoiceSnack` for `Голосок`) is too lexically far for Stage 1 → caught by Stage 2 embedding cosine instead.
+- **`Services/Intelligence/ProjectAggregator.swift`** — three wires:
+  - `resolveCanonical(_:)` — Phase A: existing fast exact-match path. Phase B (NEW): `ProjectClusterDecision.canMerge` against any variant of any existing alias → if match, `addAlias` to existing instead of inserting a new row. Logs `[ProjectAggregator] dedup: '%@' → '%@'`.
+  - `mergeAliases()` — gained Stage 1 deterministic pass BEFORE the existing embedding-centroid stage. Cross-pair every variant of every alias through `canMerge`; absorb smaller cluster into larger; log `deterministic merge: '%@' ← '%@'`. Stage 2 (embedding cosine ≥ 0.88) unchanged. Total `lastMergeCount = stage1 + stage2`. Runs at app startup (already wired) so legacy 52-alias mess auto-collapses on first launch.
+  - `listProjects(includeSingletons:)` — new parameter, defaults to `false`. Filters out projects with `conversationCount < 2`. Strips one-off LLM hallucinations from the grid.
+- **`Models/AppSettings.swift`** — `@AppStorage("projectShowSingletons") var projectShowSingletons: Bool = false`.
+- **`Views/Windows/ProjectsView.swift`** — `ALL` / `≥2` toggle in header. ALL state shows everything; ≥2 hides singletons. Tooltip explains what each state means.
+
+**Shipped in session 2026-05-07 (Calendar title priority for Library / Obsidian / row):**
+
+### ConversationTitleResolver — calendar event name beats LLM-generated title
+
+User report 2026-05-07: today's recordings showed "Discussing Project Updates And Marketing" in Library, but the actual calendar event was `Standup C`. Same for `Daily Sync` → "Video Generator Finalized". Calendar names — what user TYPED in their calendar — were being silently overwritten by LLM theme inference. Earlier 2026-05-02 fix only patched the recap popup (which reads `conv.calendarEventTitle`); the Library/Obsidian/row title (`conv.title`) still got stomped by `parsed.title` from the LLM.
+
+- **`Services/Intelligence/ConversationTitleResolver.swift` (NEW, ~25 LOC pure func)** — `resolve(calendarEventTitle: String?, llmTitle: String) -> String`. Calendar title wins if non-empty; otherwise fallback to LLM title (manual recordings / no calendar permission / no link found). 3 RED→GREEN tests in `Tests/MetaWhispTests/Services/Intelligence/ConversationTitleResolverTests.swift`.
+- **`Services/Intelligence/StructuredGenerator.swift`** — both title-assignment paths route through resolver:
+  - Short-transcript / placeholder path (line ~256): was hard-coded `conv.title = "Quick note"` → now `ConversationTitleResolver.resolve(calendarEventTitle: ..., llmTitle: "Quick note")` so a sub-300-char meeting still inherits its calendar event name.
+  - LLM-result path (line ~296): was `conv.title = parsed.title` → now resolver.
+- **No backfill** per user spec ("предыдущий можешь не трогать"). Pre-existing rows keep their LLM-generated titles. Fix applies to conversations created after 2026-05-07 hot-swap (PID 24450).
+
+**Shipped in session 2026-05-06 (ITER-028 — back-to-back via calendar event ID + stop-reason logging + daily health cron):**
+
+### ITER-028.2 — back-to-back transition pivots from window-title to calendar `EKEvent.eventIdentifier`
+
+User report 2026-05-06: «не записывается созвон» — third report in 3 days. Health reports `specs/health-reports/2026-05-05.md` and `2026-05-06-morning.md` documented a 100% kill rate on calendar-triggered recordings: 09:30 + 10:00 + 14:00 all killed within 78s by the back-to-back race. Root cause: Google Meet tab title evolves through 4+ stages (`Meet`, `Meet - Google Chrome - …`, `Meet – ROOM-NAME - …`, `Meet – ROOM-NAME - Camera and microphone recording - …`) within the first ~1s after page mount. Lazy-capture grabbed one stage; next tick saw a different stage; back-to-back killed. The 2026-05-04 lazy-capture patch and 2026-05-03 isManualMode guard were both bandaids on a fundamentally flaky signal source.
+
+- **`Services/System/BackToBackTransition.swift` (NEW, ~80 LOC pure func)** — `decide(currentRecordingEventID, gateDecision, isManualMode) -> BackToBackDecision (.keepRecording | .stopAndRestart(newEventID, newName))`. Compares stable `EKEvent.eventIdentifier` instead of mutable window titles. Manual mode short-circuits unconditionally. Fallback recordings (no eventID baseline) are left alone. RED-then-GREEN with 8 unit tests in `Tests/MetaWhispTests/Services/System/BackToBackTransitionTests.swift`.
+- **`App/AppDelegate.swift`** —
+  - Replaced `recordingFrontmostTitle: String?` with `recordingCalendarEventID: String?`.
+  - Restructured `startMeetingAutoStartTickLoop`: now always evaluates the gate (even while a recording is active), then dispatches via `BackToBackTransition.decide`. Old window-title comparison block + lazy-capture deleted.
+  - `runCountdownAndStartRecording` accepts `calendarEventID: String?` parameter; stores it in `recordingCalendarEventID` at start. Caller at the gate `.calendarReady` switch passes the eventID; fallback path passes nil.
+  - **CC-14 inline fix**: when `BackToBackTransition.decide` returns `.stopAndRestart`, AppDelegate stops A AND immediately calls `runCountdownAndStartRecording(name: newName, source: "calendar", calendarEventID: newEventID)` in the same tick. Necessary because `MeetingAutoStartGate.lastCalendarEventID` blocks the gate from re-emitting B on subsequent ticks (it's a "fire-once-per-event" invariant that we can't violate without breaking the calendar trigger semantics).
+
+### ITER-028.1 — `stopMeetingRecording(reason:)` mandatory parameter
+
+Audit gap discovered when investigating 2026-05-05 10:00 case: a recording stopped after 86s with NO log line explaining why (no back-to-back, no silence guard, no manual stop). Diagnostic blindspot meant the only way to find the cause was to cross-grep timestamps and guess.
+
+- `stopMeetingRecording()` → `stopMeetingRecording(reason: String)`. Logs `[MetaWhisp] ▶️ stopMeetingRecording reason=%@` on entry. All 4 call sites updated:
+  - `meetingRecorder.onAutoStop` callback → `recorder-auto-stop:<reason>`
+  - `toggleMeetingRecording` (user STOP button) → `user-toggle`
+  - Dictation card "End meeting" tap → `dictation-end-card-tap`
+  - Back-to-back fast-tick kill → `back-to-back-eventID:<newID>`
+- The post-start audio-sniff path that calls `meetingRecorder.stop()` directly (not via wrapper) at `runCountdownAndStartRecording` line ~1730 was intentionally left unchanged — its log line `[CallDetect] ⚠️ %@ post-start sniff — silence (audioLevel=...)` already explains why.
+- TDD: per `specs/TDD.md` exclusion (NSLog is not a pure function, AppDelegate orchestration is integration), no XCTest. Smoke validates by tail-grep of next stop event.
+
+### Daily health-report cron — `33 10 * * 1-5` (read-only sentinel)
+
+User: «можешь анализировать мои созвоны за прошлый день, есть ли ошибка». Created via SDK `CronCreate` with `recurring: true, durable: true` — but runtime flagged it `session-only` and 7-day auto-expire is hard. Documented as known limitation; long-term replacement via `launchctl` plist + shell script is `ITER-030` candidate.
+
+- Prompt is self-contained (cron-fired agents have no conversation memory) and read-only: NEVER build/edit/hot-swap. Reads `~/Library/Logs/MetaWhisp.log`, filters yesterday's lines, finds every `[CallDetect] ▶️ <name> auto-start` and pairs with the next `[MeetingRecorder] Stopped` to compute duration + kill reason + transcription outcome. Writes report to `specs/health-reports/YYYY-MM-DD.md`. Posts macOS notification on any `❌` failure. Chat output capped at 8 lines.
+- Seeded reports manually for 2026-05-05 (3 auto-starts: 1 ❌ empty, 2 🟡 partial — all back-to-back race or unlogged early stop) and 2026-05-06-morning (2 ❌ — both back-to-back race). Demonstrated the regression pattern that motivated ITER-028.2.
+
+### Known unfixed: ITER-029 backlog — fallback gate too strict for windowed Meet usage
+
+User report 2026-05-06 at 13:01: hour-long ad-hoc Meet call (no calendar event) — never recorded. `[CallDetect] Google Meet detected — gate now monitoring for sustained signal (10s frontmost+fullscreen)` fired but `[CallDetect] gate fallback ready` never followed. Cause: `MeetingAutoStartGate` requires 10s sustained frontmost AND fullscreen. Real-world: user has Meet in a window alongside Notion/Slack and tabs around → streak resets. Anti-noise gard for ITER-026 v2 was too tight. Backlog candidate ITER-029: replace fullscreen gate with audio-activity probe (mic OR system audio above speech threshold for 10s straight). Robust because real call = real audio; background Meet tab without audio still rejected.
+
+**Shipped in session 2026-05-05 (Launch at login):**
+
+### Launch at login via SMAppService.mainApp (copy of reference desktop pattern)
+
+User request 2026-05-05: «MetaWhisp не включается при включении компа, давай добавим». Standard macOS feature, missing.
+
+- **`Services/System/LaunchAtLoginManager.swift` (NEW, ~80 LOC)** — `@MainActor`/`ObservableObject` singleton wrapping `SMAppService.mainApp` (macOS 13+; Package.swift target is `.macOS(.v14)`, no availability gate needed). Pattern copied verbatim from reference `LaunchAtLoginManager.swift` (63 LOC), only `log()` → `NSLog`. Exposes `@Published isEnabled`, `@Published statusDescription`, `setEnabled(_:) -> Bool`, `updateStatus()`. Source-of-truth is the system, NOT a mirrored `@AppStorage` flag — System Settings → Login Items can flip the registration externally and a local mirror would silently drift.
+- **CC-13 fix (built in from the start, not a follow-up)** — observer on `NSApplication.didBecomeActiveNotification` calls `updateStatus()` so when user flips the Login Item from System Settings while MetaWhisp is in the background, the toggle in our Settings reflects reality the moment we re-foreground. Closure hops to `MainActor` via `Task { @MainActor in ... }` since `updateStatus()` is actor-isolated.
+- **`Views/Windows/MainSettingsView.swift`** — added `@ObservedObject launchAtLogin = LaunchAtLoginManager.shared`. In `optionsSection` after `AUTO-PASTE`: `toggleRow("LAUNCH AT LOGIN", isOn: Binding(get: ..., set: launchAtLogin.setEnabled))` + caption `Text(launchAtLogin.statusDescription)`. Binding round-trips through `setEnabled` → `updateStatus`, so a failed register snaps the toggle back to OFF (no lying UI).
+- **`App/AppDelegate.applicationDidFinishLaunching`** — one-line `LaunchAtLoginManager.shared.updateStatus()` after `MW.applyTheme`. Re-reads at every launch in case the user flipped Login Items while the app was off.
+- Tests: per `specs/TDD.md`, `SMAppService` is a TCC-style system service → manual smoke only. No XCTest.
+- Smoke executed by user on 2026-05-05: toggle ON → reboot Mac → MetaWhisp auto-launched on login. Confirmed working.
+
 **Shipped in session 2026-05-02 / 2026-05-03 (massive marathon — auto-record gate, calendar awareness, dictation pause, manual mode, back-to-back, 1.3.1 release with TSA-flake fix, GitHub Releases architecture for DMG distribution):**
 
 ### ITER-026 v2 — meeting auto-start gate (root-cause fix for false-positive recordings)
@@ -52,7 +219,7 @@ User spec: «если митинг А до 15:00 и Б с 15:00, нужно пр
 
 ### ITER-026 v2 — back-to-back guard hardened against non-call frontmost at auto-start (2026-05-04)
 
-User report 2026-05-04 (PID 21010, two sequential calendar-triggered Daily Sync recordings killed within 90 sec each): «не записывается созвон / начался 34 минуты назад и сейчас новый начался». Log evidence: `[CallDetect] back-to-back: live='Meet - Google Chrome - Andrew (projectalpha.com)' != recorded='‎⁨Ivan Smith⁩ – (24999)' → stopping current recording`. The recorded title was a Telegram chat (bidi-isolate Unicode marks `U+2068/2069` around the contact name + unread counter `(24999)` is a Telegram macOS window-title signature). Root cause: at calendar-strong auto-start, `recordingFrontmostTitle` was unconditionally set to whatever was frontmost — which was Telegram because user was reading messages while waiting for the meeting to start. As soon as user fronted the Meet tab, fast-tick saw `live (Meet) != recorded (Telegram)` and fired back-to-back stop — TWICE in 90 sec.
+User report 2026-05-04 (PID 21010, two sequential calendar-triggered Daily Sync recordings killed within 90 sec each): «не записывается созвон / начался 34 минуты назад и сейчас новый начался». Log evidence: `[CallDetect] back-to-back: live='Meet - Google Chrome - <User> (example.com)' != recorded='‎⁨<Telegram contact>⁩ – (24999)' → stopping current recording`. The recorded title was a Telegram chat (bidi-isolate Unicode marks `U+2068/2069` around the contact name + unread counter `(24999)` is a Telegram macOS window-title signature). Root cause: at calendar-strong auto-start, `recordingFrontmostTitle` was unconditionally set to whatever was frontmost — which was Telegram because user was reading messages while waiting for the meeting to start. As soon as user fronted the Meet tab, fast-tick saw `live (Meet) != recorded (Telegram)` and fired back-to-back stop — TWICE in 90 sec.
 
 - `AppDelegate.runCountdownAndStartRecording` — at auto-start, `recordingFrontmostTitle` is now set to the live title ONLY if `SystemAudioCaptureService.detectCallContext(...)` confirms the frontmost is itself a call window. Otherwise stays `nil`. Telegram / Notes / Slack frontmost → no spurious title captured.
 - `AppDelegate` fast-tick (`startMeetingAutoStartTickLoop`) — added a "lazy capture" branch: if `recordingFrontmostTitle == nil` and the current tick sees a real call frontmost, lock that title in as the canonical recordedTitle (logs `[CallDetect] back-to-back: lazy-captured recordedTitle='%@'`). The existing inequality branch (`live != recorded`) only fires after a real call title was canonicalized — so it can only stop on Meet→ZoomDifferentRoom, never on Telegram→Meet.
@@ -67,10 +234,10 @@ User spec 2026-05-02: «через 10 минут может начаться д�
 
 ### Calendar-task pipeline removed (ITER-026)
 
-Earlier in the session: `CalendarReaderService.scanNow()` was bulk-creating `TaskItem(taskDescription: shortenTaskDescription(event.title), dueAt: event.startDate, sourceApp: "Calendar")` for every upcoming non-cancelled non-declined calendar event in a 14-day window. ~10 fake "tasks"/day at this user's calendar density. Tasks like "Тех. интервью: Sam Smith — Marketing manager — AcmeWallet" rotted in the Tasks tab forever because nothing flipped them to completed when the meeting passed.
+Earlier in the session: `CalendarReaderService.scanNow()` was bulk-creating `TaskItem(taskDescription: shortenTaskDescription(event.title), dueAt: event.startDate, sourceApp: "Calendar")` for every upcoming non-cancelled non-declined calendar event in a 14-day window. ~10 fake "tasks"/day at this user's calendar density. Tasks like "Tech Interview: Person — Marketing manager — Acme" rotted in the Tasks tab forever because nothing flipped them to completed when the meeting passed.
 
 - `CalendarReaderService.scanNow` task-creation loop deleted. Calendar memory-extraction (recurring patterns) preserved.
-- `Services/Intelligence/TaskExtractor.extractFromConversation` now passes a `CalendarMeetingContext` (title + start + end + attendees) to the LLM as enrichment context, so transcript-extracted tasks reference real attendee names ("Send draft to Sam" vs "Send draft to him"). System prompt extended with a `CALENDAR MEETING CONTEXT (when present, READ FIRST)` section.
+- `Services/Intelligence/TaskExtractor.extractFromConversation` now passes a `CalendarMeetingContext` (title + start + end + attendees) to the LLM as enrichment context, so transcript-extracted tasks reference real attendee names ("Send draft to Mark" vs "Send draft to him"). System prompt extended with a `CALENDAR MEETING CONTEXT (when present, READ FIRST)` section.
 - `Models/AppSettings.swift` — `+@AppStorage("didMigrateCalendarTasks_iter026")`. `AppDelegate.migrateCalendarTasksOnce()` runs at launch and bulk-dismisses every TaskItem with `sourceApp == "Calendar"` plus orphans (no conversationId, has dueAt, empty/nil sourceApp). Soft delete only.
 - `CalendarReaderService.linkConversation` candidates now filter `if ev.isAllDay { return false }` — Holiday calendars (e.g. "Holidays in Serbia") emit 24h all-day rows that always overlap any conversation, scoring `timeOverlapFraction = 1.0` and hijacking meeting titles. Verified via direct EventKit query during the session: only `Holidays in Serbia` emits all-days; every real meeting is a bounded slot.
 
@@ -159,9 +326,9 @@ Mid-session: blindly ran `wrangler pages deploy _site --project-name=metawhisp` 
 - **`Views/Proactive/` directory deleted** — `ProactiveChipWindow.swift` and `ProactiveChipView.swift` removed. The `.proactivePrefillChat` `Notification.Name` extension that lived inside them is now declared at the bottom of `MWNotificationCard.swift`. Sole caller (`ProactiveContextService`) pushes a `.proactive` `MWNotification` with the items array directly.
 
 ### ITER-026 — calendar-event-to-task pipeline removed (root-cause fix for "интервью давным-давно")
-- User report 2026-05-02: chat was citing weeks-old interview tasks ("Тех. интервью: Sam Smith — Marketing manager — AcmeWallet"). Earlier in the session I shipped a `dueAt > now - 7d` filter in `ChatService.fetchPendingTasksForQuery` — that masked the symptom. User pushed back: "Борись с причиной, а не со следствием — посмотри как у референса" — and they were right.
+- User report 2026-05-02: chat was citing weeks-old interview tasks ("Tech Interview: Person — Marketing manager — Acme"). Earlier in the session I shipped a `dueAt > now - 7d` filter in `ChatService.fetchPendingTasksForQuery` — that masked the symptom. User pushed back: "Борись с причиной, а не со следствием — посмотри как у референса" — and they were right.
 - **Root cause located** in `Services/Indexing/CalendarReaderService.swift:scanNow()` — for every upcoming calendar event in a 14-day window, the service bulk-inserted a `TaskItem(taskDescription: shortenTaskDescription(event.title), dueAt: event.startDate, sourceApp: "Calendar")`. Bypassed `TaskExtractor` LLM entirely. Density ~10/day at this user's calendar load → endless rotting noise once events passed because nothing flipped them to `completed`.
-- **Reference comparison**: the reference action-item extractor NEVER turns calendar events into tasks. Calendar metadata is passed as **enrichment context** to the transcript-extraction LLM so attendee names land in extracted task descriptions ("Send draft to Sam" vs "Send draft to him"). One-way: voice → LLM → action item, with calendar metadata as side input.
+- **Reference comparison**: the reference action-item extractor NEVER turns calendar events into tasks. Calendar metadata is passed as **enrichment context** to the transcript-extraction LLM so attendee names land in extracted task descriptions ("Send draft to Mark" vs "Send draft to him"). One-way: voice → LLM → action item, with calendar metadata as side input.
 - **Fix:**
   - `CalendarReaderService.scanNow` — bulk task-creation loop deleted (lines 296-321 in the old file). Memory-extraction for recurring patterns (lines 323-331) kept. `lastSummary` now reports `Memories: N · Scanned M events` (no `Tasks:` row). Helpers `fetchRecentTaskSignatures` and `shortenTaskDescription` removed (orphan after the loop).
   - `TaskExtractor.extractFromConversation` — fetches `Conversation.calendarEvent*` fields (populated by ITER-018 `linkConversation`) into a new `CalendarMeetingContext` struct. `buildPrompt(...)` now takes `calendarContext: CalendarMeetingContext?` and prepends a `CALENDAR MEETING CONTEXT:` block (Title / Scheduled / Participants) BEFORE the transcript fragments.
@@ -328,7 +495,7 @@ PIDs walked: 27515 → 29604 → 32180 → 36834 → 37195 → 39404 → **47365
 ### Open / next session
 - DailySummaryService.tasksCompleted always returns 0 — not picking up `TaskItem.completedAt`. Separate root-cause hunt.
 - ScreenContext call detection latency — currently 30s polling tick. Enhancement: subscribe to `NSWorkspace.didActivateApplicationNotification` for instant detect on app focus change.
-- ProjectAggregator clutter — 52 alias rows of which 46 are 1-conv noise (VoiceTool/VoiceTool dup, Island/Island Expand/Island Expend typos, Atomic-zoo). Plan: threshold ≥2 conv before showing in Projects view + delete-button per row.
+- ProjectAggregator clutter — 52 alias rows of which 46 are 1-conv noise (Голосок/VoiceSnack dup, Island/Island Expand/Island Expend typos, Atomic-zoo). Plan: threshold ≥2 conv before showing in Projects view + delete-button per row.
 - Phase B chunk overlap (35s with 5s overlap, dedupe at merge boundary) — original Phase B plan, deprioritized while addressing user's bigger pain points. Revisit.
 - Phase C Deepgram streaming WebSocket — still budget-pending.
 
@@ -355,7 +522,7 @@ PIDs walked: 27515 → 29604 → 32180 → 36834 → 37195 → 39404 → **47365
 - **TDD violation in Phase A** acknowledged honestly — split-chunks/trim-silence helpers got GREEN-first. Retro tests added in `Tests/MetaWhispTests/App/AppDelegateAudioChunkingTests.swift` (8 cases). Going forward: Phase B/C strictly TDD.
 
 ### Zoom/Teams strict-detect REVERTED (2026-04-29 late)
-- Phase A's title-required detection for Zoom/Teams was missing real calls (titles like "Sam's Personal Meeting Room", "Waiting for host" don't contain "Zoom Meeting"). User reported missing calls multiple times.
+- Phase A's title-required detection for Zoom/Teams was missing real calls (titles like "User's Personal Meeting Room", "Waiting for host" don't contain "Zoom Meeting"). User reported missing calls multiple times.
 - Reverted: Zoom (`us.zoom.xos`) + Teams (`com.microsoft.teams[2]`) moved BACK to `alwaysCallBundleIDs` — bundle match alone fires detection.
 - Slack (`com.tinyspeck.slackmacgap`) + Discord (`com.discord.Discord`) STAYED in `dualModeCallBundleIDs` (require title indicator: "Huddle" / "Voice Connected").
 - Trade-off acknowledged: clicking idle Zoom Workplace home triggers a 5-sec countdown. User can dismiss. Better than missing real calls.
@@ -691,7 +858,7 @@ Items addressed from 7-point reference-parity gap:
     - `buildAdviceUserContext(...)` теперь `async`, использует new ranker. Original block label updated to "USER MEMORIES (durable facts — weave only when materially relevant)".
     - `generateAdvice` callsite: `let contextBlock = await buildAdviceUserContext(...)`.
     - **System prompt: новая секция MEMORY-WEAVE** — explicit rules:
-      «Reference a memory ONLY when it materially changes the advice». Concrete worked example («Stripe webhook test mode + memory 'ProjectAlpha uses Stripe billing' → "switch to test customers"»). Forbidden: shoehorning, "you said earlier...", verbatim quoting.
+      «Reference a memory ONLY when it materially changes the advice». Concrete worked example («Stripe webhook test mode + memory 'ChatApp uses Stripe billing' → "switch to test customers"»). Forbidden: shoehorning, "you said earlier...", verbatim quoting.
   - **AppDelegate wiring:** `adviceService.embeddingService = embeddingService` after configure.
   - **Risk mitigated:** "force-weave even when irrelevant" — threshold 0.45 + explicit anti-shoehorn rule.
   - **Files touched:** `AdviceService.swift`, `AppDelegate.swift`.
@@ -836,7 +1003,7 @@ Items addressed from 7-point reference-parity gap:
     - Mutation rules unchanged (explicit verb only, no bulk, no invented UUIDs).
   - **User stories (now possible):**
     - «убери задачу про Майка» → searchTasks → 2 results → LLM picks best match → dismissTask → confirm → execute → followup (ITER-017 v2).
-    - «найди мои memories про ProjectAlpha» → searchMemories → text response с listing.
+    - «найди мои memories про ChatApp» → searchMemories → text response с listing.
     - «о чём говорили в звонке про цены?» → searchConversations → returns top match → LLM quotes overview.
     - «забудь что я работаю в X» → searchMemories(query="X work") → dismissMemory → confirm.
   - **Files touched:** `Services/Intelligence/ChatToolExecutor.swift`, `Services/Intelligence/ChatService.swift`, `App/AppDelegate.swift`.
@@ -964,7 +1131,7 @@ Items addressed from 7-point reference-parity gap:
     - `Views/Windows/MainSettingsView.swift` — NEW `proactiveSection` под screen-context в Integrations tab. Toggle + cooldown slider (1-30) + blacklist textfield + warning если Screen Context off.
     - `App/AppDelegate.swift` — `+let proactiveContextService`, configure с embeddingService, `screenContext.onContextPersisted` ветка зовёт `proactiveContextService.onNewContext(ctx)` после `realtimeScreenReactor.react`.
     - `Views/Windows/ChatView.swift` — `.onReceive(.proactivePrefillChat)` pre-fills input text когда chip item тапнут.
-  - **Tap action:** `SurfaceTapAction.openChat(query:)` — chip скрывается, открывается MetaChat, через новый `Notification.Name.proactivePrefillChat` ChatView получает заготовленный вопрос типа `"Напомни что я жду от Паша"` / `"Расскажи про созвон \"Q2 budget sync\""`.
+  - **Tap action:** `SurfaceTapAction.openChat(query:)` — chip скрывается, открывается MetaChat, через новый `Notification.Name.proactivePrefillChat` ChatView получает заготовленный вопрос типа `"Напомни что я жду от Сэм"` / `"Расскажи про созвон \"Q2 budget sync\""`.
   - **Build:** clean (только pre-existing Sendable warning в MainWindowController, не от этой фичи).
   - **Risks (live-test):**
     - **Privacy:** OCR первых 1500 chars улетает в Pro-proxy для embedding'а. Opt-in + blacklist + cooldown снижают expose. В Settings явный дисклеймер не помешал бы (v2 todo).
@@ -1004,7 +1171,7 @@ Items addressed from 7-point reference-parity gap:
     - LLM может галлюцинировать UUID не из контекста → validate возвращает notFound → surface "Not found: abc123…". No mutation.
     - Edge: user пишет «убери таску» не указав конкретную → LLM по правилу 4 должен clarify в plain text, не tool_call. Зависит от LLM following rules.
 - ITER-014 — Topic / project auto-clustering (Projects tab + MetaChat world map):
-  - **Goal:** превратить плоский список созвонов в Projects-view с auto-detected кластерами. MetaChat получает `<active_projects>` блок чтобы отвечать «что у меня с ProjectAlpha» точно.
+  - **Goal:** превратить плоский список созвонов в Projects-view с auto-detected кластерами. MetaChat получает `<active_projects>` блок чтобы отвечать «что у меня с ChatApp» точно.
   - **Approach:** не k-means по embeddings (слепые кластеры без имён). Вместо — explicit label от LLM на close + merge aliases через centroid embeddings.
   - **Data model:**
     - `Models/Conversation.swift` — `+var primaryProject: String?`, `+var topicsJSON: String?` (JSON `[String]`). Оба Optional → SwiftData lightweight migration.
@@ -1037,14 +1204,14 @@ Items addressed from 7-point reference-parity gap:
     - Launch task (15s delay, после embeddings backfill): `backfillProjects(structuredGenerator:)` → `mergeAliases()`.
   - **MetaChat — `Services/Intelligence/ChatService.swift`:**
     - `activeProjects = projectAggregator?.listProjects().prefix(8)` в send() → prompt block `<active_projects>`.
-    - Render: `- ProjectAlpha (7 conv, 3 pending, 2 memories, last: 2d ago) · with: Sam, Sam`.
+    - Render: `- ChatApp (7 conv, 3 pending, 2 memories, last: 2d ago) · with: Sam, Alex`.
     - System prompt: `<task>` list расширен, `<active_projects>` упомянут в GROUND TRUTH, fallback-empty rule, PROJECTS routing rule усилен («START from <active_projects>»).
     - `buildUserPrompt` signature: `+projects: [ProjectSummary]`.
   - **Files touched:** `Models/Conversation.swift`, `Models/ProjectAlias.swift` (NEW), `Services/Data/HistoryService.swift`, `Services/Intelligence/StructuredGenerator.swift`, `Services/Intelligence/ProjectAggregator.swift` (NEW), `Views/Windows/ProjectsView.swift` (NEW), `Views/Windows/MainWindowView.swift`, `Views/Windows/MainWindowController.swift`, `App/AppDelegate.swift`, `Services/Intelligence/ChatService.swift`.
   - **Build:** clean (3 pre-existing warnings).
   - **Risks (live-test):**
     - Backfill cost: 100-500 LLM вызовов для юзера с существующей базой. Pro proxy ~$0.25 на 500 convs. Batched sequentially с 300ms паузой → ~5 мин на 500. Не блокирует UI.
-    - Merge threshold 0.88: может ложно слить «ProjectAlpha» + «Overmind» (семантически близкие короткие имена). Митигация — manual override в v2 (эта фича не в скоупе).
+    - Merge threshold 0.88: может ложно слить «ChatApp» + «Overmind» (семантически близкие короткие имена). Митигация — manual override в v2 (эта фича не в скоупе).
     - `primaryProject` остаётся raw (не canonical) в `Conversation` — это audit trail. Canonical resolve только на read-path. Если alias row удалят, conversations не потеряются.
 - ITER-013 — Action Items с owners (My / Waiting-on split):
   - **Goal:** разделить «что Я должен сделать» от «что мне должны». PM-style, два списка вместо одной кучи. Меняет фундаментальное правило старого extractor'а («только мои таски» — class C+ → SKIP).
@@ -1136,12 +1303,12 @@ Items addressed from 7-point reference-parity gap:
 - [meeting-timer-fix]: заменил `Timer.publish` на `TimelineView` — не ресетится от re-render из-за audioLevel updates
 - [permission-ux-fix]: убрал авто-открытие System Settings при permission denial — steals focus и закрывает popover. Теперь error banner кликабельный → пользователь сам открывает Settings. Логи: `[SystemAudio] No Screen Recording permission — requesting...` → `[Permissions] ScreenCaptureKit: The user declined TCCs...` → раньше popover закрывался молча. Теперь остаётся открытым с красным бэннером.
 - [appdelegate-shared-fix]: EXTRACT NOW / GENERATE NOW падали с "SwiftUI context issue" — `NSApp.delegate as? AppDelegate` runtime-cast failed (SwiftUI @NSApplicationDelegateAdaptor бриджит через Obj-C protocol, dynamic cast не проходит). Fix: `AppDelegate.shared` weak static, устанавливается в `applicationDidFinishLaunching`. MemoriesView + InsightsView теперь берут ссылку через него. Лог подтверждения в `~/Library/Logs/MetaWhisp.log`: `[InsightsView] ❌ AppDelegate cast failed. NSApp.delegate class = Optional<NSApplicationDelegate>` (до fix).
-- [developer-id-signing]: `build.sh` теперь подписывает всё под `Developer ID Application: MetaWhisp Maintainer (6D6948Z4MW)` вместо ad-hoc. Sparkle nested binaries (XPCServices, Autoupdate, Updater.app, Sparkle) подписываются снизу вверх с `--preserve-metadata=identifier,entitlements,flags` чтобы сохранить `org.sparkle-project.*` identifier. Hardened runtime (`--options runtime`) включён. Fallback на ad-hoc если cert отсутствует (CI). **Эффект:** TeamIdentifier стабилен (6D6948Z4MW) между rebuild'ами → TCC больше не сбрасывается, weekly-reprompt больше не триггерится. **Одноразовая боль:** при переходе с ad-hoc на Developer ID system-wide TCC помнит старый "deny" для Screen Recording → dialog не появляется. Решение один раз: System Settings → Privacy → Screen Recording → добавить через `+`. После этого grant прилип к Developer ID sig, rebuild не сбрасывает.
+- [developer-id-signing]: `build.sh` теперь подписывает всё под `Developer ID Application: Alex Dyuzhov (6D6948Z4MW)` вместо ad-hoc. Sparkle nested binaries (XPCServices, Autoupdate, Updater.app, Sparkle) подписываются снизу вверх с `--preserve-metadata=identifier,entitlements,flags` чтобы сохранить `org.sparkle-project.*` identifier. Hardened runtime (`--options runtime`) включён. Fallback на ad-hoc если cert отсутствует (CI). **Эффект:** TeamIdentifier стабилен (6D6948Z4MW) между rebuild'ами → TCC больше не сбрасывается, weekly-reprompt больше не триггерится. **Одноразовая боль:** при переходе с ad-hoc на Developer ID system-wide TCC помнит старый "deny" для Screen Recording → dialog не появляется. Решение один раз: System Settings → Privacy → Screen Recording → добавить через `+`. После этого grant прилип к Developer ID sig, rebuild не сбрасывает.
 - [b1-tasks-parity]: Advice→Tasks implemented . Новый `TaskItem` model + `TaskExtractor` service копирует `extract_action_items` (`backend/utils/llm/conversation_processing.py:301`). Trigger: voice transcription ≥20 chars (mirror memory trigger). Prompt: copied verbatim 345-540, удалены sections про Speaker 0/1/2 и CalendarMeetingContext (single-user adaptation). 2-day dedup window, future-only due_at parsing. UI: Insights → Tasks section с checkbox + due badges (TODAY/TOMORROW/OVERDUE). `AdviceService.startPeriodicAdvice` полностью отключён. `AdviceItem` records остаются в БД (138 шт) но скрыты от UI. Build green. Awaiting user verification scenarios (see BACKLOG#B1).
 - [ITER-003§screen-aware-intelligence]: дал intelligence-сервисам доступ к screen OCR. **Проблема:** `ScreenContext` пишется каждые 30с (778+ строк) но `ChatService` не читал вообще, `MemoryExtractor`/`TaskExtractor` читали только metadata (appName/windowTitle), не OCR — надиктовал "купи это" → task без контекста. **Изменения:** (1) `ChatService` — `+weak var screenContext`, `+fetchScreenContextLast24h(limit:30, maxCharsPerSnippet:200)` → новый блок `<recent_screen_activity>` в промпте после `<pending_tasks>` (cap ~6KB). System prompt обновлён: "consult <recent_screen_activity>… do NOT invent details OCR doesn't contain". (2) `MemoryExtractor` + `TaskExtractor` — в `buildPrompt` splice `<on_screen_right_now app="" window="">` (≤500 chars, latest snapshot only). Prompts обновлены: "USE ONLY to resolve ambiguous references (this/that). DO NOT extract from screen alone — voice is source of truth". Пример: voice "remind me to order this" + OCR "iPhone 15 Pro Max" → task "Order iPhone 15 Pro Max". (3) `AppDelegate.setupServices` — `chatService.screenContext = screenContext` after configure. (4) `DashboardView` — new `ScreenActivityCard` subview (`@Query<ScreenObservation>` last 24h → group by appName → sum durations → top-5 tiles с durationLabel "3h 12m"). Empty state "No screen activity yet. Enable Screen Context in Settings." **Cost guard:** 30×200=6KB в chat prompt (в пределах 24KB cap); 500 chars в memory/task — почти бесплатно. Privacy: blacklist (Passwords/1Password) уже enforced в `ScreenContextService` → в промпты не попадёт. **Не сделано (отдельные треки):** realtime per-window-change extraction (гэп #3), embeddings (гэп #4), retention (#5), video chunks (#6). **Файлы:** `Services/Intelligence/ChatService.swift`, `Services/Intelligence/MemoryExtractor.swift`, `Services/Intelligence/TaskExtractor.swift`, `App/AppDelegate.swift`, `Views/Windows/DashboardView.swift`. Build green (2.81s). Spec: `specs/iterations/ITER-003-screen-aware-intelligence.md`. Awaiting live verify.
 - [ITER-002§arc-meet-fix]: **Baseline ITER-002 shipped to source, user reported "не записываются звонки".** Diagnostic показал 2 RC: (RC1 primary) user запускал старый бинарь Apr 19 22:32 до ITER-002 — нужен `./build.sh`. (RC2) логи раскрыли Arc edge case — Arc window title для Google Meet = **только room code** ("gpq-mmkq-iaz"), без строки "Google Meet" → keyword lookup fails. Reference тоже этот case не ловит. **Fix:** добавил `meetRoomCodeRegex` (`^[a-z]{3}-[a-z]{3,4}-[a-z]{3}$`) как fallback в `SystemAudioCaptureService.detectCallContext` когда app is browser и keyword-match fail. Formato room code стабильный (Google Meet всегда 3-{3,4}-3 lowercase). Build green. Awaiting rebuild + test.
 - [ITER-002§call-auto-detection]: auto-detect созвона → нотификейшн → optional 5s auto-start. **Hook:** `ScreenContextService.captureIfChanged` (piggy-back на существующий window-polling loop, у пользователя screen context всегда ON). **Детекция:** `SystemAudioCaptureService.detectCallContext(bundleID:appName:windowTitle:)` — native call apps (Zoom/Teams/FaceTime/Slack/Discord/Webex/GoToMeeting) + browser apps (Chrome/Safari/Arc/Firefox/Edge/Brave/Opera) + title keywords ("Google Meet", "meet.google.com", "Teams - Microsoft", "Zoom Meeting"). **State machine:** `lastCallContext` — callback `onCallContext(name?)` фаерит только на transition (nil→name, name→nil), debounce built-in. **Settings (2 toggles под MEETING RECORDING):** `autoDetectCalls` (existing dead toggle → wired) = показать нотификейшн; `callsAutoStartEnabled` (NEW) = через 5s start recording. **AppDelegate:** `handleCallContext` → `NotificationService.postCallDetected(appName:autoStart:)` + `autoRecordCountdownTask` 5s sleep → `meetingRecorder.start()`. `didAutoStartRecording` флаг отличает auto-record от manual → auto-stop только для auto-record. Skip если уже recording. Countdown cancellable если call ended до 5s. **Файлы:** `Models/AppSettings.swift`, `Services/Audio/SystemAudioCaptureService.swift`, `Services/Screen/ScreenContextService.swift`, `Services/System/NotificationService.swift`, `App/AppDelegate.swift`, `Views/Windows/MainSettingsView.swift`. Build green. Awaiting live test on Google Meet in Chrome.
-- [memory-extractor-align]: MemoryExtractor переписан под проверенный pattern. **Trigger:** fires on each voice transcription ≥20 chars (mirror `AdviceService.triggerOnTranscription`), НЕ periodic timer каждые 10 мин. **Input:** voice transcript, screen OCR больше не input для memories (garbage in → garbage out, prompt отвергал UI junk типа "0 clawd / SEO SKILL ~ 口、"). **Prompt:** adapted из — categorization test Q1→Q2, temporal ban ("Thursday"/"next week"), transient verb ban ("is working on"/"is building"), hedging ban, strict dedup with "contradiction is EXCEPTION → extract", mandatory double-check. **Cap:** max 2 memories per extraction. **Dedup window:** все non-dismissed memories (было 20, 1000). **Verify:** diagnostic script `/tmp/mw_test_extractor.py` — на idealfactual transcript ("Я CTO ProjectAlpha, использую Swift strict concurrency") вернул 2 memories с confidence=1.0. На non-factual ("я думаю", "покажи html") вернул [] — корректно. **Files:** `Services/Intelligence/MemoryExtractor.swift`, `Services/System/TranscriptionCoordinator.swift:37-41`, `App/AppDelegate.swift:90-93, 286-289, 382-388`. EXTRACT NOW кнопка теперь extract'ит из последнего transcript в History.
+- [memory-extractor-align]: MemoryExtractor переписан под проверенный pattern. **Trigger:** fires on each voice transcription ≥20 chars (mirror `AdviceService.triggerOnTranscription`), НЕ periodic timer каждые 10 мин. **Input:** voice transcript, screen OCR больше не input для memories (garbage in → garbage out, prompt отвергал UI junk типа "0 clawd / SEO SKILL ~ 口、"). **Prompt:** adapted из — categorization test Q1→Q2, temporal ban ("Thursday"/"next week"), transient verb ban ("is working on"/"is building"), hedging ban, strict dedup with "contradiction is EXCEPTION → extract", mandatory double-check. **Cap:** max 2 memories per extraction. **Dedup window:** все non-dismissed memories (было 20, 1000). **Verify:** diagnostic script `/tmp/mw_test_extractor.py` — на idealfactual transcript ("Я CTO ChatApp, использую Swift strict concurrency") вернул 2 memories с confidence=1.0. На non-factual ("я думаю", "покажи html") вернул [] — корректно. **Files:** `Services/Intelligence/MemoryExtractor.swift`, `Services/System/TranscriptionCoordinator.swift:37-41`, `App/AppDelegate.swift:90-93, 286-289, 382-388`. EXTRACT NOW кнопка теперь extract'ит из последнего transcript в History.
 
 ## In Progress
 - [FEAT-0001§meeting-recording] (UX polish):

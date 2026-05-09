@@ -292,7 +292,7 @@ hasTask, taskTitle, sourceCategory, sourceSubcategory
   - `Models/TaskItem.swift` — added `screenContextId: UUID?`.
   - `Services/Intelligence/ScreenExtractor.swift` — same LLM call now returns **observations + memories + tasks** together (one batch, 3 arrays). visitIndex links each memory/task to source visit's ScreenContext.
   - Dedup: Swift-side cheap exact-content check against last 100 memories/tasks (LLM also does semantic dedup via prompt). Threshold 0.6 confidence for memory acceptance.
-  - **Unlocks user's ask** ("знать все проекты из Obsidian/Notion/Claude/ChatGPT") — when user reads these apps, hourly batch extracts memories like "User works on ProjectAlpha SEO strategy" from GA4 dashboard reading.
+  - **Unlocks user's ask** ("знать все проекты из Obsidian/Notion/Claude/ChatGPT") — when user reads these apps, hourly batch extracts memories like "User works on ChatApp SEO strategy" from GA4 dashboard reading.
   - **Verify after 1 hour of varied screen activity:**
     ```bash
     sqlite3 ~/Library/Application\ Support/MetaWhisp.store \
@@ -408,7 +408,7 @@ User explicit ask 2026-04-19: premium TTS + more voice features revisited after 
 - `Views/Windows/MainSettingsView.swift` — new VOICE section with the two SPEAK-answers toggles, voice picker (system default + TTSService.availableVoices filtered to en/ru), preview button, speed slider.
 - `App/AppDelegate.swift` — creates `ttsService`, wires `coordinator.chatService = chatService`, `chatService.ttsService = ttsService`, passes `onVoiceQuestionStart/Stop` to `hotkeyService.register`.
 - **UX notes:** Right ⌘ short tap (existing dictation flow) now has a 500ms observation window — tap must be <0.4s to fire. Between 0.4s and 0.5s → neither fires (safety gap). Long-press mode triggers at 500ms if still held with no other keys.
-- **Verify:** toggle VOICE ON → hold Right ⌘ 500ms+ → speak "what do I know about ProjectAlpha" → release → answer appears in MetaChat AND speaks aloud. Short tap Right ⌘ → normal dictation. Left ⌘ untouched.
+- **Verify:** toggle VOICE ON → hold Right ⌘ 500ms+ → speak "what do I know about ChatApp" → release → answer appears in MetaChat AND speaks aloud. Short tap Right ⌘ → normal dictation. Left ⌘ untouched.
 
 ### Phase 6+: Proactive + Floating Bar (deferred)
 

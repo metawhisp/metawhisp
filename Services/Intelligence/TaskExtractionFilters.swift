@@ -6,7 +6,7 @@ import Foundation
 /// 1. App-level blacklist — never extract tasks from OCR of AI coding assistants or
 ///    the app's own UI (recursive noise).
 /// 2. Fuzzy dedup — word-overlap similarity catches wording variations that exact
-///    case-insensitive match misses ("Fix Atomicbot SEO" vs "Fix ProjectAlpha SEO issue").
+///    case-insensitive match misses ("Fix exampleproject SEO" vs "Fix Example Project SEO issue").
 ///
 /// Used by both `ScreenExtractor` (hourly batch) and `RealtimeScreenReactor` (per-snapshot).
 enum TaskExtractionFilters {

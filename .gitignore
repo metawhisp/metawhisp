@@ -23,11 +23,24 @@ design-handoff/
 api/
 website/
 
-# Secrets
+# Secrets — never let any of these slip into a commit
 .env
+.env.*
+.dev.vars
+.dev.vars.*
 *.key
 *.pem
+*.p12
+*.p8
+*.cer
 .secrets
+secrets.json
+credentials.json
+*.token
+*.token.txt
 how-to-build/
 .human/
 .npmrc
+
+# Local diagnostic — never commit (contains real meeting/person names)
+specs/health-reports/

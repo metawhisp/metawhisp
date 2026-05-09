@@ -11,6 +11,7 @@ import SwiftUI
 /// spec://iterations/ITER-014-project-clustering
 struct ProjectsView: View {
     @EnvironmentObject private var projectAggregator: ProjectAggregator
+    @ObservedObject private var settings = AppSettings.shared
 
     @State private var summaries: [ProjectSummary] = []
     @State private var selectedProject: String?
@@ -34,6 +35,24 @@ struct ProjectsView: View {
                 .font(MW.monoTitle)
                 .foregroundStyle(MW.textPrimary)
             Spacer()
+            // ITER-032 — toggle to reveal one-conversation projects (LLM
+            // hallucinations / typos). Off by default keeps the grid clean.
+            Button {
+                settings.projectShowSingletons.toggle()
+                Task { await refresh() }
+            } label: {
+                Text(settings.projectShowSingletons ? "ALL" : "≥2")
+                    .font(MW.label).tracking(0.6)
+                    .foregroundStyle(settings.projectShowSingletons ? MW.textPrimary : MW.textSecondary)
+                    .padding(.horizontal, 8).padding(.vertical, 4)
+                    .background(settings.projectShowSingletons ? MW.elevated : .clear)
+                    .overlay(RoundedRectangle(cornerRadius: MW.rSmall, style: .continuous).stroke(MW.border, lineWidth: 0.5))
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .help(settings.projectShowSingletons
+                  ? "Showing all projects (incl. one-conversation noise)"
+                  : "Hiding singletons — projects with only one conversation")
             Button {
                 Task { await refresh() }
             } label: {
@@ -167,7 +186,7 @@ struct ProjectsView: View {
         isLoading = true
         defer { isLoading = false }
         // listProjects is sync but cheap — wrap in Task only for UI consistency.
-        summaries = projectAggregator.listProjects()
+        summaries = projectAggregator.listProjects(includeSingletons: settings.projectShowSingletons)
     }
 }
 
@@ -181,6 +200,17 @@ private struct ProjectDetailView: View {
     @State private var details: ProjectDetails?
     @State private var showDeleteConfirm = false
     @State private var deleteResultMessage: String?
+    /// ITER-032.1: ALIASES section state. Re-fetches the row directly so we
+    /// see all variants (including ones that auto-merge picked up from past
+    /// LLM hallucinations).
+    @State private var aliases: [String] = []
+    /// Current canonical (mirrors `canonicalName` initially; updated when
+    /// the user picks a different variant via "Make canonical").
+    @State private var currentCanonical: String = ""
+    /// ITER-032.2: free-form rename text — accepts any string, not just an
+    /// existing variant. Useful when the auto-curative pass picks something
+    /// suboptimal or the user wants a brand new display name.
+    @State private var renameText: String = ""
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -248,6 +278,46 @@ private struct ProjectDetailView: View {
                                 }
                             }
                         }
+                        // ITER-032.1 — ALIASES section. Lists every variant
+                        // string that's collapsed under this canonical. User
+                        // can promote a variant to canonical (rename) or
+                        // split it out as a separate project (when an
+                        // accidental merge happened, e.g. LLM-hallucinated
+                        // `HallucinatedName` swallowed the real `Example Project`).
+                        if aliases.count > 1 {
+                            section("ALIASES") {
+                                ForEach(aliases, id: \.self) { variant in
+                                    aliasRow(variant)
+                                }
+                            }
+                        }
+                        // ITER-032.2 — free-form rename. Type any name and
+                        // hit RENAME — added to the aliases list AND set as
+                        // canonical. Useful when no existing variant looks
+                        // right (e.g. promote a brand-new clean name).
+                        section("RENAME") {
+                            HStack(spacing: 8) {
+                                TextField("New display name", text: $renameText)
+                                    .textFieldStyle(.plain)
+                                    .font(MW.mono)
+                                    .padding(.horizontal, 8).padding(.vertical, 6)
+                                    .overlay(RoundedRectangle(cornerRadius: MW.rSmall, style: .continuous).stroke(MW.border, lineWidth: 0.5))
+                                Button("RENAME") {
+                                    let trimmed = renameText.trimmingCharacters(in: .whitespacesAndNewlines)
+                                    guard !trimmed.isEmpty else { return }
+                                    if projectAggregator.renameCanonical(currentCanonical: currentCanonical, newName: trimmed) {
+                                        currentCanonical = trimmed
+                                        aliases = projectAggregator.aliasVariants(for: trimmed)
+                                        renameText = ""
+                                    }
+                                }
+                                .font(MW.label).foregroundStyle(MW.textSecondary)
+                                .padding(.horizontal, 10).padding(.vertical, 6)
+                                .overlay(RoundedRectangle(cornerRadius: MW.rSmall, style: .continuous).stroke(MW.border, lineWidth: 0.5))
+                                .buttonStyle(.plain)
+                                .disabled(renameText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                            }
+                        }
                     }
                     .padding(16)
                 }
@@ -257,6 +327,8 @@ private struct ProjectDetailView: View {
         }
         .task {
             details = projectAggregator.details(for: canonicalName)
+            currentCanonical = canonicalName
+            aliases = projectAggregator.aliasVariants(for: canonicalName)
         }
         .confirmationDialog(
             "Delete project \"\(canonicalName)\"?",
@@ -336,6 +408,60 @@ private struct ProjectDetailView: View {
                 Text(m.content).font(MW.monoSm).foregroundStyle(MW.textSecondary).lineLimit(2)
             }
             Spacer()
+        }
+        .padding(.vertical, 4)
+    }
+
+    /// ITER-032.1 — ALIASES row with two actions:
+    ///  • "Make canonical" — promote this variant to be the cluster's
+    ///    display name (when auto-merge picked the wrong winner).
+    ///  • "Split out"      — extract this variant into its OWN ProjectAlias
+    ///    row (when an accidental merge needs to be undone).
+    /// The currently-canonical variant shows a non-clickable "canonical" tag.
+    private func aliasRow(_ variant: String) -> some View {
+        let isCurrentCanonical = variant.localizedCaseInsensitiveCompare(currentCanonical) == .orderedSame
+        return HStack(spacing: 8) {
+            Image(systemName: isCurrentCanonical ? "star.fill" : "star")
+                .font(.system(size: 10))
+                .foregroundStyle(isCurrentCanonical ? MW.accent : MW.textMuted)
+                .frame(width: 16)
+            Text(variant)
+                .font(MW.mono)
+                .foregroundStyle(isCurrentCanonical ? MW.textPrimary : MW.textSecondary)
+            Spacer()
+            if isCurrentCanonical {
+                Text("CANONICAL")
+                    .font(MW.label).tracking(0.6)
+                    .foregroundStyle(MW.textMuted)
+                    .padding(.horizontal, 6).padding(.vertical, 2)
+                    .overlay(RoundedRectangle(cornerRadius: MW.rSmall, style: .continuous).stroke(MW.border, lineWidth: 0.5))
+            } else {
+                Button("MAKE CANONICAL") {
+                    if projectAggregator.setCanonical(currentCanonical: currentCanonical, newCanonical: variant) {
+                        currentCanonical = variant
+                        aliases = projectAggregator.aliasVariants(for: variant)
+                    }
+                }
+                .font(MW.label).foregroundStyle(MW.textSecondary)
+                .padding(.horizontal, 6).padding(.vertical, 2)
+                .overlay(RoundedRectangle(cornerRadius: MW.rSmall, style: .continuous).stroke(MW.border, lineWidth: 0.5))
+                .buttonStyle(.plain)
+            }
+            Button("SPLIT OUT") {
+                if projectAggregator.splitAlias(currentCanonical: currentCanonical, variantToSplit: variant) {
+                    // After split, the alias's canonical may have changed if
+                    // we split out the canonical itself. Refresh both states.
+                    aliases = projectAggregator.aliasVariants(for: currentCanonical)
+                    if !aliases.contains(where: { $0.localizedCaseInsensitiveCompare(currentCanonical) == .orderedSame }),
+                       let next = aliases.first {
+                        currentCanonical = next
+                    }
+                }
+            }
+            .font(MW.label).foregroundStyle(.orange.opacity(0.85))
+            .padding(.horizontal, 6).padding(.vertical, 2)
+            .overlay(RoundedRectangle(cornerRadius: MW.rSmall, style: .continuous).stroke(Color.orange.opacity(0.4), lineWidth: 0.5))
+            .buttonStyle(.plain)
         }
         .padding(.vertical, 4)
     }

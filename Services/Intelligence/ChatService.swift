@@ -98,7 +98,7 @@ final class ChatService: ObservableObject {
         let pendingTasks = fetchPendingTasksForQuery(queryVector: queryVector, limit: 15)
         let activeGoals = fetchActiveGoals()
         // ITER-014 — top project clusters give the LLM a "world map" so questions
-        // like "что у меня с ProjectAlpha?" route to the right summary instantly.
+        // like "что у меня с ChatApp?" route to the right summary instantly.
         let activeProjects = projectAggregator?.listProjects().prefix(8).map { $0 } ?? []
         let screenSnippets = fetchScreenContextLast24h(limit: 15, maxCharsPerSnippet: 160)
         let relevantFiles = fetchRelevantFiles(query: trimmed, limit: 3, previewChars: 400)
@@ -418,7 +418,7 @@ final class ChatService: ObservableObject {
     - <recent_meetings> — long-form recorded meetings/calls with title, overview, duration, full transcript. May include a `calendar:` line when the meeting was linked to a calendar event (event title + time range + attendees from the user's calendar).
     - <my_tasks> — open action items the USER themselves owes (their own to-do list)
     - <waiting_on> — items grouped by person; the user is waiting for THAT person to deliver
-    - <active_projects> — recurring projects/products detected across conversations, with per-cluster counts (e.g. "ProjectAlpha · 7 conv · 3 pending")
+    - <active_projects> — recurring projects/products detected across conversations, with per-cluster counts (e.g. "ChatApp · 7 conv · 3 pending")
     - <active_goals> — persistent targets the user is tracking (booleans, scales, numeric counters)
     - <current_screen> — OCR captured RIGHT NOW for this voice question (only present in voice mode). Highest-priority signal for "what's on my screen?" / "fill this form" / "translate this UI" questions.
     - <recent_screen_activity> — OCR excerpts from apps viewed in last 24h (historical, may be 30 sec to 24h stale)
@@ -447,7 +447,7 @@ final class ChatService: ObservableObject {
         · NEVER pad an answer by quoting a noisy fragment just to look authoritative.
     - **NEVER ask the user to clarify or "ask a clearer question".** Voice questions are auto-transcribed and may contain ASR noise (a stray phrase before or after the real question). Identify the most plausible real question in the transcript and answer it using the available context. If the entire question is genuinely unintelligible, give a brief honest "couldn't make out the question — heard: '<quote>'" instead of asking the user to repeat.
     - **MEETINGS / CALLS / СОЗВОН**: when the user asks about a call, meeting, созвон, or asks to "transcribe / summarize / кратко о последнем созвоне / транскрибируй", consult <recent_meetings>. For "transcribe"-type requests, reproduce the transcript text from the relevant meeting (the newest one if unspecified). For "summarize"-type requests, give a structured summary using the overview + transcript. Meetings are the ONLY source for calls/созвоны — do NOT confuse them with dictations or tasks. **Calendar lookup**: when the user references a meeting by its CALENDAR EVENT NAME ("о чём говорили на standup в среду", "что обсуждали на 1-on-1 с Alex?"), match against the `calendar:` line of each meeting — that's the actual event title from the user's calendar (with attendees). When a meeting has both a `calendar:` line AND a structured title, prefer citing the calendar name (the user knows their calendar event names better).
-    - **PROJECTS / ПРОЕКТЫ / РАБОТА**: when asked about projects, work, what user does, "что я делаю в жизни / какие у меня проекты / что у меня с X" — START from <active_projects> (that block is the aggregated truth across all conversations). Quote the canonical name, counts, and last-activity verbatim. Use <user_facts> and <recent_meetings> overviews to add one-line context per project. When the user asks about a SPECIFIC project ("что у меня с ProjectAlpha"), find that cluster in <active_projects> and answer with its stats + the most recent conversation overviews tagged to it.
+    - **PROJECTS / ПРОЕКТЫ / РАБОТА**: when asked about projects, work, what user does, "что я делаю в жизни / какие у меня проекты / что у меня с X" — START from <active_projects> (that block is the aggregated truth across all conversations). Quote the canonical name, counts, and last-activity verbatim. Use <user_facts> and <recent_meetings> overviews to add one-line context per project. When the user asks about a SPECIFIC project ("что у меня с ChatApp"), find that cluster in <active_projects> and answer with its stats + the most recent conversation overviews tagged to it.
     - **CURRENT SCREEN (voice questions)**: when `<current_screen>` is present, it's a fresh OCR snapshot taken at the moment of THIS question — treat it as the primary source for "что сейчас на экране", "what am I looking at", "fill this form for me", "translate this", "answer for the field". For form-fill requests, return the values the user should paste, organized field by field. For "what's on my screen", summarize what's visible (app + main content). Quote OCR text when relevant — do NOT invent details the snapshot doesn't contain.
     - When the user asks about what they were reading / working on / viewing in the past — consult <recent_screen_activity>. Quote concrete text from OCR when it directly answers the question. Do NOT invent details the OCR doesn't contain.
     - **GOALS / ЦЕЛИ / ПРОГРЕСС**: when the user asks about goals, targets, progress ("how am I doing on my goals?", "как мои цели?", "сколько отжиманий осталось"), consult <active_goals>. Quote the title and progress label verbatim ("3/10 push-ups", "Done", "Pending") so the user sees the exact tracked value. If a goal is at 0 or behind expected pace, surface that bluntly. If <active_goals> is empty, say so honestly — do NOT invent goals.
@@ -768,7 +768,7 @@ final class ChatService: ObservableObject {
 
         // ITER-014 — Active projects: compact cluster listing, gives the LLM a
         // "world map" of user's recurring themes so questions like "что у меня
-        // с ProjectAlpha?" route to the right source immediately.
+        // с ChatApp?" route to the right source immediately.
         parts.append("")
         parts.append("<active_projects>")
         if projects.isEmpty {

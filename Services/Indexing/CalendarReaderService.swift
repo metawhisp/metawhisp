@@ -78,6 +78,16 @@ final class CalendarReaderService: ObservableObject {
         return candidates.sorted { $0.startDate > $1.startDate }.first
     }
 
+    /// Look up an EKEvent by its `eventIdentifier`. Used by AppDelegate's
+    /// ITER-034 calendar-end auto-stop to read `endDate` from the event the
+    /// gate just fired for. Returns nil if calendar access not granted, the
+    /// id is invalid, or the event has been deleted from the calendar.
+    func event(forIdentifier eventID: String) -> EKEvent? {
+        let status = EKEventStore.authorizationStatus(for: .event)
+        guard status == .fullAccess || status == .authorized else { return nil }
+        return store.event(withIdentifier: eventID)
+    }
+
     /// Returns the calendar event currently in progress (if any) — start ≤ now ≤ end.
     /// Used by AppDelegate's meeting auto-stop to schedule a hard stop at
     /// `event.endDate + buffer`. No-op if calendar access wasn't granted.

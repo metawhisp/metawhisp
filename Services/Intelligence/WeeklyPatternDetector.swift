@@ -188,7 +188,7 @@ final class WeeklyPatternDetector: ObservableObject {
 
     PEOPLE:
     - Names appearing in ≥2 conversations. Preserved as spoken (Russian / English).
-    - Format: "Sam (5 convs · co-working on ProjectAlpha)" — name + role/context if clear.
+    - Format: "Sam (5 convs · co-working on ChatApp)" — name + role/context if clear.
     - Skip the user themselves.
 
     STUCK_LOOPS:
@@ -201,7 +201,7 @@ final class WeeklyPatternDetector: ObservableObject {
     INSIGHTS:
     - Cross-context observations the user wouldn't see in single conv.
     - GOOD: "Mike appears in 3 different project contexts — possible coordination role?"
-            "Same pricing blocker across ProjectAlpha AND ProjectAlpha — common cause?"
+            "Same pricing blocker across ChatApp AND Example Project — common cause?"
             "5 meetings tagged 'work', 0 decisions — agendas need pre-work"
     - BAD: "User had many meetings" (counting, not insight)
     - Empty if nothing rises.

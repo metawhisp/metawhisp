@@ -97,7 +97,7 @@ final class TaskExtractor: ObservableObject {
         // an EKEvent (by `CalendarReaderService.linkConversation`), we surface
         // the event title + scheduled time + attendee names BEFORE the
         // transcript so the LLM can name people correctly in extracted tasks
-        // ("Send draft to Sam" instead of "Send draft to him").
+        // ("Send draft to Maya" instead of "Send draft to him").
         let calendarContext = fetchCalendarContext(conversationId: conversationId, in: ctx)
         let prompt = buildPrompt(
             fragments: fragments,
@@ -170,7 +170,7 @@ final class TaskExtractor: ObservableObject {
 
     A `CALENDAR MEETING CONTEXT:` block may precede the transcript. When it appears it lists the meeting Title, Scheduled time range, and Participants pulled from the user's actual calendar event linked to this conversation. You MUST:
     - Use participant names verbatim in extracted tasks. NEVER use "Speaker 0" / "Speaker 1" or vague pronouns ("him") when names are available.
-    - Recognise that the conversation involved exactly the listed participants — match transcript voices to those names by content cues. Example: if the meeting is "1-on-1 with Sam" and the user says "I'll send him the draft", extract "Send draft to Sam" — not "Send draft to him".
+    - Recognise that the conversation involved exactly the listed participants — match transcript voices to those names by content cues. Example: if the meeting is "1-on-1 with Maya" and the user says "I'll send him the draft", extract "Send draft to Maya" — not "Send draft to him".
     - Treat the meeting Title only as situational context — do NOT extract the title itself as a task. Action items must come from the SPEAKERS' words inside the transcript.
     - When ambiguous which named participant a delegated action falls on (e.g. user says "we agreed they'll handle it" but multiple names listed), prefer SKIP over guessing.
 
@@ -197,13 +197,13 @@ final class TaskExtractor: ObservableObject {
         with someone where the OTHER person is the executor.
         Examples:
         - "Я попросил Сэма задеплоить" / "I asked Sam to deploy" → assignee = "Sam"
-        - "Мы решили что Паша подготовит отчёт" (user is in "мы" but Sam does it) → assignee = "Sam"
+        - "Мы решили что Сэм подготовит отчёт" (user is in "мы" but Sam does it) → assignee = "Sam"
         - "Сказал Майку прислать драфт" / "Told Mike to send draft" → assignee = "Mike"
         → EXTRACT with assignee = <person name as spoken>
 
     (C) UNRELATED THIRD PARTY — someone else's action with NO link to user.
         Examples:
-        - "У Паши созвон с Саней в среду" → SKIP (just a fact, not user's concern)
+        - "У Сэма созвон с Саней в среду" → SKIP (just a fact, not user's concern)
         - "Mike has a meeting with his team" → SKIP
         - "Sam is shipping v2 today" → SKIP (no delegation, no co-commitment)
         → SKIP — do not extract
@@ -213,13 +213,13 @@ final class TaskExtractor: ObservableObject {
     mention of someone else's activity = (C) = SKIP. When ambiguous, prefer SKIP.
 
     Ambiguous cases — default to SKIP unless explicit:
-    - "Созвон с Пашей в понедельник" → who calls? SKIP unless "у меня / I have / поставил".
-    - "Паша прислал документы, нужно посмотреть" → who looks is ambiguous → SKIP unless clearly user said "посмотрю / I'll review".
-    - "У меня созвон с Пашей в понедельник" → "у меня" = user → MY task.
-    - "Просил Пашу прислать к среде" → explicit delegation → WAITING-ON, assignee = "Паша".
+    - "Созвон с Сэмуй в понедельник" → who calls? SKIP unless "у меня / I have / поставил".
+    - "Сэм прислал документы, нужно посмотреть" → who looks is ambiguous → SKIP unless clearly user said "посмотрю / I'll review".
+    - "У меня созвон с Сэмуй в понедельник" → "у меня" = user → MY task.
+    - "Просил Сэма прислать к среде" → explicit delegation → WAITING-ON, assignee = "Сэм".
 
     Assignee field formatting:
-    - Use the name AS SPOKEN in the transcript (don't normalize "Паша" → "Sam").
+    - Use the name AS SPOKEN in the transcript (don't normalize "Bob" → "Robert").
     - Capitalize first letter ("Sam" not "sam").
     - Multi-person: pick the primary executor (the one who actually does it). If truly
       shared between two people, pick the first named.
@@ -245,7 +245,7 @@ final class TaskExtractor: ObservableObject {
     Examples:
     - "Remind me to buy milk" → Extract "Buy milk"
     - "Don't forget to call your mom" → Extract "Call mom"
-    - "Напомни мне проверить трафик ProjectAlpha" → Extract "Проверить трафик ProjectAlpha"
+    - "Напомни мне проверить трафик ChatApp" → Extract "Проверить трафик ChatApp"
 
     CRITICAL DEDUPLICATION RULES (Check BEFORE extracting):
     • DO NOT extract action items that are >95% similar to existing ones shown below
@@ -309,7 +309,7 @@ final class TaskExtractor: ObservableObject {
     - ≤15 words per description (strict)
     - Start with a verb when possible ("Call", "Send", "Review", "Pay", "Submit")
     - Resolve ALL vague references ("it", "that") using transcript context.
-      Example: "planning Sarah's birthday party" + "buy decorations for it" → "Buy decorations for Sarah's birthday party"
+      Example: "planning Jordan's birthday party" + "buy decorations for it" → "Buy decorations for Jordan's birthday party"
     - Remove time refs from description — they go in due_at:
       "buy groceries by tomorrow" → description "Buy groceries", due_at tomorrow 23:59 UTC
 
@@ -486,7 +486,7 @@ final class TaskExtractor: ObservableObject {
             // ITER-013 — normalize assignee:
             // - empty/whitespace/"null" → nil (MY task)
             // - non-empty → trimmed + capitalized first letter, preserved as-is otherwise
-            //   (don't transliterate or translate — "Паша" stays "Паша", "Sam" stays "Sam")
+            //   (don't transliterate or translate — "Сэм" stays "Сэм", "Sam" stays "Sam")
             let assignee: String? = {
                 guard let raw = json.assignee?.trimmingCharacters(in: .whitespacesAndNewlines),
                       !raw.isEmpty, raw.lowercased() != "null" else { return nil }

@@ -335,7 +335,7 @@ final class ScreenExtractor: ObservableObject {
     3. tasks (0-5 total) — concrete actionable tasks observable on screen.
 
     OBSERVATIONS — one per visit:
-    - contextSummary: 1 sentence, specific. "User reviewing ProjectAlpha GA4 traffic dashboard", NOT "User was in browser".
+    - contextSummary: 1 sentence, specific. "User reviewing ChatApp GA4 traffic dashboard", NOT "User was in browser".
     - currentActivity: verb phrase 2-5 words. "Analyzing traffic decline", "Reviewing PR on GitHub".
     - hasTask: true if this visit showed concrete task the user should do. Browsing/reading is NOT a task.
     - taskTitle: ≤10 word imperative if hasTask. Else null.
@@ -343,8 +343,8 @@ final class ScreenExtractor: ObservableObject {
     - focusStatus: "focused" sustained work on one topic / "distracted" switching between unrelated topics / null unclear.
 
     MEMORIES — across all visits extract durable facts about the user. STRICT — same rules as voice memory extraction:
-    - Named projects user works on ("User builds ProjectAlpha, an AI ChatGPT wrapper product").
-    - Named people in network with role ("User's colleague Ivan Smith handles Telegram bot MeetingTool").
+    - Named projects user works on ("User builds ChatApp, an AI ChatGPT wrapper product").
+    - Named people in network with role ("User's colleague Alice Smith handles Telegram bot WatchBot").
     - Specific preferences with reasoning ("User prefers PARA method for Obsidian vault organization").
     - Concrete commitments ("User plans to integrate Stripe billing into MetaWhisp").
     - NO generic "User was in X app". NO "User is working on something" (vague).

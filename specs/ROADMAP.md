@@ -48,7 +48,7 @@ SwiftData. No way for external LLM tools to read them.
 ObsidianVault/
 └── _MetaWhisp/                         (everything created by app)
     ├── Conversations/2026-05-03 — Митинг с Машей.md
-    ├── Memories/Знания/Я работаю в Selzy с 2024.md
+    ├── Memories/Знания/Я работаю в Acme с 2024.md
     ├── Memories/Люди/Маша — продакт менеджер.md
     ├── Tasks/active.md                 (open tasks, sorted by due)
     ├── Tasks/archive/2026-05.md        (closed)

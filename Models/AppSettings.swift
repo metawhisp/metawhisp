@@ -181,6 +181,18 @@ final class AppSettings: ObservableObject {
     /// appended must have createdAt > this). Empty on first run.
     @AppStorage("obsidianLastSyncedAt") var obsidianLastSyncedAt: String = ""
 
+    /// ITER-032 — show one-conversation projects in the Projects view.
+    /// Default off so the grid stays clean (LLM hallucinations + typo
+    /// duplicates are usually one-offs). Toggle in ProjectsView header
+    /// flips it on for "show me everything I've ever generated".
+    @AppStorage("projectShowSingletons") var projectShowSingletons: Bool = false
+
+    /// ITER-032.2 — one-shot migration flag. The curative pass
+    /// (reclassify suspect conversations → recanonicalize aliases by
+    /// conversation count → prune orphans) runs ONCE per upgrade. Future
+    /// launches no-op. Bump the suffix when shipping a new sweep.
+    @AppStorage("didCurativePass_iter032_2") var didCurativePass_iter032_2: Bool = false
+
     // Daily Summary (spec://iterations/ITER-009-daily-summary)
     @AppStorage("dailySummaryEnabled") var dailySummaryEnabled: Bool = true
     /// Hour (0-23) in local time when the recap fires. Default 22 = 10 PM.

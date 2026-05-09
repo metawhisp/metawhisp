@@ -13,7 +13,7 @@ final class DailySummary {
     var id: UUID
     /// Calendar day normalized to 00:00 local. Unique key.
     var date: Date
-    /// Short LLM title, e.g. "Heavy MetaWhisp dev day · ProjectAlpha SEO push".
+    /// Short LLM title, e.g. "Heavy MetaWhisp dev day · ChatApp SEO push".
     var title: String
     /// 3–5 sentence narrative of what the user did / learned / decided.
     var overview: String

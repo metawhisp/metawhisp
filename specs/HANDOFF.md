@@ -96,7 +96,7 @@ Mockup demos: `mockups/voice-and-hotkeys.html` (MenuBar Variant A + Settings hot
 
 1. **DailySummaryService.tasksCompleted always 0** — the field never picks up `TaskItem.completedAt`. Real-time TODAY counter side-stepped this for the dashboard, but DailySummary's narrative agents still see 0. Root cause hunt — separate session.
 2. **ScreenContext call-detect latency** — currently 30s polling. Subscribe to `NSWorkspace.didActivateApplicationNotification` for instant detect on app focus change. ~10 lines.
-3. **ProjectAggregator clutter** — 52 alias rows; 46 are 1-conv noise (VoiceTool/VoiceTool dup, Island/Island Expand/Island Expend typos, Atomic-zoo). Plan: threshold ≥ 2 conv before showing in Projects view + delete-button per row + Latin/Cyrillic transliteration dedup at alias-creation time.
+3. **ProjectAggregator clutter** — 52 alias rows; 46 are 1-conv noise (Голосок/VoiceSnack dup, Island/Island Expand/Island Expend typos, Atomic-zoo). Plan: threshold ≥ 2 conv before showing in Projects view + delete-button per row + Latin/Cyrillic transliteration dedup at alias-creation time.
 4. **Phase B chunk overlap** (35s with 5s overlap, dedupe at merge boundary) — original Phase B plan, deprioritized while addressing user pains. Revisit.
 5. **Phase C Deepgram streaming WebSocket** — still budget-pending (~$0.0043/min direct Deepgram).
 6. **Auto-paste promahnulsa mimo input** — `prev.activate()` + 0.2s + `CGEvent ⌘V` fires into whatever's frontResponder, not necessarily the text field. Real fix path = AX direct insert via `kAXSelectedTextAttribute` (Raycast-style), 80 lines. Mitigation today: clipboard always populated (verified), user can ⌘V manually.

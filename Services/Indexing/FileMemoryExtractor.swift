@@ -132,11 +132,11 @@ final class FileMemoryExtractor: ObservableObject {
     - DEFAULT TO EMPTY LIST. Max 3 memories per file.
 
     ACCEPT:
-    - Named projects user builds ("User builds ProjectAlpha, an AI ChatGPT wrapper").
+    - Named projects user builds ("User builds ChatApp, an AI ChatGPT wrapper").
     - Named people in network with role ("User's cofounder Alex handles backend").
     - Concrete preferences with reasoning ("User prefers PARA method for Obsidian vault organization").
     - Stated goals / commitments ("User aims to ship MetaWhisp v1 by May").
-    - Domain expertise ("User is founder of ProjectAlpha, AI wrapper company").
+    - Domain expertise ("User is founder of ChatApp, AI wrapper company").
 
     REJECT:
     - Generic preferences ("likes coffee") without specifics.

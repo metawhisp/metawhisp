@@ -764,7 +764,7 @@ final class ChatToolExecutor: ObservableObject {
             "type": "function",
             "function": [
                 "name": "addMemory",
-                "description": "Store a durable fact about the user. Use when user explicitly asks to remember something (\"remember that I work at ProjectAlpha\", \"запомни что Y\").",
+                "description": "Store a durable fact about the user. Use when user explicitly asks to remember something (\"remember that I work at ChatApp\", \"запомни что Y\").",
                 "parameters": [
                     "type": "object",
                     "properties": [

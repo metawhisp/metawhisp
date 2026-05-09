@@ -2,7 +2,7 @@ import Foundation
 import SwiftData
 
 /// Canonical project name + its observed aliases. Merging table for
-/// `Conversation.primaryProject` strings so "ProjectAlpha", "ProjectAlpha", "projectalpha"
+/// `Conversation.primaryProject` strings so "ChatApp", "ЧатЭп", "chatapp"
 /// all collapse to ONE Project in the Projects view.
 ///
 /// Created lazily by `ProjectAggregator` — the first time a new project name
@@ -27,7 +27,7 @@ final class ProjectAlias {
     var createdAt: Date
     var updatedAt: Date
     /// Average of all conversation embeddings tagged with this project (or any alias).
-    /// Used by `mergeAliases()` to detect "ProjectAlpha" vs "ProjectAlpha AI" as the same thing
+    /// Used by `mergeAliases()` to detect "ChatApp" vs "ChatApp AI" as the same thing
     /// without hardcoding rules. Nil while no conversation has been embedded yet.
     var centroidEmbedding: Data?
 

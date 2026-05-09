@@ -100,9 +100,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     /// premature stops on a brief tab-switch while still catching real call
     /// ends. Default 60s — see `armCallEndedDebounce`.
     private var callEndedDebounceTask: Task<Void, Never>?
-    /// Calendar-based hard stop: once a recording starts during a calendar
-    /// event, schedule a stop at endTime + 5 min buffer. Cleared on stop().
+    /// ITER-034 (2026-05-08) — calendar-end-aware auto-stop. When a
+    /// recording starts via `.calendarReady(name, eventID)`, we schedule a
+    /// task to fire at `EKEvent.endDate + grace` and run
+    /// `CalendarEndStopDecision.evaluate(...)`. Outcomes: stop now, notify
+    /// + extend, or hard stop after too many notifies. Cleared on
+    /// `stopMeetingRecording`. Replaces the never-implemented earlier slot.
     private var calendarHardStopTask: Task<Void, Never>?
+    /// Counter for `notifyAndExtend` rounds. Reset on each new recording.
+    private var calendarEndNotifyAttempts: Int = 0
     /// Fast 1-sec polling loop for `MeetingAutoStartGate`. Samples frontmost
     /// window state, audio level, calendar events; feeds to gate; on
     /// `.fallbackReady` / `.calendarReady` runs the countdown + audio-sniff
@@ -112,14 +118,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     /// True while the 5-sec countdown plashka is up. Prevents the fast tick
     /// loop from re-firing the gate while a countdown is already running.
     private var meetingCountdownInFlight = false
-    /// ITER-026 v2 — frontmost window title captured at the moment a
-    /// recording started. Used by the fast tick loop to detect back-to-back
-    /// meeting transitions: if the live frontmost title diverges from this
-    /// while a recording is going, the user has switched to a NEW call —
-    /// stop the current recording so the new one can start fresh. Same
-    /// title = the same call is still going (possibly overrunning a
-    /// scheduled boundary), keep recording untouched.
-    private var recordingFrontmostTitle: String?
+    /// ITER-028.2 (2026-05-06) — calendar `EKEvent.eventIdentifier` captured
+    /// at the moment the current recording started. Used by the fast-tick
+    /// loop together with `BackToBackTransition.decide(...)` to detect when
+    /// the user transitioned from calendar event A to calendar event B.
+    /// `nil` for fallback/manual recordings — those don't have a comparable
+    /// calendar baseline, so back-to-back logic skips them.
+    ///
+    /// Replaces the previous `recordingFrontmostTitle` window-title heuristic
+    /// which misfired daily because Google Meet tab titles mutate from
+    /// generic to specific in the first ~1s after page mount. See
+    /// `specs/health-reports/2026-05-05.md` and `2026-05-06-morning.md` for
+    /// the 100% kill rate that motivated this rewrite.
+    private var recordingCalendarEventID: String?
     /// Display name of the call context that was detected when the current
     /// meeting recording started ("Google Meet", "Zoom"). Used by
     /// `ConversationGrouper.assign(...)` at close so a lid-bounce reopens the
@@ -133,6 +144,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
 
         // Apply saved theme
         MW.applyTheme(AppSettings.shared.appTheme)
+
+        // Re-read launch-at-login status. The user could have flipped the
+        // registration from System Settings → General → Login Items while the
+        // app was off; reading here ensures the Settings toggle reflects
+        // reality on first open of this session.
+        LaunchAtLoginManager.shared.updateStatus()
 
         // Single-instance guard: if another MetaWhisp is already running, activate it and quit
         let runningApps = NSRunningApplication.runningApplications(withBundleIdentifier: Bundle.main.bundleIdentifier ?? "com.metawhisp.app")
@@ -396,7 +413,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             guard let self else { return }
             NSLog("[MeetingRecorder] Auto-stop fired: %@", String(describing: reason))
             NotificationService.shared.postMeetingAutoStopped(reason: reason)
-            self.stopMeetingRecording()
+            self.stopMeetingRecording(reason: "recorder-auto-stop:\(reason)")
         }
         // ITER-026 v2 — manual recordings get a non-blocking 2h reminder
         // instead of auto-stop. Card just informs; recording continues until
@@ -499,14 +516,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
 
         // ITER-014 — Project aggregator. Backfills primaryProject for legacy completed
         // conversations + runs an embedding-similarity merge pass after backfill so
-        // "ProjectAlpha"/"ProjectAlpha"/"ProjectAlphaAI" collapse to one canonical row.
+        // "ChatApp"/"ЧатЭп"/"ChatAppAI" collapse to one canonical row.
         projectAggregator.configure(modelContainer: historyService.modelContainer)
         Task { @MainActor [weak self] in
             // Wait longer than the embeddings backfill so the centroid pass below has
             // vectors to work with.
             try? await Task.sleep(for: .seconds(15))
-            await self?.projectAggregator.backfillProjects(structuredGenerator: self?.structuredGenerator ?? StructuredGenerator())
-            await self?.projectAggregator.mergeAliases()
+            guard let self else { return }
+            await self.projectAggregator.backfillProjects(structuredGenerator: self.structuredGenerator)
+            await self.projectAggregator.mergeAliases()
+            // ITER-032.2 (2026-05-08) — one-shot curative pass that
+            // reclassifies conversations tagged with hallucinated/typo
+            // project names, then re-picks canonical-by-conversation-count,
+            // then prunes orphan aliases. Runs once per major version bump
+            // (gated by `@AppStorage` flag); future launches no-op.
+            if !AppSettings.shared.didCurativePass_iter032_2 {
+                NSLog("[ProjectAggregator] curative pass — first run after upgrade")
+                _ = await self.projectAggregator.curativePass(generator: self.structuredGenerator)
+                AppSettings.shared.didCurativePass_iter032_2 = true
+            }
         }
         Task { @MainActor [weak self] in
             // Small delay so initial app launch isn't slowed by the backfill LLM calls.
@@ -809,7 +837,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         systemAudioCapture.lastError = nil
 
         if meetingRecorder.isRecording || meetingRecorder.isStarting {
-            stopMeetingRecording()
+            stopMeetingRecording(reason: "user-toggle")
         } else {
             startMeetingRecording()
         }
@@ -865,7 +893,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
 
         // Title priority: CALENDAR EVENT first (when CalendarReader linked the
         // meeting to an EKEvent), else LLM summary title. User wants the
-        // calendar-event name as primary — the LLM "AcmeChat Updates" /
+        // calendar-event name as primary — the LLM "Acme Chat Updates" /
         // "Quick note" fallbacks were noise compared to the actual event.
         let title: String = {
             if let cal = conv?.calendarEventTitle?.trimmingCharacters(in: .whitespaces),
@@ -996,15 +1024,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         }
     }
 
-    private func stopMeetingRecording() {
+    /// Stops the active meeting recording. The `reason` is logged so
+    /// post-mortems can tell apart user-tap, back-to-back, silence guard,
+    /// 2h heartbeat, etc. without guessing from log neighbours
+    /// (ITER-028.1, 2026-05-06 — every previous "why did the recording
+    /// stop after 86s" question required cross-grepping).
+    private func stopMeetingRecording(reason: String) {
+        NSLog("[MetaWhisp] ▶️ stopMeetingRecording reason=%@", reason)
         // Reset auto-detect flag — any follow-up manual recording starts from a clean slate.
         // Without this a subsequent manual recording would be auto-stopped on the next call-end event.
         didAutoStartRecording = false
         autoRecordCountdownTask?.cancel()
         autoRecordCountdownTask = nil
-        // ITER-026 v2 — clear back-to-back signature so the next recording
-        // captures its own frontmost title baseline.
-        recordingFrontmostTitle = nil
+        // ITER-028.2 — clear calendar event baseline so the next recording
+        // captures its own. (Replaced the old `recordingFrontmostTitle` clear.)
+        recordingCalendarEventID = nil
 
         // Mark the active call session as user-declined: while the same call
         // window is still in front, window-detect won't re-arm a countdown.
@@ -1462,7 +1496,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             onTap: { [weak self] in
                 guard let self else { return }
                 NSLog("[CallDetect] User tapped 'End meeting' from dictation card")
-                self.stopMeetingRecording()
+                self.stopMeetingRecording(reason: "dictation-end-card-tap")
             }
         )
         MWNotificationStack.shared.push(endNote)
@@ -1495,64 +1529,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
                     continue
                 }
 
-                // ITER-026 v2 — back-to-back transition detection. When an
-                // AUTO-STARTED recording is going AND the frontmost window
-                // title diverges from the one captured at recording start,
-                // the user has switched to a NEW call. Stop the current
-                // recording so the next gate evaluation can fire its own
-                // countdown for the new call. Same title = current call
-                // still going (possibly overrunning a calendar boundary),
-                // keep recording untouched.
-                //
-                // Manual recordings are USER-CONTROLLED — they're not call-
-                // related and must NEVER be auto-stopped by window changes.
-                // (User pressed RECORD in Notion → opened Meet later →
-                // would have wrongly killed the manual recording without
-                // this guard.) Only auto-recordings participate.
-                if self.meetingRecorder.isRecording {
-                    if !self.meetingRecorder.isManualMode,
-                       let frontApp = NSWorkspace.shared.frontmostApplication {
-                        let liveTitle = self.frontmostWindowTitle(pid: frontApp.processIdentifier) ?? ""
-                        // Only trigger transition when frontmost is itself a
-                        // call window — avoid stopping when user is just in
-                        // Slack/Notion mid-call.
-                        let frontIsCall = SystemAudioCaptureService.detectCallContext(
-                            bundleID: frontApp.bundleIdentifier ?? "",
-                            appName: frontApp.localizedName ?? "",
-                            windowTitle: liveTitle
-                        ) != nil
-
-                        // Lazy capture — if recording started before user
-                        // fronted the call (calendar-ready auto-start while
-                        // user was reading Telegram/Notes), recordedTitle is
-                        // nil. The first tick where user fronts a real call
-                        // window: lock in THAT title as the canonical
-                        // recorded title. Back-to-back fires only when the
-                        // canonical call title diverges from a NEW call
-                        // title — which means user actually transitioned
-                        // between calls, not from a non-call app.
-                        if frontIsCall, !liveTitle.isEmpty {
-                            if self.recordingFrontmostTitle == nil {
-                                self.recordingFrontmostTitle = liveTitle
-                                NSLog("[CallDetect] back-to-back: lazy-captured recordedTitle='%@'", liveTitle)
-                            } else if let recordedTitle = self.recordingFrontmostTitle,
-                                      liveTitle != recordedTitle {
-                                NSLog("[CallDetect] back-to-back: live='%@' != recorded='%@' → stopping current recording",
-                                      liveTitle, recordedTitle)
-                                self.stopMeetingRecording()
-                                continue
-                            }
-                        }
-                    }
-                    // No transition detected — recording is its own owner now,
-                    // gate is irrelevant.
-                    continue
-                }
-                if self.meetingRecorder.isStarting {
-                    continue
-                }
-
-                // Master gate: feature toggles.
+                // Master gate: feature toggles. Same check whether we're
+                // recording or not — if user disabled meetings entirely
+                // we don't even evaluate the gate.
                 guard AppSettings.shared.meetingRecordingEnabled,
                       AppSettings.shared.autoDetectCalls,
                       AppSettings.shared.callsAutoStartEnabled
@@ -1561,7 +1540,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
                     continue
                 }
 
-                // Sample frontmost window state.
+                // Sample frontmost window state — needed for both gate
+                // evaluation and back-to-back detection.
                 guard let frontApp = NSWorkspace.shared.frontmostApplication else {
                     MeetingAutoStartGate.shared.reset()
                     continue
@@ -1600,15 +1580,51 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
                     calendarEventNow: calendarEvent
                 )
 
+                // ITER-028.2 (2026-05-06) — back-to-back transition detection
+                // via stable calendar `EKEvent.eventIdentifier`. Replaces the
+                // 2026-05-04 window-title heuristic that misfired daily.
+                // While a recording is active, ask the pure-function decider
+                // whether the latest gate state means the user transitioned
+                // to a new calendar event. Manual recordings short-circuit
+                // inside `BackToBackTransition.decide`.
+                if self.meetingRecorder.isRecording {
+                    let bbDecision = BackToBackTransition.decide(
+                        currentRecordingEventID: self.recordingCalendarEventID,
+                        gateDecision: decision,
+                        isManualMode: self.meetingRecorder.isManualMode
+                    )
+                    if case let .stopAndRestart(newEventID, newName) = bbDecision {
+                        NSLog("[CallDetect] back-to-back via eventID: newID=%@ ('%@') != recordedID=%@ → stop A, immediately fire B countdown",
+                              newEventID, newName,
+                              self.recordingCalendarEventID ?? "(nil)")
+                        self.stopMeetingRecording(reason: "back-to-back-eventID:\(newEventID)")
+                        // CC-14 fix: gate already consumed its single
+                        // `.calendarReady(B)` emission this tick, and won't
+                        // re-emit B on subsequent ticks
+                        // (`MeetingAutoStartGate.lastCalendarEventID` blocks
+                        // it). So we MUST fire B's countdown right here, in
+                        // the same tick, or B is silently lost. We have
+                        // newEventID and newName from the same gate output.
+                        await self.runCountdownAndStartRecording(name: newName, source: "calendar", calendarEventID: newEventID)
+                    }
+                    // No transition (or A→B already kicked off) — either way
+                    // do NOT fall through to the countdown switch below.
+                    continue
+                }
+                if self.meetingRecorder.isStarting {
+                    continue
+                }
+
+                // Not recording → handle the countdown decisions normally.
                 switch decision {
                 case .idle, .tracking:
                     continue
                 case let .fallbackReady(name):
                     NSLog("[CallDetect] gate fallback ready for %@ — running countdown", name)
-                    await self.runCountdownAndStartRecording(name: name, source: "fallback")
-                case let .calendarReady(name, _):
-                    NSLog("[CallDetect] gate calendar ready for %@ — running countdown", name)
-                    await self.runCountdownAndStartRecording(name: name, source: "calendar")
+                    await self.runCountdownAndStartRecording(name: name, source: "fallback", calendarEventID: nil)
+                case let .calendarReady(name, eventID):
+                    NSLog("[CallDetect] gate calendar ready for %@ (eventID=%@) — running countdown", name, eventID)
+                    await self.runCountdownAndStartRecording(name: name, source: "calendar", calendarEventID: eventID)
                 }
             }
         }
@@ -1670,7 +1686,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     /// Show the 5-sec countdown plashka, then start `meetingRecorder`. Three
     /// seconds into the recording, sample `audioLevel` — if silent, stop and
     /// don't persist (AFK / room actually empty). Otherwise normal flow.
-    private func runCountdownAndStartRecording(name: String, source: String) async {
+    private func runCountdownAndStartRecording(name: String, source: String, calendarEventID: String?) async {
         meetingCountdownInFlight = true
         defer { meetingCountdownInFlight = false }
 
@@ -1703,34 +1719,35 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
 
         // Start recording. ITER-026 v2 — gate-triggered = NOT manual; full
         // silence + maxDuration guards apply.
-        NSLog("[CallDetect] ▶️ %@ auto-start (%@)", name, source)
+        NSLog("[CallDetect] ▶️ %@ auto-start (%@, eventID=%@)", name, source, calendarEventID ?? "(nil)")
         didAutoStartRecording = true
         currentMeetingCallContext = name
-        // Capture the call signature (frontmost window title) so the back-
-        // to-back transition logic in the fast tick loop can distinguish
-        // "same call overrunning" from "new call started".
-        //
-        // ITER-026 v2 fix (2026-05-04): only capture title IF frontmost is a
-        // call window. Calendar-ready auto-start fires at scheduled time
-        // regardless of where the user is — they might be reading Telegram,
-        // Notes, Slack, etc. while waiting for the meeting to actually
-        // happen. Capturing those non-call titles caused the back-to-back
-        // detector to fire as soon as the user fronted the Meet/Zoom tab
-        // (live = call title, recorded = Telegram chat → differ → kill).
-        // Real bug user hit on 2026-05-04: TWO sequential calendar-triggered
-        // recordings killed within 90 sec because user was on Telegram chats
-        // before each call. Lazy capture in the fast tick (below) handles
-        // the post-start case once user fronts the call.
-        if let frontApp = NSWorkspace.shared.frontmostApplication {
-            let liveTitle = self.frontmostWindowTitle(pid: frontApp.processIdentifier) ?? ""
-            let frontIsCall = SystemAudioCaptureService.detectCallContext(
-                bundleID: frontApp.bundleIdentifier ?? "",
-                appName: frontApp.localizedName ?? "",
-                windowTitle: liveTitle
-            ) != nil
-            recordingFrontmostTitle = frontIsCall ? liveTitle : nil
-        }
+        // ITER-028.2 (2026-05-06) — store the calendar event ID so the
+        // back-to-back detector can compare against gate ticks. Stable
+        // across the meeting; replaces the flaky window-title heuristic.
+        // `nil` for fallback path (sustained-window) — those don't have a
+        // comparable calendar baseline; back-to-back simply skips them.
+        recordingCalendarEventID = calendarEventID
+        calendarEndNotifyAttempts = 0
         meetingRecorder.start(manualMode: false)
+
+        // ITER-034 — schedule the calendar-end auto-stop. Fires at
+        // `EKEvent.endDate + grace` and decides via
+        // `CalendarEndStopDecision.evaluate(...)`. Skipped for:
+        //   • fallback path (no eventID)
+        //   • events the calendar API can't resolve (nil)
+        //   • all-day events (heuristic: > 6h duration treated as all-day)
+        if let eventID = calendarEventID,
+           let event = self.calendarReader.event(forIdentifier: eventID) {
+            let endDate = event.endDate ?? Date().addingTimeInterval(3600)
+            let durationSec = endDate.timeIntervalSince(event.startDate ?? Date())
+            if durationSec <= 6 * 3600 {
+                self.armCalendarEndStopTask(eventID: eventID, eventEnd: endDate)
+            } else {
+                NSLog("[CalendarEndStop] skip arming for '%@' (duration %.0fs > 6h, treated as all-day)",
+                      name, durationSec)
+            }
+        }
 
         // 3-sec post-start audio sniff. If meeting room is empty (AFK / no
         // one talking) we stop without saving so the user doesn't get a
@@ -1744,6 +1761,70 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             _ = meetingRecorder.stop()
             didAutoStartRecording = false
             currentMeetingCallContext = nil
+            calendarHardStopTask?.cancel()
+            calendarHardStopTask = nil
+        }
+    }
+
+    /// ITER-034 — schedule calendar-end auto-stop. Re-schedules itself on
+    /// `notifyAndExtend` outcomes. Cancelled by `stopMeetingRecording`.
+    private func armCalendarEndStopTask(eventID: String, eventEnd: Date) {
+        calendarHardStopTask?.cancel()
+        let attemptsAtSchedule = calendarEndNotifyAttempts
+        let now = Date()
+        let grace = CalendarEndStopDecisionRules.defaultGraceSeconds
+        // Fire at endDate + grace, OR right now if already past (e.g.
+        // re-arm after a notifyAndExtend whose deadline already lapsed).
+        let fireAt = max(eventEnd.addingTimeInterval(grace), now.addingTimeInterval(1))
+        let delay = fireAt.timeIntervalSince(now)
+        NSLog("[CalendarEndStop] armed for eventID=%@ end=%@ fireIn=%.0fs (attempt=%d)",
+              eventID, "\(eventEnd)", delay, attemptsAtSchedule)
+        calendarHardStopTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .seconds(delay))
+            guard let self, !Task.isCancelled else { return }
+            // If recording stopped/changed underneath us, bail.
+            guard self.meetingRecorder.isRecording,
+                  self.recordingCalendarEventID == eventID else {
+                NSLog("[CalendarEndStop] fire — but state moved on, skip")
+                return
+            }
+            // Sample current audio level (max of mic + system, already
+            // aggregated by MeetingRecorder).
+            let rms = self.meetingRecorder.audioLevel
+            let decision = CalendarEndStopDecision.evaluate(
+                now: Date(),
+                eventEnd: eventEnd,
+                audioRMSLastNSec: rms,
+                notifyAttemptsSoFar: self.calendarEndNotifyAttempts
+            )
+            NSLog("[CalendarEndStop] fire eventID=%@ rms=%.4f attempts=%d decision=%@",
+                  eventID, rms, self.calendarEndNotifyAttempts, "\(decision)")
+            switch decision {
+            case .keepRunning:
+                // Should not normally happen at fire time (we slept past
+                // grace). Re-arm in 60s as safety.
+                self.armCalendarEndStopTask(eventID: eventID, eventEnd: eventEnd)
+            case .stopNow:
+                self.stopMeetingRecording(reason: "calendar-end-grace:\(eventID)")
+            case let .notifyAndExtend(newDeadline):
+                self.calendarEndNotifyAttempts += 1
+                let card = MWNotification(
+                    kind: .recordingStopped,
+                    title: "Meeting overrunning",
+                    body: "Calendar event ended. Tap to stop now or it will re-check in 5 min.",
+                    onTap: { [weak self] in
+                        guard let self else { return }
+                        self.stopMeetingRecording(reason: "calendar-end-overrun-card-tap:\(eventID)")
+                    }
+                )
+                MWNotificationStack.shared.push(card)
+                // Re-arm: pretend the new deadline is the eventEnd-anchor +
+                // grace, so we sleep until newDeadline before re-evaluating.
+                let pseudoEnd = newDeadline.addingTimeInterval(-CalendarEndStopDecisionRules.defaultGraceSeconds)
+                self.armCalendarEndStopTask(eventID: eventID, eventEnd: pseudoEnd)
+            case .hardStop:
+                self.stopMeetingRecording(reason: "calendar-end-hard-stop:\(eventID)")
+            }
         }
     }
 

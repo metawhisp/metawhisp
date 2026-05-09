@@ -4,6 +4,7 @@ struct MainSettingsView: View {
     @ObservedObject var modelManager: ModelManagerService
     @ObservedObject private var settings = AppSettings.shared
     @ObservedObject private var license = LicenseService.shared
+    @ObservedObject private var launchAtLogin = LaunchAtLoginManager.shared
 
     // Screen Context app picker sheet
     @State private var showAppPicker = false
@@ -811,6 +812,19 @@ struct MainSettingsView: View {
 
             toggleRow("SOUND EFFECTS", isOn: $settings.soundEnabled)
             toggleRow("AUTO-PASTE", isOn: $settings.autoSubmit)
+
+            // Launch-at-login. Source of truth = SMAppService.mainApp registration,
+            // NOT @AppStorage — system can flip it from System Settings → Login
+            // Items, and a local mirror would silently drift. We bind the toggle
+            // through LaunchAtLoginManager.shared, which round-trips register/
+            // unregister + re-reads status so UI stays consistent with the OS.
+            toggleRow("LAUNCH AT LOGIN", isOn: Binding(
+                get: { launchAtLogin.isEnabled },
+                set: { _ = launchAtLogin.setEnabled($0) }
+            ))
+            Text(launchAtLogin.statusDescription)
+                .font(MW.monoSm)
+                .foregroundStyle(MW.textMuted)
 
             HStack {
                 Text("WEEK STARTS").font(MW.mono).foregroundStyle(MW.textSecondary)
