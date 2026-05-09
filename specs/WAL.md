@@ -1,3 +1,26 @@
+
+## Released v1.3.2 — 2026-05-09 02:30 GMT+3
+
+**Status: SHIPPED to users via:**
+- ✅ GitHub Release [v1.3.2](https://github.com/metawhisp/metawhisp/releases/tag/v1.3.2)
+- ✅ Cloudflare Pages deploy `b17438ec` (appcast.xml + 13 blog posts intact + sitemap)
+- ✅ Cloudflare Page Rule flipped to `releases/latest/` pattern (no more per-version dashboard edits ever)
+- ✅ Hot-swap on `/Applications/MetaWhisp.app` (PID 43837)
+- ⚠️ Source push to github.com BLOCKED tonight by network MITM (SSL self-signed cert + 444 from intercept). Local commit `726c515` ready; user pushes when network unblocked.
+
+**Root cause that took 4 failed releases to find:** `build.sh` line 212 was `cp -r "$APP_DIR" "$INSTALLED_APP"` — macOS `cp -r` dereferences symlinks, destroying Sparkle.framework's required `Sparkle → Versions/Current/Sparkle` etc symlink layout. Apple notary then reject with "signature invalid" because CodeDirectory hashes (computed on pristine, with-symlinks artifact) didn't match the `cp -r` post-state (with-files-instead-of-symlinks). Fix: `cp -r` → `ditto`.
+
+**Also fixed in build.sh same session:**
+- TSA retry budget 3→10 with exponential 5→60s sleep — Apple TSA outages last minutes, the old 8s window blew through them.
+
+**1.3.2 user-visible changes** (`website/src/appcast.xml` updated):
+- Back-to-back transition via stable EKEvent.eventIdentifier (replaces flaky window-title heuristic)
+- Stop-reason on every meeting recording stop
+- Calendar-end auto-stop with grace
+- Conversation titles preserve calendar event names
+- Project clustering deduplicates aliases at load
+- Privacy: scrubbed personal references from binary strings
+- Health-report cron sentinel
 # WAL — Write-Ahead Log
 
 **Backlog:** открытые треки перечислены в `specs/BACKLOG.md` (source of truth). Ни одна работа не начинается без OK user'а.
