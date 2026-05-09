@@ -1264,7 +1264,7 @@ Items addressed from 7-point reference-parity gap:
   - **Build:** clean (only 3 pre-existing unrelated warnings).
   - **Risks (для live-теста):**
     - LLM может слишком жадно вытаскивать класс B из обычных упоминаний. Жёсткий критерий «explicit delegation OR co-commitment» — митигация в промпте, проверять на реальных диктовках.
-    - Aliases: «Вася»/«Sam»/«Сэмалий» → 3 разные секции. Для v1 принято — будем мерджить в ITER-014 через ProjectAlias-style canonicalization.
+    - Aliases: «Сэм»/«Sam»/«Сэмалий» → 3 разные секции. Для v1 принято — будем мерджить в ITER-014 через ProjectAlias-style canonicalization.
 - ITER-012 — Meeting auto-stop guarantee + per-meeting recap notification:
   - **Symptom (user 2026-04-23):** "созвон сейчас 7 часов записывался и не останавливался автоматически". User wants stop-within-1-min after any call ends + post-meeting summary with next steps.
   - **Root causes (3 layers):** (1) `AppDelegate.handleCallContext` else-branch was a no-op for manually-started recordings — only auto-recorded ones got auto-stopped on call-end transition; (2) call-end signal relies on a window-title transition that never fires when Chrome tab stays open after meeting ends; (3) no upper duration bound — could record indefinitely.
