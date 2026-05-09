@@ -66,19 +66,22 @@ final class InsightDedupCheckerTests: XCTestCase {
         ))
     }
 
-    /// Tunable threshold: can be loosened for stricter dedup.
+    /// Tunable threshold: lower threshold catches more dups; higher
+    /// threshold demands near-identical strings.
     func test_thresholdTuning() {
-        // 0.5 similarity (loose) - catches more dups
+        // Loose (0.5) — catches anything moderately similar.
         XCTAssertTrue(InsightDedupChecker.isDuplicate(
             candidate: mk("You stashed changes 2 hours ago"),
             recent: [mk("You stashed changes 3 hours ago")],
             similarityThreshold: 0.5
         ))
-        // 0.95 similarity (strict) - lets near-identical pass
+        // Very strict (0.99) — even one-char differences fall below the
+        // bar (this pair is ~0.97 similar by edit-distance ratio), so the
+        // dedup check returns false and the surface is allowed.
         XCTAssertFalse(InsightDedupChecker.isDuplicate(
             candidate: mk("You stashed changes 2 hours ago"),
             recent: [mk("You stashed changes 3 hours ago")],
-            similarityThreshold: 0.95
+            similarityThreshold: 0.99
         ))
     }
 }

@@ -17,24 +17,24 @@ struct MWNotification: Identifiable {
     let createdAt: Date
     /// Click → execute. Pass `nil` for purely informational cards.
     let onTap: (@MainActor () -> Void)?
-    /// Multi-row content used ONLY by `.proactive`. The card renders rows
-    /// instead of a single body when this is non-nil.
-    let proactiveItems: [SurfaceItem]?
 
     init(
         kind: Kind,
         title: String,
         body: String,
         onTap: (@MainActor () -> Void)? = nil,
-        proactiveItems: [SurfaceItem]? = nil
+        proactiveItems: Void? = nil
     ) {
+        // ITER-027.5 — `proactiveItems` parameter retained as a no-op for
+        // the few call sites that still pass `proactiveItems: nil`. They'll
+        // be cleaned up in a follow-up; for now this keeps the diff minimal.
+        _ = proactiveItems
         self.id = UUID()
         self.kind = kind
         self.title = title
         self.body = body
         self.createdAt = Date()
         self.onTap = onTap
-        self.proactiveItems = proactiveItems
     }
 
     enum Kind {

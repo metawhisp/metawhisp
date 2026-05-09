@@ -47,7 +47,7 @@ final class ProjectAliasNormalizerTests: XCTestCase {
     /// Internal whitespace runs collapsed.
     func test_collapseInternalWhitespace() {
         XCTAssertEqual(
-            ProjectAliasNormalizer.canonicalize("Atomic    Wallet"),
+            ProjectAliasNormalizer.canonicalize("Acme    Wallet"),
             ProjectAliasNormalizer.canonicalize("Acme Wallet")
         )
     }

@@ -14,32 +14,24 @@ struct MWNotificationCard: View {
     var body: some View {
         VStack(alignment: .leading, spacing: MW.sp6) {
             header
-            if let items = notification.proactiveItems, !items.isEmpty {
-                ForEach(items) { item in
-                    proactiveRow(item)
-                        .contentShape(Rectangle())
-                        .onTapGesture {
-                            handleProactiveTap(item)
-                            onClose()
-                        }
-                }
-            } else {
-                if !notification.title.isEmpty {
-                    Text(notification.title)
-                        .font(.system(size: 13, weight: .semibold))
-                        .foregroundStyle(MW.textPrimary)
-                        .lineLimit(2)
-                        .multilineTextAlignment(.leading)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                }
-                if !notification.body.isEmpty {
-                    Text(notification.body)
-                        .font(MW.body)
-                        .foregroundStyle(MW.textSecondary)
-                        .lineLimit(3)
-                        .multilineTextAlignment(.leading)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                }
+            // ITER-027.5 — single-line render for ALL kinds including
+            // `.proactive`. The previous SurfaceItem list is gone; insights
+            // surface as headline + body just like `.task` / `.advice` etc.
+            if !notification.title.isEmpty {
+                Text(notification.title)
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(MW.textPrimary)
+                    .lineLimit(2)
+                    .multilineTextAlignment(.leading)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            if !notification.body.isEmpty {
+                Text(notification.body)
+                    .font(MW.body)
+                    .foregroundStyle(MW.textSecondary)
+                    .lineLimit(3)
+                    .multilineTextAlignment(.leading)
+                    .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
         .padding(MW.sp12)
@@ -68,9 +60,7 @@ struct MWNotificationCard: View {
         .shadow(color: .black.opacity(0.25), radius: 14, x: 0, y: 6)
         .contentShape(Rectangle())
         .onTapGesture {
-            // Single-card kinds: click anywhere → run the action.
-            // Proactive cards consume the gesture per row already.
-            guard notification.proactiveItems == nil else { return }
+            // Single-tap action for all kinds (ITER-027.5 unified rendering).
             notification.onTap?()
             onClose()
         }
@@ -103,50 +93,6 @@ struct MWNotificationCard: View {
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-        }
-    }
-
-    // MARK: - Proactive row
-
-    private func proactiveRow(_ item: SurfaceItem) -> some View {
-        HStack(alignment: .top, spacing: MW.sp8) {
-            Image(systemName: item.iconName)
-                .font(.system(size: 11))
-                .foregroundStyle(MW.textMuted)
-                .frame(width: 14)
-                .padding(.top, 2)
-            VStack(alignment: .leading, spacing: 2) {
-                Text(item.title)
-                    .font(.system(size: 13, weight: .medium))
-                    .foregroundStyle(MW.textPrimary)
-                    .lineLimit(item.kind == .memory ? 2 : 1)
-                if !item.meta.isEmpty {
-                    Text(item.meta)
-                        .font(.system(size: 11))
-                        .foregroundStyle(MW.textMuted)
-                        .lineLimit(1)
-                }
-            }
-        }
-        .padding(.vertical, 3)
-    }
-
-    // MARK: - Proactive tap dispatch
-
-    /// Runs the per-row `SurfaceTapAction` for proactive notification cards.
-    /// Mirrors the previous `ProactiveChipWindow.handleTap(_:)` behaviour:
-    /// `.openChat` opens MetaChat with the query pre-filled (fired through
-    /// the existing notification channel after a small mount delay), `.openTab`
-    /// just switches the tab.
-    private func handleProactiveTap(_ item: SurfaceItem) {
-        switch item.tapAction {
-        case .openChat(let query):
-            AppDelegate.shared?.openMainWindow(tab: .chat)
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
-                NotificationCenter.default.post(name: .proactivePrefillChat, object: query)
-            }
-        case .openTab(let tab):
-            AppDelegate.shared?.openMainWindow(tab: tab)
         }
     }
 

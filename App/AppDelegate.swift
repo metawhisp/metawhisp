@@ -54,6 +54,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     let projectAggregator = ProjectAggregator()
     let chatToolExecutor = ChatToolExecutor()
     let proactiveContextService = ProactiveContextService()
+    /// ITER-027 — produces ONE actionable insight per evaluation tick
+    /// (replaces cosine-retrieval list of related conversations). Wired
+    /// into `proactiveContextService` so the existing `onNewContext` hook
+    /// fires it under the same gates (composing app, OCR ≥ 80 chars, …).
+    let insightAssistantService = InsightAssistantService()
     let liveMeetingAdvisor = LiveMeetingAdvisor()
     let dailySummaryService = DailySummaryService()
     let weeklyPatternDetector = WeeklyPatternDetector()
@@ -507,11 +512,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             self?.migrateSilenceStopMinutesOnce()
         }
 
-        // ITER-015 — Proactive context service. Configured after embedding service
-        // so it can do semantic retrieval when the chip evaluates relevance.
+        // ITER-027 — Proactive context service is now powered by the
+        // InsightAssistantService (LLM-based insight extraction) instead
+        // of cosine retrieval. embeddingService is no longer a dependency
+        // here — it's still used elsewhere (MetaChat RAG, project clustering).
         proactiveContextService.configure(
             modelContainer: historyService.modelContainer,
-            embeddingService: embeddingService
+            insightAssistant: insightAssistantService
         )
 
         // ITER-014 — Project aggregator. Backfills primaryProject for legacy completed

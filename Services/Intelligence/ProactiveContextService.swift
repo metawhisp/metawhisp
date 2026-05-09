@@ -1,23 +1,31 @@
 import Foundation
 import SwiftData
 
-/// Proactive in-the-moment surfacing (ITER-015).
+/// Proactive in-the-moment surfacing (ITER-027 v1 — text-only insight extraction).
 ///
-/// While the user is COMPOSING in Slack/Mail/Notion/etc., MetaWhisp silently
-/// embeds the current screen text, finds the top 2-3 relevant memories +
-/// past decisions + pending waiting-on tasks, and shows a peripheral chip
-/// (via `ProactiveChipWindow`) for 8 seconds. Not a notification — no OS
-/// banner, no sound, no flow interrupt.
+/// While the user is COMPOSING in Slack/Mail/Notion/etc., MetaWhisp asks an
+/// LLM whether there's ONE specific, non-obvious insight worth surfacing
+/// right now. Most ticks return nothing — that's the point. When something
+/// fires, it's actionable: *"Sensitive credentials visible — mask before
+/// sharing"*, *"Year 2026 — did you mean 2027?"*, *"Stashed changes 2h ago
+/// — git stash pop"*.
 ///
-/// Design principles:
-/// - Opt-in (off by default). Settings toggle + per-app blacklist.
-/// - Cooldown between surfaces (default 5 min) — never spammy.
-/// - High relevance threshold (cosine ≥ 0.55). Missing relevance → no chip.
-/// - Sensitive-app blacklist (1Password, Keychain, Terminal).
-/// - Min OCR length (80 chars). Tiny windows don't trigger.
-/// - Composing-intent heuristic v1: whitelist of known composing apps.
+/// Replaces the pre-027 cosine-retrieval pipeline that surfaced lists of
+/// "тематически близких созвонов" — list noise that the user reasonably
+/// described as "вода" (specs/health-reports/2026-05-08*.md).
 ///
-/// spec://iterations/ITER-015-proactive-surfacing
+/// Pipeline per `evaluateAndSurface(ctx:)` call:
+///   1. Hard gates: `proactiveEnabled`, cooldown, OCR length, blacklist,
+///      composing-app whitelist. Most calls exit here.
+///   2. Build activity summary from last hour's `ScreenContext`.
+///   3. Call `InsightAssistantService.evaluate(...)` — the LLM is the
+///      filter. It either returns an insight or `nil`.
+///   4. Persist returned insight via `InsightStorage` (cross-restart dedup).
+///   5. Push as a single-line `.proactive` MWNotification.
+///
+/// ITER-027.6 (future) adds a vision pass + 2-phase SQL tool loop for
+/// deeper-context insights ("you stashed changes 2h ago" needs the LLM
+/// to be able to query terminal OCR from an hour back).
 @MainActor
 final class ProactiveContextService: ObservableObject {
     @Published var isRunning = false
@@ -25,41 +33,40 @@ final class ProactiveContextService: ObservableObject {
 
     private let settings = AppSettings.shared
     private var modelContainer: ModelContainer?
-    weak var embeddingService: EmbeddingService?
 
-    /// Cosine threshold. Keeps the bar high — better to show nothing than noise.
-    private let relevanceThreshold: Float = 0.55
-    /// Min OCR chars to bother embedding.
+    // ITER-027 dependencies. Wired by `configure(...)` from AppDelegate.
+    private weak var insightAssistant: InsightAssistantService?
+    private var insightStorage: InsightStorage?
+
+    /// Min OCR chars to bother the LLM. Tiny windows have nothing to
+    /// reason about; saves a proxy call.
     private let minContextChars = 80
-    /// How many items total across all types.
-    private let maxChipItems = 3
 
-    /// Known composing-friendly apps. v1 heuristic — whitelist is tighter than
-    /// blacklist, keeps false-positives to ~zero. v2 will add a micro-classifier.
-    private let composingAppBundles: Set<String> = [
-        "com.tinyspeck.slackmacgap",        // Slack
-        "com.apple.mail",                    // Mail
-        "com.apple.MobileSMS",              // Messages
-        "notion.id",                         // Notion
-        "com.linear",                        // Linear (some bundle variants)
-        "com.linear.linear",
-        "com.figma.Desktop",                 // Figma comments
-        "md.obsidian",                       // Obsidian
-        "com.microsoft.Outlook",             // Outlook
-        "com.hnc.Discord",                   // Discord
-        "com.telegram.macos",                // Telegram
-        "ru.keepcoder.Telegram",
-        "com.loom.desktop",                  // Loom comments
-    ]
-    /// Name-based fallback (when bundleID isn't known from OCR pipeline).
+    /// How many minutes back the activity summary covers. Reference: 60.
+    private let activityLookbackMinutes: TimeInterval = 60
+
+    /// Known composing-friendly apps. v1 heuristic — whitelist is tighter
+    /// than blacklist, keeps false-positives to ~zero.
     private let composingAppNames: Set<String> = [
         "Slack", "Mail", "Messages", "Notion", "Linear", "Figma", "Obsidian",
         "Outlook", "Discord", "Telegram", "Loom", "Spark", "Airmail", "Superhuman",
     ]
 
-    func configure(modelContainer: ModelContainer, embeddingService: EmbeddingService) {
+    func configure(modelContainer: ModelContainer,
+                   insightAssistant: InsightAssistantService) {
         self.modelContainer = modelContainer
-        self.embeddingService = embeddingService
+        self.insightAssistant = insightAssistant
+        self.insightStorage = InsightStorage(modelContainer: modelContainer)
+        // ITER-027.4 — seed the dedup window from persisted insights so
+        // the LLM doesn't repeat what it told the user before app restart.
+        Task { [weak self] in
+            guard let self,
+                  let storage = self.insightStorage,
+                  let assistant = self.insightAssistant else { return }
+            let recent = await storage.loadRecent(limit: 50)
+            assistant.seedDedup(from: recent)
+            NSLog("[Proactive] dedup seeded with %d prior insights", recent.count)
+        }
     }
 
     /// Called on every new `ScreenContext` row persisted (existing hook).
@@ -73,9 +80,9 @@ final class ProactiveContextService: ObservableObject {
     // MARK: - Pipeline
 
     private func evaluateAndSurface(ctx: ScreenContext) async {
-        // ── Gates ───────────────────────────────────────────────────────────
+        // ── Hard gates ────────────────────────────────────────────────
         guard settings.proactiveEnabled else { return }
-        guard !isRunning else { return }           // concurrency guard
+        guard !isRunning else { return }
         if let last = lastSurfaceAt {
             let cooldownSeconds = max(60, settings.proactiveCooldownMinutes * 60)
             guard Date().timeIntervalSince(last) > cooldownSeconds else { return }
@@ -83,186 +90,80 @@ final class ProactiveContextService: ObservableObject {
         guard ctx.ocrText.count >= minContextChars else { return }
         guard !isBlacklisted(appName: ctx.appName) else { return }
         guard isComposingApp(appName: ctx.appName) else { return }
+        guard let assistant = insightAssistant,
+              let storage = insightStorage else { return }
+        guard let licenseKey = LicenseService.shared.licenseKey,
+              !licenseKey.isEmpty else {
+            // Pro-only feature; quietly no-op for free tier.
+            return
+        }
 
         isRunning = true
         defer { isRunning = false }
 
-        // ── Retrieve candidates in parallel ─────────────────────────────────
-        guard let embedding = embeddingService else { return }
-        // Truncate OCR to first 1500 chars — enough signal, respect embedding token cap.
-        let queryText = String(ctx.ocrText.prefix(1500))
-        let queryVec: [Float]
-        do {
-            queryVec = try await embedding.embedOne(queryText)
-        } catch {
-            NSLog("[Proactive] embed failed (graceful): %@", error.localizedDescription)
-            return
-        }
-        guard !queryVec.isEmpty else { return }
+        // ── Activity summary (last hour) ─────────────────────────────
+        let now = Date()
+        let lookbackStart = now.addingTimeInterval(-activityLookbackMinutes * 60)
+        let activitySummary = buildActivitySummary(from: lookbackStart, to: now)
 
-        var items: [SurfaceItem] = []
-        items.append(contentsOf: rankedMemories(query: queryVec))
-        items.append(contentsOf: rankedConversations(query: queryVec))
-        items.append(contentsOf: rankedWaitingTasks(query: queryVec, ctxText: queryText))
+        // ── LLM call (the actual filter) ─────────────────────────────
+        let insight: ExtractedInsight?
+        insight = await assistant.evaluate(
+            appName: ctx.appName,
+            windowTitle: ctx.windowTitle.isEmpty ? nil : ctx.windowTitle,
+            ocr: ctx.ocrText,
+            activitySummary: activitySummary,
+            licenseKey: licenseKey
+        )
 
-        // Apply global threshold + cap + dedup.
-        items = items
-            .filter { $0.relevance >= relevanceThreshold }
-            .sorted { $0.relevance > $1.relevance }
-            .prefix(maxChipItems)
-            .map { $0 }
+        guard let insight else { return }
 
-        guard !items.isEmpty else { return }
+        // ── Persist for cross-restart dedup ──────────────────────────
+        await storage.save(insight)
 
-        // ── Surface card ────────────────────────────────────────────────────
-        // Push into the unified `MWNotificationStack` instead of the legacy
-        // `ProactiveChipWindow`. Stack handles positioning + dedup with the
-        // other notification kinds. Proactive is the only kind that uses
-        // `proactiveItems` — the card view renders rows and dispatches each
-        // row's `SurfaceTapAction` directly (no extra plumbing).
+        // ── Surface ──────────────────────────────────────────────────
+        // Single-line render: headline as the card's main text, body as
+        // the secondary line. No more "list of related conversations".
         lastSurfaceAt = Date()
+        let title = insight.headline?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let titleText = (title?.isEmpty == false) ? title! : insight.body
+        let bodyText: String = (titleText == insight.body) ? "" : insight.body
         let note = MWNotification(
             kind: .proactive,
-            title: "while typing in \(ctx.appName)",
-            body: "",
+            title: titleText,
+            body: bodyText,
             onTap: nil,
-            proactiveItems: items
+            proactiveItems: nil
         )
         MWNotificationStack.shared.push(note)
-        NSLog("[Proactive] surfaced %d items for app=%@ (cos range %.2f-%.2f)",
-              items.count, ctx.appName,
-              items.map(\.relevance).min() ?? 0,
-              items.map(\.relevance).max() ?? 0)
+        NSLog("[Proactive] ✅ surfaced insight in %@: %@",
+              ctx.appName, String(insight.body.prefix(120)))
     }
 
-    // MARK: - Retrieval helpers
+    // MARK: - Activity summary
 
-    private func rankedMemories(query: [Float]) -> [SurfaceItem] {
-        guard let container = modelContainer else { return [] }
-        let ctx = ModelContext(container)
-        let desc = FetchDescriptor<UserMemory>(
-            predicate: #Predicate { !$0.isDismissed && $0.embedding != nil }
+    /// Pull last-hour `ScreenContext` rows from SwiftData and hand to the
+    /// pure-function builder. Bounds memory by capping fetch to recent
+    /// rows (the time predicate further filters in-window).
+    private func buildActivitySummary(from lookbackStart: Date, to now: Date) -> String {
+        guard let container = modelContainer else { return "" }
+        let mctx = ModelContext(container)
+        var desc = FetchDescriptor<ScreenContext>(
+            predicate: #Predicate { $0.timestamp > lookbackStart && $0.timestamp <= now },
+            sortBy: [SortDescriptor(\.timestamp, order: .reverse)]
         )
-        let mems = (try? ctx.fetch(desc)) ?? []
-        return mems.compactMap { m -> SurfaceItem? in
-            guard let data = m.embedding else { return nil }
-            let vec = EmbeddingService.decode(data)
-            guard !vec.isEmpty else { return nil }
-            let sim = EmbeddingService.cosineSimilarity(query, vec)
-            // Reference MemoryCardView pattern: render the fact directly, no
-            // preamble. `headline` is a punchy short summary if extracted,
-            // else the raw content prefix.
-            let label = m.headline?.isEmpty == false ? m.headline! : String(m.content.prefix(80))
-            return SurfaceItem(
-                kind: .memory,
-                title: label,
-                meta: Self.relativeShort(m.createdAt),
-                relevance: sim,
-                tapAction: .openChat(query: "Что ты знаешь про \"\(label)\"?")
+        // 60 minutes × 1 frame / 30s = 120 max in a heavy session; cap at
+        // 500 to be safe against bursty captures.
+        desc.fetchLimit = 500
+        let rows = (try? mctx.fetch(desc)) ?? []
+        let mapped = rows.map { ctx in
+            ActivitySummaryBuilder.Row(
+                appName: ctx.appName,
+                windowTitle: ctx.windowTitle,
+                timestamp: ctx.timestamp
             )
         }
-    }
-
-    private func rankedConversations(query: [Float]) -> [SurfaceItem] {
-        guard let container = modelContainer else { return [] }
-        let ctx = ModelContext(container)
-        let desc = FetchDescriptor<Conversation>(
-            predicate: #Predicate { !$0.discarded && $0.embedding != nil && $0.title != nil }
-        )
-        let convs = (try? ctx.fetch(desc)) ?? []
-        return convs.compactMap { c -> SurfaceItem? in
-            guard let data = c.embedding else { return nil }
-            let vec = EmbeddingService.decode(data)
-            guard !vec.isEmpty else { return nil }
-            let sim = EmbeddingService.cosineSimilarity(query, vec)
-            let title = c.title ?? "untitled"
-            // Reference compact row: title + (timestamp · duration).
-            // Duration only when finishedAt is set and >= 1 min.
-            var meta = Self.relativeShort(c.startedAt)
-            if let finished = c.finishedAt {
-                let secs = Int(finished.timeIntervalSince(c.startedAt))
-                if secs >= 60 {
-                    meta += " · " + Self.durationShort(secs)
-                }
-            }
-            return SurfaceItem(
-                kind: .pastDecision,
-                title: title,
-                meta: meta,
-                relevance: sim,
-                tapAction: .openChat(query: "Расскажи про созвон \"\(title)\"")
-            )
-        }
-    }
-
-    /// Waiting-on tasks where the assignee's name appears in the current screen text.
-    /// Cheap boost: if user is typing AT that person, remind them what's owed.
-    private func rankedWaitingTasks(query: [Float], ctxText: String) -> [SurfaceItem] {
-        guard let container = modelContainer else { return [] }
-        let ctx = ModelContext(container)
-        let desc = FetchDescriptor<TaskItem>(
-            predicate: #Predicate<TaskItem> {
-                !$0.isDismissed && !$0.completed && $0.assignee != nil
-            }
-        )
-        let tasks = (try? ctx.fetch(desc)) ?? []
-        let lowered = ctxText.lowercased()
-        return tasks.compactMap { t -> SurfaceItem? in
-            guard let name = t.assignee, !name.isEmpty else { return nil }
-            let nameLower = name.lowercased()
-            // Only include when the assignee name is present in the context.
-            guard lowered.contains(nameLower) else { return nil }
-            // Score = embedding cosine if available, else flat 0.6 (above threshold).
-            var sim: Float = 0.6
-            if let data = t.embedding {
-                let vec = EmbeddingService.decode(data)
-                if !vec.isEmpty {
-                    sim = max(0.6, EmbeddingService.cosineSimilarity(query, vec))
-                }
-            }
-            return SurfaceItem(
-                kind: .waitingOnTask,
-                title: t.taskDescription,            // the actual ask, no preamble
-                meta: "Waiting on \(name)",          // who owes
-                relevance: sim,
-                tapAction: .openChat(query: "Напомни что я жду от \(name)")
-            )
-        }
-    }
-
-    // MARK: - Formatters (reference compact-row style)
-
-    /// "10:43 AM" for today, "Yesterday" / "Tue" for closer past, "Jan 29" further.
-    /// Mirrors reference ConversationRowView's formattedTimestamp.
-    private static func relativeShort(_ date: Date) -> String {
-        let cal = Calendar.current
-        if cal.isDateInToday(date) {
-            let f = DateFormatter()
-            f.dateFormat = "h:mm a"
-            return f.string(from: date)
-        }
-        if cal.isDateInYesterday(date) {
-            return "Yesterday"
-        }
-        let now = Date()
-        let days = cal.dateComponents([.day], from: cal.startOfDay(for: date), to: cal.startOfDay(for: now)).day ?? 0
-        if days < 7 {
-            let f = DateFormatter()
-            f.dateFormat = "EEE"
-            return f.string(from: date)
-        }
-        let f = DateFormatter()
-        f.dateFormat = "MMM d"
-        return f.string(from: date)
-    }
-
-    /// "32m" / "1h 12m" — concise like reference's formattedDuration.
-    private static func durationShort(_ seconds: Int) -> String {
-        let m = seconds / 60
-        if m < 60 { return "\(m)m" }
-        let h = m / 60
-        let rm = m % 60
-        return rm > 0 ? "\(h)h \(rm)m" : "\(h)h"
+        return ActivitySummaryBuilder.build(rows: mapped, lookbackStart: lookbackStart, now: now)
     }
 
     // MARK: - App gating
@@ -283,43 +184,5 @@ final class ProactiveContextService: ObservableObject {
             if lowered.contains(n.lowercased()) { return true }
         }
         return false
-    }
-}
-
-// MARK: - SurfaceItem DTO
-
-enum SurfaceItemKind {
-    case memory
-    case pastDecision
-    case waitingOnTask
-    case projectContext
-}
-
-enum SurfaceTapAction {
-    case openChat(query: String)
-    case openTab(MainWindowView.SidebarTab)
-}
-
-struct SurfaceItem: Identifiable {
-    let id = UUID()
-    let kind: SurfaceItemKind
-    /// Primary label. For conversations — `Conversation.title`. For memories
-    /// — just `memory.content` (we render the fact directly, like reference
-    /// MemoryCardView, not "Memory is about X" preamble).
-    let title: String
-    /// Optional metadata line. For conversations — `"10:43 AM · 32m"`-style
-    /// timestamp + duration (mirrors reference compact ConversationRowView).
-    /// For tasks — task description. Empty for memories (title carries fact).
-    let meta: String
-    let relevance: Float
-    let tapAction: SurfaceTapAction
-
-    var iconName: String {
-        switch kind {
-        case .memory:         return "brain"
-        case .pastDecision:   return "bubble.left.and.bubble.right"
-        case .waitingOnTask:  return "clock"
-        case .projectContext: return "folder"
-        }
     }
 }
