@@ -81,7 +81,7 @@ private struct DailySummaryCard: View {
                 Text("Heavy MetaWhisp dev day · ProjectAlpha SEO push")
                     .font(Glass.h2)
                     .foregroundStyle(Glass.textPrimary)
-                Text("Shipped three commits to MetaWhisp — Staged Tasks, Embeddings, Daily Summary — paired with the team on ProjectAlpha SEO fixes, and drafted the ProjectAlpha Q2 pricing memo. Cleared the Telegram backlog and scheduled the client review for Thursday.")
+                Text("Shipped three commits to MetaWhisp — Staged Tasks, Embeddings, Daily Summary — paired with the team on ProjectAlpha SEO fixes, and drafted the ProjectAlpha Q2 pricing memo. Cleared the messages backlog and scheduled the client review for Thursday.")
                     .font(Glass.body)
                     .foregroundStyle(Glass.textSecondary)
                     .lineSpacing(4)
