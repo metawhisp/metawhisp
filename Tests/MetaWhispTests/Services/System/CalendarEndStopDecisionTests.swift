@@ -133,4 +133,77 @@ final class CalendarEndStopDecisionTests: XCTestCase {
         )
         XCTAssertEqual(decision, .stopNow)
     }
+
+    // MARK: - ITER-034.1 — sliding-window guards (regression 2026-05-11)
+
+    /// REGRESSION 2026-05-11: user report «созвон закончился в 5 минут позже
+    /// календарного окна» — caller used `meetingRecorder.audioLevel`
+    /// (instantaneous), which dropped below threshold in normal 200-500ms
+    /// pauses between sentences. Decision fired `.stopNow` mid-discussion.
+    /// Fix: caller now passes `recentAudioActive` (true iff audio crossed
+    /// the silence threshold within the last 30s — sliding window, NOT
+    /// instantaneous). When true we must NOT `.stopNow` even if the current
+    /// RMS sample is quiet.
+    func test_recentAudioActive_blocksStopNow_evenIfCurrentRMSQuiet() {
+        let decision = CalendarEndStopDecision.evaluate(
+            now: now.addingTimeInterval(70),
+            eventEnd: now,
+            audioRMSLastNSec: 0.001,               // current sample IS quiet
+            notifyAttemptsSoFar: 0,
+            recentAudioActive: true                // …but someone talked recently
+        )
+        // Must not be stopNow — meeting still in progress, just a pause.
+        if case .stopNow = decision {
+            XCTFail("stopped mid-pause despite recent audio activity: \(decision)")
+        }
+    }
+
+    /// Same regression — alternate channel: if a meeting app (Zoom / Meet /
+    /// Teams / etc) is visible on screen in the recent capture window, the
+    /// meeting is ongoing regardless of audio. Blocks stopNow.
+    func test_meetingAppVisible_blocksStopNow() {
+        let decision = CalendarEndStopDecision.evaluate(
+            now: now.addingTimeInterval(70),
+            eventEnd: now,
+            audioRMSLastNSec: 0.001,
+            notifyAttemptsSoFar: 0,
+            recentAudioActive: false,
+            meetingAppVisible: true                // Zoom in foreground
+        )
+        if case .stopNow = decision {
+            XCTFail("stopped while meeting app visible: \(decision)")
+        }
+    }
+
+    /// Both new signals false + quiet RMS → still stops as before. Guards
+    /// the backward-compat path so the new params don't break the existing
+    /// "no one's around" auto-stop.
+    func test_stopNow_stillFires_whenAllSignalsClear() {
+        let decision = CalendarEndStopDecision.evaluate(
+            now: now.addingTimeInterval(70),
+            eventEnd: now,
+            audioRMSLastNSec: 0.001,
+            notifyAttemptsSoFar: 0,
+            recentAudioActive: false,
+            meetingAppVisible: false
+        )
+        XCTAssertEqual(decision, .stopNow)
+    }
+
+    /// `hardStop` budget cap STILL wins over `recentAudioActive` — the whole
+    /// point of `maxNotifyAttempts` is to bound the recording at ~15-30 min
+    /// past calendar end (3 attempts × 5 min extension). Without this cap,
+    /// a forgotten music session would record forever even when the
+    /// "audio active" signal is real.
+    func test_hardStop_wins_over_recentAudioActive() {
+        let decision = CalendarEndStopDecision.evaluate(
+            now: now.addingTimeInterval(2000),
+            eventEnd: now,
+            audioRMSLastNSec: 0.05,
+            notifyAttemptsSoFar: 3,
+            recentAudioActive: true,
+            meetingAppVisible: true
+        )
+        XCTAssertEqual(decision, .hardStop)
+    }
 }

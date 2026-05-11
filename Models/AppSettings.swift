@@ -39,6 +39,18 @@ final class AppSettings: ObservableObject {
     /// stale default in their UserDefaults and back-to-back calls keep
     /// merging into one recording.
     @AppStorage("didMigrateSilenceStop_iter026") var didMigrateSilenceStop: Bool = false
+
+    /// One-time auto-promotion (ITER-034.3, 2026-05-11): Pro subscribers
+    /// whose `processingMode` is still on the global default `"raw"` get
+    /// promoted to `"structured"` on the first launch after install of this
+    /// build. Reason: user report «у меня никогда метависп не структурирует
+    /// текст и не добавляет буллеты хотя должен» — Pro user expecting AI
+    /// cleanup-with-bullets, but the default was raw and they never knew to
+    /// flip it in Settings → Processing Mode. The flag-gating means we
+    /// promote ONCE; if the user later moves themselves back to raw, the
+    /// flag is already set and we don't overwrite. Mirrors the existing
+    /// `transcriptionEngine` auto-switch to `cloud` for Pro.
+    @AppStorage("didAutoPromoteProcessingMode_iter034") var didAutoPromoteProcessingMode: Bool = false
     @AppStorage("weekStartsOn") var weekStartsOn: Int = 2 // 1=Sunday, 2=Monday
     @AppStorage("appTheme") var appTheme: String = "dark" // dark, light, auto
 

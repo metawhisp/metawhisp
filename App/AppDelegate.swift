@@ -19,6 +19,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     private var statusItem: NSStatusItem!
     private var popover: NSPopover!
     private var eventMonitor: Any?
+    /// KVO subscription on `NSApp.effectiveAppearance` — fires when macOS flips
+    /// system Light/Dark (Sunset/Sunrise auto-switch, Control Centre toggle, or
+    /// `defaults write -g AppleInterfaceStyle`). We use it to push the new
+    /// appearance to the popover + every open window so SwiftUI views inside
+    /// re-resolve `Color.primary`, `MW.bg`, `MW.textPrimary`, etc. against the
+    /// current scheme. Without this observer NSPopover and detached NSWindows
+    /// cache their effectiveAppearance at creation time, leading to the
+    /// black-on-black symptom in the menu-bar popover and History window when
+    /// the system flips theme while the app is running. Owner-layer fix —
+    /// individual views stay untouched. spec://feedback#theme-propagation.
+    private var appearanceObservation: NSKeyValueObservation?
 
     // Services
     /// Top-level mic capture — used by dictation (Right ⌘ short tap) and
@@ -214,6 +225,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         popover.contentSize = NSSize(width: 300, height: 300)
         popover.behavior = .applicationDefined
         popover.delegate = self
+        // Pin popover's appearance to NSApp.effectiveAppearance at creation
+        // and re-pin on every system theme change (see appearanceObservation
+        // setup below). NSPopover otherwise caches `.aqua` from the menu-bar
+        // status item and never re-evaluates → SwiftUI Color.primary inside
+        // the popover stays light while the popover background goes dark
+        // → unreadable black-on-black labels.
+        popover.appearance = NSApp.effectiveAppearance
         popover.contentViewController = NSHostingController(
             rootView: PopoverRootView(
                 coordinator: coordinator,
@@ -226,6 +244,38 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             )
         )
         self.popover = popover
+
+        // Observe system Light/Dark flips and propagate to popover + all
+        // currently-open windows. Using KVO on `effectiveAppearance` (not the
+        // legacy `NSWorkspace.didChangeColorSchemeNotification`) — KVO fires
+        // for every transition: system auto Sunset/Sunrise, Control-Centre
+        // toggle, manual `defaults write`, and the case where the user
+        // overrides app theme via Settings. The resulting refresh is
+        // idempotent — setting `appearance` to the value it already has is
+        // a no-op for AppKit. Captures `self` weakly so `applicationWillTerminate`
+        // doesn't need to invalidate the observation explicitly.
+        appearanceObservation = NSApp.observe(\.effectiveAppearance, options: [.new]) { [weak self] _, _ in
+            // KVO fires on whichever queue the change happened on. AppKit
+            // appearance changes always come from the main thread already,
+            // but Task @MainActor guarantees it for Swift 6 strict concurrency.
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                let appearance = NSApp.effectiveAppearance
+                self.popover?.appearance = appearance
+                for window in NSApp.windows {
+                    // Skip windows that explicitly opted out by setting
+                    // their own `appearance` (none currently do — but if
+                    // a future view needs a permanent override, it can
+                    // pin its window.appearance and we leave it alone here).
+                    // Detection: if window.appearance is non-nil AND
+                    // different from NSApp.effectiveAppearance, the view
+                    // chose that override on purpose. Today no view does
+                    // this — DictionaryView pins via SwiftUI .colorScheme,
+                    // not NSWindow.appearance — so unconditional sync is safe.
+                    window.appearance = appearance
+                }
+            }
+        }
 
         // Status bar item
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
@@ -365,6 +415,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             NSLog("[MetaWhisp] 🔄 Pro subscription detected — auto-switching to cloud transcription")
             AppSettings.shared.transcriptionEngine = "cloud"
         }
+
+        // 5a. ITER-034.3 (2026-05-11) — one-time auto-promote `processingMode`
+        // from default "raw" to "structured" for Pro users. User feedback:
+        // «никогда не структурирует текст и не добавляет буллеты хотя должен».
+        // Pro pays for the AI cleanup-with-bullets feature, so they should get
+        // it without having to find Settings → Processing Mode. Flag-gated so
+        // we only do this ONCE — if the user explicitly moves back to "raw"
+        // later, we don't fight them on the next launch.
+        if LicenseService.shared.isPro
+            && !AppSettings.shared.didAutoPromoteProcessingMode
+            && AppSettings.shared.processingMode == "raw" {
+            NSLog("[MetaWhisp] 🔄 Pro on default raw — auto-promoting processingMode to structured")
+            AppSettings.shared.processingMode = "structured"
+        }
+        // Mark as done regardless of whether we promoted (Free users, or Pro
+        // users who'd already moved off raw — neither needs the promotion
+        // again on the next launch).
+        AppSettings.shared.didAutoPromoteProcessingMode = true
 
         // 6. Load selected model (skip if cloud transcription is selected — WhisperKit not created, saves ~1 GB RAM)
         let isCloudMode = AppSettings.shared.transcriptionEngine == "cloud"
@@ -510,6 +578,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         Task { @MainActor [weak self] in
             self?.migrateCalendarTasksOnce()
             self?.migrateSilenceStopMinutesOnce()
+            // ITER-034.2 (2026-05-11) — prune Recovery/ orphans (>7 days old).
+            // Daily audit found 12 MB of stale .wav files from May 7-8, no
+            // cleanup code anywhere in the project. Idempotent: zero-op when
+            // dir is fresh, deletes whatever's >7d when there's accumulated
+            // junk. Not gated by a flag because deleting old wavs is always
+            // safe — recovery only re-uses files written this session.
+            self?.cleanupStaleRecoveryWavs()
         }
 
         // ITER-027 — Proactive context service is now powered by the
@@ -1795,17 +1870,38 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
                 NSLog("[CalendarEndStop] fire — but state moved on, skip")
                 return
             }
-            // Sample current audio level (max of mic + system, already
-            // aggregated by MeetingRecorder).
+            // ITER-034.1 (2026-05-11) — sliding-window guards. Instantaneous
+            // `audioLevel` was the original input but it dropped below the
+            // quiet threshold during the natural 200-500ms pauses between
+            // sentences → bug report «созвон закончился по календарю в
+            // середине обсуждения». We now feed the decider three signals:
+            //   • `rms` — instantaneous (kept for the fast-path quiet check
+            //     when EVERYTHING else also says "over")
+            //   • `recentAudioActive` — true iff `audioLevel` was NOT
+            //     continuously below threshold for the last 30s (sliding
+            //     window via MeetingRecorder's silence guard)
+            //   • `meetingAppVisible` — true iff a meeting app (Zoom /
+            //     Meet / Teams / FaceTime / etc) was foreground in the
+            //     recent screen-context window. User-requested signal
+            //     («если ещё созвон на экране — продолжай записывать»).
+            // Either sliding-window signal vetoes stopNow; the decider falls
+            // back to notifyAndExtend which surfaces the overrun card.
             let rms = self.meetingRecorder.audioLevel
+            let recentAudioActive = !self.meetingRecorder.hasBeenContinuouslyQuiet(forAtLeast: 30)
+            let meetingAppVisible = self.isMeetingAppVisibleInRecentScreenContext()
             let decision = CalendarEndStopDecision.evaluate(
                 now: Date(),
                 eventEnd: eventEnd,
                 audioRMSLastNSec: rms,
-                notifyAttemptsSoFar: self.calendarEndNotifyAttempts
+                notifyAttemptsSoFar: self.calendarEndNotifyAttempts,
+                recentAudioActive: recentAudioActive,
+                meetingAppVisible: meetingAppVisible
             )
-            NSLog("[CalendarEndStop] fire eventID=%@ rms=%.4f attempts=%d decision=%@",
-                  eventID, rms, self.calendarEndNotifyAttempts, "\(decision)")
+            NSLog("[CalendarEndStop] fire eventID=%@ rms=%.4f recentAudio=%@ meetingApp=%@ attempts=%d decision=%@",
+                  eventID, rms,
+                  recentAudioActive ? "YES" : "NO",
+                  meetingAppVisible ? "YES" : "NO",
+                  self.calendarEndNotifyAttempts, "\(decision)")
             switch decision {
             case .keepRunning:
                 // Should not normally happen at fire time (we slept past
@@ -1832,6 +1928,108 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             case .hardStop:
                 self.stopMeetingRecording(reason: "calendar-end-hard-stop:\(eventID)")
             }
+        }
+    }
+
+    // MARK: - ITER-034.1 meeting-app visibility probe
+
+    /// True iff a recognized meeting app (Zoom / Google Meet / Teams /
+    /// FaceTime / Webex / Discord-voice / Slack-huddle) was foreground in
+    /// the last 60s of `ScreenContextService.recentContexts`. Fed into
+    /// `CalendarEndStopDecision.evaluate(meetingAppVisible:)` as a
+    /// "meeting is still ongoing" override — even if the room went quiet
+    /// for a moment, the meeting UI being on screen is strong evidence
+    /// not to terminate the recording.
+    ///
+    /// We re-use the same name/title patterns that
+    /// `SystemAudioCaptureService` uses for call detection so the two
+    /// places can't disagree about what counts as a meeting app. Pattern
+    /// set is intentionally narrow — no "Telegram" / "Mattermost"
+    /// general matches, since those apps are 90% chat and only
+    /// occasionally voice/video.
+    private func isMeetingAppVisibleInRecentScreenContext() -> Bool {
+        let lookbackSec: TimeInterval = 60
+        let cutoff = Date().addingTimeInterval(-lookbackSec)
+        let recent = screenContext.recentContexts.filter { $0.timestamp >= cutoff }
+        guard !recent.isEmpty else { return false }
+
+        // App-name matches (case-insensitive substring).
+        let meetingAppPrefixes = ["zoom", "microsoft teams", "teams", "facetime", "webex", "gotomeeting", "skype", "whereby"]
+        // Window-title matches — for browser-hosted calls (Meet / Zoom web).
+        let meetingTitleSubstrings = ["meet.google.com", "google meet", "zoom meeting", "teams - microsoft", "microsoft teams"]
+        // Discord/Slack voice — title-specific keywords; chat-only sessions don't match.
+        let voiceModeTitleSubstrings = ["huddle", "voice connected", "voice call"]
+
+        for ctx in recent {
+            let appLower = ctx.appName.lowercased()
+            if meetingAppPrefixes.contains(where: { appLower.contains($0) }) {
+                return true
+            }
+            let titleLower = ctx.windowTitle.lowercased()
+            if meetingTitleSubstrings.contains(where: { titleLower.contains($0) }) {
+                return true
+            }
+            if voiceModeTitleSubstrings.contains(where: { titleLower.contains($0) }) {
+                return true
+            }
+        }
+        return false
+    }
+
+    // MARK: - ITER-034.2 Recovery dir cleanup (2026-05-11)
+
+    /// Delete `.wav` files in `~/Library/Application Support/MetaWhisp/Recovery/`
+    /// older than 7 days. Idempotent: zero-op when nothing's old, deletes
+    /// whatever crossed the cutoff otherwise. No flag-gating — this is a
+    /// recurring janitor pass, not a one-time migration.
+    ///
+    /// Why 7 days: Recovery serves resurrected-after-crash transcription;
+    /// a wav still around after a week was never going to be picked up
+    /// (the user has moved on, the conversation isn't going to be salvaged).
+    /// Earlier audit (2026-05-11) surfaced 13 .wav files from May 7-8 totaling
+    /// 12 MB — accumulated over a year because the original code path that
+    /// wrote them never had a paired delete on success.
+    ///
+    /// Failure mode is silent — we log warnings but never throw or block
+    /// app startup. A dir-doesn't-exist case is fine; an unreadable file is
+    /// logged and skipped.
+    private func cleanupStaleRecoveryWavs() {
+        let fm = FileManager.default
+        guard let appSupport = fm.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else {
+            return
+        }
+        let recoveryDir = appSupport.appendingPathComponent("MetaWhisp/Recovery", isDirectory: true)
+        guard fm.fileExists(atPath: recoveryDir.path) else { return }
+
+        let cutoff = Date().addingTimeInterval(-7 * 24 * 3600)
+        let resourceKeys: [URLResourceKey] = [.contentModificationDateKey, .nameKey]
+
+        guard let enumerator = fm.enumerator(
+            at: recoveryDir,
+            includingPropertiesForKeys: resourceKeys,
+            options: [.skipsHiddenFiles, .skipsSubdirectoryDescendants]
+        ) else { return }
+
+        var deleted = 0
+        var totalBytes: Int64 = 0
+        for case let url as URL in enumerator {
+            guard url.pathExtension.lowercased() == "wav" else { continue }
+            guard let vals = try? url.resourceValues(forKeys: Set(resourceKeys)),
+                  let mtime = vals.contentModificationDate else { continue }
+            guard mtime < cutoff else { continue }
+            let size = (try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0
+            do {
+                try fm.removeItem(at: url)
+                deleted += 1
+                totalBytes += Int64(size)
+            } catch {
+                NSLog("[RecoveryCleanup] ⚠️ Failed to delete %@: %@",
+                      url.lastPathComponent, error.localizedDescription)
+            }
+        }
+        if deleted > 0 {
+            NSLog("[RecoveryCleanup] ✅ Pruned %d wav files (%.1f MB) older than 7d",
+                  deleted, Double(totalBytes) / 1_048_576.0)
         }
     }
 

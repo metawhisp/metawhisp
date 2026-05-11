@@ -238,7 +238,10 @@ struct DictionaryView: View {
             )
             .font(MW.mono).foregroundStyle(MW.textPrimary)
             .textFieldStyle(.roundedBorder)
-            .colorScheme(.dark)
+            // colorScheme(.dark) override removed 2026-05-11 — it forced the
+            // rounded-border TextField to render with a dark backplate even
+            // in Light mode, producing the "dark control on light card"
+            // mismatch reported by the user. Inherits ambient scheme now.
         }
         .padding(MW.sp16)
     }

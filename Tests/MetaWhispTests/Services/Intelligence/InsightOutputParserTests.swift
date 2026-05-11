@@ -141,4 +141,55 @@ final class InsightOutputParserTests: XCTestCase {
             XCTFail("expected noInsight for unknown tool")
         }
     }
+
+    // MARK: - Markdown-wrapper tolerance (regression — 2026-05-11)
+
+    /// REGRESSION: 2026-05-11 daily log audit surfaced that gpt-4o-mini
+    /// (Pro proxy) routinely wraps JSON in ```json ... ``` despite the
+    /// prompt asking for plain JSON. Pre-fix: the parser handed the wrapper
+    /// to JSONSerialization → parseError → 99% of pipeline outputs silently
+    /// dropped. The reference `AdviceService.parseAdviceResponse` strips the
+    /// wrapper (lines 599-602) — InsightOutputParser missed that step.
+    /// This test pins the post-fix behavior so the regression can't recur.
+    func test_parsesProvideAdviceWrappedInMarkdownCodeBlock() {
+        let json = """
+        ```json
+        {
+          "tool": "provide_advice",
+          "advice": "Tokens expiring tomorrow",
+          "category": "other",
+          "source_app": "Terminal",
+          "confidence": 0.88
+        }
+        ```
+        """
+        guard case let .provideInsight(ins) = InsightOutputParser.parse(jsonString: json) else {
+            return XCTFail("expected provideInsight, got \(InsightOutputParser.parse(jsonString: json))")
+        }
+        XCTAssertEqual(ins.body, "Tokens expiring tomorrow")
+        XCTAssertEqual(ins.confidence, 0.88, accuracy: 0.001)
+    }
+
+    /// Same regression — `no_advice` shape wrapped in plain ``` (no `json`
+    /// language tag). Both forms appear in the wild log sample.
+    func test_parsesNoAdviceWrappedInPlainCodeBlock() {
+        let json = """
+        ```
+        {"tool":"no_advice","context_summary":"User idling"}
+        ```
+        """
+        XCTAssertEqual(
+            InsightOutputParser.parse(jsonString: json),
+            .noInsight(reason: "User idling")
+        )
+    }
+
+    /// Lenient stripper: leading whitespace + trailing whitespace + newline
+    /// after the opening fence. Mirrors the actual log samples.
+    func test_parsesProvideAdviceWithLeadingTrailingWhitespace() {
+        let json = "   \n```json\n{\"tool\":\"provide_advice\",\"advice\":\"x\",\"category\":\"other\",\"source_app\":\"X\",\"confidence\":0.9}\n```\n   "
+        guard case .provideInsight = InsightOutputParser.parse(jsonString: json) else {
+            return XCTFail("expected provideInsight, got \(InsightOutputParser.parse(jsonString: json))")
+        }
+    }
 }

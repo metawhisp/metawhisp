@@ -7,6 +7,14 @@ struct MainWindowView: View {
     @ObservedObject var recorder: AudioRecordingService
     var historyService: HistoryService
 
+    /// Drives the sidebar footer pips. AppSettings publishes change events
+    /// when @AppStorage-backed properties flip, so the footer recomposes
+    /// the moment the user toggles e.g. "Proactive insights" in Settings.
+    @ObservedObject private var settings = AppSettings.shared
+    /// Drives the tier pip ("free" / "pro"). LicenseService publishes
+    /// `isPro` after license activation/deactivation.
+    @ObservedObject private var license = LicenseService.shared
+
     @State var selectedTab: SidebarTab
 
     init(
@@ -111,25 +119,83 @@ struct MainWindowView: View {
 
             Spacer()
 
-            // Version + on-device status pip — matches mockup footer.
+            // Version + processing-mode + tier pips. Replaces a previous
+            // hard-coded "● on-device" label that was decorative-only and
+            // misleading for users on Cloud Whisper / Pro proxy paths.
+            // Both pips derive from settings + license live, so flipping
+            // a Cloud-feature toggle in Settings instantly updates the footer.
             HStack(spacing: 8) {
                 Text("v\(Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "?")")
                     .font(MW.monoSm)
                     .foregroundStyle(MW.textDim)
                 Spacer()
-                HStack(spacing: 5) {
-                    Circle()
-                        .fill(MW.idle)
-                        .frame(width: 5, height: 5)
-                    Text("on-device")
-                        .font(.system(size: 10, weight: .medium))
-                        .foregroundStyle(MW.textMuted)
-                }
+                statusPip(label: processingModeLabel, color: processingModeColor)
+                statusPip(label: tierLabel, color: tierColor)
             }
             .padding(.horizontal, 14)
             .padding(.vertical, 10)
         }
         .mwCard(radius: MW.rLarge, elevation: .hero)
+    }
+
+    // MARK: - Footer status pips
+
+    /// Reusable colored-dot + label pip for the sidebar footer.
+    /// `color` is the dot fill; the label always uses `MW.textMuted` so the
+    /// pip is unobtrusive — the dot carries the accent.
+    private func statusPip(label: String, color: Color) -> some View {
+        HStack(spacing: 5) {
+            Circle()
+                .fill(color)
+                .frame(width: 5, height: 5)
+            Text(label)
+                .font(.system(size: 10, weight: .medium))
+                .foregroundStyle(MW.textMuted)
+        }
+    }
+
+    /// Decides the processing-mode label based on which paths the user
+    /// has actually wired up. Source-of-truth flags:
+    ///   - `transcriptionEngine`: primary dictation engine ("ondevice" or "cloud")
+    ///   - `processingMode == "structured"`: post-transcription LLM cleanup
+    ///   - `proactiveEnabled`: ITER-027 insight extraction (cloud LLM)
+    ///   - `ttsCloudEnabled`: cloud TTS for voice replies
+    ///   - `liveMeetingAdviceEnabled`: live coach during meetings
+    ///
+    /// `cloud` features all require Pro proxy so they're real cloud roundtrips.
+    private var processingModeLabel: String {
+        let primaryCloud = settings.transcriptionEngine == "cloud"
+        let cloudFeatures = settings.processingMode == "structured"
+            || settings.proactiveEnabled
+            || settings.ttsCloudEnabled
+            || settings.liveMeetingAdviceEnabled
+        let hasCloud = primaryCloud || cloudFeatures
+        let hasLocal = !primaryCloud  // engine = "ondevice" → local dictation path active
+
+        if hasCloud && hasLocal { return "on-device+cloud" }
+        if hasCloud { return "cloud" }
+        return "on-device"
+    }
+
+    /// Color follows the label's "leaning":
+    ///   - `on-device` → green (idle) — fully local, no network roundtrips
+    ///   - `cloud` → light blue (postProcess) — networked, semantically remote
+    ///   - `on-device+cloud` → orange (processing) — hybrid, intermediate
+    private var processingModeColor: Color {
+        switch processingModeLabel {
+        case "cloud":           return MW.postProcess
+        case "on-device+cloud": return MW.processing
+        default:                return MW.idle
+        }
+    }
+
+    private var tierLabel: String {
+        license.isPro ? "pro" : "free"
+    }
+
+    private var tierColor: Color {
+        // Pro = green (active subscription); free = dim grey (no accent steal).
+        license.isPro ? MW.idle : MW.textDim
     }
 
     @ViewBuilder

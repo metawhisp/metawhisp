@@ -335,6 +335,28 @@ final class MeetingRecorder: ObservableObject {
         manualHeartbeatTask = nil
     }
 
+    // MARK: - Sliding-window quiet probe (ITER-034.1)
+
+    /// Returns `true` iff `audioLevel` has stayed below `silenceRMSThreshold`
+    /// (0.025) continuously for at least `seconds`. Returns `false` if audio
+    /// rose above the threshold at any point during that window.
+    ///
+    /// Used by `AppDelegate.armCalendarEndStopTask` to decide whether a
+    /// calendar-end auto-stop should fire. Reading `audioLevel` directly
+    /// gave us a false-positive during the 200-500ms pauses between
+    /// sentences (the 2026-05-11 user-reported bug «созвон закончился по
+    /// календарю в середине обсуждения»). This wraps the silence-guard's
+    /// existing `silentSince` so the two pieces of code can't disagree on
+    /// "is the room actually quiet."
+    ///
+    /// Caller convention: pass 30s for the calendar-end probe. Shorter
+    /// windows risk the same instantaneous-sample problem; longer windows
+    /// burn the user's grace budget.
+    func hasBeenContinuouslyQuiet(forAtLeast seconds: TimeInterval) -> Bool {
+        guard let start = silentSince else { return false }
+        return Date().timeIntervalSince(start) >= seconds
+    }
+
     /// ITER-026 v2 — fires `onManualHeartbeat` once after 2h of recording.
     /// Owner shows a card "Recording 2h elapsed" without stopping. Manual
     /// recordings have no other auto-stop — only user STOP ends them.

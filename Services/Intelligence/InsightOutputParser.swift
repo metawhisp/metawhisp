@@ -36,7 +36,20 @@ enum InsightParseResult: Equatable {
 /// empty body — all rejected so caller surfaces nothing rather than water.
 enum InsightOutputParser {
     static func parse(jsonString: String) -> InsightParseResult {
-        guard let data = jsonString.data(using: .utf8) else { return .parseError }
+        // Strip optional markdown code-block wrapper. gpt-4o-mini (current
+        // Pro-proxy upstream) routinely wraps JSON in ```json ... ``` despite
+        // the prompt asking for plain JSON, and the daily log audit on
+        // 2026-05-11 caught us silently parse-erroring 99% of pipeline outputs
+        // because of it. Reference `AdviceService.parseAdviceResponse`
+        // (Services/Intelligence/AdviceService.swift lines 599-602) does the
+        // same strip — this parser was a missed port of that step. Tests:
+        // `test_parsesProvideAdviceWrappedInMarkdownCodeBlock` and friends
+        // pin the post-fix behavior so the regression can't recur.
+        let cleaned = jsonString
+            .replacingOccurrences(of: "```json", with: "")
+            .replacingOccurrences(of: "```", with: "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let data = cleaned.data(using: .utf8) else { return .parseError }
         guard let raw = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
             return .parseError
         }

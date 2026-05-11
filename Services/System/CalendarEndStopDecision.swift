@@ -42,11 +42,25 @@ extension CalendarEndStopDecision {
     ///   - eventEnd: `EKEvent.endDate` snapshot from the moment the
     ///     recording started. Stale if user edits the calendar mid-record;
     ///     acceptable trade-off for simplicity.
-    ///   - audioRMSLastNSec: max(mic, system) RMS observed during the
-    ///     last sampling window. Caller usually polls 30s of audio.
+    ///   - audioRMSLastNSec: instantaneous RMS sample at fire time. Used as
+    ///     a fast quiet-check, BUT it can be false-positive during the
+    ///     200-500ms pauses between sentences. The sliding-window guard
+    ///     `recentAudioActive` (below) is the authoritative signal for
+    ///     "someone is still talking."
     ///   - notifyAttemptsSoFar: how many times we've already pushed the
     ///     "meeting overrunning — tap to stop" card. Caller increments
     ///     after each `notifyAndExtend`.
+    ///   - recentAudioActive: ITER-034.1 (2026-05-11) — true iff audio
+    ///     crossed the silence threshold within the last sliding window
+    ///     (caller usually 30s). When true, we never `.stopNow` — at worst
+    ///     we `.notifyAndExtend`. Closes the bug where a single quiet
+    ///     instant between sentences killed an ongoing meeting.
+    ///   - meetingAppVisible: ITER-034.1 — true iff a recognized meeting
+    ///     app (Zoom / Meet / Teams / Discord / FaceTime / Webex / etc) was
+    ///     foreground in the recent ScreenContext window. User-requested
+    ///     signal: "if the meeting is still open on my screen, don't stop
+    ///     it just because there was silence." When true, blocks `.stopNow`
+    ///     same as `recentAudioActive`.
     ///   - graceSeconds: grace period after `eventEnd` before any stop
     ///     decision. Default 60s — covers the common "couple of minutes
     ///     to wrap up" overrun.
@@ -61,6 +75,8 @@ extension CalendarEndStopDecision {
         eventEnd: Date,
         audioRMSLastNSec: Float,
         notifyAttemptsSoFar: Int,
+        recentAudioActive: Bool = false,
+        meetingAppVisible: Bool = false,
         graceSeconds: TimeInterval = CalendarEndStopDecisionRules.defaultGraceSeconds,
         extensionSeconds: TimeInterval = CalendarEndStopDecisionRules.defaultExtensionSeconds,
         quietRMSThreshold: Float = CalendarEndStopDecisionRules.defaultQuietRMSThreshold,
@@ -70,13 +86,25 @@ extension CalendarEndStopDecision {
         let secondsPastEnd = now.timeIntervalSince(eventEnd)
         if secondsPastEnd < graceSeconds { return .keepRunning }
 
-        // Past grace + already exhausted notify budget → force stop.
+        // Past grace + already exhausted notify budget → force stop, ALWAYS.
+        // This is the safety valve: if the user has ignored 3 "overrunning"
+        // cards already, we cap the recording even if the room is still loud
+        // (forgotten music session, all-night zombie call, etc).
         if notifyAttemptsSoFar >= maxNotifyAttempts { return .hardStop }
 
-        // Past grace, audio quiet → graceful stop.
-        if audioRMSLastNSec < quietRMSThreshold { return .stopNow }
+        // ITER-034.1 — sliding-window guards. A single quiet sample is NOT
+        // enough evidence the meeting is over. We need EITHER:
+        //   • audio continuously quiet for the caller's sliding window, OR
+        //   • the meeting app gone from screen recently.
+        // Either positive signal → graceful notifyAndExtend instead of stopNow.
+        let meetingLikelyOngoing = recentAudioActive || meetingAppVisible
 
-        // Audio still active → notify user, re-check after extension.
+        // Past grace, audio quiet, and no positive "still going" signal → stop.
+        if audioRMSLastNSec < quietRMSThreshold && !meetingLikelyOngoing {
+            return .stopNow
+        }
+
+        // Audio still active (or meeting still visible) → notify, re-check later.
         return .notifyAndExtend(newDeadline: now.addingTimeInterval(extensionSeconds))
     }
 }

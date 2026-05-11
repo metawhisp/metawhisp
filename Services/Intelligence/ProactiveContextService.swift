@@ -3,20 +3,27 @@ import SwiftData
 
 /// Proactive in-the-moment surfacing (ITER-027 v1 — text-only insight extraction).
 ///
-/// While the user is COMPOSING in Slack/Mail/Notion/etc., MetaWhisp asks an
-/// LLM whether there's ONE specific, non-obvious insight worth surfacing
-/// right now. Most ticks return nothing — that's the point. When something
-/// fires, it's actionable: *"Sensitive credentials visible — mask before
-/// sharing"*, *"Year 2026 — did you mean 2027?"*, *"Stashed changes 2h ago
-/// — git stash pop"*.
+/// As the user works ANYWHERE, MetaWhisp asks an LLM whether there's ONE
+/// specific, non-obvious insight worth surfacing right now. Most ticks
+/// return nothing — that's the point. When something fires, it's actionable:
+/// *"Sensitive credentials visible — mask before sharing"*, *"Year 2026 —
+/// did you mean 2027?"*, *"Stashed changes 2h ago — git stash pop"*.
 ///
 /// Replaces the pre-027 cosine-retrieval pipeline that surfaced lists of
 /// "тематически близких созвонов" — list noise that the user reasonably
 /// described as "вода" (specs/health-reports/2026-05-08*.md).
 ///
 /// Pipeline per `evaluateAndSurface(ctx:)` call:
-///   1. Hard gates: `proactiveEnabled`, cooldown, OCR length, blacklist,
-///      composing-app whitelist. Most calls exit here.
+///   1. Hard gates: `proactiveEnabled`, cooldown, OCR length, blacklist.
+///      Most calls still exit early — but the gate is "is this a sensitive
+///      context the user opted out of?" (blacklist), NOT "is this a
+///      pre-approved composing app?" (the prior whitelist). Reference
+///      (omi-style) keeps gating to blacklist + the LLM itself, on the
+///      principle that the model is a better content filter than a
+///      hardcoded app list. Whitelist was removed 2026-05-11 after audit
+///      showed it dropped 14 days of work in Claude / Safari / Chrome /
+///      Arc on the floor (all non-composing) → 1 surfaced insight in 14
+///      days.
 ///   2. Build activity summary from last hour's `ScreenContext`.
 ///   3. Call `InsightAssistantService.evaluate(...)` — the LLM is the
 ///      filter. It either returns an insight or `nil`.
@@ -44,13 +51,6 @@ final class ProactiveContextService: ObservableObject {
 
     /// How many minutes back the activity summary covers. Reference: 60.
     private let activityLookbackMinutes: TimeInterval = 60
-
-    /// Known composing-friendly apps. v1 heuristic — whitelist is tighter
-    /// than blacklist, keeps false-positives to ~zero.
-    private let composingAppNames: Set<String> = [
-        "Slack", "Mail", "Messages", "Notion", "Linear", "Figma", "Obsidian",
-        "Outlook", "Discord", "Telegram", "Loom", "Spark", "Airmail", "Superhuman",
-    ]
 
     func configure(modelContainer: ModelContainer,
                    insightAssistant: InsightAssistantService) {
@@ -89,7 +89,11 @@ final class ProactiveContextService: ObservableObject {
         }
         guard ctx.ocrText.count >= minContextChars else { return }
         guard !isBlacklisted(appName: ctx.appName) else { return }
-        guard isComposingApp(appName: ctx.appName) else { return }
+        // No composing-app whitelist (removed 2026-05-11). The LLM is the
+        // content filter — it returns `no_advice` for screens that aren't
+        // worth surfacing. Blacklist above is the only hardcoded gate; users
+        // can extend it from Settings → Proactive blacklist for sensitive
+        // contexts they don't want analyzed (banking, password vaults, etc).
         guard let assistant = insightAssistant,
               let storage = insightStorage else { return }
         guard let licenseKey = LicenseService.shared.licenseKey,
@@ -174,15 +178,5 @@ final class ProactiveContextService: ObservableObject {
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() }
         let lowered = appName.lowercased()
         return list.contains { !$0.isEmpty && lowered.contains($0) }
-    }
-
-    private func isComposingApp(appName: String) -> Bool {
-        let lowered = appName.lowercased()
-        if composingAppNames.contains(where: { $0.lowercased() == lowered }) { return true }
-        // Substring tolerance: "Slack", "Slack.app", "Slack (Helper)" — all map.
-        for n in composingAppNames {
-            if lowered.contains(n.lowercased()) { return true }
-        }
-        return false
     }
 }
