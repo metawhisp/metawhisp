@@ -1,4 +1,29 @@
 
+## Released v1.3.3 — 2026-05-10 (proactive insights + privacy + history scrub)
+
+**Status: SHIPPED via:**
+- ✅ GitHub Release [v1.3.3](https://github.com/metawhisp/metawhisp/releases/tag/v1.3.3) (DMG `MetaWhisp.dmg`, 9890157 bytes, edSig `Z1/sraXPAh3ncaB8VG35c81yhL4XR4fedAg1ubPYvCI1h6lkpS3jXcXwzfDdXbID5hw475/yha6PZroPaJGlCQ==`)
+- ✅ Cloudflare Page Rule still routes `metawhisp.com/downloads/MetaWhisp.dmg` → `releases/latest/download/MetaWhisp.dmg` → v1.3.3 ✅
+- ✅ Repo visibility flipped public (was accidentally private — broke download chain until 2026-05-09 23:20)
+- ✅ Old broken releases v1.3.1 + v1.3.2 deleted (their tags pointed to dead SHAs after filter-repo)
+- ✅ Source committed + force-pushed to `metawhisp/metawhisp` main, all author lines = `MetaWhisp Maintainer <maintainer@metawhisp.com>` after `git filter-repo --replace-text + --mailmap` rewrite
+- ✅ Public github.com search returns 0 hits for `Andrey`, `Atomic Bot`, `overchat`, `sk_live` (Stripe key — was leaking in old WAL.md commits)
+- ✅ Marketing site rolled back to deployment `199df86e` (recovers 13 blog posts)
+
+**Build pipeline fix (this session):**
+- `build.sh` SIGN_IDENTITY now resolves cert by SHA-1 hash via team ID `6D6948Z4MW` (privacy-safe — keychain cert legal name doesn't leak into committed source)
+
+**KNOWN BROKEN — existing 1.3.x users (Sparkle auto-update):**
+- Live `metawhisp.com/appcast.xml` advertises v1.3.2 with edSignature for the OLD (now-deleted) v1.3.2 DMG → Sparkle either no-prompts (because installed >= advertised) or sig-mismatches on download → silent failure
+- New users via website Download button get clean v1.3.3. Existing 1.3.x users stuck on whatever they have.
+- **MUST FIX at next release** (1.3.4): pivot appcast off Cloudflare Pages onto GitHub raw via Page Rule `metawhisp.com/appcast.xml` → `raw.githubusercontent.com/metawhisp/metawhisp/main/appcast.xml`. Then every future release just updates the committed `appcast.xml`. Detail in `memory/state_appcast_stale_since_1_3_3.md`.
+
+**ITER-027 v1 shipped in this build:**
+- Replaced cosine-retrieval `ProactiveContextService` (which surfaced lists of fake-titled meetings) with `InsightAssistantService` LLM extraction — one specific insight per tick or nothing.
+- New pure functions + RED-then-GREEN tests: `InsightPrompts`, `InsightOutputParser`, `InsightDedupChecker`, `WindowTitleNormalizer`, `ActivitySummaryBuilder`, `InsightStorage`, `BackToBackTransition`, `ConversationTitleResolver`, `Levenshtein`, etc. Full suite green 155/155.
+- Confidence threshold default 0.75, cooldown unchanged. Pro-only feature; no-op for free tier.
+- Future ITER-027.6: vision call + 2-phase SQL tool loop = full reference parity. Backlogged.
+
 ## Released v1.3.2 — 2026-05-09 02:30 GMT+3
 
 **Status: SHIPPED to users via:**
@@ -1406,3 +1431,51 @@ User предпочитает продуктовые фичи > infrastructure p
 - НЕ ЛОМАЙ существующий обычный pipeline (Right ⌘ → mic → clipboard) — основной flow пользователя
 - НЕ ДОБАВЛЯЙ sudo в build scripts — блокирует rebuild из-за root-owned файлов
 - НЕ городи архитектуру на будущее (Karpathy Simplicity First) — только то что нужно для текущей задачи
+
+---
+
+## v1.3.4 SHIP (2026-05-12)
+
+**Released:** https://github.com/metawhisp/metawhisp/releases/tag/v1.3.4 + live appcast at https://metawhisp.com/appcast.xml
+
+### Client fixes (10)
+
+- **Composing whitelist removed** (`ProactiveContextService`): LLM + blacklist are the content filter. Daily insight surfacing went from ~1/14 days → 32+/day measured on user data.
+- **InsightOutputParser markdown strip**: ```json wrappers now removed before JSONSerialization. 99% of pipeline outputs previously parse-errored silently.
+- **CalendarEndStopDecision** ITER-034.1: sliding-window guards (`recentAudioActive` 30s + `meetingAppVisible` 60s for Zoom/Meet/Teams/FaceTime/Webex/Discord/Slack-huddle). Meetings no longer auto-stop mid-discussion at calendar boundary.
+- **MeetingRecorder**: exposed `hasBeenContinuouslyQuiet(forAtLeast:)` for the new guards.
+- **MainWindowController**: hide-on-close via `windowShouldClose → orderOut` + `NSWindowDelegate`. Eliminates Space-flicker. Window unbinds from Space when hidden, reopens on user's current Space cleanly.
+- **MainWindowView**: live status pips (on-device / cloud / on-device+cloud + free/pro) driven by @ObservedObject settings + license.
+- **AppDelegate** ITER-034.3: auto-promote `processingMode "raw" → "structured"` on first launch for Pro users (was hidden in Settings → users didn't know to flip it).
+- **AppDelegate** ITER-034.2: `cleanupStaleRecoveryWavs()` prunes Recovery/*.wav older than 7 days at launch.
+- **AppSettings**: `didAutoPromoteProcessingMode` flag for ITER-034.3.
+- **DictionaryView**: dropped hardcoded `.colorScheme(.dark)` on TextField — now follows system theme.
+
+### Tests
+- +3 InsightOutputParserTests for markdown-wrapper stripping.
+- +4 CalendarEndStopDecisionTests for sliding-window + meeting-app visibility guards.
+- 162 total, all green.
+
+### Tooling
+- `audit-daily.sh`: DB activity / log markers / insight pipeline / recovery / crashes / RSS. Run at session start to catch regressions.
+
+### Server-side
+- `metawhisp-api` Worker (`handleProProcess`): hardened MANDATORY bullet rule for sequence markers («первое/во-первых», «secondly», etc), replaced em-dash examples with `•` for consistency. Llama-3.3-70b was rendering lists inline due to em-dash confusion.
+
+### Infrastructure
+- **CF Pages site repo** (`metawhisp/MetaWhisp.com`): added `eleventyConfig.addPassthroughCopy("src/appcast.xml")` to `.eleventy.js`. Appcast was in git since Mar 2026 but never reached `_site/` → Sparkle auto-update never worked. **First time auto-update actually functions.**
+- New CF API token: keychain `metawhisp-cf` (Edit Workers scope). Memory note saved.
+- New memory: `routine_daily_audit_session_start.md` + `reference_cloudflare_worker.md`.
+
+### Verification
+- ✓ `swift test` 162 green
+- ✓ DMG notarized, stapled, validated
+- ✓ Sparkle EdDSA signature verified
+- ✓ GitHub Release asset uploaded
+- ✓ `curl https://metawhisp.com/appcast.xml` returns valid Sparkle 2 XML with v1.3.4 entry
+
+### Known issues deferred to v1.3.5
+- ScreenExtractor parse errors ~10/day (different from InsightOutputParser fix, separate root cause).
+- Hardcoded color audit on `MainSettingsView` + `DictionaryView` Add button (Color.black on MW.idle / MW.elevated).
+- ITER-027.6 vision + 2-phase SQL pipeline (separate session, large scope).
+- Settings UI: make active mode pill more visually obvious (3 pills look identical, user mistook Raw for Structured).
