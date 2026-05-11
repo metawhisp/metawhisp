@@ -1479,3 +1479,38 @@ User предпочитает продуктовые фичи > infrastructure p
 - Hardcoded color audit on `MainSettingsView` + `DictionaryView` Add button (Color.black on MW.idle / MW.elevated).
 - ITER-027.6 vision + 2-phase SQL pipeline (separate session, large scope).
 - Settings UI: make active mode pill more visually obvious (3 pills look identical, user mistook Raw for Structured).
+
+---
+
+## End-of-session marker (2026-05-12 ~01:15 local)
+
+**Today shipped:**
+- v1.3.4 live release (GitHub Release + DMG + appcast + Sparkle EdDSA sig)
+- Sparkle auto-update **впервые actually работает** since Mar 2026 site migration (Eleventy passthrough fix в `metawhisp.com` repo)
+- Worker `metawhisp-api` bullets prompt fix deployed
+- Auto-promote `processingMode → structured` для Pro юзеров
+- Window hide-on-close pattern (still has Space-binding artifact — see below)
+
+**Open bug for next session:**
+- **Window Space-switching artifact**: после моего `windowShouldClose → orderOut` reuse pattern, при subsequent open NSWindow может переключать Space (preferred Space binding не разрывается через orderOut). Юзер reported 2026-05-12 ~01:00. **Не починили в этой сессии — нужен fresh-window pattern (close = release, open = new NSWindow)**. v1.3.4.1 hotfix candidate.
+
+**Tomorrow's planned start — three new tracks, full specs ready:**
+
+1. **ITER-035 — Obsidian Vault Sync** — see `specs/iterations/ITER-035-obsidian-vault-sync.md`. 12-step checklist inside.
+2. **ITER-036 — RAG Lifetime Chat** — see `specs/iterations/ITER-036-rag-lifetime-chat.md`. 14-step checklist inside.
+3. **ITER-037 — MCP Server** — see `specs/iterations/ITER-037-mcp-server.md`. Option A first (≈zero coding, just docs after #1). Option B native MCP deferred.
+
+**Order:** 035 → 037 (Option A) → 036 — но Karpathy pick-one applies, juзер скажет утром с какого старт.
+
+**Open questions for user at start of tomorrow's session:**
+1. Window-bug fix v1.3.4.1 — сначала, или живём с багом пока пилим новые фичи?
+2. ITER-035: existing Obsidian vault или новый создаём? Path?
+3. ITER-035: file naming convention — timestamp-based `2026-05-12-21h05.md` или slug-based `first-5-words.md`? **Default в spec — гибрид: `YYYY-MM-DD--slug.md`**
+4. ITER-035: single file per entity vs daily-notes pattern? **Default в spec — per-entity (Obsidian convention)**
+
+**Session start protocol для завтра:**
+1. `bash audit-daily.sh` (per memory rule)
+2. Read this WAL section + 3 ITER specs
+3. Surface open questions above to user
+4. Wait for picks → start coding on chosen iteration
+

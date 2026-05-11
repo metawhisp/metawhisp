@@ -445,6 +445,16 @@ User explicit ask 2026-04-19: premium TTS + more voice features revisited after 
 
 ---
 
+## Planned for next coding session (2026-05-12 evening / 2026-05-13 morning)
+
+User commit 2026-05-12: three feature tracks queued, each with detailed spec + acceptance + checklist. **Karpathy rule applies — pick ONE at a time, не размазывать.**
+
+1. **ITER-035 — Obsidian Vault Sync** (one-way: SwiftData → markdown). Foundation. Unblocks #2 and #3. Effort ~2 days. Start here.
+2. **ITER-036 — RAG Lifetime Chat** (named-entity + temporal queries: «когда я с Машей последний раз говорил»). Extends existing ChatService. Effort ~3 days.
+3. **ITER-037 — MCP Server** (Claude Desktop / Cursor / ChatGPT integration). After ITER-035: Option A = filesystem-MCP off-the-shelf, ~1.25 days docs + UI. Option B = native Swift MCP server, deferred to «if needed».
+
+Order rationale: 035 → 037A (free bonus from vault export) → 036 (independent, can interleave). Full specs include checklists ready to crosscheck during coding.
+
 ## What's currently in flight
 
 ### Testing Pending (не блокирует)
