@@ -1345,7 +1345,7 @@ struct MainSettingsView: View {
         VStack(alignment: .leading, spacing: MW.sp10) {
             toggleRow("Obsidian Sync", isOn: $settings.obsidianSyncEnabled)
             if settings.obsidianSyncEnabled {
-                Text("Appends new memories to <vault>/MetaWhisp/Journal.md so they propagate into your Obsidian-connected knowledge graph (mobile, plugins, search).")
+                Text("Writes voices, meetings, tasks, memories and insights as Markdown files in your Obsidian vault. Date-first folders for time-bound entities, project-first for memories. Tasks support two-way delete.")
                     .font(MW.monoSm).foregroundStyle(MW.textMuted)
                     .fixedSize(horizontal: false, vertical: true)
                 HStack(spacing: 6) {
@@ -1372,9 +1372,25 @@ struct MainSettingsView: View {
                     }
                     .buttonStyle(.plain)
                 }
-                scanNowButton {
-                    if let svc = AppDelegate.shared?.obsidianSync { _ = await svc.syncNow() }
+                // ITER-035 v2 — manual bulk export. Rerenders every entity
+                // in SwiftData → markdown. Idempotent (overwrites by id-path),
+                // safe to run repeatedly.
+                Button {
+                    Task { @MainActor in
+                        if let exp = AppDelegate.shared?.obsidianExporter {
+                            _ = await exp.bulkExportAll()
+                        }
+                    }
+                } label: {
+                    HStack(spacing: 4) {
+                        Image(systemName: "square.and.arrow.up.on.square")
+                            .font(.system(size: 10))
+                        Text("Export everything to vault").font(MW.label).tracking(0.6)
+                    }
+                    .foregroundStyle(MW.textPrimary)
+                    .glassChip(selected: false, radius: MW.rTiny)
                 }
+                .buttonStyle(.plain)
             }
         }
         .padding(MW.sp16)

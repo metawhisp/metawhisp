@@ -39,25 +39,49 @@ final class ObsidianExporter: ObservableObject {
 }
 ```
 
-**Vault layout:**
+**Vault layout (confirmed by user 2026-05-12 morning):**
+
+Two top-level patterns:
+- **Date-first** для transient artefacts (voices, meetings, tasks) — chronological view.
+- **Project-first** для durable knowledge (memories) — knowledge base view.
+
 ```
 <obsidianVaultPath>/MetaWhisp/
-  README.md                    # — описание структуры, generated once
-  Conversations/
-    2026-05-12--standup-with-sam.md
-    2026-05-12--quick-note.md
-  Voices/
-    2026-05-12-21h05--quick-note.md
-  Tasks/
-    T-001--починить-окно.md
-    T-002--собрать-релиз.md
-  Memories/
-    M-2026-05-08--sam-prefers-async.md
-  Insights/
-    I-2026-05-12--credentials-visible.md
-  Screen/                      # optional, off by default — отдельный toggle
-    2026-05-12.md              # daily aggregate
+  README.md                              # — описание структуры, generated once
+
+  2026-05-12/                            # день — корень для time-bound entities
+    meetings/
+      14h00--standup-with-sam.md         # отдельный файл на каждый meeting
+      16h30--client-call-acme.md
+    voices/
+      09h15--MetaWhisp.md                # project tag из Conversation.primaryProject
+      11h22--Untagged.md                 # если project не присвоен
+    tasks/
+      T-0001--починить-окно.md           # ID-prefixed for stability; 2-way delete (см. ниже)
+      T-0002--релизнуть-1-3-4.md
+
+  Memories/                              # knowledge base — project-first, date-second
+    MetaWhisp/
+      2026-05-12--user-prefers-bullets.md
+      2026-05-11--auto-promote-pro.md
+    AcmeCorp/
+      2026-05-08--quarterly-deadline.md
+    General/                             # default project, если UserMemory.project == nil
+      2026-05-12--bought-milk.md
+
+  Insights/                              # отдельная папка под ITER-027 surfaced insights
+    2026-05-12/
+      09h22--credentials-visible.md
 ```
+
+**Two-way delete behaviour для tasks:**
+- Юзер mark task as completed (checkbox) → файл **остаётся**, frontmatter `completed: true` обновляется.
+- Юзер dismiss task / delete task → файл **удаляется с диска**.
+- Cleanup на bulk export: orphaned `Tasks/T-NNNN.md` файлы (нет соответствующего row в SwiftData) удаляются.
+
+**Project-tag derivation:**
+- **Voices/Meetings:** `Conversation.primaryProject` (already в SwiftData) → string used as filename suffix. Если nil → `"Untagged"`.
+- **Memories:** NEW field `UserMemory.project: String?` (см. Step 1b ниже). Default `"General"`.
 
 **Markdown rendering rules:**
 - YAML frontmatter с `id`, `type`, `created`, `updated`, `source_app` (если есть), `conversation_id` (если линк), `tags`
@@ -126,18 +150,23 @@ if AppSettings.shared.obsidianSyncEnabled {
 
 ## Implementation checklist
 
-- [ ] **Step 1 — Models:** добавить `obsidianVaultPath` / `obsidianSyncEnabled` / `obsidianLastFullSyncAt` в `AppSettings.swift`
-- [ ] **Step 2 — Pure rendering:** `ObsidianMarkdownRenderer.swift` — pure-function `func render(_ entity: ExportableEntity) -> String`. Тесты сразу: `ObsidianMarkdownRendererTests.swift` для каждого entity type
-- [ ] **Step 3 — Filename helper:** `slugForFilename(_ text: String, date: Date) -> String` — pure, тестируется
-- [ ] **Step 4 — Service shell:** `ObsidianExporter.swift` с API skeleton, без реальной записи (NSLog only)
-- [ ] **Step 5 — File IO:** реальная запись через FileManager. Test через temp dir
-- [ ] **Step 6 — Bulk export:** `bulkExportAll()` итерация всех таблиц
-- [ ] **Step 7 — Subscribe to changes:** wire в HistoryService / ConversationGrouper / TaskExtractor / MemoryExtractor / InsightStorage
-- [ ] **Step 8 — UI:** Settings раздел с folder picker + toggle + bulk export button
-- [ ] **Step 9 — README generator:** при первом export пишем `MetaWhisp/README.md` со structure docs
-- [ ] **Step 10 — Manual smoke:** записать 5 voices, 1 meeting, 2 tasks → проверить vault структуру в Finder + Obsidian
-- [ ] **Step 11 — Bulk export smoke:** прогнать на всей DB (5000+ items) → проверить time-to-complete + correctness
-- [ ] **Step 12 — Spec close:** обновить WAL.md + memory с прогрессом
+- [ ] **Step 1 — AppSettings extensions:** добавить `obsidianVaultPath: String = ""`, `obsidianSyncEnabled: Bool = false`, `obsidianLastFullSyncAt: Date?`, `obsidianIncludeScreenActivity: Bool = false` в `AppSettings.swift`
+- [ ] **Step 1b — UserMemory.project field:** добавить `var project: String?` в `Models/UserMemory.swift`. SwiftData lightweight migration (Optional field → no schema version bump). Default nil → render as `Memories/General/...`
+- [ ] **Step 2 — Pure rendering:** `Services/Export/ObsidianMarkdownRenderer.swift` — pure-function `static func render(_ entity: ExportableEntity) -> String` для каждого type (HistoryItem, Conversation, TaskItem, UserMemory, ExtractedInsight). Test первым: `ObsidianMarkdownRendererTests.swift` со всеми happy + edge cases (long text, emoji, кириллица в slug, missing fields)
+- [ ] **Step 3 — Filename helpers:** pure functions
+  - `slugForFilename(_ text: String) -> String` — strip emoji, keep кириллица, kebab-case, max 60 chars, collapse repeated dashes
+  - `dateFolder(_ date: Date) -> String` → `"2026-05-12"`
+  - `timestampPrefix(_ date: Date) -> String` → `"14h00"` для within-day ordering
+  - все pure, full test coverage
+- [ ] **Step 4 — Service shell:** `Services/Export/ObsidianExporter.swift` (@MainActor) с API skeleton: `bulkExportAll()`, `exportConversation(_:)`, `exportHistoryItem(_:)`, `exportTask(_:)`, `exportMemory(_:)`, `exportInsight(_:)`, `deleteTaskFile(_:)`. Логирует через NSLog, не пишет файлы пока
+- [ ] **Step 5 — File IO:** реальная запись через FileManager. Создание date-folder + sub-folder если не существуют. Atomic write через `.atomicWrite`. Тесты через temp dir
+- [ ] **Step 6 — Bulk export + cleanup:** `bulkExportAll()` итерирует все non-dismissed entities. Plus: scan vault для orphaned `Tasks/T-*.md` → delete (no SwiftData row). Idempotent: re-running не дублирует, overwrite same-id files
+- [ ] **Step 7 — Subscribe to changes:** wire в `HistoryService`, `ConversationGrouper`, `TaskExtractor`, `MemoryExtractor`, `InsightStorage`. После `ctx.save()` — `Task { await obsidianExporter.exportXxx(id) }`. **Tasks dismiss/delete** — отдельный hook на `TaskItem.isDismissed` change → `deleteTaskFile(id)`
+- [ ] **Step 8 — UI:** в `MainSettingsView.swift` секция **OBSIDIAN SYNC**: folder picker (NSOpenPanel), toggle, bulk export button, optional screen activity toggle. Progress bar для bulk export через `@Published var stats`
+- [ ] **Step 9 — README generator:** при первом export пишем `MetaWhisp/README.md` с описанием structure + tagging conventions + frontmatter schema
+- [ ] **Step 10 — Manual smoke:** записать 5 voices (с/без project tag), 1 meeting, 2 tasks (одну dismiss), 3 memories → проверить структуру в Finder + Obsidian. Verify two-way delete для tasks
+- [ ] **Step 11 — Bulk export smoke:** прогнать на всей DB (5000+ items) → time-to-complete + spot-check correctness. Verify orphan cleanup
+- [ ] **Step 12 — Spec close:** обновить WAL.md + commit + push
 
 **Karpathy reminder:** не пилить Step 4-5 пока Step 2 не зелёный по тестам. Pure rendering — это самое важное правильное место для tests.
 

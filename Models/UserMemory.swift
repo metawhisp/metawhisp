@@ -68,6 +68,13 @@ final class UserMemory {
     var subject: String?
     var characterization: String?
 
+    /// Project this memory belongs to. Drives ObsidianExporter folder
+    /// placement: `Memories/<project>/<date>--<slug>.md`. Nil → "General".
+    /// Added 2026-05-12 (ITER-035 Obsidian sync v2). SwiftData lightweight
+    /// migration: Optional field added without schema version bump, legacy
+    /// rows get nil = General bucket.
+    var project: String?
+
     init(
         content: String,
         category: String,

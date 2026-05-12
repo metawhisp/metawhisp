@@ -91,6 +91,14 @@ final class InsightStorage {
         do {
             try ctx.save()
             NSLog("[InsightStorage] saved: %@", String(insight.body.prefix(80)))
+            // ITER-035 v2 — export the insight to Obsidian vault. tagsCSV
+            // contains "insight" → exportMemory routes it to Insights/ folder.
+            if let exporter = AppDelegate.shared?.obsidianExporter {
+                let memID = mem.id
+                Task { @MainActor in
+                    await exporter.exportMemory(memID)
+                }
+            }
         } catch {
             NSLog("[InsightStorage] save failed (graceful): %@", error.localizedDescription)
         }

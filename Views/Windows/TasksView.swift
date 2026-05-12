@@ -217,6 +217,11 @@ struct TasksView: View {
                 item.completedAt = Date()
                 item.updatedAt = Date()
                 try? modelContext.save()
+                // ITER-035 v2 — re-export so the vault file reflects new completed state
+                let id = item.id
+                Task { @MainActor in
+                    await AppDelegate.shared?.obsidianExporter.exportTask(id)
+                }
             } label: {
                 Image(systemName: "checkmark")
                     .font(.system(size: 12, weight: .medium))
@@ -249,6 +254,11 @@ struct TasksView: View {
                 item.isDismissed = true
                 item.updatedAt = Date()
                 try? modelContext.save()
+                // ITER-035 v2 — dismissed → delete the markdown file from vault (two-way delete).
+                let id = item.id
+                Task { @MainActor in
+                    await AppDelegate.shared?.obsidianExporter.deleteTaskFile(id)
+                }
             } label: {
                 Image(systemName: "xmark")
                     .font(.system(size: 11, weight: .medium))
@@ -320,6 +330,11 @@ struct TasksView: View {
                     item.isDismissed = true
                     item.updatedAt = Date()
                     try? modelContext.save()
+                    // ITER-035 v2 — two-way delete: remove .md file from vault.
+                    let id = item.id
+                    Task { @MainActor in
+                        await AppDelegate.shared?.obsidianExporter.deleteTaskFile(id)
+                    }
                 } label: {
                     Image(systemName: "xmark")
                         .font(.system(size: 10))

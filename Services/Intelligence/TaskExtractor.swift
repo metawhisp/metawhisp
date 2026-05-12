@@ -152,6 +152,16 @@ final class TaskExtractor: ObservableObject {
 
             // Fire-and-forget embedding for semantic RAG (ITER-008).
             AppDelegate.shared?.embeddingService.embedTasksInBackground(tasks, in: ctx)
+
+            // ITER-035 v2 — export each new task as markdown in the user's vault.
+            if let exporter = AppDelegate.shared?.obsidianExporter {
+                let ids = tasks.map { $0.id }
+                Task { @MainActor in
+                    for id in ids {
+                        await exporter.exportTask(id)
+                    }
+                }
+            }
         } catch {
             lastError = error.localizedDescription
             NSLog("[TaskExtractor] ❌ Failed: %@", error.localizedDescription)

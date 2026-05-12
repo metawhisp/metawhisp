@@ -80,6 +80,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     let fileMemoryExtractor = FileMemoryExtractor()
     let appleNotesReader = AppleNotesReaderService()
     let obsidianSync = ObsidianSyncService()
+    /// ITER-035 v2 (2026-05-12) — replaces `obsidianSync` (Journal.md) and
+    /// `MeetingObsidianWriter` (flat Meetings/) with a date-first folder layout
+    /// + project-first memories + two-way task delete. Old services remain in
+    /// the codebase for legacy data; new exports go through this one.
+    let obsidianExporter = ObsidianExporter()
     let calendarReader = CalendarReaderService()
     let ttsService = TTSService()
     let floatingVoiceWindow = FloatingVoiceWindowController()
@@ -212,6 +217,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         coordinator.taskExtractor = taskExtractor
         coordinator.conversationGrouper = conversationGrouper
         coordinator.chatService = chatService
+        // ITER-035 v2: each saved dictation triggers a markdown export.
+        coordinator.obsidianExporter = obsidianExporter
         chatService.ttsService = ttsService
         selectionTranslator = SelectionTranslator(
             textProcessor: coordinator.textProcessor!,
@@ -690,13 +697,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             appleNotesReader.startPeriodic(interval: AppSettings.shared.appleNotesInterval)
         }
 
-        // 9g.1 Configure ObsidianSync (2026-04-28). Outbound: appends new
-        // memories to <vault>/MetaWhisp/Journal.md so they propagate into
-        // the user's broader Obsidian-based knowledge graph.
+        // 9g.1 Configure Obsidian export (ITER-035 v2, 2026-05-12).
+        // New date-first layout via `obsidianExporter`. Legacy
+        // `obsidianSync.startPeriodic()` is intentionally NOT called — its
+        // append-only Journal.md path is superseded. The instance stays around
+        // only so existing wiring compiles; future iteration removes it
+        // entirely after migration script ships.
+        obsidianExporter.configure(modelContainer: historyService.modelContainer)
         obsidianSync.configure(modelContainer: historyService.modelContainer)
-        if AppSettings.shared.obsidianSyncEnabled {
-            obsidianSync.startPeriodic()
-        }
+        // NB: NOT calling obsidianSync.startPeriodic() — replaced by per-save hooks.
 
         // 9h. Configure CalendarReader (Phase 3 E3).
         calendarReader.configure(modelContainer: historyService.modelContainer)
@@ -1071,14 +1080,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             MeetingRecapState.shared.present(payload)
         }
 
-        // Per-meeting Obsidian markdown + calendar event notes patch.
-        // Self-contained — no-op if Obsidian sync isn't enabled.
+        // Per-meeting Obsidian markdown via new ITER-035 v2 exporter.
+        // Self-contained — no-op if Obsidian sync isn't enabled (the exporter
+        // bails inside `vaultURL()` when the path is unset/missing).
+        // NB: 2026-05-12 — replaced `MeetingObsidianWriter.shared.write(...)`
+        // which wrote to legacy flat `Meetings/<date> · <title>.md` layout.
+        // Calendar-event-notes patch is deferred to a follow-up — the new
+        // exporter doesn't touch EKEventStore yet.
         Task { @MainActor [weak self] in
             guard let self else { return }
-            await MeetingObsidianWriter.shared.write(
-                conversationId: conversationId,
-                modelContainer: self.historyService.modelContainer
-            )
+            await self.obsidianExporter.exportConversation(conversationId)
         }
     }
 

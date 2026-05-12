@@ -134,6 +134,18 @@ final class MemoryExtractor: ObservableObject {
 
             // Fire-and-forget embedding for semantic RAG (ITER-008).
             AppDelegate.shared?.embeddingService.embedMemoriesInBackground(insertedMemories, in: ctx)
+
+            // ITER-035 v2 — export each new memory to the Obsidian vault.
+            // Fire-and-forget; exporter handles all gates (sync enabled, vault
+            // path valid) and silently no-ops otherwise.
+            if let exporter = AppDelegate.shared?.obsidianExporter {
+                let ids = insertedMemories.map { $0.id }
+                Task { @MainActor in
+                    for id in ids {
+                        await exporter.exportMemory(id)
+                    }
+                }
+            }
         } catch {
             lastError = error.localizedDescription
             NSLog("[MemoryExtractor] ❌ Failed: %@", error.localizedDescription)

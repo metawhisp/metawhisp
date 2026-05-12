@@ -54,6 +54,11 @@ final class TranscriptionCoordinator: ObservableObject {
     /// spec://BACKLOG#Phase6
     weak var chatService: ChatService?
 
+    /// ITER-035 v2 — after a dictation HistoryItem is saved + assigned to a
+    /// Conversation, fire-and-forget a markdown export to the user's Obsidian
+    /// vault. No-op when sync isn't enabled.
+    weak var obsidianExporter: ObsidianExporter?
+
     /// True while user is holding Right ⌘ (long-press). Set by `startVoiceQuestion()` /
     /// cleared by `stopVoiceQuestion()` handler after the transcript is sent.
     var voiceQuestionMode: Bool = false
@@ -341,6 +346,16 @@ final class TranscriptionCoordinator: ObservableObject {
                 // Assign to Conversation (C1.1) — sets conversationId on the item.
                 if let item {
                     conversationGrouper?.assign(historyItem: item)
+                    // ITER-035 v2 — export this dictation as a markdown file
+                    // in the user's Obsidian vault. Fire-and-forget;
+                    // ObsidianExporter handles all gates (sync enabled, path
+                    // valid, etc) and silently no-ops otherwise.
+                    if let exporter = obsidianExporter {
+                        let itemID = item.id
+                        Task { @MainActor in
+                            await exporter.exportHistoryItem(itemID)
+                        }
+                    }
                 }
             }
 
