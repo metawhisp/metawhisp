@@ -76,7 +76,11 @@ final class FloatingVoiceWindowController {
     private func createWindow() {
         let contentView = FloatingVoiceView(state: VoiceQuestionState.shared)
         let hosting = NSHostingView(rootView: contentView)
-        hosting.frame = NSRect(x: 0, y: 0, width: 520, height: 180)
+        // 380pt pill + 72pt shadow envelope (36 each side, see
+        // FloatingVoiceView pillContent `.padding(36)`). Vertical bumped from
+        // 180 → 300 so the 36pt padding doesn't get squeezed when the QA
+        // pair fills vertical space. 2026-05-12 — fixes shadow clip.
+        hosting.frame = NSRect(x: 0, y: 0, width: 520, height: 300)
 
         let panel = NSPanel(
             contentRect: hosting.frame,

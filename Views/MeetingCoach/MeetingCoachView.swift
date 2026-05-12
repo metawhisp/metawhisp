@@ -55,6 +55,11 @@ struct MeetingCoachView: View {
                 .strokeBorder(MW.border, lineWidth: 0.5)
         )
         .shadow(color: .black.opacity(0.35), radius: 28, y: 14)
+        // Explicit shadow envelope (42pt = radius 28 + |y| 14) so it doesn't
+        // clip when full state (3+ suggestions + transcript) makes the pill
+        // fill the window vertically. 2026-05-12 — proactive fix matching
+        // FloatingVoiceView / MeetingRecapView.
+        .padding(42)
     }
 
     private var header: some View {

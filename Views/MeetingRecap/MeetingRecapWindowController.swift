@@ -46,7 +46,13 @@ final class MeetingRecapWindowController {
             onToggleTask: { [weak self] id in self?.handleToggleTask(id) }
         )
         let hosting = NSHostingView(rootView: view)
-        hosting.frame = NSRect(x: 0, y: 0, width: 560, height: 540)
+        // 480pt pill + 96pt shadow envelope (48 each side, see
+        // MeetingRecapView.recapPill `.padding(48)`). Vertical bumped from 540
+        // → 700 to accommodate dense recap content (header + about + with +
+        // decisions + next steps + memories + actions bar can be ~520pt)
+        // PLUS the 96pt shadow padding without Spacers collapsing to 0.
+        // 2026-05-12 — fixes the clipped shadow visible in user screenshot.
+        hosting.frame = NSRect(x: 0, y: 0, width: 600, height: 700)
         hosting.autoresizingMask = [.width, .height]
 
         let panel = NSPanel(

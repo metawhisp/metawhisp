@@ -15,7 +15,10 @@ final class MWNotificationStackController {
     /// Initial size — gets recalculated from the host view's fittingSize on
     /// every items change. Width is fixed (one card per row); height grows
     /// with the stack (up to maxStack=4 cards).
-    private static let cardWidth: CGFloat = 360
+    /// Width = 344pt card + 28pt shadow envelope (14 each side, see
+    /// MWNotificationCard `.padding(.horizontal, 14)`). 2026-05-12 — was 360,
+    /// bumped to fit shadow without clipping.
+    private static let cardWidth: CGFloat = 372
     private static let edgeInset: CGFloat = 12
 
     init() {

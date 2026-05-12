@@ -58,6 +58,14 @@ struct MWNotificationCard: View {
                 .allowsHitTesting(false)
         )
         .shadow(color: .black.opacity(0.25), radius: 14, x: 0, y: 6)
+        // Explicit shadow envelope (20pt = radius 14 + |y| 6) — without this,
+        // the 344pt card centred in a 360pt window only has 8pt margin per
+        // side, but shadow needs 14pt → straight cut on left/right + a bigger
+        // one on bottom. Stack controller bumps cardWidth + height calc to
+        // accommodate this padding. 2026-05-12.
+        .padding(.horizontal, 14)
+        .padding(.top, 14)
+        .padding(.bottom, 20)
         .contentShape(Rectangle())
         .onTapGesture {
             // Single-tap action for all kinds (ITER-027.5 unified rendering).

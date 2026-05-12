@@ -101,6 +101,11 @@ struct FloatingVoiceView: View {
         .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
         .shadow(color: .black.opacity(0.45), radius: 24, x: 0, y: 12)
         .shadow(color: .black.opacity(0.30), radius: 6, x: 0, y: 2)
+        // Explicit shadow envelope so it doesn't get clipped when content
+        // fills the window vertically. 36pt = radius 24 + |y| 12. Window
+        // height bumped to accommodate (see FloatingVoiceWindowController).
+        // 2026-05-12.
+        .padding(36)
     }
 
     // MARK: - Header

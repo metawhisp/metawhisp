@@ -105,6 +105,12 @@ struct MeetingRecapView: View {
                     .strokeBorder(MW.border, lineWidth: 0.5)
             )
             .shadow(color: .black.opacity(0.4), radius: 32, y: 16)
+            // Explicit shadow envelope so it doesn't get clipped when the pill
+            // content fills the window vertically (Spacer-based centering
+            // collapses to 0 in that case). 48pt = radius 32 + |y| 16. Window
+            // height bumped accordingly so this padding has room (see
+            // MeetingRecapWindowController). 2026-05-12.
+            .padding(48)
     }
 
     // MARK: - Header
