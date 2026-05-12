@@ -1632,3 +1632,72 @@ on Cyrillic. Important because user dictates in Russian.
 
 Sources verified May 12, 2026.
 
+
+## ITER-039 multi-model catalog (user request 2026-05-12 ~13:30)
+
+User wants: «давай предложим юзеру для скачивания несколько вариантов»
+— offer 4-5 models, user downloads multiple, evaluates side-by-side,
+picks favorite via Active switcher.
+
+### Real HF model IDs verified on huggingface.co/mlx-community
+
+```
+1. mlx-community/Phi-4-mini-instruct-4bit          (default)
+   3.8B • AWQ-4bit • ~2.2 GB DL • 3 GB RAM • 135 tok/s on M1
+   Microsoft SOTA <4B, multilingual incl. Russian
+
+2. mlx-community/gemma-4-e2b-it-4bit               (lightweight)
+   E2B effective • TurboQuant-MLX • ~1.5 GB DL • 5 GB RAM • 158 tok/s
+   Speed-priority, edge/mobile-class
+
+3. mlx-community/Qwen3-4B-Instruct-2507-4bit        (multilingual)
+   4B • AWQ-4bit • ~2.3 GB DL • 3 GB RAM • 80 tok/s
+   Best Russian via Alibaba multilingual training
+
+4. mlx-community/Qwen3-7B-Instruct-2507-4bit        (quality)
+   7B • AWQ-4bit • ~4.2 GB DL • 6 GB RAM • 50 tok/s
+   HumanEval 76.0 — best under 8B
+
+5. Apple Foundation Models                          (built-in)
+   ~3B equivalent • 0 MB • native • macOS 26+ only
+   Auto-selected when available, no download needed
+```
+
+### UX requirements for the Settings catalog
+
+- Per-card characteristics: params, size, RAM, speed, quality stars,
+  language support, recommended Mac/RAM tier, best-for tag.
+- Multi-download — user can download all 4 if they want, parallel
+  progress bars.
+- Single Active at a time — visible chip on the card («Active»).
+- Switch any time — model swap in-place, no app restart.
+- Delete — free disk space, keep other downloaded models.
+- **Test prompt button** — fixed input («во-первых купить молоко...»),
+  shows output + time, so user can side-by-side compare.
+
+### Architecture (re-confirmation)
+
+- `Services/LLM/ModelRegistry.swift` — static catalog with HF IDs +
+  characteristics struct.
+- `Services/LLM/MLXModelManager.swift` — download via URLSession +
+  resumable, store in `~/Library/Application Support/MetaWhisp/LocalLLM/<id>/`.
+- `Services/LLM/LocalLLMService.swift` — wrapper exposing `complete(...)`,
+  loads current Active model at startup, supports hot-swap on
+  `settings.localLLMActiveModelID` change.
+- `Models/AppSettings.swift` — `localLLMActiveModelID: String`,
+  `localLLMDownloadedModels: [String]` (or derived from filesystem).
+- `Views/Windows/MainSettingsView` — new AI MODELS section, card list.
+
+### TurboQuant note
+
+User mentioned «turbo quantum lx» — wasn't a thing I knew, but verified
+real: TurboQuant is a quantization method in MLX-vlm that delivers same
+accuracy as uncompressed baseline with ~4× less active memory + faster
+end-to-end. Applied to Gemma 4 E2B currently. Watch for spread to other
+mlx-community models.
+
+Sources verified May 12, 2026:
+- mlx-community on HF
+- Gemma 4 announcement / unsloth docs
+- localaimaster small-model 2026 guide
+
