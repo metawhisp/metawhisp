@@ -270,7 +270,7 @@ final class TranscriptionCoordinator: ObservableObject {
             promptWords.append("MetaWhisp")
             let result = try await currentEngine.transcribe(audioSamples: samples, language: lang, promptWords: promptWords)
 
-            let trimmed = result.text.trimmingCharacters(in: .whitespacesAndNewlines)
+            var trimmed = result.text.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !trimmed.isEmpty else {
                 NSLog("[Coordinator] Empty result")
                 // Surface to user — silent return left them wondering why
@@ -298,6 +298,22 @@ final class TranscriptionCoordinator: ObservableObject {
                 abortVoiceQuestionIfActive(reason: "Filtered as hallucination.")
                 stage = .idle
                 return
+            }
+            // ITER-035-followup #2 (2026-05-12) — long-form dictation MAY still
+            // contain a hallucination artifact spliced into a momentary silence
+            // mid-speech (Whisper inserts «DimaTorzok» / «Subtitles by» between
+            // real phrases). `isAlwaysHallucination` returned false for these
+            // (text was long enough to be real speech), but we still need to
+            // strip the toxic substring before sending to TextProcessor.
+            let lowerCheck = trimmed.lowercased()
+            let stillHasToxic = Self.toxicHallucinationTokens.contains { lowerCheck.contains($0) }
+            if stillHasToxic {
+                let cleaned = Self.stripHallucinationTokens(trimmed)
+                if cleaned != trimmed {
+                    NSLog("[Coordinator] 🧹 Stripped hallucination tokens (was %d chars, now %d)",
+                          trimmed.count, cleaned.count)
+                    trimmed = cleaned
+                }
             }
             // Phase 2: Pattern-match only on near-silence audio (RMS < 0.003).
             // Built-in MacBook mic: silence ~0.0005, quiet speech ~0.002, normal speech ~0.005+
@@ -512,32 +528,76 @@ final class TranscriptionCoordinator: ObservableObject {
     /// Tokens that are ALWAYS hallucinations — filter regardless of audio energy.
     /// These are YouTube artifacts that Whisper never produces from real speech.
     /// Exposed internally so meeting recording can reuse the same filter.
+    /// Tokens that NEVER appear in real human speech — they're Whisper's
+    /// «I don't know what to emit on this silent fragment» fillers. Single
+    /// source of truth for both detection (this method) and surgical removal
+    /// (`stripHallucinationTokens`).
+    static let toxicHallucinationTokens = [
+        "♪", "♫", "торзок", "torzok", "dimatorzok", "dima torzok",
+        "amara.org", "переводчик:", "translator:",
+    ]
+
+    /// Surgical removal of hallucination artifacts from a transcript that's
+    /// OTHERWISE real speech. Catches both bare tokens («DimaTorzok») and the
+    /// usual attribution sentences («Subtitles by DimaTorzok»). Cleans up
+    /// double-spaces and dangling punctuation after removal. Caller checks
+    /// for toxic-token presence first; this just does the cleanup.
+    static func stripHallucinationTokens(_ text: String) -> String {
+        var result = text
+
+        // Order matters — longer / more specific patterns first so we don't
+        // leave «Subtitles by» behind after removing «DimaTorzok».
+        let patterns: [String] = [
+            // Attribution boilerplate (Whisper YouTube artifact):
+            #"(?i)\s*\b(subtitles?|субтитры|перевод|translated)\s+(by\s+|от\s+)?(dima\s*torzok|dimatorzok|amara\.org)\b\.?"#,
+            // Standalone «DimaTorzok» / variants:
+            #"(?i)\bdima\s*torzok\b"#,
+            #"(?i)\bdimatorzok\b"#,
+            #"(?i)\bторзок\b"#,
+            // Translator attribution:
+            #"(?i)переводчик:\s*\S+"#,
+            #"(?i)translator:\s*\S+"#,
+            // Music notation runs:
+            "♪+",
+            "♫+",
+            // amara.org standalone:
+            #"(?i)\bamara\.org\b"#,
+        ]
+
+        for pattern in patterns {
+            guard let regex = try? NSRegularExpression(pattern: pattern) else { continue }
+            let range = NSRange(result.startIndex..., in: result)
+            result = regex.stringByReplacingMatches(in: result, range: range, withTemplate: "")
+        }
+
+        // Collapse multi-space + clean dangling punctuation pairs.
+        if let r = try? NSRegularExpression(pattern: #"\s{2,}"#) {
+            let range = NSRange(result.startIndex..., in: result)
+            result = r.stringByReplacingMatches(in: result, range: range, withTemplate: " ")
+        }
+        // Fix « , » → « ,» and « . » → «. » left by mid-sentence removal.
+        result = result.replacingOccurrences(of: " ,", with: ",")
+        result = result.replacingOccurrences(of: " .", with: ".")
+        result = result.replacingOccurrences(of: " !", with: "!")
+        result = result.replacingOccurrences(of: " ?", with: "?")
+
+        return result.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
     static func isAlwaysHallucination(_ text: String) -> Bool {
         let lower = text.lowercased()
-        let toxicTokens = [
-            "♪", "♫", "торзок", "torzok", "dimatorzok", "dima torzok",
-            "amara.org", "переводчик:", "translator:",
-        ]
-        // ITER-035-followup (2026-05-12) — long-form mention safety net.
-        // Hallucinations from silence are SHORT — Whisper emits a tag like
-        // «Subtitles by DimaTorzok» on quiet audio and stops. A 1000-char
-        // dictation that mentions the same name MID-TEXT is the user
-        // referencing the artifact, not the artifact itself. User report:
-        // user dictated «и Дима Торзок ебаный опять вылез» → filter
-        // greedy-matched on the substring → entire 1084-char dictation
-        // discarded → user pasted clipboard raw without structured cleanup.
-        // 200 chars chosen as the upper bound of typical hallucination
-        // verbiage; real long-form dictation always exceeds this.
-        let isLongForm = text.count >= 200
-        for token in toxicTokens {
-            if lower.contains(token) {
-                if isLongForm {
-                    // Long real speech — keep, process normally. Caller
-                    // gets the verbatim text; TextProcessor still runs.
-                    continue
-                }
-                return true
-            }
+        let containsToxic = Self.toxicHallucinationTokens.contains { lower.contains($0) }
+        if containsToxic {
+            // ITER-035-followup #2 (2026-05-12) — split the decision.
+            // SHORT text + toxic token = pure hallucination (Whisper emitted
+            // «Subtitles by DimaTorzok» on silent audio and stopped). DROP.
+            // LONG text + toxic token = real speech with the artifact spliced
+            // mid-stream. We DON'T drop the whole thing — caller is expected
+            // to call `stripHallucinationTokens(_:)` to surgically remove the
+            // artifact substring and pass the cleaned remainder through to
+            // TextProcessor. Returning `false` here means «not all-hallucination»,
+            // not «no cleanup needed».
+            return text.count < 200
         }
         // Text is ONLY "субтитры" + attribution (no real speech content)
         if lower.hasPrefix("субтитры") && text.count < 60 { return true }
