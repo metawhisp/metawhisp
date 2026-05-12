@@ -518,8 +518,26 @@ final class TranscriptionCoordinator: ObservableObject {
             "♪", "♫", "торзок", "torzok", "dimatorzok", "dima torzok",
             "amara.org", "переводчик:", "translator:",
         ]
+        // ITER-035-followup (2026-05-12) — long-form mention safety net.
+        // Hallucinations from silence are SHORT — Whisper emits a tag like
+        // «Subtitles by DimaTorzok» on quiet audio and stops. A 1000-char
+        // dictation that mentions the same name MID-TEXT is the user
+        // referencing the artifact, not the artifact itself. User report:
+        // user dictated «и Дима Торзок ебаный опять вылез» → filter
+        // greedy-matched on the substring → entire 1084-char dictation
+        // discarded → user pasted clipboard raw without structured cleanup.
+        // 200 chars chosen as the upper bound of typical hallucination
+        // verbiage; real long-form dictation always exceeds this.
+        let isLongForm = text.count >= 200
         for token in toxicTokens {
-            if lower.contains(token) { return true }
+            if lower.contains(token) {
+                if isLongForm {
+                    // Long real speech — keep, process normally. Caller
+                    // gets the verbatim text; TextProcessor still runs.
+                    continue
+                }
+                return true
+            }
         }
         // Text is ONLY "субтитры" + attribution (no real speech content)
         if lower.hasPrefix("субтитры") && text.count < 60 { return true }
