@@ -130,6 +130,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     private var calendarHardStopTask: Task<Void, Never>?
     /// Counter for `notifyAndExtend` rounds. Reset on each new recording.
     private var calendarEndNotifyAttempts: Int = 0
+    /// ITER-035-followup (2026-05-12) — per-app cooldown for the «CALL DETECTED»
+    /// notification card. The underlying `CallSessionMachine` already de-dupes
+    /// while the session is alive, but it clears the session after the 180s
+    /// nil-debounce — so if the user tab-switches off the meeting tab for
+    /// > 3 min during a long call (very common), the next time they tab back
+    /// the system treats it as a fresh call and fires the card again. The
+    /// user reported this UX as «card вылезает каждый раз когда переключаю
+    /// экран на протяжении созвона». This map enforces a 30-min cooldown on
+    /// the card itself — independent of session-machine state.
+    /// Key: callName ("Google Meet" etc). Value: timestamp of last card fired.
+    private var lastCallCardFiredAt: [String: Date] = [:]
     /// Fast 1-sec polling loop for `MeetingAutoStartGate`. Samples frontmost
     /// window state, audio level, calendar events; feeds to gate; on
     /// `.fallbackReady` / `.calendarReady` runs the countdown + audio-sniff
@@ -876,6 +887,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
                 NSLog("[CallDetect] %@ user declined recording for this session — suppress (no auto-restart)", callName)
                 return
             case let .fireNotify(name, armCountdown):
+                // ITER-035-followup (2026-05-12) — outer per-app cooldown.
+                // CallSessionMachine de-dupes ONLY while the session is alive.
+                // It clears after the 180s nil-debounce (when window-scan
+                // stops seeing the meeting tab). If user tab-switches off the
+                // meeting for > 3 min, next return = fresh session = new card.
+                // Result: card flashes every time during a long meeting. We
+                // suppress here regardless of session state if we already
+                // showed the card for this name within the last 30 min.
+                let cardCooldown: TimeInterval = 30 * 60
+                if let lastFired = lastCallCardFiredAt[name],
+                   Date().timeIntervalSince(lastFired) < cardCooldown {
+                    NSLog("[CallDetect] %@ — card shown %.0f sec ago < %.0fs cooldown, suppress",
+                          name, Date().timeIntervalSince(lastFired), cardCooldown)
+                    return
+                }
+                lastCallCardFiredAt[name] = Date()
+
                 // ITER-026 v2 — info-only "call detected" notification. Auto-start
                 // is now governed by `MeetingAutoStartGate` via the fast tick
                 // loop in `runMeetingAutoStartTick`. The gate requires
