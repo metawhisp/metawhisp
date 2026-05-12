@@ -1514,3 +1514,44 @@ User предпочитает продуктовые фичи > infrastructure p
 3. Surface open questions above to user
 4. Wait for picks → start coding on chosen iteration
 
+
+---
+
+## End-of-session marker (2026-05-12 ~13:00 local)
+
+**ITER-035 v2 shipped** (commit dabe580 yesterday) — Obsidian vault sync with date-first / project-first layout. Live, hooks wired in 5 services + TasksView, settings UI bulk-export button.
+
+**ITER-037 Option A shipped** (commit 4a43923) — three integration setup docs (Claude Desktop / Cursor / ChatGPT) in `specs/integrations/` + Settings UI link buttons.
+
+**Today's UX + cost fix sweep (9 commits on `architecture-phase-1-3`):**
+- `5933bca` shadow envelope systematic fix (4 floating views)
+- `48323a2` meeting overrun card → `recordingOverrun` kind + silentExtend + 10-min guard
+- `101578a` CALL DETECTED 30-min per-app cooldown
+- `95629e9` SF Symbol detection via AppKit
+- `914afbf` recap header drops emoji icon + StructuredGen anti-hallucination prompt
+- `05d41fd` StructuredGen backfill cost-control (was burning $1+/day on infinite retry loop)
+- `86d0a6d` ConversationDetailView project picker (Menu w/ existing + new + clear)
+- `ab6d6ff` then `b6a3130` — hallucination filter: surgical strip of toxic tokens (DimaTorzok etc) instead of whole-text reject; lower bound 200 chars for «mention vs hallucination» split.
+
+**v1.3.4 still in GitHub Releases** — these 9 fixes are debug-only (user PID 49274). Next release = v1.3.5 with all of these. Appcast pivot already done — when v1.3.5 ships, `appcast.xml` gets a new entry and Sparkle picks it up automatically.
+
+**Audit cost picture (post-fix expected):**
+- llama-3.3-70b: $0.10-0.30/day (was $0.40-1.60 because backfill loop)
+- Whisper: <$0.05/day at user's usage volume
+
+**Open at end of session:**
+- ITER-036 RAG lifetime chat (entity index + temporal queries) — 3 days, untouched
+- Loosen Free/Pro gates (text-style, daily summary BYOK) — 30 min, optional
+- `build.sh` bundle `specs/integrations/*.md` into Resources/ so release-build setup-buttons resolve correctly — 15 min, optional
+- ITER-027.6 vision + 2-phase SQL for insights — multi-day, deferred
+- Backup bundle 4.9 MB cleanup — 1 min, housekeeping
+
+**User-facing smoke checklist** (next time user dictates / records meeting):
+- Project picker chip → click → menu opens with existing projects + «+ New» + «Clear»
+- Long dictation with Whisper hallucinated «DimaTorzok» mid-stream → token stripped, sentence intact, processed normally
+- Meeting overrun → first 10 min no card EVER; after that silentExtend if both audio+app active, notifyAndExtend otherwise
+- Screen recap card → no SF Symbol icon left of title, just title + meta
+- Stack-of-notifications shadows → no straight cut at edges
+
+**Session ends here.** No new background tasks armed. No memory notes added (existing `routine_daily_audit_session_start.md` + `reference_cloudflare_worker.md` still relevant).
+
