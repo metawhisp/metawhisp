@@ -1391,11 +1391,56 @@ struct MainSettingsView: View {
                     .glassChip(selected: false, radius: MW.rTiny)
                 }
                 .buttonStyle(.plain)
+
+                // ITER-037 Option A (2026-05-12) — external LLM access docs.
+                // After bulk export, the user can wire Claude Desktop / Cursor /
+                // ChatGPT to read the vault as «second memory». No custom code —
+                // just MCP filesystem server pointed at the vault path.
+                Divider().padding(.vertical, 4)
+                Text("EXTERNAL LLM ACCESS")
+                    .font(MW.label).tracking(1.0)
+                    .foregroundStyle(MW.textMuted)
+                Text("Once vault is filled, point Claude Desktop / Cursor / ChatGPT at it. They'll read your voices, meetings, tasks and memories as «second memory».")
+                    .font(MW.monoSm).foregroundStyle(MW.textMuted)
+                    .fixedSize(horizontal: false, vertical: true)
+                HStack(spacing: 6) {
+                    integrationDocButton(label: "Setup Claude Desktop", file: "CLAUDE-DESKTOP-SETUP.md")
+                    integrationDocButton(label: "Setup Cursor", file: "CURSOR-SETUP.md")
+                    integrationDocButton(label: "Setup ChatGPT", file: "CHATGPT-SETUP.md")
+                }
             }
         }
         .padding(MW.sp16)
         .frame(maxWidth: .infinity, alignment: .topLeading)
         .mwCard(radius: MW.rMedium, elevation: .raised)
+    }
+
+    /// ITER-037 Option A — opens the relevant setup doc from `specs/integrations/`
+    /// in the user's preferred Markdown viewer (Finder fallback). Bundled into
+    /// the .app at `Contents/Resources/integrations/<file>` by build.sh; here
+    /// we resolve via Bundle.main + NSWorkspace.open.
+    private func integrationDocButton(label: String, file: String) -> some View {
+        Button {
+            // Prefer bundled doc; if not present (debug builds skip resource
+            // copy), open the source spec via filesystem path.
+            let bundledURL = Bundle.main.url(forResource: file.replacingOccurrences(of: ".md", with: ""), withExtension: "md", subdirectory: "integrations")
+            let fallbackURL = URL(fileURLWithPath: "/Users/\(NSUserName())/Code/MetaWhisp/specs/integrations/\(file)")
+            let url = bundledURL ?? (FileManager.default.fileExists(atPath: fallbackURL.path) ? fallbackURL : nil)
+            if let url {
+                NSWorkspace.shared.open(url)
+            } else {
+                NSLog("[Settings] Integration doc not found: %@", file)
+            }
+        } label: {
+            HStack(spacing: 4) {
+                Image(systemName: "book")
+                    .font(.system(size: 10))
+                Text(label).font(MW.label).tracking(0.6)
+            }
+            .foregroundStyle(MW.textSecondary)
+            .glassChip(selected: false, radius: MW.rTiny)
+        }
+        .buttonStyle(.plain)
     }
 
     private var calendarSection: some View {
