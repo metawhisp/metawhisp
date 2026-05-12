@@ -33,6 +33,14 @@ struct ConversationDetailView: View {
     @State private var selectedTab: Tab = .summary
     @State private var isRegenerating = false
     @State private var lastError: String?
+    /// ITER-037-followup (2026-05-12) — interactive project assign.
+    /// `existingProjects` populated once on appear from distinct values
+    /// across all Conversations + UserMemories, so the picker shows
+    /// what's already in use as one-click options. `showingNewProjectAlert`
+    /// gates the «+ New project» modal.
+    @State private var existingProjects: [String] = []
+    @State private var showingNewProjectAlert = false
+    @State private var newProjectName: String = ""
 
     private enum Tab: String, CaseIterable {
         case summary = "SUMMARY"
@@ -65,6 +73,7 @@ struct ConversationDetailView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .task(id: conversationId) {
             await reload()
+            loadExistingProjects()  // ITER-037-followup — populate project picker
         }
     }
 
@@ -86,9 +95,7 @@ struct ConversationDetailView: View {
                         if let cat = conv.category, !cat.isEmpty, cat != "other" {
                             chip(cat.uppercased())
                         }
-                        if let proj = conv.primaryProject, !proj.isEmpty {
-                            chip("📁 \(proj)")
-                        }
+                        projectMenu(conv)
                         chip(conv.source.uppercased())
                         Text(conv.startedAt.formatted(date: .abbreviated, time: .shortened))
                             .font(MW.monoSm)
@@ -406,6 +413,108 @@ struct ConversationDetailView: View {
             .foregroundStyle(MW.textMuted)
             .padding(.horizontal, 6).padding(.vertical, 2)
             .overlay(RoundedRectangle(cornerRadius: 3, style: .continuous).stroke(MW.border, lineWidth: 0.5))
+    }
+
+    // MARK: - Project picker (ITER-037-followup)
+
+    /// Inline menu replacing the read-only project chip. User can re-assign
+    /// the conversation's `primaryProject` from any value already in use OR
+    /// add a new one via the «+ New project» modal. Clearing the project
+    /// sets the field back to nil → ObsidianExporter will route future
+    /// voice exports to `voices/<HHhMM>--Untagged.md`.
+    @ViewBuilder
+    private func projectMenu(_ conv: Conversation) -> some View {
+        let label = conv.primaryProject?.isEmpty == false ? "📁 \(conv.primaryProject!)" : "📁 No project"
+        Menu {
+            ForEach(existingProjects, id: \.self) { proj in
+                Button {
+                    setProject(conv, proj.isEmpty ? nil : proj)
+                } label: {
+                    if conv.primaryProject == proj {
+                        Label(proj, systemImage: "checkmark")
+                    } else {
+                        Text(proj)
+                    }
+                }
+            }
+            Divider()
+            Button("+ New project…") {
+                newProjectName = ""
+                showingNewProjectAlert = true
+            }
+            if conv.primaryProject != nil {
+                Button("Clear project", role: .destructive) {
+                    setProject(conv, nil)
+                }
+            }
+        } label: {
+            Text(label)
+                .font(MW.label).tracking(0.6)
+                .foregroundStyle(MW.textMuted)
+                .padding(.horizontal, 6).padding(.vertical, 2)
+                .overlay(RoundedRectangle(cornerRadius: 3, style: .continuous).stroke(MW.border, lineWidth: 0.5))
+        }
+        .menuStyle(.borderlessButton)
+        .alert("New project name", isPresented: $showingNewProjectAlert) {
+            TextField("e.g. MetaWhisp", text: $newProjectName)
+            Button("Cancel", role: .cancel) {}
+            Button("Save") {
+                let trimmed = newProjectName.trimmingCharacters(in: .whitespacesAndNewlines)
+                if !trimmed.isEmpty {
+                    setProject(conv, trimmed)
+                    if !existingProjects.contains(trimmed) {
+                        existingProjects.append(trimmed)
+                        existingProjects.sort()
+                    }
+                }
+            }
+        }
+    }
+
+    /// Persist project change + trigger Obsidian re-export so the vault
+    /// files for this conversation's HistoryItems move to the new project
+    /// folder. Old project's folder files are left in place — user can
+    /// click «Export everything» in Settings later to rebuild from scratch.
+    private func setProject(_ conv: Conversation, _ newProject: String?) {
+        conv.primaryProject = newProject
+        conv.updatedAt = Date()
+        try? modelContext.save()
+        // Re-export every HistoryItem in this conversation so voices land
+        // in the right project folder.
+        let convID = conv.id
+        Task { @MainActor in
+            guard let exporter = AppDelegate.shared?.obsidianExporter else { return }
+            for item in transcript {
+                await exporter.exportHistoryItem(item.id)
+            }
+            // If it's a meeting, re-export the meeting summary too.
+            if conv.source == "meeting" {
+                await exporter.exportConversation(convID)
+            }
+        }
+    }
+
+    /// Populate `existingProjects` from distinct values across Conversations
+    /// and UserMemories. Sorted, deduped, empty/nil filtered.
+    private func loadExistingProjects() {
+        var seen = Set<String>()
+        let convDesc = FetchDescriptor<Conversation>()
+        if let convs = try? modelContext.fetch(convDesc) {
+            for c in convs {
+                if let p = c.primaryProject?.trimmingCharacters(in: .whitespacesAndNewlines), !p.isEmpty {
+                    seen.insert(p)
+                }
+            }
+        }
+        let memDesc = FetchDescriptor<UserMemory>()
+        if let mems = try? modelContext.fetch(memDesc) {
+            for m in mems {
+                if let p = m.project?.trimmingCharacters(in: .whitespacesAndNewlines), !p.isEmpty {
+                    seen.insert(p)
+                }
+            }
+        }
+        existingProjects = Array(seen).sorted { $0.lowercased() < $1.lowercased() }
     }
 
     // MARK: - Data
