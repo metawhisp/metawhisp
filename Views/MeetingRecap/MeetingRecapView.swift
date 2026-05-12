@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 /// Per-meeting recap popup card (2026-04-29).
@@ -282,13 +283,14 @@ struct MeetingRecapView: View {
         return "\(mins / 60)h \(mins % 60)m"
     }
 
-    /// True if `s` looks like an SF Symbol name (e.g. "bubble.left",
-    /// "phone.connection") rather than a Unicode emoji ("📞"). SF Symbol names
-    /// are ASCII + dot-separated. Real emojis use codepoints in private-use
-    /// emoji blocks. Cheap heuristic: ASCII + contains a dot = SF Symbol.
+    /// True if `s` is a valid SF Symbol name. Asks AppKit directly via
+    /// `NSImage(systemSymbolName:)` — Apple's own resolver, no false positives
+    /// or negatives. 2026-05-12 — replaced the previous "contains a dot"
+    /// heuristic that missed single-word SF Symbols (`hammer`, `bell`, `gear`,
+    /// `star`, `phone`, `bubble`, …) and rendered them as literal text in
+    /// the recap header. User report: «не понимаю почему hammer ещё написано».
     private func isSFSymbolName(_ s: String) -> Bool {
-        guard !s.isEmpty else { return false }
-        guard s.allSatisfy({ $0.isASCII }) else { return false }
-        return s.contains(".")
+        guard !s.isEmpty, s.allSatisfy({ $0.isASCII }) else { return false }
+        return NSImage(systemSymbolName: s, accessibilityDescription: nil) != nil
     }
 }
