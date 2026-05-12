@@ -1555,3 +1555,55 @@ User предпочитает продуктовые фичи > infrastructure p
 
 **Session ends here.** No new background tasks armed. No memory notes added (existing `routine_daily_audit_session_start.md` + `reference_cloudflare_worker.md` still relevant).
 
+
+## Next session start: ITER-039 + v1.3.5 release
+
+User committed 2026-05-12 ~13:10: «давай для free-моделей добавим опцию
+скачать с huggingface супер-быструю модель» — local LLM для Free tier
+без Pro / без BYOK ключа. Then v1.3.5 release with all today's fixes
+shipped through Sparkle to existing users.
+
+### Plan
+
+1. **ITER-039 — Local LLM for Free tier** (~4-5 days)
+   - Tech: MLX Swift + `mlx-community/` models on HuggingFace
+   - Default model: Llama-3.2-3B-Instruct-MLX-4bit (1.5GB, 35 tok/s on M1)
+   - Smaller alt: Llama-3.2-1B (700MB, weak Macs)
+   - Phase 1: integrate MLX, model download UI, LocalLLMService, wire
+     into TextProcessor (Structured mode)
+   - Phase 2: wire into MemoryExtractor, TaskExtractor, ChatService
+   - Phase 3 (optional): macOS 26+ Foundation Models bypass — 0 MB,
+     built-in. Skip download entirely.
+
+2. **v1.3.5 release** (~30 min)
+   - Bump Info.plist 1.3.4 → 1.3.5
+   - `bash build.sh` → notarize → DMG
+   - `gh release create v1.3.5` + upload DMG
+   - Update src/appcast.xml in metawhisp/MetaWhisp.com repo
+   - Verify Sparkle auto-update to existing v1.3.4 users
+
+   Bundle 9 UX+cost fixes from today + ITER-035 v2 + ITER-037 Option A
+   + ITER-039 local LLM into the same release. Major version-worthy
+   bump but holding the minor («.5») because semver isn't user-facing
+   here.
+
+### Defaults set by Claude (user can override at start)
+
+- MLX model: Llama-3.2-3B-Instruct-4bit (vs Qwen2.5-3B alternative)
+- Phase order: Structured → Memory/Task/Chat → Foundation Models
+- Foundation Models bypass deferred to Phase 3, not blocking Phase 1+2
+
+### What to check before coding
+
+- `bash audit-daily.sh` (per session-start memory)
+- Confirm Groq spend over the past 24h has dropped → validates backfill
+  cost-control fix is working in production
+- Quick smoke of the 5-item checklist from prior WAL entry
+- Ask user if defaults above are OK before starting Phase 1
+
+### Open dependencies
+
+- `mlx-swift` Swift Package on https://github.com/ml-explore/mlx-swift
+  — add as dependency in Package.swift
+- Models download URLs from HuggingFace `mlx-community/Llama-3.2-3B-
+  Instruct-4bit` — need stable URL pattern for resume-on-fail downloads
