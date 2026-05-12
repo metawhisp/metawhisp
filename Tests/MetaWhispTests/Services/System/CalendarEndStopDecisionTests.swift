@@ -158,6 +158,56 @@ final class CalendarEndStopDecisionTests: XCTestCase {
         }
     }
 
+    /// REGRESSION 2026-05-12: user got «RECORDING STOPPED · Meeting
+    /// overrunning» card ~5 min into a recording (event was short OR
+    /// recording started after event end). Recording was actually CONTINUING,
+    /// not stopped — the card title was misleading. Fix: when BOTH signals
+    /// say meeting is clearly ongoing (audio active AND meeting app visible),
+    /// return `.silentExtend` instead of `.notifyAndExtend` — no card pushed.
+    func test_bothPositiveSignals_silentExtendNotNotify() {
+        let decision = CalendarEndStopDecision.evaluate(
+            now: now.addingTimeInterval(70),
+            eventEnd: now,
+            audioRMSLastNSec: 0.05,
+            notifyAttemptsSoFar: 0,
+            recentAudioActive: true,
+            meetingAppVisible: true
+        )
+        if case .silentExtend = decision {
+            // OK
+        } else {
+            XCTFail("expected silentExtend when both signals active, got \(decision)")
+        }
+    }
+
+    /// Only ONE positive signal (audio but no visible meeting app, or vice versa)
+    /// → still notifyAndExtend (caller pushes a card so user knows).
+    func test_onePositiveSignal_notifyAndExtend() {
+        let auditDecision = CalendarEndStopDecision.evaluate(
+            now: now.addingTimeInterval(70),
+            eventEnd: now,
+            audioRMSLastNSec: 0.05,
+            notifyAttemptsSoFar: 0,
+            recentAudioActive: true,
+            meetingAppVisible: false
+        )
+        if case .notifyAndExtend = auditDecision { } else {
+            XCTFail("audio-only signal should still notify, got \(auditDecision)")
+        }
+
+        let visibleDecision = CalendarEndStopDecision.evaluate(
+            now: now.addingTimeInterval(70),
+            eventEnd: now,
+            audioRMSLastNSec: 0.001,
+            notifyAttemptsSoFar: 0,
+            recentAudioActive: false,
+            meetingAppVisible: true
+        )
+        if case .notifyAndExtend = visibleDecision { } else {
+            XCTFail("app-visible-only signal should still notify, got \(visibleDecision)")
+        }
+    }
+
     /// Same regression — alternate channel: if a meeting app (Zoom / Meet /
     /// Teams / etc) is visible on screen in the recent capture window, the
     /// meeting is ongoing regardless of audio. Blocks stopNow.

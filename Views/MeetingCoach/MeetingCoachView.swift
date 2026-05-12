@@ -15,6 +15,26 @@ struct MeetingCoachView: View {
     var onStop: (() -> Void)?
 
     var body: some View {
+        // Outer container fills the entire NSHostingView so the SwiftUI canvas
+        // matches the window content rect (540×440). Without this, SwiftUI
+        // sizes the root to intrinsic content (pill + padding only), and the
+        // 28-radius shadow rendered beyond that boundary gets clipped by the
+        // transparent window edge — visible as straight shadow cut-offs in
+        // the screenshot user reported 2026-05-12. With maxWidth/maxHeight
+        // .infinity, the shadow extends freely inside the full canvas.
+        VStack {
+            Spacer(minLength: 0)
+            HStack {
+                Spacer(minLength: 0)
+                pillContent
+                Spacer(minLength: 0)
+            }
+            Spacer(minLength: 0)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    private var pillContent: some View {
         VStack(alignment: .leading, spacing: 10) {
             header
             if state.suggestions.isEmpty {
@@ -35,10 +55,6 @@ struct MeetingCoachView: View {
                 .strokeBorder(MW.border, lineWidth: 0.5)
         )
         .shadow(color: .black.opacity(0.35), radius: 28, y: 14)
-        // Generous outer padding (was 12) so the 28pt-radius shadow has room
-        // to render on every side of the card before the host window edge.
-        .padding(.horizontal, 36)
-        .padding(.vertical, 40)
     }
 
     private var header: some View {

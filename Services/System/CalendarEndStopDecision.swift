@@ -9,8 +9,15 @@ enum CalendarEndStopDecision: Equatable {
     case keepRunning
     /// Past endDate + grace, audio below quiet threshold → stop now.
     case stopNow
-    /// Past endDate + grace BUT audio is still active → push notification
-    /// to user and re-check at `newDeadline`.
+    /// Both strong signals say meeting is ongoing (audio active AND meeting
+    /// app visible). Extend the deadline silently — no user-facing card.
+    /// ITER-035-followup (2026-05-12): the previous behavior pushed a
+    /// «RECORDING STOPPED · Meeting overrunning» card here, which was both
+    /// misleading (recording was NOT stopped) and noisy (fires within
+    /// minutes of recording start if the calendar event was short).
+    case silentExtend(newDeadline: Date)
+    /// Past endDate + grace, ONE positive signal but not both → push a
+    /// user-facing «still recording» card and re-check at `newDeadline`.
     case notifyAndExtend(newDeadline: Date)
     /// User has ignored too many notify attempts → force stop to prevent
     /// indefinite recording (e.g. someone left mic on overnight after a
@@ -96,15 +103,22 @@ extension CalendarEndStopDecision {
         // enough evidence the meeting is over. We need EITHER:
         //   • audio continuously quiet for the caller's sliding window, OR
         //   • the meeting app gone from screen recently.
-        // Either positive signal → graceful notifyAndExtend instead of stopNow.
-        let meetingLikelyOngoing = recentAudioActive || meetingAppVisible
+        // Either positive signal → don't stop. Both → silent extend.
 
         // Past grace, audio quiet, and no positive "still going" signal → stop.
-        if audioRMSLastNSec < quietRMSThreshold && !meetingLikelyOngoing {
+        if audioRMSLastNSec < quietRMSThreshold && !recentAudioActive && !meetingAppVisible {
             return .stopNow
         }
 
-        // Audio still active (or meeting still visible) → notify, re-check later.
+        // ITER-035-followup (2026-05-12) — both strong signals say meeting is
+        // ongoing → silent extension, no user card. Avoids the «RECORDING
+        // STOPPED · Meeting overrunning» false-alarm card the user reported
+        // hitting after only ~5 minutes of recording.
+        if recentAudioActive && meetingAppVisible {
+            return .silentExtend(newDeadline: now.addingTimeInterval(extensionSeconds))
+        }
+
+        // One positive signal — uncertain, notify the user and re-check later.
         return .notifyAndExtend(newDeadline: now.addingTimeInterval(extensionSeconds))
     }
 }

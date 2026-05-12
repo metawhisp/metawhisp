@@ -1860,7 +1860,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     }
 
     /// ITER-034 — schedule calendar-end auto-stop. Re-schedules itself on
-    /// `notifyAndExtend` outcomes. Cancelled by `stopMeetingRecording`.
+    /// `notifyAndExtend` / `silentExtend` outcomes. Cancelled by `stopMeetingRecording`.
     private func armCalendarEndStopTask(eventID: String, eventEnd: Date) {
         calendarHardStopTask?.cancel()
         let attemptsAtSchedule = calendarEndNotifyAttempts
@@ -1868,7 +1868,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         let grace = CalendarEndStopDecisionRules.defaultGraceSeconds
         // Fire at endDate + grace, OR right now if already past (e.g.
         // re-arm after a notifyAndExtend whose deadline already lapsed).
-        let fireAt = max(eventEnd.addingTimeInterval(grace), now.addingTimeInterval(1))
+        var fireAt = max(eventEnd.addingTimeInterval(grace), now.addingTimeInterval(1))
+
+        // ITER-035-followup (2026-05-12) — minimum-recording-time guard.
+        // Without this, if `eventEnd` is already in the past at start of
+        // recording (e.g. user joined a meeting that was scheduled hours ago),
+        // the first fire happens immediately and the user gets a «calendar
+        // ended, still recording?» card within the first ~60s of recording.
+        // Confusing UX. We push fire-time to at least
+        // `recordingStartedAt + minRecordingForOverrunCard` so users get
+        // 10 quiet minutes of recording before any overrun-card chatter.
+        if let recordingStart = meetingRecorder.recordingStartedAt {
+            let minRecordingForOverrunCard: TimeInterval = 10 * 60
+            let earliestFire = recordingStart.addingTimeInterval(minRecordingForOverrunCard)
+            if earliestFire > fireAt {
+                fireAt = earliestFire
+            }
+        }
         let delay = fireAt.timeIntervalSince(now)
         NSLog("[CalendarEndStop] armed for eventID=%@ end=%@ fireIn=%.0fs (attempt=%d)",
               eventID, "\(eventEnd)", delay, attemptsAtSchedule)
@@ -1920,12 +1936,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
                 self.armCalendarEndStopTask(eventID: eventID, eventEnd: eventEnd)
             case .stopNow:
                 self.stopMeetingRecording(reason: "calendar-end-grace:\(eventID)")
+            case let .silentExtend(newDeadline):
+                // Both audio + meeting app say ongoing → extend without bothering
+                // the user. No card, no notify-attempt counter bump. We only
+                // re-arm the next check at `newDeadline`.
+                let pseudoEnd = newDeadline.addingTimeInterval(-CalendarEndStopDecisionRules.defaultGraceSeconds)
+                self.armCalendarEndStopTask(eventID: eventID, eventEnd: pseudoEnd)
             case let .notifyAndExtend(newDeadline):
                 self.calendarEndNotifyAttempts += 1
+                // ITER-035-followup (2026-05-12) — use the new `recordingOverrun`
+                // kind so the title reads «STILL RECORDING» (truthful) instead
+                // of the old «RECORDING STOPPED» (misleading — the recorder is
+                // CONTINUING here, not stopping).
                 let card = MWNotification(
-                    kind: .recordingStopped,
-                    title: "Meeting overrunning",
-                    body: "Calendar event ended. Tap to stop now or it will re-check in 5 min.",
+                    kind: .recordingOverrun,
+                    title: "Calendar slot ended — still recording",
+                    body: "Audio activity detected, keeping the recording going. Tap to stop now, or it will re-check in 5 min.",
                     onTap: { [weak self] in
                         guard let self else { return }
                         self.stopMeetingRecording(reason: "calendar-end-overrun-card-tap:\(eventID)")

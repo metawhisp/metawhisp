@@ -10,6 +10,23 @@ struct FloatingVoiceView: View {
     @ObservedObject var state: VoiceQuestionState
 
     var body: some View {
+        // Fill the full NSHostingView (520×180) so the 24-radius shadow has
+        // room on every side — without this, SwiftUI canvas = pill intrinsic
+        // size and shadow clips at the transparent window edge.
+        // ITER-035-followup (2026-05-12).
+        VStack {
+            Spacer(minLength: 0)
+            HStack {
+                Spacer(minLength: 0)
+                pillContent
+                Spacer(minLength: 0)
+            }
+            Spacer(minLength: 0)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    private var pillContent: some View {
         VStack(spacing: 0) {
             header
 

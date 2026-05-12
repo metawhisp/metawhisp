@@ -17,8 +17,27 @@ struct MeetingRecapView: View {
     var onToggleTask: (UUID) -> Void
 
     var body: some View {
+        // Outer container fills NSHostingView (560×540) so the 32-radius shadow
+        // doesn't clip at the transparent window edge. The pill itself is
+        // centred within. Same fix pattern as MeetingCoachView / FloatingVoiceView.
+        // ITER-035-followup (2026-05-12).
         if let p = state.payload {
-            VStack(alignment: .leading, spacing: 0) {
+            VStack {
+                Spacer(minLength: 0)
+                HStack {
+                    Spacer(minLength: 0)
+                    recapPill(p)
+                    Spacer(minLength: 0)
+                }
+                Spacer(minLength: 0)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+    }
+
+    @ViewBuilder
+    private func recapPill(_ p: MeetingRecapState.Payload) -> some View {
+        VStack(alignment: .leading, spacing: 0) {
                 header(p)
                 divider
                 ScrollView {
@@ -86,8 +105,6 @@ struct MeetingRecapView: View {
                     .strokeBorder(MW.border, lineWidth: 0.5)
             )
             .shadow(color: .black.opacity(0.4), radius: 32, y: 16)
-            .padding(40)
-        }
     }
 
     // MARK: - Header

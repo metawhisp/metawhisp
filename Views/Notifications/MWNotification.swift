@@ -40,7 +40,8 @@ struct MWNotification: Identifiable {
     enum Kind {
         case task             // task extracted from voice / screen
         case call             // call detected (Zoom/Meet/Teams)
-        case recordingStopped // meeting recorder auto-stopped
+        case recordingStopped // meeting recorder auto-stopped — recording REALLY ended
+        case recordingOverrun // recording CONTINUES past calendar slot — info only (user can tap to stop)
         case recap            // meeting recap (light variant — heavy block lives in MeetingRecapWindow)
         case advice           // proactive advice item
         case proactive        // multi-row proactive surface (memory / past decision / waiting-on)
@@ -50,6 +51,7 @@ struct MWNotification: Identifiable {
             case .task:             return "text.badge.plus"
             case .call:             return "phone.fill"
             case .recordingStopped: return "stop.circle"
+            case .recordingOverrun: return "stopwatch"
             case .recap:            return "doc.text"
             case .advice:           return "sparkles"
             case .proactive:        return "lightbulb.fill"
@@ -61,6 +63,7 @@ struct MWNotification: Identifiable {
             case .task:             return MW.idle
             case .call:             return MW.postProcess
             case .recordingStopped: return MW.textMuted
+            case .recordingOverrun: return MW.processing  // orange — active, needs attention but not error
             case .recap:            return MW.idle
             case .advice:           return Color(red: 0.65, green: 0.40, blue: 1.00)
             case .proactive:        return Color(red: 1.00, green: 0.80, blue: 0.20)
@@ -72,6 +75,7 @@ struct MWNotification: Identifiable {
             case .task:             return "NEW TASK"
             case .call:             return "CALL DETECTED"
             case .recordingStopped: return "RECORDING STOPPED"
+            case .recordingOverrun: return "STILL RECORDING"
             case .recap:            return "MEETING RECAP"
             case .advice:           return "ADVICE"
             case .proactive:        return "CONTEXT"
