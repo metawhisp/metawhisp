@@ -1567,8 +1567,9 @@ shipped through Sparkle to existing users.
 
 1. **ITER-039 — Local LLM for Free tier** (~4-5 days)
    - Tech: MLX Swift + `mlx-community/` models on HuggingFace
-   - Default model: Llama-3.2-3B-Instruct-MLX-4bit (1.5GB, 35 tok/s on M1)
-   - Smaller alt: Llama-3.2-1B (700MB, weak Macs)
+   - Default model: Phi-4-mini-instruct AWQ-4bit MLX (2GB, 135 tok/s on M-series) — 2026 frontier replacement for Llama-3.2-3B
+   - Smaller alt for weak Macs: Gemma 4 E2B 4bit MLX (~1GB, 158 tok/s)
+   - Higher quality alt: Qwen 3 7B 4bit MLX (~4GB, 50 tok/s, best HumanEval under 8B)
    - Phase 1: integrate MLX, model download UI, LocalLLMService, wire
      into TextProcessor (Structured mode)
    - Phase 2: wire into MemoryExtractor, TaskExtractor, ChatService
@@ -1607,3 +1608,27 @@ shipped through Sparkle to existing users.
   — add as dependency in Package.swift
 - Models download URLs from HuggingFace `mlx-community/Llama-3.2-3B-
   Instruct-4bit` — need stable URL pattern for resume-on-fail downloads
+
+## 2026-frontier model picks (research update, 2026-05-12 ~13:25)
+
+Replaces prior Llama-3.2 recommendation after WebSearch on actual SOTA.
+
+| Tier | Model | DL | Speed | Quality | When |
+|------|-------|----|----|----|---------|
+| Default | Phi-4-mini-instruct AWQ-4bit | 2 GB | 135 tok/s | Excellent (Microsoft SOTA <4B) | M1+, 8 GB+ RAM |
+| Lightweight | Gemma 4 E2B 4bit | 1 GB | 158 tok/s | Good | Weak Macs / 8 GB |
+| Power | Qwen 3 7B 4bit | 4 GB | 50 tok/s | HumanEval 76.0, best <8B | 16 GB+ RAM |
+| Built-in | Apple Foundation Models | 0 GB | native | ~3B equivalent | macOS 26+ only |
+
+**Framework:** MLX. WWDC 2025 confirmed Apple's preferred LLM stack; Ollama
+switched to MLX on 2026-03-30. MLX gives 10-25% faster inference than
+llama.cpp on Apple Silicon for models < 14B. llama.cpp deprioritized.
+
+**Quantization:** AWQ-4bit (95% FP16 quality retention, +3pp vs GPTQ on MMLU).
+GGUF Q6_K acceptable but llama.cpp-tied. NVFP4 not Apple-relevant.
+
+**Russian-language priority:** Phi-4-mini + Qwen3 family beat Llama 3.x
+on Cyrillic. Important because user dictates in Russian.
+
+Sources verified May 12, 2026.
+
