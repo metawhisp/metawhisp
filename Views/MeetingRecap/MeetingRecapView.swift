@@ -118,21 +118,13 @@ struct MeetingRecapView: View {
 
     private func header(_ p: MeetingRecapState.Payload) -> some View {
         HStack(alignment: .top, spacing: 10) {
-            // `Conversation.emoji` is set by StructuredGenerator and may hold
-            // EITHER a Unicode emoji ("📞") OR an SF Symbol name ("bubble.left").
-            // Detect SF symbol by the presence of a dot in the string +
-            // absence of any emoji-presentation scalar — render with
-            // Image(systemName:) so the user sees a glyph, not raw text.
-            if let emoji = p.emoji, !emoji.isEmpty {
-                if isSFSymbolName(emoji) {
-                    Image(systemName: emoji)
-                        .font(.system(size: 18, weight: .semibold))
-                        .foregroundStyle(MW.textSecondary)
-                } else {
-                    Text(emoji)
-                        .font(.system(size: 22))
-                }
-            }
+            // Conversation.emoji (SF Symbol picked by LLM) is intentionally
+            // omitted from the recap header. User feedback 2026-05-12: «должно
+            // быть написано только название созвона» — the LLM-picked symbols
+            // (`hammer`, `bell`, `gear`, …) felt arbitrary and added visual
+            // noise without informational value. The field is still populated
+            // and shown in ConversationsView/DetailView lists where it helps
+            // scanning, just not in the recap popup.
             VStack(alignment: .leading, spacing: 3) {
                 Text(p.title.isEmpty ? "Meeting" : p.title)
                     .font(.system(size: 15, weight: .semibold))

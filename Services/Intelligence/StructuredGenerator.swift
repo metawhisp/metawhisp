@@ -376,6 +376,45 @@ final class StructuredGenerator: ObservableObject {
     static let systemPrompt = """
     You are an expert content analyzer. Your task is to analyze the provided voice transcript and provide structure and clarity.
 
+    ── CORE ANTI-HALLUCINATION DIRECTIVE (read first, applies to ALL fields) ──
+
+    The transcript is the ONLY source of truth. Do NOT invent facts. Do NOT
+    fill in plausible-sounding technical details (e.g. «geolocation push
+    notifications», «chat functionality», «OAuth flow») unless those exact
+    concepts are LITERALLY stated in the transcript. If the transcript is
+    short, fragmented, or unclear, prefer GENERIC honesty («Quick check-in»,
+    «Brief catch-up») over confident invention.
+
+    ── MAIN-TOPIC vs PASSING-MENTION RULE ──
+
+    A word mentioned ONCE or TWICE in a service phrase («у меня по X завал
+    был», «потому что X не успел», «между делом по X занимался») is NOT the
+    meeting's main topic. It's context, not the subject. Examples of REAL
+    user transcripts that got mis-titled before this rule:
+    -  «Я больше работал по атомику, поэтому билд не успел собрать» — main
+       topic is «build delay» or «MetaWhisp release», NOT «Atomic Bot».
+    -  «Вчера встретил Алекса, он рассказал про конференцию» — main topic
+       is whatever was discussed AFTER that opener, NOT Alex.
+    To qualify as main topic, the subject must:
+    - Appear ≥30% of the transcript word-count, OR
+    - Be the explicit answer to «what was this conversation about»
+      (decisions, actions, key questions all centred on it).
+    If neither — that word is CONTEXT, ignore for title/overview/project/topics.
+
+    ── INSUFFICIENT-EVIDENCE FALLBACK ──
+
+    When transcript is < 30 seconds OR no clear main topic emerges OR the
+    main topic is just status-reporting («didn't get around to X», «still
+    working on Y»):
+    - title: «Quick check-in» / «Status update» / «Brief notes» (Title Case)
+    - overview: literal 1-sentence factual summary of what was actually said,
+      no embellishment. Example: «Status update — release delayed, more work
+      on side project tomorrow.»
+    - decisions / action_items / participants / key_quotes / next_steps:
+      empty `[]` arrays. EMPTY is better than fabricated.
+
+    ── ──
+
     For the TITLE: Write a clear, compelling headline (≤10 words) that captures the central topic and outcome. Use Title Case, avoid filler words, include a key noun + verb where possible (e.g., "Team Finalizes Q2 Budget" or "Debugging Memory Extraction Pipeline").
 
     HARD-FORBIDDEN titles (will be rejected — re-generate with more substance):
@@ -391,8 +430,11 @@ final class StructuredGenerator: ObservableObject {
     ❌ "Invoice" / "Sync" / "Meeting" / "Standup"
     ❌ "Marketing Sync" (still too generic — pick a specific topic discussed)
     ❌ "Q2 Plans" (which Q2? plans for what? include a project or person)
+    ❌ Title that amplifies a passing-mention word (see PASSING-MENTION RULE above).
+       Re-read the transcript: if the subject occupies < 30% of the talk,
+       choose a different subject OR the insufficient-evidence fallback.
 
-    For the OVERVIEW: Direct, factual 1-2 sentence summary. Lead with concrete content — what was built, decided, discussed, planned. Use specific project names, people, concrete actions.
+    For the OVERVIEW: Direct, factual 1-2 sentence summary. Lead with concrete content — what was built, decided, discussed, planned. Use specific project names, people, concrete actions. NEVER invent specifics — only use facts literally stated in the transcript.
 
     HARD-FORBIDDEN preambles (do NOT start the overview with these — they add zero info):
     - "The conversation is about ..."
