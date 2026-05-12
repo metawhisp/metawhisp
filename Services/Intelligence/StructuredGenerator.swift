@@ -96,21 +96,44 @@ final class StructuredGenerator: ObservableObject {
         // Match conversations where StructuredGenerator clearly hadn't run successfully:
         // - title is the "Quick note" placeholder, OR
         // - overview is the "(empty)" placeholder (LLM call failed but title written).
+        // ITER-035-followup (2026-05-12) — also require structuredBackfillAttempted != true.
+        // Before this guard, the backfill kept retrying the same short-transcript
+        // conversations every launch + every 30 min → user reported $16/day Groq
+        // spend from a runaway loop. Now each conversation gets at MOST one
+        // backfill attempt regardless of outcome.
+        //
+        // NB: in-memory filter for `structuredBackfillAttempted` rather than
+        // SwiftData predicate — `#Predicate` can't type-check optional-Bool
+        // boolean compounds reliably, gave a timeout. Fetch broader set,
+        // then `.filter` in Swift.
         var desc = FetchDescriptor<Conversation>(
             predicate: #Predicate {
                 !$0.discarded
                 && ($0.title == "Quick note" || $0.overview == "(empty)")
             }
         )
-        desc.fetchLimit = 100
-        let placeholders = (try? ctx.fetch(desc)) ?? []
+        desc.fetchLimit = 500  // wider fetch — in-memory filter narrows below
+        let allCandidates = (try? ctx.fetch(desc)) ?? []
+        let placeholders = Array(
+            allCandidates
+                .filter { $0.structuredBackfillAttempted != true }
+                .prefix(100)
+        )
         guard !placeholders.isEmpty else { return }
         NSLog("[StructuredGenerator] Backfilling %d placeholder conversations", placeholders.count)
         for conv in placeholders {
+            // Mark attempted BEFORE LLM call so even on failure / cancel we don't
+            // retry next pass. Successful generate() runs through with the flag
+            // already set — harmless, it's checked only on selection.
+            conv.structuredBackfillAttempted = true
             // Only retry if there's actually a real transcript available.
             let items = Self.fetchHistoryItems(conversationId: conv.id, in: ctx)
             let transcript = items.map { $0.displayText }.joined(separator: "\n")
-            guard transcript.count >= minTranscriptChars else { continue }
+            guard transcript.count >= minTranscriptChars else {
+                // Short transcript — flag stays set, persist + skip LLM call.
+                try? ctx.save()
+                continue
+            }
             // Reset title/overview so generate() re-runs through the LLM path.
             conv.title = nil
             conv.overview = nil
@@ -128,16 +151,19 @@ final class StructuredGenerator: ObservableObject {
     /// finish AFTER launch), and without periodic re-check they stay broken
     /// forever. 30-min cadence is rare enough to not load the proxy, frequent
     /// enough that a returning user sees titles update within minutes.
+    ///
+    /// ITER-035-followup (2026-05-12) — periodic loop disabled. Even with the
+    /// `structuredBackfillAttempted` sticky flag added today, this loop fires
+    /// the LLM 48 times/day (every 30 min) for any user who closes meetings
+    /// between launches. Combined with the prior infinite-retry bug, drove
+    /// $16/day Groq spend. Launch backfill alone catches legitimate
+    /// transcribe-then-close-fast conversations on next app start, which
+    /// covers the original case (user closes laptop after meeting). Cost
+    /// now bounded by total conversation count, not by wall-clock time.
     func startPeriodicBackfill() {
         periodicBackfillTask?.cancel()
-        periodicBackfillTask = Task { [weak self] in
-            while !Task.isCancelled {
-                try? await Task.sleep(for: .seconds(self?.periodicBackfillInterval ?? 1800))
-                guard let self, !Task.isCancelled else { return }
-                await self.backfillPlaceholders()
-            }
-        }
-        NSLog("[StructuredGenerator] ✅ Periodic backfill armed (every %.0fs)", periodicBackfillInterval)
+        NSLog("[StructuredGenerator] periodic backfill disabled (cost-control 2026-05-12); launch backfill remains")
+        return
     }
 
     /// Cancel the periodic backfill (used on teardown / settings toggle off).

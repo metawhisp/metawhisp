@@ -69,6 +69,18 @@ final class Conversation {
     /// spec://iterations/ITER-014-project-clustering
     var topicsJSON: String?
 
+    /// ITER-035-followup (2026-05-12) — sticky «we've already tried to generate
+    /// structured fields for this conversation» flag. Without it, the backfill
+    /// loop in `StructuredGenerator.backfillPlaceholders()` re-runs the LLM
+    /// on every conversation whose `title == "Quick note"` or
+    /// `overview == "(empty)"` on every launch + every 30 min, even if the
+    /// transcript is too short to generate anything meaningful → infinite
+    /// retry → $16+/day Groq bill. Set to `true` on every backfill attempt
+    /// (success or short-transcript skip). The predicate now excludes
+    /// `structuredBackfillAttempted == true` so each conversation gets at
+    /// most one backfill attempt. Optional → lightweight SwiftData migration.
+    var structuredBackfillAttempted: Bool?
+
     // ITER-021 — Structured meeting summary (5 sections, JSON-encoded `[String]`).
     // Populated by `StructuredGenerator` ON CLOSE for meeting-source conversations.
     // Display-only — `actionItemsJSON` here is a HISTORICAL READ-ONLY record;
