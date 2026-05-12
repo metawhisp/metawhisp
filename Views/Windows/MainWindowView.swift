@@ -161,31 +161,63 @@ struct MainWindowView: View {
     ///   - `proactiveEnabled`: ITER-027 insight extraction (cloud LLM)
     ///   - `ttsCloudEnabled`: cloud TTS for voice replies
     ///   - `liveMeetingAdviceEnabled`: live coach during meetings
+    ///   - `localLLMEnabled` + `localLLMActiveModelID`: ITER-039 local LLM is loaded
     ///
     /// `cloud` features all require Pro proxy so they're real cloud roundtrips.
+    /// `local` features run through MLX-hosted model OR Apple Foundation Models.
+    ///
+    /// Label combinations (ITER-039):
+    ///   - "on-device" — fully local Whisper + no post-processing LLM
+    ///   - "local" — Whisper on-device + LOCAL LLM for cleanup/intelligence
+    ///   - "cloud" — cloud Whisper + cloud LLM (Pro)
+    ///   - "on-device+cloud" — local Whisper + cloud LLM
+    ///   - "local+cloud" — local LLM for processing + cloud Whisper for transcription
+    ///   - "on-device+local" — fully local stack (Whisper + local LLM)
     private var processingModeLabel: String {
         let primaryCloud = settings.transcriptionEngine == "cloud"
+        let hasLocalLLM = settings.localLLMEnabled && !settings.localLLMActiveModelID.isEmpty
         let cloudFeatures = settings.processingMode == "structured"
             || settings.proactiveEnabled
             || settings.ttsCloudEnabled
             || settings.liveMeetingAdviceEnabled
-        let hasCloud = primaryCloud || cloudFeatures
-        let hasLocal = !primaryCloud  // engine = "ondevice" → local dictation path active
+        // When local LLM is active, structured/processing fires on-device — only
+        // truly remote features (proactive insights, cloud TTS, live meeting
+        // advice) count as «cloud features».
+        let actualCloudFeatures = hasLocalLLM
+            ? (settings.proactiveEnabled || settings.ttsCloudEnabled || settings.liveMeetingAdviceEnabled)
+            : cloudFeatures
+        let hasCloud = primaryCloud || actualCloudFeatures
+        let hasLocalDictation = !primaryCloud
 
-        if hasCloud && hasLocal { return "on-device+cloud" }
+        // Six possible states, ordered by likelihood for status pip display:
+        if hasLocalDictation && hasLocalLLM && !hasCloud {
+            return "on-device+local"  // fully on-device stack
+        }
+        if hasLocalDictation && hasLocalLLM && hasCloud {
+            return "on-device+local+cloud"  // hybrid: local Whisper + local LLM + cloud insight/TTS
+        }
+        if hasLocalLLM && hasCloud {
+            return "local+cloud"  // cloud Whisper + local LLM
+        }
+        if hasLocalLLM {
+            return "local"
+        }
+        if hasCloud && hasLocalDictation { return "on-device+cloud" }
         if hasCloud { return "cloud" }
         return "on-device"
     }
 
     /// Color follows the label's "leaning":
-    ///   - `on-device` → green (idle) — fully local, no network roundtrips
-    ///   - `cloud` → light blue (postProcess) — networked, semantically remote
-    ///   - `on-device+cloud` → orange (processing) — hybrid, intermediate
+    ///   - all-local labels → green (idle) — no network roundtrips
+    ///   - all-cloud → light blue (postProcess) — networked, semantically remote
+    ///   - hybrid (mix) → orange (processing) — intermediate
     private var processingModeColor: Color {
         switch processingModeLabel {
-        case "cloud":           return MW.postProcess
-        case "on-device+cloud": return MW.processing
-        default:                return MW.idle
+        case "cloud":                       return MW.postProcess
+        case "on-device+cloud",
+             "local+cloud",
+             "on-device+local+cloud":       return MW.processing
+        default:                            return MW.idle   // "on-device" / "local" / "on-device+local"
         }
     }
 

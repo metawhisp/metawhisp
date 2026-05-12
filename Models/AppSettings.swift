@@ -51,6 +51,17 @@ final class AppSettings: ObservableObject {
     /// flag is already set and we don't overwrite. Mirrors the existing
     /// `transcriptionEngine` auto-switch to `cloud` for Pro.
     @AppStorage("didAutoPromoteProcessingMode_iter034") var didAutoPromoteProcessingMode: Bool = false
+
+    /// ITER-039 — local LLM for Free tier. When `localLLMEnabled` is true AND
+    /// `localLLMActiveModelID` resolves to a downloaded model (or
+    /// «apple-foundation-models» on macOS 26+), the existing
+    /// `hasLLMAccess`-gated services route through `LocalLLMService` instead
+    /// of silently no-op'ing for Free users without a BYOK key.
+    @AppStorage("localLLMEnabled_iter039") var localLLMEnabled: Bool = false
+    /// Stable ModelSpec.id — one of «phi-4-mini» / «gemma-4-e2b» / «qwen3-4b»
+    /// / «qwen3-7b» / «apple-foundation-models». Empty = no active model.
+    /// Switched by the user via Settings → AI Models cards.
+    @AppStorage("localLLMActiveModelID_iter039") var localLLMActiveModelID: String = ""
     @AppStorage("weekStartsOn") var weekStartsOn: Int = 2 // 1=Sunday, 2=Monday
     @AppStorage("appTheme") var appTheme: String = "dark" // dark, light, auto
 
