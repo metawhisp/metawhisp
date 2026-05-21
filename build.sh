@@ -90,6 +90,61 @@ if [ -d "$BUNDLE_PATH" ]; then
     cp -r "$BUNDLE_PATH" "$RESOURCES/"
 fi
 
+# ──────────────────────────────────────────────────────────────────────────────
+# Compile MLX Metal shaders → mlx.metallib (mandatory for MLX init)
+# ──────────────────────────────────────────────────────────────────────────────
+# WHY: mlx-swift's `Cmlx` target lists 8 `.metal` shader source files in
+# `Source/Cmlx/mlx-generated/metal/` but does NOT declare them as
+# `.process(...)` resources in its `Package.swift`. As a result `swift build`
+# compiles the C++ side (libmlx) but never produces the runtime `.metallib`
+# that `mlx/mlx/backend/metal/device.cpp:load_default_library` searches for.
+#
+# At runtime MLX tries (in order):
+#   1. <binary_dir>/mlx.metallib                    ← colocated
+#   2. <mainBundle>/Resources/mlx-swift_Cmlx.bundle/Contents/Resources/<lib>.metallib
+#   3. AllBundles / AllFrameworks loop for SWIFTPM_BUNDLE
+# If none exists the C++ side throws and the process exits. v1.3.5 release
+# (2026-05-21) shipped without metallib → crash on first `eval(...)` → user-
+# reported "app не работает" minutes after upload. Old /Applications survived
+# only because a much older Xcode-built bundle had a metallib that lingered
+# until the next `rm -rf "$APP"; ditto` cycle.
+#
+# Layer-1 root-cause fix: WE own the bundle; mlx-swift gave us source `.metal`
+# files; turning them into the runtime metallib is OUR responsibility in the
+# build pipeline. Done here, BEFORE codesign, so the signature seals the file.
+#
+# This block is mandatory — any failure aborts the build. Better to fail loud
+# at release time than ship a binary that crashes on every user's machine.
+MLX_METAL_DIR="$SCRIPT_DIR/.build/checkouts/mlx-swift/Source/Cmlx/mlx-generated/metal"
+if [ ! -d "$MLX_METAL_DIR" ]; then
+    echo "==> ❌ mlx-swift metal sources not found at $MLX_METAL_DIR"
+    echo "    Run \`swift build\` first so SPM checks out mlx-swift."
+    exit 1
+fi
+METAL_BUILD_DIR=$(mktemp -d -t mw-metalbuild)
+trap "rm -rf '$METAL_BUILD_DIR'" EXIT
+echo "==> Compiling MLX metal shaders → mlx.metallib..."
+metal_count=0
+for m in "$MLX_METAL_DIR"/*.metal; do
+    name=$(basename "${m%.metal}")
+    if ! xcrun -sdk macosx metal -c "$m" -I "$MLX_METAL_DIR" -o "$METAL_BUILD_DIR/${name}.air" 2>&1 | head -5; then
+        echo "==> ❌ Failed to compile $m"
+        exit 1
+    fi
+    metal_count=$((metal_count + 1))
+done
+echo "    Compiled $metal_count metal sources → .air"
+if ! xcrun -sdk macosx metallib "$METAL_BUILD_DIR"/*.air -o "$MACOS/mlx.metallib" 2>&1 | head -5; then
+    echo "==> ❌ Failed to link metallib"
+    exit 1
+fi
+if [ ! -s "$MACOS/mlx.metallib" ]; then
+    echo "==> ❌ mlx.metallib is missing or empty after link"
+    exit 1
+fi
+metallib_size=$(stat -f%z "$MACOS/mlx.metallib")
+echo "    mlx.metallib OK (${metallib_size} bytes, colocated next to binary)"
+
 echo "==> Bundle created: $APP_DIR"
 
 # Clear extended attributes — Finder resource forks, xattr from curl downloads,
@@ -146,9 +201,23 @@ if [ -d "$SPARKLE" ]; then
                 --timestamp \
                 --identifier "$identifier" \
                 "$target"
-            if codesign -dvvv "$target" 2>&1 | grep -q "^Timestamp="; then
+            # Verify timestamp landed. IMPORTANT — must NOT use
+            # `codesign -dvvv | grep -q "^Timestamp="` directly: grep -q
+            # exits on first match, the unread tail of codesign output
+            # SIGPIPEs (exit 141), and under `set -o pipefail` the pipeline
+            # exit code becomes 141 → the `if` evaluates as failure →
+            # every attempt is reported as "no timestamp" even when the
+            # timestamp was actually attached. 2026-05-21 incident: 4 hours
+            # of retry cycles before this was identified. Dump codesign
+            # output to a temp file first, then grep the file (no pipe).
+            local cs_log
+            cs_log=$(mktemp)
+            codesign -dvvv "$target" >"$cs_log" 2>&1 || true
+            if grep -q "^Timestamp=" "$cs_log"; then
+                rm -f "$cs_log"
                 return 0
             fi
+            rm -f "$cs_log"
             echo "==> ⚠️  No timestamp on $(basename "$target") (attempt $attempt/10) — TSA flake, sleeping ${sleep_sec}s..."
             sleep "$sleep_sec"
             sleep_sec=$((sleep_sec < 60 ? sleep_sec + 10 : 60))
@@ -165,6 +234,17 @@ if [ -d "$SPARKLE" ]; then
     sign_target "$SPARKLE"                                        "org.sparkle-project.Sparkle"
 fi
 
+# Sign mlx.metallib — codesign --deep on the outer bundle requires every
+# nested binary to be individually signed first. Metal libraries are
+# Mach-O-like artifacts so codesign treats them as code objects. Without
+# this step the outer bundle sign fails:
+#   "code object is not signed at all In subcomponent: .../mlx.metallib"
+# We sign with --timestamp here too so the metallib survives notarization;
+# Apple's notary rejects un-timestamped Mach-O in app bundles.
+if [ -f "$MACOS/mlx.metallib" ]; then
+    codesign --force --sign "$SIGN_IDENTITY" --options runtime --timestamp "$MACOS/mlx.metallib"
+fi
+
 # Sign outer bundle with our app identifier — macOS uses Identifier as app identity
 # for notifications, TCC, and URL scheme registration.
 # `--timestamp` is MANDATORY for notarization (Apple verifies timestamp via
@@ -179,9 +259,16 @@ for attempt in 1 2 3 4 5 6 7 8 9 10; do
         --identifier "com.metawhisp.app" \
         --entitlements "Resources/MetaWhisp.entitlements" \
         "$APP_DIR" 2>&1
-    if codesign -dvvv "$APP_DIR" 2>&1 | grep -q "^Timestamp="; then
+    # Same SIGPIPE pitfall as `sign_target` above — `grep -q` over a pipe
+    # makes the unread tail SIGPIPE codesign, pipeline exits 141 under
+    # `pipefail`, and we falsely loop. Dump to file, grep the file.
+    outer_cs_log=$(mktemp)
+    codesign -dvvv "$APP_DIR" >"$outer_cs_log" 2>&1 || true
+    if grep -q "^Timestamp=" "$outer_cs_log"; then
+        rm -f "$outer_cs_log"
         break
     fi
+    rm -f "$outer_cs_log"
     echo "==> ⚠️  No timestamp on outer bundle (attempt $attempt/10) — TSA flake, sleeping ${outer_sleep}s..."
     sleep "$outer_sleep"
     outer_sleep=$((outer_sleep < 60 ? outer_sleep + 10 : 60))
