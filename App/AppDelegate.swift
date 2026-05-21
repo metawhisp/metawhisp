@@ -220,21 +220,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         // crash-on-activate every time.
         LocalLLMService.prewarmMLX()
 
-        // ITER-039 — auto-load on launch DISABLED 2026-05-13. Calling
-        // `LocalLLMService.loadModel` on launch caused a crash loop:
-        // `eval(model)` after `update(parameters:)` blocks the main thread
-        // for ~20 s materializing 2 GB of weights, AppKit's watchdog
-        // declares the app unresponsive, sends SIGKILL, macOS auto-relaunches
-        // → infinite loop.
+        // ITER-039 — auto-load DISABLED AGAIN 2026-05-21 evening.
         //
-        // Until LocalLLMService is refactored to do the heavy MLX work on
-        // a background `Task.detached` (with Sendable bridging for
-        // Phi3Model + Tokenizer), the user must press «Make active» from
-        // Settings → AI manually after launch. Logging it so we know the
-        // state didn't auto-restore.
+        // First enabled this evening after refactoring loadModel onto a real
+        // GCD thread (not Swift Concurrency cooperative pool). The load
+        // itself succeeded in ~12 s without blocking main, and the model
+        // was generating tokens correctly. HOWEVER within minutes the app's
+        // resident memory climbed to ~35 GB and the system froze; user had
+        // to force-kill MetaWhisp. Not yet diagnosed — likely candidates:
+        //   - KV cache not being released between generate() calls
+        //     (Insight + RealtimeReactor + ScreenExtractor fire frequently,
+        //     each with multi-thousand-token prompts → unbounded growth)
+        //   - MLX quantized weights being de-quantized into a separate
+        //     full-precision copy on every forward pass
+        //   - Concurrent generation queue holding strong references to
+        //     completed-but-not-collected MLXArrays
+        //
+        // Until the memory profile is understood and fixed, the user must
+        // press «Make active» from Settings → AI Models manually. This
+        // gives them a controlled one-shot test, not an auto-on-every-launch
+        // resource sink.
         if AppSettings.shared.localLLMEnabled,
            !AppSettings.shared.localLLMActiveModelID.isEmpty {
-            NSLog("[ITER-039] auto-load skipped; user must re-press Make active in Settings → AI Models (last active id: %@)",
+            NSLog("[ITER-039] auto-load DISABLED (memory leak under investigation 2026-05-21); use Settings → AI Models → Make active (last active id: %@)",
                   AppSettings.shared.localLLMActiveModelID)
         }
 
