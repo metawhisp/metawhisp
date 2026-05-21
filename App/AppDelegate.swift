@@ -200,6 +200,44 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
 
         NSLog("[MetaWhisp] Launched")
 
+        // macOS 26 Tahoe — disable window-state restoration. The Tahoe
+        // saved-window-state apparatus caches NSWindow Auto Layout
+        // constraints across launches and replays them on next start. If
+        // the previous session ended mid-NSISEngine-recursion (a SwiftUI
+        // view with constraint cycle, common on macOS 26's stricter
+        // layout engine), restoration re-creates the broken state and
+        // crashes again on every relaunch — even after a code fix
+        // (user-reported loop 2026-05-19, the `open` command kept
+        // re-poisoning the freshly-built process). Disabling restoration
+        // forces a clean layout on every launch.
+        UserDefaults.standard.set(false, forKey: "NSQuitAlwaysKeepsWindows")
+
+        // ITER-039 — pre-warm MLX/Metal on the MAIN thread at launch.
+        // First MLX call has main-thread affinity (Metal context init).
+        // Without this, later `MLXArray.zeros([1])` on a background GCD
+        // thread inside `LocalLLMService.buildModelSync` SIGKILLs the
+        // process before any traps fire. We pay ~10 ms here once vs
+        // crash-on-activate every time.
+        LocalLLMService.prewarmMLX()
+
+        // ITER-039 — auto-load on launch DISABLED 2026-05-13. Calling
+        // `LocalLLMService.loadModel` on launch caused a crash loop:
+        // `eval(model)` after `update(parameters:)` blocks the main thread
+        // for ~20 s materializing 2 GB of weights, AppKit's watchdog
+        // declares the app unresponsive, sends SIGKILL, macOS auto-relaunches
+        // → infinite loop.
+        //
+        // Until LocalLLMService is refactored to do the heavy MLX work on
+        // a background `Task.detached` (with Sendable bridging for
+        // Phi3Model + Tokenizer), the user must press «Make active» from
+        // Settings → AI manually after launch. Logging it so we know the
+        // state didn't auto-restore.
+        if AppSettings.shared.localLLMEnabled,
+           !AppSettings.shared.localLLMActiveModelID.isEmpty {
+            NSLog("[ITER-039] auto-load skipped; user must re-press Make active in Settings → AI Models (last active id: %@)",
+                  AppSettings.shared.localLLMActiveModelID)
+        }
+
         // Register URL scheme handler (metawhisp://auth?token=...)
         NSAppleEventManager.shared().setEventHandler(
             self,
@@ -311,12 +349,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             await setupServices()
         }
 
-        // Show onboarding on first launch, otherwise open main window
+        // Show onboarding ONLY on first launch. After onboarding, app
+        // starts silently in the menubar — no auto-open of the main window.
+        //
+        // **Why we removed auto-open** (2026-05-13, user-reported repeatedly):
+        // calling `openMainWindow()` here triggered `setActivationPolicy(.regular)`
+        // + `makeKeyAndOrderFront`, which macOS handled by either dragging
+        // the user across Spaces to wherever the previous window frame was
+        // remembered, OR popping the user out of someone else's fullscreen
+        // to an empty Desktop Space to render our window. Either way the
+        // user-visible symptom was «через несколько секунд после апдейта
+        // приложение кидает в другой экран». User now opens the main
+        // window explicitly via the menubar icon → Settings/Dashboard/etc.
         if !AppSettings.shared.hasCompletedOnboarding {
             onboardingWindow.coordinator = coordinator
             onboardingWindow.show()
-        } else {
-            openMainWindow()
         }
 
         // Menu bar icon stays MW logo — no state changes needed
@@ -564,6 +611,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         // 9d. Configure ConversationGrouper (C1.1) + StructuredGenerator (C1.2).
         // Grouper fires StructuredGenerator + extractors on conversation close.
         conversationGrouper.configure(modelContainer: historyService.modelContainer)
+
+        // ITER-037 — start MCP snapshot writer. Dumps memories / tasks /
+        // conversations to `~/Library/Application Support/MetaWhisp/mcp-snapshot.json`
+        // every 5 min so the standalone `metawhisp-mcp` CLI can answer
+        // Claude Desktop tool calls without sharing the SwiftData store.
+        MCPSnapshotService.shared.configure(container: historyService.modelContainer)
+        MCPSnapshotService.shared.start()
         structuredGenerator.configure(modelContainer: historyService.modelContainer)
         // Wire embedding so StructuredGenerator embeds each closed conversation
         // right after title/overview populate (ITER-011).
@@ -2024,6 +2078,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         let meetingTitleSubstrings = ["meet.google.com", "google meet", "zoom meeting", "teams - microsoft", "microsoft teams"]
         // Discord/Slack voice — title-specific keywords; chat-only sessions don't match.
         let voiceModeTitleSubstrings = ["huddle", "voice connected", "voice call"]
+        // Browsers that can host meetings. We DON'T treat browser-foreground
+        // alone as a meeting signal (user could be reading docs), but we
+        // pair it with the Meet room-code regex below.
+        let browserAppPrefixes = ["chrome", "arc", "safari", "firefox", "edge", "brave", "opera"]
+        // Google Meet room code: xxx-yyyy-zzz. Arc + some Chrome builds
+        // show ONLY the code as the window title, no «Google Meet» suffix.
+        // Mirrors `SystemAudioCaptureService.meetRoomCodeRegex` — same
+        // 3-letter / 3-4-letter / 3-letter pattern.
+        let meetRoomCodeRegex = try? NSRegularExpression(
+            pattern: "(^|\\s)[a-z]{3}-[a-z]{3,4}-[a-z]{3}($|\\s)",
+            options: [.caseInsensitive]
+        )
 
         for ctx in recent {
             let appLower = ctx.appName.lowercased()
@@ -2036,6 +2102,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             }
             if voiceModeTitleSubstrings.contains(where: { titleLower.contains($0) }) {
                 return true
+            }
+            // Browser foreground + Meet room-code in title → it's a Meet call.
+            // Closes the 2026-05-15 bug where Google Meet in Chrome wasn't
+            // detected → meetingAppVisible=NO → calendar-end-hardStop hit.
+            if let regex = meetRoomCodeRegex,
+               browserAppPrefixes.contains(where: { appLower.contains($0) }) {
+                let title = ctx.windowTitle
+                let range = NSRange(title.startIndex..., in: title)
+                if regex.firstMatch(in: title, range: range) != nil {
+                    return true
+                }
             }
         }
         return false

@@ -173,10 +173,21 @@ final class MeetingCoachService {
     // MARK: - LLM access
 
     private var hasLLMAccess: Bool {
-        !settings.activeAPIKey.isEmpty || LicenseService.shared.isPro
+        !settings.activeAPIKey.isEmpty
+            || LicenseService.shared.isPro
+            || LocalLLMService.shared.isReady
     }
 
     private func callLLM(systemPrompt: String, userPrompt: String) async throws -> String {
+        // ITER-039 — local Phi takes priority for the meeting-coach loop:
+        // small prompts, frequent (every 30s during a call), low-stakes
+        // (one short hint per cycle). Local cuts ~$0.05/hour meeting cost
+        // to zero.
+        if LocalLLMService.shared.isReady {
+            return try await LocalLLMService.shared.completeBlocking(
+                system: systemPrompt, user: userPrompt, maxTokens: 256
+            )
+        }
         if LicenseService.shared.isPro, let licenseKey = LicenseService.shared.licenseKey {
             return try await callProProxy(system: systemPrompt, user: userPrompt, licenseKey: licenseKey)
         }
@@ -262,11 +273,28 @@ Hard rules:
 - Match the conversation language. Don't translate.
 - ONE suggestion only. No arrays.
 - Plain JSON. No markdown, no code fence, no preamble.
+
+Anti-patterns — output `null` instead of any of these:
+- "What does <generic word> mean?" or "Что значит <фраза-связка>?" —
+  filler conversational tokens («продолжение следует», «короче», «ну вот»,
+  «короче говоря») are NOT topics to question.
+- "How does <app/brand name> relate to <thing>?" — references to apps the
+  user is RUNNING (MetaWhisp itself, Zoom, Slack, the browser, Telegram,
+  ChatGPT, etc.) leaked from screen-context OCR are NOT meeting topics
+  unless the participants actively discussed them. If the transcript
+  doesn't show the speaker NAMING the app, treat any app/brand mention
+  as background noise and ignore.
+- "Can you elaborate on <X>?" without a concrete X grounded in the
+  transcript — that's L1 generic. Skip.
+- Speculative «why» questions about emotion/motivation — meetings deal
+  in facts and decisions, not feelings.
 """
 
     private struct SuggestionJSON: Decodable { let type: String; let text: String }
 
-    private func parseSuggestion(_ raw: String) -> (kind: MeetingCoachState.Suggestion.Kind, text: String)? {
+    /// Internal (not private) so `MeetingCoachServiceTests` can pin the
+    /// regression for the 2026-05-21 Range-crash fix.
+    func parseSuggestion(_ raw: String) -> (kind: MeetingCoachState.Suggestion.Kind, text: String)? {
         let cleaned = raw
             .replacingOccurrences(of: "```json", with: "")
             .replacingOccurrences(of: "```", with: "")
@@ -276,7 +304,17 @@ Hard rules:
             return mapKind(parsed)
         }
         // Permissive fallback — find { ... } window if model added preamble.
-        if let start = cleaned.firstIndex(of: "{"), let end = cleaned.lastIndex(of: "}") {
+        // CRASH FIX 2026-05-21: when the LLM emits `}` BEFORE the first `{`
+        // (e.g. preamble like `cannot answer that } { "type": "question" ...`
+        // with no closing brace after), `firstIndex(of: "{") > lastIndex(of: "}")`
+        // and `cleaned[start...end]` constructs a reversed Range, killing the
+        // app with `Fatal error: Range requires lowerBound <= upperBound`.
+        // The other 10 LLM-JSON parsers in this codebase use brace-counting
+        // (Services/Intelligence/MemoryExtractor.swift:463 and similar) which
+        // is robust; here the naive firstIndex/lastIndex pair was the bug.
+        if let start = cleaned.firstIndex(of: "{"),
+           let end = cleaned.lastIndex(of: "}"),
+           start <= end {
             let slice = String(cleaned[start...end])
             if let parsed = decodeSuggestionJSON(slice) {
                 return mapKind(parsed)

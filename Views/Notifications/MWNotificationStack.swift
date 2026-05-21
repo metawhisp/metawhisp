@@ -31,9 +31,14 @@ final class MWNotificationStack: ObservableObject {
             items.removeLast()
         }
         // Insert at index 0 so the newest is at the top of the visual stack.
-        withAnimation(.spring(duration: 0.28)) {
-            items.insert(notification, at: 0)
-        }
+        // macOS 26 fix (2026-05-19) — dropped `withAnimation(.spring)` here.
+        // The spring animation kept the SwiftUI ViewUpdater pipeline busy
+        // while the panel's resize-on-items-change ran in the same run loop,
+        // and Tahoe's stricter Auto Layout bridge recursed forever solving
+        // the half-animated frame. Plain insert + transition still gives a
+        // visible appearance via the View's `.transition(.move + .opacity)`
+        // modifier (also tamed below).
+        items.insert(notification, at: 0)
         armFade(for: notification.id)
     }
 

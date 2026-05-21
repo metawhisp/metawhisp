@@ -41,7 +41,9 @@ final class AdviceService: ObservableObject {
 
     /// True if we can call an LLM: either user has their own API key, or they're Pro (server proxy).
     private var hasLLMAccess: Bool {
-        !settings.activeAPIKey.isEmpty || LicenseService.shared.isPro
+        !settings.activeAPIKey.isEmpty
+            || LicenseService.shared.isPro
+            || LocalLLMService.shared.isReady
     }
 
     /// Start periodic advice generation.
@@ -93,7 +95,13 @@ final class AdviceService: ObservableObject {
             let prompt = Self.activePrompt
             let mode = settings.adviceCoachMode ? "coach" : "standard"
             let response: String
-            if LicenseService.shared.isPro, let licenseKey = LicenseService.shared.licenseKey {
+            // ITER-039 — local LLM takes priority when loaded.
+            if LocalLLMService.shared.isReady {
+                NSLog("[Advice] Generating via local Phi (mode=%@)", mode)
+                response = try await LocalLLMService.shared.completeBlocking(
+                    system: prompt, user: contextBlock, maxTokens: 256
+                )
+            } else if LicenseService.shared.isPro, let licenseKey = LicenseService.shared.licenseKey {
                 NSLog("[Advice] Generating via Pro proxy (mode=%@)", mode)
                 response = try await callProProxy(system: prompt, user: contextBlock, licenseKey: licenseKey)
             } else {

@@ -52,12 +52,26 @@ final class MainWindowController: NSObject, NSWindowDelegate {
     private var window: NSWindow?
 
     /// Collection behavior applied to the main window on create / reactivate.
-    /// **Default-managed (empty option set).** Reverted from
-    /// `[.moveToActiveSpace, .fullScreenAuxiliary]` (2026-05-10) — the prior
-    /// pair forced the window to overlay whatever fullscreen-Space the user
-    /// was in. Empty set is the macOS-standard behavior: window lives on its
-    /// own Desktop Space, AppKit handles the transition.
-    private static let windowBehavior: NSWindow.CollectionBehavior = []
+    ///
+    /// **`[.moveToActiveSpace, .fullScreenAuxiliary]` is the correct
+    /// menubar-app setting** and MUST stay this way. The two flags do:
+    ///   - `.moveToActiveSpace` — when shown, the window follows the user
+    ///     to whatever Space they're currently on (instead of being bound
+    ///     to the Space where it last lived).
+    ///   - `.fullScreenAuxiliary` — the window CAN appear over a
+    ///     fullscreen Space of another app (Claude, Safari fullscreen,
+    ///     etc.). Without this flag, macOS has to kick the user OUT of
+    ///     their fullscreen Space to a neighboring desktop Space to render
+    ///     our window — symptom is "click a MetaWhisp button → I get
+    ///     thrown to an empty left-side Space".
+    ///
+    /// **DO NOT revert this to `[]`** (a previous well-intentioned
+    /// reversion on 2026-05-10 caused the exact "thrown to empty Space"
+    /// bug user reported 2026-05-13). The misdiagnosis at the time was
+    /// "overlay forces window to overlay fullscreen-Space" — that's
+    /// actually correct menubar-app behavior, not a bug.
+    private static let windowBehavior: NSWindow.CollectionBehavior =
+        [.moveToActiveSpace, .fullScreenAuxiliary]
 
     func open(
         coordinator: TranscriptionCoordinator,
@@ -77,16 +91,17 @@ final class MainWindowController: NSObject, NSWindowDelegate {
             if let tab = initialTab {
                 NotificationCenter.default.post(name: .switchMainTab, object: tab)
             }
-            // The hide-on-close delegate set policy to .accessory; flip back.
-            NSApp.setActivationPolicy(.regular)
             window.collectionBehavior = Self.windowBehavior
-            // Bind to user's current Space, then activate. Reverse order
-            // would tell macOS to switch user to wherever MetaWhisp lives —
-            // which is "nowhere visible" since we orderOut'd, so the user
-            // bounces. `activate()` (without `ignoringOtherApps:`) is
-            // gentler — smooth navigation, no forced snap.
+            // ORDER MATTERS for Space-throw prevention:
+            //   1. makeKeyAndOrderFront FIRST — `.moveToActiveSpace` puts
+            //      the window in user's current Space.
+            //   2. setActivationPolicy(.regular) AFTER — the dock-app
+            //      promotion happens with the window already placed, so
+            //      macOS doesn't snap user to the window's last-known Space.
+            //   3. NO `NSApp.activate()` — that was the explicit cause of
+            //      «приложение кидает в другой экран» reported 2026-05-13.
             window.makeKeyAndOrderFront(nil)
-            NSApp.activate()
+            NSApp.setActivationPolicy(.regular)
             return
         }
 
@@ -112,6 +127,12 @@ final class MainWindowController: NSObject, NSWindowDelegate {
         window.contentView = NSHostingView(rootView: contentView)
         window.center()
         window.isReleasedWhenClosed = false
+        // macOS 26 fix — disable window state restoration (auto-saved
+        // NSWindow constraints replay on next launch and re-trigger
+        // NSISEngine recursion if last layout had a cycle). Frame
+        // autosave below still persists position/size in UserDefaults
+        // separately, so users keep their window placement across launches.
+        window.isRestorable = false
         // Persist user's last frame across launches via UserDefaults.
         window.setFrameAutosaveName("MetaWhispMainWindow")
         window.collectionBehavior = Self.windowBehavior
@@ -120,9 +141,18 @@ final class MainWindowController: NSObject, NSWindowDelegate {
 
         self.window = window
 
-        NSApp.setActivationPolicy(.regular)
+        // Order matters here to prevent Space-throw:
+        //   1. makeKeyAndOrderFront FIRST — window appears in user's
+        //      current Space (.moveToActiveSpace is honored).
+        //   2. setActivationPolicy(.regular) AFTER — the policy flip from
+        //      .accessory → .regular happens once the window is already
+        //      where the user is, so macOS doesn't pick a "natural" Space
+        //      to drag the user to.
+        //   3. NO `NSApp.activate()` — was the trigger for «через несколько
+        //      секунд приложение кидает в другой экран». makeKeyAndOrderFront
+        //      is sufficient for bringing window forward in current Space.
         window.makeKeyAndOrderFront(nil)
-        NSApp.activate()
+        NSApp.setActivationPolicy(.regular)
 
         NSLog("[MainWindow] Opened")
     }

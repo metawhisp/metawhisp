@@ -57,11 +57,20 @@ struct ModelSpec: Identifiable, Equatable {
 
 enum ModelRegistry {
 
-    /// The 5 models offered to users in ITER-039.
-    /// Order matters — Settings UI renders this top-to-bottom. Default
-    /// recommendation first.
+    /// Models offered to users in v1.3.5. Order matters — Settings UI
+    /// renders this top-to-bottom. Default recommendation first.
+    ///
+    /// **v1.3.5 ships 2 cards on purpose:** Phi-4 Mini (working inference
+    /// path) + Apple Foundation Models (informational — becomes selectable
+    /// once user upgrades to macOS 26 Tahoe; no MLX download, the model is
+    /// built into the OS). The original 5-model catalog showed 3 more MLX
+    /// cards (Gemma 4 E2B, Qwen 3 4B/7B) but their architecture adapters
+    /// haven't shipped yet — dead Download buttons in the catalog are a
+    /// false promise (user feedback 2026-05-13 «зачем они нам там нужны
+    /// если не работают»). Restore those entries when their per-architecture
+    /// inference code lands in `Services/LLM/Vendored/`.
     static let allModels: [ModelSpec] = [
-        // ─── Default ───────────────────────────────────────────────────
+        // ─── Default — the model with working inference in v1.3.5 ─────
         ModelSpec(
             id: "phi-4-mini",
             hfRepoID: "mlx-community/Phi-4-mini-instruct-4bit",
@@ -73,7 +82,7 @@ enum ModelRegistry {
             ramPeakGB: 3,
             speedM1TokPerSec: 135,
             quality: 5,
-            languages: ["EN", "RU", "multilingual"],
+            languages: ["multilingual"],
             minRecommendedRAMGB: 8,
             hardMinRAMGB: 8,
             minChipGen: 1,
@@ -81,67 +90,7 @@ enum ModelRegistry {
             isFoundationModels: false
         ),
 
-        // ─── Lightweight (fastest) ─────────────────────────────────────
-        ModelSpec(
-            id: "gemma-4-e2b",
-            hfRepoID: "mlx-community/gemma-4-e2b-it-4bit",
-            displayName: "Gemma 4 E2B",
-            vendor: "Google",
-            paramsDisplay: "E2B effective",
-            quantization: "TurboQuant-MLX",
-            downloadSizeBytes: 1_600_000_000,   // ~1.5 GB
-            ramPeakGB: 5,
-            speedM1TokPerSec: 158,
-            quality: 4,
-            languages: ["EN", "multilingual (limited)"],
-            minRecommendedRAMGB: 8,
-            hardMinRAMGB: 8,
-            minChipGen: 1,
-            bestForTagline: "Fastest responses, mobile-class Macs",
-            isFoundationModels: false
-        ),
-
-        // ─── Multilingual (best Russian) ───────────────────────────────
-        ModelSpec(
-            id: "qwen3-4b",
-            hfRepoID: "mlx-community/Qwen3-4B-Instruct-2507-4bit",
-            displayName: "Qwen 3 4B Instruct",
-            vendor: "Alibaba",
-            paramsDisplay: "4 B",
-            quantization: "AWQ-4bit MLX",
-            downloadSizeBytes: 2_500_000_000,   // ~2.3 GB
-            ramPeakGB: 3,
-            speedM1TokPerSec: 80,
-            quality: 5,
-            languages: ["RU (best)", "EN", "multilingual"],
-            minRecommendedRAMGB: 8,
-            hardMinRAMGB: 8,
-            minChipGen: 1,
-            bestForTagline: "Heavy Russian dictation, multilingual users",
-            isFoundationModels: false
-        ),
-
-        // ─── Quality (best, but heavier) ────────────────────────────────
-        ModelSpec(
-            id: "qwen3-7b",
-            hfRepoID: "mlx-community/Qwen3-7B-Instruct-2507-4bit",
-            displayName: "Qwen 3 7B Instruct",
-            vendor: "Alibaba",
-            paramsDisplay: "7 B",
-            quantization: "AWQ-4bit MLX",
-            downloadSizeBytes: 4_500_000_000,   // ~4.2 GB
-            ramPeakGB: 6,
-            speedM1TokPerSec: 50,
-            quality: 5,
-            languages: ["EN", "RU", "multilingual excellent"],
-            minRecommendedRAMGB: 16,
-            hardMinRAMGB: 10,
-            minChipGen: 1,
-            bestForTagline: "Highest quality (HumanEval 76.0) — needs 16 GB+",
-            isFoundationModels: false
-        ),
-
-        // ─── Built-in (macOS 26+) ──────────────────────────────────────
+        // ─── Built-in (macOS 26 Tahoe+) — info card, no download ──────
         ModelSpec(
             id: "apple-foundation-models",
             hfRepoID: "",
@@ -153,13 +102,32 @@ enum ModelRegistry {
             ramPeakGB: 2,
             speedM1TokPerSec: 0,                // varies; «native» speed
             quality: 4,
-            languages: ["EN", "Apple-supported languages"],
+            languages: ["Apple-supported languages"],
             minRecommendedRAMGB: 8,
             hardMinRAMGB: 8,
             minChipGen: 1,
-            bestForTagline: "Zero download, zero config — macOS 26+ only",
+            bestForTagline: "Zero download, zero config — built into macOS Tahoe",
             isFoundationModels: true
         ),
+
+        // ─── Deferred to v1.4+ — restore once architecture adapters ship
+        //
+        // Gemma 4 E2B (Google, TurboQuant-MLX, ~1.5 GB, mobile-class):
+        //   hfRepoID: "mlx-community/gemma-4-e2b-it-4bit"
+        //   arch work: GroupedQueryAttention + sliding-window attention mask
+        //   tagline:   "Fastest responses, mobile-class Macs"
+        //
+        // Qwen 3 4B Instruct (Alibaba, AWQ-4bit, ~2.3 GB, multilingual):
+        //   hfRepoID: "mlx-community/Qwen3-4B-Instruct-2507-4bit"
+        //   arch work: Qwen3 RoPE scaling differs from Phi
+        //   tagline:   "Best for multilingual users"
+        //
+        // Qwen 3 7B Instruct (Alibaba, AWQ-4bit, ~4.2 GB, 16 GB+ Macs):
+        //   hfRepoID: "mlx-community/Qwen3-7B-Instruct-2507-4bit"
+        //   arch work: same as 4B but different head count + dims
+        //   tagline:   "Highest quality (HumanEval 76.0) — needs 16 GB+"
+        //
+        // Full ModelSpec initializers preserved in git history (this commit).
     ]
 
     /// Lookup by `id`. Used by AppSettings.localLLMActiveModelID → resolve.
@@ -190,6 +158,21 @@ enum CompatibilityVerdict: Equatable {
 
 enum ModelCompatibility {
 
+    /// Apple skipped macOS 16-25 in 2025 and jumped to macOS 26 «Tahoe» for
+    /// year-aligned numbering. Map known major versions to marketing names so
+    /// the «Requires macOS X» message is recognizable instead of cryptic.
+    static func macOSName(major: Int) -> String {
+        switch major {
+        case ...12: return "an older macOS"
+        case 13: return "Ventura"
+        case 14: return "Sonoma"
+        case 15: return "Sequoia"
+        case 26: return "Tahoe"
+        case 27: return "Tahoe+"
+        default: return "macOS \(major)"
+        }
+    }
+
     /// Pure-function verdict. Takes spec + a closure-supplied system snapshot
     /// (so it's testable without touching `SystemSpecs` real I/O).
     static func verdict(
@@ -197,16 +180,19 @@ enum ModelCompatibility {
         systemRAMGB: Int = SystemSpecs.totalRAMGB,
         systemChipGen: Int = SystemSpecs.chipGeneration,
         macOSMajor: Int = SystemSpecs.macOSVersion.major,
+        macOSMinor: Int = SystemSpecs.macOSVersion.minor,
         isAppleSilicon: Bool = SystemSpecs.isAppleSilicon
     ) -> CompatibilityVerdict {
 
-        // Foundation Models is a special case — no download, but needs OS support.
+        // Foundation Models — built-in Apple API, no download. Available
+        // starting macOS 26 «Tahoe» (Apple jumped numbering 15→26 in 2025).
         if spec.isFoundationModels {
             if macOSMajor >= 26 {
                 return .recommended
             }
+            let yourName = macOSName(major: macOSMajor)
             return .incompatible(
-                reason: "Requires macOS 26+ (you're on macOS \(macOSMajor))"
+                reason: "Requires macOS Tahoe (26+). You have \(yourName) (\(macOSMajor).\(macOSMinor)). Update macOS to enable."
             )
         }
 

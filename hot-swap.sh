@@ -14,7 +14,6 @@ cd "$SCRIPT_DIR"
 DEBUG_BIN="$SCRIPT_DIR/.build/debug/MetaWhisp"
 APP="/Applications/MetaWhisp.app"
 SPARKLE="$APP/Contents/MacOS/Sparkle.framework"
-SIGN_ID="Developer ID Application: MetaWhisp Maintainer (6D6948Z4MW)"
 ENTITLEMENTS="$SCRIPT_DIR/Resources/MetaWhisp.entitlements"
 
 if [ ! -f "$DEBUG_BIN" ]; then
@@ -22,11 +21,25 @@ if [ ! -f "$DEBUG_BIN" ]; then
     exit 1
 fi
 
-if ! security find-identity -v -p codesigning | grep -q "$SIGN_ID"; then
-    echo "ERROR: Developer ID identity not in keychain — TCC will reset on launch."
+# Look up Developer ID Application cert by team ID 6D6948Z4MW. The cert's
+# common name varies (whatever legal name is on the Apple Developer Program
+# account on the laptop being used) — the team ID is the only stable
+# identifier. Mirrors the build.sh dynamic lookup added 2026-05-09 for the
+# same reason.
+SIGN_ID=$(security find-identity -v -p codesigning 2>/dev/null \
+    | awk '/Developer ID Application:.*\(6D6948Z4MW\)/ {
+        # Reconstruct the full identity string (everything after the SHA-1
+        # hash and quotes). codesign accepts both the SHA-1 hash and the
+        # full quoted name; using the name keeps hot-swap.sh log output
+        # readable.
+        match($0, /"[^"]+"/); print substr($0, RSTART+1, RLENGTH-2); exit
+    }')
+if [ -z "$SIGN_ID" ]; then
+    echo "ERROR: Developer ID Application cert (team 6D6948Z4MW) not in keychain."
     echo "       Falling back to ad-hoc would re-prompt for all permissions."
     exit 1
 fi
+echo "==> Signing with: $SIGN_ID"
 
 echo "==> Killing running MetaWhisp..."
 pkill -x MetaWhisp 2>/dev/null || true

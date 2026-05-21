@@ -20,6 +20,15 @@ final class ScreenContextService: ObservableObject {
     private var lastWindowTitle: String?
     private var modelContainer: ModelContainer?
 
+    /// Instant-detection observer for `NSWorkspace.didActivateApplicationNotification`.
+    /// Fires within ~100 ms of any app activation (Zoom open, Meet tab focus,
+    /// FaceTime answer) — bypasses the 30 s polling loop so call recording
+    /// can start before the user has time to switch focus elsewhere.
+    /// Notion's "Hey, want to record this call?" works because they use this
+    /// same hook; without it MetaWhisp can miss the call entirely if the
+    /// user moves to Slack 5 s after joining.
+    private var instantAppActivationObserver: NSObjectProtocol?
+
     /// Fires on video-call state change detected during window polling.
     /// Argument: call display name ("Google Meet", "Zoom", …) when a call starts,
     /// or `nil` when the previously-detected call ends (window switched / closed).
@@ -88,6 +97,26 @@ final class ScreenContextService: ObservableObject {
             await MainActor.run { self.isActive = true }
             NSLog("[ScreenContext] ✅ Monitoring started (interval: %.0fs)", interval)
 
+            // Subscribe to instant app-activation notifications for fast call
+            // detection. The 30 s poll below still runs for OCR + memory
+            // capture, but call detection now fires within ~100 ms of focus
+            // change so we don't miss short calls or fast-switching users.
+            await MainActor.run { [weak self] in
+                guard let self else { return }
+                self.instantAppActivationObserver = NSWorkspace.shared
+                    .notificationCenter.addObserver(
+                        forName: NSWorkspace.didActivateApplicationNotification,
+                        object: nil,
+                        queue: .main
+                    ) { [weak self] _ in
+                        Task { [weak self] in
+                            await self?.checkCallContextInstant(
+                                blacklist: mergedBlacklist
+                            )
+                        }
+                    }
+            }
+
             while !Task.isCancelled {
                 await self.captureIfChanged(blacklist: mergedBlacklist, whitelist: whitelist)
                 try? await Task.sleep(for: .seconds(interval))
@@ -95,9 +124,42 @@ final class ScreenContextService: ObservableObject {
         }
     }
 
+    /// Lightweight call-detection-only pass. Triggered by NSWorkspace
+    /// instant-activation notifications (within ~100 ms of focus change),
+    /// independent of the 30 s OCR loop. Mirrors the call-detection branch
+    /// of `captureIfChanged` but skips OCR + persistence (no expensive work
+    /// on every app switch). Same dedup via `lastCallContext` so we never
+    /// double-fire.
+    private func checkCallContextInstant(blacklist: Set<String>) async {
+        guard let frontApp = await MainActor.run(body: { NSWorkspace.shared.frontmostApplication }) else { return }
+        let appName = frontApp.localizedName ?? "Unknown"
+        let bundleID = frontApp.bundleIdentifier ?? ""
+
+        // Bail on privacy-blacklisted apps (1Password etc) — don't even
+        // peek at their window titles.
+        if blacklist.contains(bundleID) || blacklist.contains(appName) { return }
+
+        let windowTitle = getActiveWindowTitle(pid: frontApp.processIdentifier) ?? ""
+        let currentCall = SystemAudioCaptureService.detectCallContext(
+            bundleID: bundleID,
+            appName: appName,
+            windowTitle: windowTitle
+        )
+        if currentCall != lastCallContext {
+            lastCallContext = currentCall
+            NSLog("[ScreenContext] ⚡️ instant call-context change: %@ (app=%@)",
+                  currentCall ?? "nil", appName)
+            await MainActor.run { self.onCallContext?(currentCall) }
+        }
+    }
+
     func stopMonitoring() {
         monitorTask?.cancel()
         monitorTask = nil
+        if let observer = instantAppActivationObserver {
+            NSWorkspace.shared.notificationCenter.removeObserver(observer)
+            instantAppActivationObserver = nil
+        }
         isActive = false
         NSLog("[ScreenContext] Monitoring stopped")
     }

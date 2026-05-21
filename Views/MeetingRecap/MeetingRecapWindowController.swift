@@ -8,7 +8,7 @@ import SwiftUI
 @MainActor
 final class MeetingRecapWindowController {
     private var window: NSPanel?
-    private var hostingView: NSHostingView<MeetingRecapView>?
+    private var hostingView: ClickThroughHostingView<MeetingRecapView>?
     private var visibilityCancellable: AnyCancellable?
     private var autoDismissTask: Task<Void, Never>?
 
@@ -45,7 +45,7 @@ final class MeetingRecapWindowController {
             onDismiss: { MeetingRecapState.shared.dismiss() },
             onToggleTask: { [weak self] id in self?.handleToggleTask(id) }
         )
-        let hosting = NSHostingView(rootView: view)
+        let hosting = ClickThroughHostingView(rootView: view)
         // 480pt pill + 96pt shadow envelope (48 each side, see
         // MeetingRecapView.recapPill `.padding(48)`). Vertical bumped from 540
         // → 700 to accommodate dense recap content (header + about + with +
@@ -54,6 +54,8 @@ final class MeetingRecapWindowController {
         // 2026-05-12 — fixes the clipped shadow visible in user screenshot.
         hosting.frame = NSRect(x: 0, y: 0, width: 600, height: 700)
         hosting.autoresizingMask = [.width, .height]
+        // 48-pt transparent shadow padding around the card → click-through.
+        hosting.shadowInset = 48
 
         let panel = NSPanel(
             contentRect: hosting.frame,

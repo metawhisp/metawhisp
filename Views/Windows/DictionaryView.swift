@@ -12,6 +12,12 @@ struct DictionaryView: View {
     @State private var newKey = ""
     @State private var newValue = ""
 
+    /// Transient «copied to clipboard» feedback. When a tag's main body is
+    /// tapped, we copy its expansion and flip this to the tag's key for
+    /// ~1.2 s so the tag renders «✓ copied» instead of the value. Auto-
+    /// clears via the same Task that set it.
+    @State private var copiedKey: String? = nil
+
     var body: some View {
         VStack(spacing: 0) {
             headerBar
@@ -163,10 +169,15 @@ struct DictionaryView: View {
             Text(hintText)
                 .font(MW.monoSm).foregroundStyle(MW.textMuted)
 
-            // Load defaults button for brands tab
-            if selectedTab == 1 {
+            // Load defaults button — available for both Brands (preset
+            // capitalization) and Snippets (preset trigger templates with
+            // empty values for the user to fill in).
+            if selectedTab == 1 || selectedTab == 2 {
                 Button {
-                    withAnimation(.easeInOut(duration: 0.15)) { dictionary.loadDefaultBrands() }
+                    withAnimation(.easeInOut(duration: 0.15)) {
+                        if selectedTab == 1 { dictionary.loadDefaultBrands() }
+                        else { dictionary.loadDefaultSnippets() }
+                    }
                 } label: {
                     HStack(spacing: MW.sp4) {
                         Image(systemName: "arrow.clockwise").font(.system(size: 9, weight: .medium))
@@ -329,20 +340,60 @@ struct DictionaryView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
+    /// Two interactive zones in each tag:
+    ///   1. Main body (key → value) — tapping copies `value` to the
+    ///      clipboard with a 1.2 s «✓ copied» flash. For EMPTY snippet
+    ///      presets (Snippets tab, value == "") the same tap instead
+    ///      pre-fills the Add form above with the trigger so the user
+    ///      can type their email / LinkedIn / etc. in one move.
+    ///   2. X button — removes the entry. Separate `Button` so it doesn't
+    ///      trigger the copy/edit handler.
     private func itemTag(key: String, value: String) -> some View {
-        HStack(spacing: MW.sp4) {
-            if selectedTab == 0 {
-                Text(key).font(MW.mono).foregroundStyle(MW.textMuted)
-                    .strikethrough(color: MW.textMuted.opacity(0.5))
-            } else {
-                Text(key).font(MW.mono).foregroundStyle(MW.textMuted)
+        let isEmpty = value.isEmpty
+        let isSnippet = selectedTab == 2
+        let isPresetPlaceholder = isEmpty && isSnippet
+        let isCopied = copiedKey == key
+
+        return HStack(spacing: MW.sp4) {
+            Button {
+                handleTagTap(key: key, value: value, isPresetPlaceholder: isPresetPlaceholder)
+            } label: {
+                HStack(spacing: MW.sp4) {
+                    if selectedTab == 0 {
+                        Text(key).font(MW.mono).foregroundStyle(MW.textMuted)
+                            .strikethrough(color: MW.textMuted.opacity(0.5))
+                    } else {
+                        Text(key).font(MW.mono)
+                            .foregroundStyle(isPresetPlaceholder ? MW.textPrimary : MW.textMuted)
+                    }
+
+                    Image(systemName: "arrow.right")
+                        .font(.system(size: 7, weight: .medium)).foregroundStyle(MW.textSecondary)
+
+                    if isCopied {
+                        HStack(spacing: 3) {
+                            Image(systemName: "checkmark")
+                                .font(.system(size: 8, weight: .bold))
+                            Text("copied").font(MW.monoSm)
+                        }
+                        .foregroundStyle(MW.idle)
+                    } else if isPresetPlaceholder {
+                        Text("tap to fill in").font(MW.mono).italic()
+                            .foregroundStyle(MW.textMuted)
+                    } else {
+                        Text(value).font(MW.mono).foregroundStyle(MW.textPrimary)
+                            .lineLimit(1)
+                        Image(systemName: "doc.on.doc")
+                            .font(.system(size: 8, weight: .medium))
+                            .foregroundStyle(MW.textMuted.opacity(0.6))
+                            .padding(.leading, 2)
+                    }
+                }
             }
-
-            Image(systemName: "arrow.right")
-                .font(.system(size: 7, weight: .medium)).foregroundStyle(MW.textSecondary)
-
-            Text(value).font(MW.mono).foregroundStyle(MW.textPrimary)
-                .lineLimit(1)
+            .buttonStyle(.plain)
+            .help(isPresetPlaceholder
+                  ? "Tap to fill in this snippet — pre-fills the Add form so you can type your value."
+                  : "Tap to copy expansion to clipboard")
 
             Button {
                 withAnimation(.easeInOut(duration: 0.15)) { removeItem(key) }
@@ -351,9 +402,36 @@ struct DictionaryView: View {
                     .font(.system(size: 7, weight: .medium)).foregroundStyle(MW.textMuted)
             }
             .buttonStyle(.plain)
+            .help("Remove")
         }
         .padding(.horizontal, MW.sp8).padding(.vertical, MW.sp4)
         .mwCard(radius: MW.rSmall, elevation: .flat)
+        .opacity(isPresetPlaceholder ? 0.7 : 1.0)
+    }
+
+    /// Tap handler for the main tag body (the everything-except-X area).
+    /// Two paths:
+    ///   - Preset placeholder (empty snippet) → pre-fill the Add form so
+    ///     the user can type the actual value. Keeps the trigger phrase
+    ///     intact, focuses the value field.
+    ///   - Filled value → copy to clipboard + briefly flip the tag's UI
+    ///     to «✓ copied» state via `copiedKey`.
+    private func handleTagTap(key: String, value: String, isPresetPlaceholder: Bool) {
+        if isPresetPlaceholder {
+            // Pre-fill Add form. User types the value, hits ADD → overwrites
+            // the empty preset with their real value.
+            newKey = key
+            newValue = ""
+            return
+        }
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        pasteboard.setString(value, forType: .string)
+        copiedKey = key
+        Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(1200))
+            if copiedKey == key { copiedKey = nil }
+        }
     }
 
     // MARK: - Actions

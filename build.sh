@@ -103,9 +103,15 @@ xattr -cr "$APP_DIR" 2>/dev/null || true
 # each rebuild as a new app and resets TCC permissions (Screen Recording, Microphone,
 # Accessibility). Developer ID keeps the same Team ID across rebuilds, so TCC sticks.
 # If the cert is missing (CI, another machine) fall back to ad-hoc so build still works.
-SIGN_IDENTITY="Developer ID Application: MetaWhisp Maintainer (6D6948Z4MW)"
-if ! security find-identity -v -p codesigning | grep -q "$SIGN_IDENTITY"; then
-    echo "==> ⚠️  Developer ID cert not found, falling back to ad-hoc (TCC will reset each rebuild)"
+# Sign with Developer ID cert by SHA-1 hash (privacy: hash never reveals
+# the legal name on the cert, unlike the human-readable identity string).
+# Look up the hash dynamically by team ID 6D6948Z4MW so this works whether
+# the cert is currently labelled "MetaWhisp Maintainer" or any prior legal
+# name on the same Apple Developer Program team.
+SIGN_IDENTITY=$(security find-identity -v -p codesigning 2>/dev/null \
+    | awk '/Developer ID Application:.*\(6D6948Z4MW\)/ {print $2; exit}')
+if [ -z "$SIGN_IDENTITY" ]; then
+    echo "==> ⚠️  Developer ID cert (team 6D6948Z4MW) not found, falling back to ad-hoc (TCC will reset each rebuild)"
     SIGN_IDENTITY="-"
 fi
 

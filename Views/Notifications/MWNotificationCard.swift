@@ -17,13 +17,19 @@ struct MWNotificationCard: View {
             // ITER-027.5 — single-line render for ALL kinds including
             // `.proactive`. The previous SurfaceItem list is gone; insights
             // surface as headline + body just like `.task` / `.advice` etc.
+            // macOS 26 — inner `.frame(maxWidth: .infinity)` on Text views
+            // combined with outer `.frame(width: 344)` on the VStack
+            // triggered NSISEngine constraint-solver recursion every time
+            // a proactive insight was surfaced (user-reported crash
+            // 2026-05-19 21:04:59). Outer fixed width handles horizontal
+            // expansion; inner Text width-constraints are redundant and
+            // confuse Tahoe's stricter Auto Layout bridge.
             if !notification.title.isEmpty {
                 Text(notification.title)
                     .font(.system(size: 13, weight: .semibold))
                     .foregroundStyle(MW.textPrimary)
                     .lineLimit(2)
                     .multilineTextAlignment(.leading)
-                    .frame(maxWidth: .infinity, alignment: .leading)
             }
             if !notification.body.isEmpty {
                 Text(notification.body)
@@ -31,33 +37,29 @@ struct MWNotificationCard: View {
                     .foregroundStyle(MW.textSecondary)
                     .lineLimit(3)
                     .multilineTextAlignment(.leading)
-                    .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
         .padding(MW.sp12)
         .frame(width: 344, alignment: .topLeading)
+        .fixedSize(horizontal: false, vertical: true)
+        // macOS 26 Tahoe crash fix (2026-05-19): the previous stack of
+        // `.background(.thinMaterial)` + two `.overlay(RoundedRectangle…)`
+        // + `.shadow(…)` triggered NSISEngine recursion every time a
+        // proactive insight surfaced. Tahoe's stricter Auto Layout bridge
+        // can't keep up with multiple round-rect-clipped layers stacked
+        // on a SwiftUI Card. Reduced to a single opaque background +
+        // single border. Lose the liquid-glass specular rim + drop shadow
+        // here; trade-off is acceptable because cards are short-lived
+        // (6 s autodismiss). Reintroduce one effect at a time once we
+        // have a Layout Instruments trace of the exact cycle source.
         .background(
             RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .fill(.thinMaterial)
+                .fill(Color(nsColor: .underPageBackgroundColor).opacity(0.92))
         )
         .overlay(
             RoundedRectangle(cornerRadius: 14, style: .continuous)
                 .stroke(MW.border, lineWidth: 0.5)
         )
-        .overlay(
-            // Specular top rim — subtle white gradient gives the glass its
-            // depth. Same trick used by MenuBarView and FloatingVoiceView.
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .fill(
-                    LinearGradient(
-                        colors: [MW.rimInner, .clear],
-                        startPoint: .top, endPoint: .center
-                    )
-                )
-                .blendMode(.plusLighter)
-                .allowsHitTesting(false)
-        )
-        .shadow(color: .black.opacity(0.25), radius: 14, x: 0, y: 6)
         // Explicit shadow envelope (20pt = radius 14 + |y| 6) — without this,
         // the 344pt card centred in a 360pt window only has 8pt margin per
         // side, but shadow needs 14pt → straight cut on left/right + a bigger

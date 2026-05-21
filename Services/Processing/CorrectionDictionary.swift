@@ -14,6 +14,44 @@ final class CorrectionDictionary: ObservableObject {
     private let brandsURL: URL
     private let snippetsURL: URL
 
+    /// Built-in snippet PRESETS — common "say-this-want-that" triggers shipped
+    /// with empty expansions. User-facing copy: «moy LinkedIn» / «my LinkedIn»
+    /// → user fills in their actual profile URL. Until filled in, the snippet
+    /// is rendered greyed-out and skipped by `apply(...)` (see
+    /// `allReplacements`). Reasons for ship-with-empty-value:
+    ///   1. Discoverability — without seeing «moy email» as a hint, most
+    ///      users never realize they CAN have «when I say X, paste Y».
+    ///   2. Naming taxonomy — we standardize trigger phrases so cross-device
+    ///      sync (future) and team-shared snippet packs stay consistent.
+    /// Loaded via `loadDefaultSnippets()` from the Settings/Dictionary UI.
+    /// Order doesn't matter — `apply(...)` sorts longest-first internally.
+    static let defaultSnippetPresets: [String: String] = [
+        // Russian-language triggers (in case user dictates in RU).
+        "моя почта": "",
+        "мой email": "",
+        "мой телефон": "",
+        "мой номер": "",
+        "мой LinkedIn": "",
+        "мой GitHub": "",
+        "мой Twitter": "",
+        "мой сайт": "",
+        "мой адрес": "",
+        "моё имя": "",
+        // English-language triggers — used when user dictates in EN. Whisper
+        // sometimes translates Russian → English mid-sentence ("мой LinkedIn"
+        // → "my LinkedIn"), so both variants need to map to the same
+        // expansion. After `loadDefaultSnippets()` the user fills both with
+        // the same URL once.
+        "my email": "",
+        "my phone": "",
+        "my LinkedIn": "",
+        "my GitHub": "",
+        "my Twitter": "",
+        "my website": "",
+        "my address": "",
+        "my name": "",
+    ]
+
     /// Built-in brand corrections (user can toggle these on/off)
     static let defaultBrands: [String: String] = [
         "google": "Google", "youtube": "YouTube", "linkedin": "LinkedIn",
@@ -26,7 +64,14 @@ final class CorrectionDictionary: ObservableObject {
         "notion": "Notion", "figma": "Figma", "canva": "Canva",
         "dropbox": "Dropbox", "trello": "Trello", "asana": "Asana",
         "jira": "Jira", "confluence": "Confluence", "zoom": "Zoom",
-        "metawhisp": "MetaWhisp", "iphone": "iPhone", "ipad": "iPad",
+        // «metawhisp» REMOVED 2026-05-13 — fuzzy-matching against the app's
+        // own name caught Russian words with similar character distance
+        // (Levenshtein ≤ 2 on 9-char keys) and replaced them with «MetaWhisp»,
+        // which then leaked into MeetingCoach context and generated irrelevant
+        // «How does MetaWhisp relate to our project goals?» questions. Apps
+        // don't need to autocorrect their own name — the user controls casing
+        // directly in the chat / snippet UI.
+        "iphone": "iPhone", "ipad": "iPad",
         "macbook": "MacBook", "airpods": "AirPods", "imessage": "iMessage",
         "facetime": "FaceTime", "siri": "Siri", "alexa": "Alexa",
         "uber": "Uber", "airbnb": "Airbnb", "paypal": "PayPal",
@@ -46,10 +91,13 @@ final class CorrectionDictionary: ObservableObject {
     }
 
     /// All active replacements: corrections + brands + snippets merged.
+    /// Snippets with empty values are skipped — those are PRESETS the user
+    /// hasn't filled in yet (see `defaultSnippetPresets`) and applying them
+    /// would clobber the original word with nothing.
     private var allReplacements: [String: String] {
         var merged = corrections
-        for (k, v) in brands { merged[k] = v }
-        for (k, v) in snippets { merged[k] = v }
+        for (k, v) in brands where !v.isEmpty { merged[k] = v }
+        for (k, v) in snippets where !v.isEmpty { merged[k] = v }
         return merged
     }
 
@@ -88,6 +136,14 @@ final class CorrectionDictionary: ObservableObject {
             let lower = stripped.lowercased()
             // Skip if this word is already a known replacement value
             if all.values.contains(where: { $0.caseInsensitiveCompare(stripped) == .orderedSame }) {
+                return word
+            }
+            // 2026-05-13 — fuzzy ONLY runs on ASCII words. Russian/Cyrillic
+            // source words don't fuzzy-match against English brand keys
+            // (false positives caused «новые» → «MetaWhisp» chains because
+            // Levenshtein distance 2 was hit on 9-char keys). Whisper writes
+            // English brand names in ASCII, so we only need fuzzy there.
+            guard stripped.unicodeScalars.allSatisfy({ $0.isASCII }) else {
                 return word
             }
             for (key, replacement) in sorted {
@@ -265,8 +321,16 @@ final class CorrectionDictionary: ObservableObject {
     // MARK: - Snippets
 
     func addSnippet(trigger: String, expansion: String) {
-        let key = trigger.lowercased()
-        guard !key.isEmpty, !expansion.isEmpty else { return }
+        // Use original-case key for snippets so triggers preserve their
+        // intended capitalization («my LinkedIn» stays «my LinkedIn» rather
+        // than «my linkedin»). `apply(...)` matches with .caseInsensitive
+        // regex, so the stored case is purely display.
+        let key = trigger.trimmingCharacters(in: .whitespaces)
+        guard !key.isEmpty else { return }
+        // Empty expansion is allowed for PRESETS — user-loaded templates the
+        // user fills in later. `allReplacements` filters empties out of the
+        // active replacement set, so an unfilled preset is a no-op during
+        // transcription (but still visible in the Dictionary UI as a hint).
         snippets[key] = expansion
         saveSnippets()
     }
@@ -278,6 +342,18 @@ final class CorrectionDictionary: ObservableObject {
 
     func removeAllSnippets() {
         snippets.removeAll()
+        saveSnippets()
+    }
+
+    /// Seed snippets with the preset triggers (empty values). Mirrors
+    /// `loadDefaultBrands()` — idempotent, doesn't clobber a key already set.
+    /// Triggered from the Dictionary UI's «LOAD DEFAULTS» button on the
+    /// Snippets tab. Surfaces «moy LinkedIn», «moy email», etc. as
+    /// fill-in templates so the user discovers the feature.
+    func loadDefaultSnippets() {
+        for (k, v) in Self.defaultSnippetPresets {
+            if snippets[k] == nil { snippets[k] = v }
+        }
         saveSnippets()
     }
 

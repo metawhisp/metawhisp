@@ -80,7 +80,12 @@ final class RealtimeScreenReactor: ObservableObject {
 
         do {
             let response: String
-            if LicenseService.shared.isPro, let key = LicenseService.shared.licenseKey {
+            // ITER-039 — local LLM takes priority when loaded.
+            if LocalLLMService.shared.isReady {
+                response = try await LocalLLMService.shared.completeBlocking(
+                    system: Self.systemPrompt, user: prompt, maxTokens: 256
+                )
+            } else if LicenseService.shared.isPro, let key = LicenseService.shared.licenseKey {
                 response = try await callProProxy(system: Self.systemPrompt, user: prompt, licenseKey: key)
             } else {
                 let apiKey = settings.activeAPIKey
@@ -463,6 +468,8 @@ final class RealtimeScreenReactor: ObservableObject {
     }
 
     private var hasLLMAccess: Bool {
-        !settings.activeAPIKey.isEmpty || LicenseService.shared.isPro
+        !settings.activeAPIKey.isEmpty
+            || LicenseService.shared.isPro
+            || LocalLLMService.shared.isReady
     }
 }

@@ -122,20 +122,47 @@ final class MeetingAutoStartGate {
         audioHistory.append(audioActive)
         trimAudioHistory()
 
-        // Both must be true for streak to advance.
-        if isFullscreen {
+        // ITER-002 — fullscreen-OR-call-app rule. Native call apps
+        // (Zoom / Teams / FaceTime / Meet etc.) are sufficient signal that
+        // a real call is happening REGARDLESS of window size — Zoom's
+        // default "floating video window" is a small PiP that's frontmost
+        // but NOT fullscreen (user report 2026-05-15: «я на созвоне в зуме,
+        // запись не началась»). Before this change the streak only advanced
+        // when the window was fullscreen, so PiP-style calls never crossed
+        // the 10s threshold. The browser-tab cases (Meet/Teams in a browser
+        // tab) still need fullscreen because a background browser tab is a
+        // common false-positive source.
+        //
+        // `SystemAudioCaptureService.detectCallContext` only returns a
+        // non-nil `callName` when the frontmost window is already filtered
+        // for legitimate call indicators (always-call bundles, dual-mode
+        // with Huddle/VoiceConnected suffix, or browser+call-keyword
+        // matches). So `callName != nil` AND user is FRONTMOST is enough
+        // confidence to start the streak.
+        if isFullscreen || isNativeCallApp(name) {
             fullscreenStreak += 1
         } else {
             fullscreenStreak = 0
         }
 
-        let activeAudioCount = audioHistory.filter { $0 }.count
-        let speechSustained = activeAudioCount >= 8 && audioHistory.count >= sustainedSecondsRequired
-
-        if fullscreenStreak >= sustainedSecondsRequired && speechSustained {
-            // Reset so we don't keep firing every tick — caller will react
-            // (plashka + countdown). If the user dismisses, they call reset()
-            // explicitly.
+        // 2026-05-15 — audio requirement REMOVED from fallback fire.
+        // Before this change the gate required BOTH
+        // `fullscreenStreak >= 10` AND `speechSustained` (≥80% of last 10
+        // ticks with audioActive). But the caller in `AppDelegate.swift`
+        // (`startMeetingAutoStartTickLoop`) hardcodes `audioActive: false`
+        // because it can't probe system audio without a running recorder.
+        // Net effect: `speechSustained` was ALWAYS false → fallback fire
+        // NEVER triggered → recording only started via `.calendarReady`
+        // (calendar event). User without a calendar event was silently
+        // missed (today's report: «на созвоне в зуме, запись не началась»).
+        //
+        // Safety: `detectCallContext` already filters strictly upstream
+        // (always-call bundles, Huddle/VoiceConnected suffixes, or
+        // browser+call-keyword matches). 10 seconds of sustained
+        // frontmost-OR-native-call-app is sufficient confidence; the audio
+        // sniff was a vestige of an earlier design where the gate ran
+        // before window-fullscreen-OR-native check was added.
+        if fullscreenStreak >= sustainedSecondsRequired {
             let finalName = name
             audioHistory.removeAll()
             fullscreenStreak = 0
@@ -143,7 +170,7 @@ final class MeetingAutoStartGate {
             return .fallbackReady(name: finalName)
         }
 
-        let secondsLeft = max(0, sustainedSecondsRequired - min(fullscreenStreak, audioHistory.count))
+        let secondsLeft = max(0, sustainedSecondsRequired - fullscreenStreak)
         return .tracking(name: name, secondsLeft: secondsLeft)
     }
 
@@ -151,6 +178,27 @@ final class MeetingAutoStartGate {
     private func trimAudioHistory() {
         while audioHistory.count > sustainedSecondsRequired {
             audioHistory.removeFirst()
+        }
+    }
+
+    /// Native call apps that mean «definitely in a call» whenever they're
+    /// frontmost, regardless of window state (fullscreen / floating PiP /
+    /// docked panel). For browser-based calls (Meet/Teams-in-tab) we still
+    /// require fullscreen because a backgrounded browser tab is a common
+    /// false-positive source. Matches `SystemAudioCaptureService.alwaysCallBundleIDs`
+    /// + dual-mode (`com.tinyspeck.slackmacgap` Huddle, `com.discord.Discord`
+    /// Voice Connected) — these already passed strict title checks upstream
+    /// before producing a non-nil `callName`.
+    private func isNativeCallApp(_ callName: String) -> Bool {
+        switch callName {
+        case "Zoom", "Teams", "FaceTime", "Webex", "GoTo Meeting",
+             "Slack", "Discord":
+            return true
+        default:
+            // "Google Meet" comes through this path too — but that's a
+            // browser tab, NOT a native call app. Leave it requiring
+            // fullscreen.
+            return false
         }
     }
 }

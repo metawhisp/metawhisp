@@ -93,11 +93,22 @@ extension CalendarEndStopDecision {
         let secondsPastEnd = now.timeIntervalSince(eventEnd)
         if secondsPastEnd < graceSeconds { return .keepRunning }
 
-        // Past grace + already exhausted notify budget → force stop, ALWAYS.
-        // This is the safety valve: if the user has ignored 3 "overrunning"
-        // cards already, we cap the recording even if the room is still loud
-        // (forgotten music session, all-night zombie call, etc).
-        if notifyAttemptsSoFar >= maxNotifyAttempts { return .hardStop }
+        // Past grace + exhausted notify budget → force stop, UNLESS audio is
+        // currently active. 2026-05-15 bug: user's Google-Meet-in-Chrome call
+        // ran for 46 min and got hard-stopped at the 3rd notify because the
+        // meeting-app probe doesn't recognize browser-tab meetings. Audio
+        // was loud the entire time (RMS 0.099-1.0). Real-life recording
+        // shouldn't get killed when there's clearly still conversation.
+        // The safety valve fires ONLY when room is genuinely quiet.
+        if notifyAttemptsSoFar >= maxNotifyAttempts && !recentAudioActive {
+            return .hardStop
+        }
+        // Audio still active after 3 notifies — extend silently rather than
+        // killing the recording. User will get a final card every 5 min if
+        // they want to stop, but the recorder keeps capturing.
+        if notifyAttemptsSoFar >= maxNotifyAttempts {
+            return .silentExtend(newDeadline: now.addingTimeInterval(extensionSeconds))
+        }
 
         // ITER-034.1 — sliding-window guards. A single quiet sample is NOT
         // enough evidence the meeting is over. We need EITHER:

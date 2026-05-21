@@ -120,7 +120,13 @@ final class RecordingOverlayController {
         let isEdgeVariant = pillStyle == "island" || pillStyle == "dotglow" || pillStyle == "glow"
         panel.level = isEdgeVariant ? NSWindow.Level(rawValue: Int(CGShieldingWindowLevel()) + 1) : .floating
         panel.hasShadow = pillStyle != "glow" && !isEdgeVariant
-        panel.collectionBehavior = [.canJoinAllSpaces, .stationary]
+        // `.fullScreenAuxiliary` is critical: without it, when user is in
+        // another app's fullscreen Space (e.g. Claude fullscreen) and starts
+        // recording, macOS kicks them out to a neighboring Space to render
+        // the pill. See `MainWindowController.windowBehavior` header for the
+        // full pattern — every floating panel that should follow the user
+        // gets this flag.
+        panel.collectionBehavior = [.canJoinAllSpaces, .stationary, .fullScreenAuxiliary]
         panel.isMovableByWindowBackground = pillStyle != "glow" && pillStyle != "island" && pillStyle != "dotglow"
         panel.ignoresMouseEvents = isEdgeVariant
         panel.hidesOnDeactivate = false

@@ -14,7 +14,7 @@ import SwiftUI
 @MainActor
 final class MeetingCoachWindowController {
     private var window: NSPanel?
-    private var hostingView: NSHostingView<MeetingCoachView>?
+    private var hostingView: ClickThroughHostingView<MeetingCoachView>?
     private var visibilityCancellable: AnyCancellable?
 
     init() {
@@ -57,13 +57,18 @@ final class MeetingCoachWindowController {
                 self?.handleStopTap()
             }
         )
-        let hosting = NSHostingView(rootView: view)
+        let hosting = ClickThroughHostingView(rootView: view)
         // Wider/taller than the visible card so shadow (radius 28, y offset 14)
         // doesn't clip at the window boundary. The card itself has internal
         // padding to push it away from these edges. 540×440 leaves comfortable
         // room on every side even with 3 suggestions + transcript footer.
         hosting.frame = NSRect(x: 0, y: 0, width: 540, height: 440)
         hosting.autoresizingMask = [.width, .height]
+        // The MeetingCoachView wraps its card in `.padding(42)` (the shadow
+        // envelope). Tell the hosting view about it so clicks inside that
+        // 42-pt transparent border fall through to whatever app is below
+        // (Zoom, browser, etc.) instead of being eaten by the floating panel.
+        hosting.shadowInset = 42
 
         // Borderless, non-activating panel — appears over Zoom etc. without
         // stealing focus. `nonactivatingPanel` is critical so clicking near it

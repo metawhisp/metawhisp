@@ -5,6 +5,9 @@ struct MainSettingsView: View {
     @ObservedObject private var settings = AppSettings.shared
     @ObservedObject private var license = LicenseService.shared
     @ObservedObject private var launchAtLogin = LaunchAtLoginManager.shared
+    /// ITER-039 — local-LLM download progress + downloaded set. Drives the
+    /// Download/Make-active state machine inside `aiModelCard`.
+    @ObservedObject private var mlxManager = MLXModelManager.shared
 
     // Screen Context app picker sheet
     @State private var showAppPicker = false
@@ -1446,42 +1449,50 @@ struct MainSettingsView: View {
 
     // MARK: - AI Models (ITER-039 local LLM catalog)
 
-    /// Section shown in the AI tab. Lists 5 local LLM options (4 downloadable
-    /// MLX + 1 Apple Foundation Models built-in) with characteristics and a
-    /// compatibility badge based on `SystemSpecs`. Step 1 ships UI scaffold;
-    /// Download / Active / Delete buttons wire up in Step 2-3.
+    /// Section shown in the AI tab. Collapsed by default — `localLLMEnabled`
+    /// toggle controls whether the model catalog is expanded. Keeps the
+    /// section minimal for users who haven't opted in.
     private var aiModelsSection: some View {
         VStack(alignment: .leading, spacing: MW.sp10) {
             Text("AI MODELS").blocksLabel()
-            Text("Local processing — Free, no API key needed. Pick one to download.")
-                .font(MW.monoSm).foregroundStyle(MW.textMuted)
-                .fixedSize(horizontal: false, vertical: true)
 
-            // System summary chip — shows what we detected so user understands
-            // why some models are flagged «too heavy».
-            HStack(spacing: 6) {
-                Image(systemName: "cpu").font(.system(size: 10))
-                Text("Your Mac: \(SystemSpecs.summary)")
-                    .font(MW.monoSm).foregroundStyle(MW.textSecondary)
-            }
-            .padding(.bottom, 4)
+            // ALWAYS-VISIBLE routing indicator — TEMPORARILY DISABLED
+            // 2026-05-19 on macOS 26 Tahoe. The view triggered NSISEngine
+            // constraint-solver recursion (stack overflow) when the AI tab
+            // is rendered. Suspect: HStack with mixed `.frame(maxWidth: .infinity)`
+            // + `.lineLimit(1)` + nested `.background/.overlay` shapes confuses
+            // macOS 26's stricter SwiftUI→AppKit autoresizing bridge.
+            // Reintroduce after standalone repro + Layout Instruments trace.
+            // currentAIRoutingIndicator
 
-            // Master enable toggle. When OFF, local LLM is skipped in all
-            // service gates even if a model is downloaded. Lets user pause
-            // local usage without uninstalling models.
+            // Master toggle — collapsed/expanded state driver.
             toggleRow("Use local model for AI features",
                       isOn: $settings.localLLMEnabled)
 
-            // Cards. Inline forEach so we can color the active one differently.
-            ForEach(ModelRegistry.allModels) { spec in
-                aiModelCard(spec)
-            }
-
-            // Storage hint.
-            if !ModelRegistry.allModels.contains(where: { $0.id == settings.localLLMActiveModelID }) {
-                Text("No active model yet — pick one above. App still works through Pro proxy or your API key if configured.")
+            if !settings.localLLMEnabled {
+                // Collapsed — one-line summary so user knows the section exists
+                // and what it does. Tapping the toggle expands it.
+                Text("Run AI features (structured text, memory, tasks, chat) on-device for free instead of through Pro proxy / API key. Toggle on to pick a model.")
                     .font(MW.monoSm).foregroundStyle(MW.textMuted)
-                    .padding(.top, 4)
+                    .fixedSize(horizontal: false, vertical: true)
+            } else {
+                // Expanded — system summary + cards.
+                HStack(spacing: 6) {
+                    Image(systemName: "cpu").font(.system(size: 10))
+                    Text("Your Mac: \(SystemSpecs.summary)")
+                        .font(MW.monoSm).foregroundStyle(MW.textSecondary)
+                }
+                .padding(.bottom, 2)
+
+                ForEach(ModelRegistry.allModels) { spec in
+                    aiModelCard(spec)
+                }
+
+                if !ModelRegistry.allModels.contains(where: { $0.id == settings.localLLMActiveModelID }) {
+                    Text("No active model yet. App keeps using Pro proxy / your API key for AI features in the meantime.")
+                        .font(MW.monoSm).foregroundStyle(MW.textMuted)
+                        .padding(.top, 4)
+                }
             }
         }
         .padding(MW.sp16)
@@ -1489,124 +1500,76 @@ struct MainSettingsView: View {
         .mwCard(radius: MW.rMedium, elevation: .raised)
     }
 
-    /// Single model card. Renders all characteristics + compatibility badge +
-    /// action buttons (Download / Make Active / Delete — placeholder in Step 1).
+    /// Compact 2-column model card. LEFT = identity + tagline + compat badge.
+    /// RIGHT = stats + action button (right-aligned). Significantly shorter
+    /// than the previous all-left-stacked layout — fits 5 cards in roughly
+    /// the same vertical space as 2 cards before.
     private func aiModelCard(_ spec: ModelSpec) -> some View {
         let verdict = ModelCompatibility.verdict(for: spec)
         let isActive = settings.localLLMActiveModelID == spec.id
 
-        return VStack(alignment: .leading, spacing: 6) {
-            // Top row: name + vendor + active chip.
-            HStack(alignment: .firstTextBaseline, spacing: 8) {
-                Text(spec.displayName)
-                    .font(MW.mono).fontWeight(.semibold)
-                    .foregroundStyle(MW.textPrimary)
-                Text("· \(spec.vendor)")
-                    .font(MW.monoSm).foregroundStyle(MW.textMuted)
-                Spacer()
-                if isActive {
-                    Text("ACTIVE")
-                        .font(.system(size: 9, weight: .bold))
-                        .tracking(1)
-                        .foregroundStyle(.black)
-                        .padding(.horizontal, 6).padding(.vertical, 2)
-                        .background(MW.idle)
+        return HStack(alignment: .top, spacing: 16) {
+            // ── LEFT column ───────────────────────────────────────────────
+            VStack(alignment: .leading, spacing: 3) {
+                // Title row
+                HStack(spacing: 6) {
+                    Text(spec.displayName)
+                        .font(MW.mono).fontWeight(.semibold)
+                        .foregroundStyle(MW.textPrimary)
+                    if isActive {
+                        Text("ACTIVE")
+                            .font(.system(size: 8, weight: .bold))
+                            .tracking(1)
+                            .foregroundStyle(.black)
+                            .padding(.horizontal, 5).padding(.vertical, 1.5)
+                            .background(MW.idle)
+                            .cornerRadius(2)
+                    }
                 }
-            }
-
-            // Tech row: params + quantization + download size.
-            HStack(spacing: 6) {
-                Text(spec.paramsDisplay)
-                Text("·")
-                Text(spec.quantization)
-                Text("·")
-                Text(spec.downloadSizeDisplay)
-            }
-            .font(MW.monoSm).foregroundStyle(MW.textSecondary)
-
-            // Perf row: speed + RAM + quality stars.
-            HStack(spacing: 12) {
-                Label("\(spec.speedM1TokPerSec) tok/s on M1", systemImage: "speedometer")
+                // Vendor + params
+                Text("\(spec.vendor) · \(spec.paramsDisplay) · \(spec.quantization)")
+                    .font(MW.monoSm).foregroundStyle(MW.textMuted)
+                // Tagline
+                Text(spec.bestForTagline)
                     .font(MW.monoSm).foregroundStyle(MW.textSecondary)
-                Label("\(spec.ramPeakGB) GB RAM", systemImage: "memorychip")
-                    .font(MW.monoSm).foregroundStyle(MW.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                // Compatibility badge
+                compatBadge(verdict)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+
+            // ── RIGHT column ──────────────────────────────────────────────
+            VStack(alignment: .trailing, spacing: 3) {
+                // Stars
                 Text(String(repeating: "★", count: spec.quality) +
                      String(repeating: "☆", count: 5 - spec.quality))
                     .font(MW.monoSm).foregroundStyle(MW.textSecondary)
-            }
-
-            // Languages.
-            HStack(spacing: 4) {
-                Image(systemName: "globe").font(.system(size: 9))
-                    .foregroundStyle(MW.textMuted)
+                // Speed + RAM packed
+                if spec.isFoundationModels {
+                    Text("native · ~\(spec.ramPeakGB) GB RAM")
+                        .font(MW.monoSm).foregroundStyle(MW.textMuted)
+                } else {
+                    Text("\(spec.speedM1TokPerSec) tok/s · \(spec.ramPeakGB) GB RAM")
+                        .font(MW.monoSm).foregroundStyle(MW.textMuted)
+                }
+                // Languages
                 Text(spec.languages.joined(separator: " · "))
                     .font(MW.monoSm).foregroundStyle(MW.textMuted)
+                // Action button (always rendered, may be disabled)
+                actionButton(for: spec, verdict: verdict, isActive: isActive)
+                    .padding(.top, 2)
             }
-
-            // Best-for tagline.
-            Text(spec.bestForTagline)
-                .font(MW.monoSm).foregroundStyle(MW.textMuted)
-                .italic()
-                .fixedSize(horizontal: false, vertical: true)
-
-            // Compatibility badge.
-            HStack(spacing: 4) {
-                switch verdict {
-                case .recommended:
-                    Image(systemName: "checkmark.circle.fill").font(.system(size: 10))
-                        .foregroundStyle(MW.idle)
-                    Text("Recommended for your Mac")
-                        .font(MW.monoSm).foregroundStyle(MW.idle)
-                case .slow(let reason):
-                    Image(systemName: "exclamationmark.triangle.fill").font(.system(size: 10))
-                        .foregroundStyle(MW.processing)
-                    Text(reason)
-                        .font(MW.monoSm).foregroundStyle(MW.processing)
-                case .incompatible(let reason):
-                    Image(systemName: "xmark.circle.fill").font(.system(size: 10))
-                        .foregroundStyle(MW.recording)
-                    Text(reason)
-                        .font(MW.monoSm).foregroundStyle(MW.recording)
-                }
-            }
-
-            // Action buttons. In Step 1 these are placeholders — Download
-            // shows alert «Coming in v1.3.5 — Phase 2 of ITER-039»; Make
-            // Active only works for Foundation Models (which doesn't need
-            // download). Step 2 will wire real MLXModelManager.
-            HStack(spacing: 6) {
-                if spec.isFoundationModels {
-                    if case .recommended = verdict {
-                        Button(isActive ? "Active" : "Make active") {
-                            settings.localLLMActiveModelID = isActive ? "" : spec.id
-                        }
-                        .buttonStyle(.plain)
-                        .font(MW.label).tracking(0.6)
-                        .padding(.horizontal, 8).padding(.vertical, 3)
-                        .foregroundStyle(isActive ? .black : MW.textPrimary)
-                        .background(isActive ? MW.idle : Color.clear)
-                        .overlay(RoundedRectangle(cornerRadius: MW.rSmall, style: .continuous)
-                                    .stroke(MW.border, lineWidth: 0.5))
-                    }
-                } else if verdict.isDownloadable {
-                    Button("Download (\(spec.downloadSizeDisplay))") {
-                        // Step 2 wires real download. For now — placeholder alert.
-                        NSLog("[ITER-039] Download tapped for \(spec.id); MLX manager not yet wired (Step 2 pending)")
-                    }
-                    .buttonStyle(.plain)
-                    .font(MW.label).tracking(0.6)
-                    .foregroundStyle(MW.textPrimary)
-                    .padding(.horizontal, 8).padding(.vertical, 3)
-                    .overlay(RoundedRectangle(cornerRadius: MW.rSmall, style: .continuous)
-                                .stroke(MW.border, lineWidth: 0.5))
-                    .disabled(true)
-                    .help("Download UI ships in Phase 2 of ITER-039")
-                }
-            }
-            .padding(.top, 2)
+            .frame(width: 180, alignment: .trailing)
         }
-        .padding(10)
-        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 12).padding(.vertical, 8)
+        // macOS 26 fix: dropped outer `.frame(maxWidth: .infinity)` on
+        // the HStack — collision with inner `.frame(maxWidth: .infinity)`
+        // (LEFT) + `.frame(width: 180)` (RIGHT) caused NSISEngine to
+        // recurse forever during constraint solve (crash 2026-05-19
+        // 20:48 / 20:52 / 20:54). The HStack now sizes to the parent
+        // section's padding container naturally.
+        .frame(maxWidth: .infinity)
+        .fixedSize(horizontal: false, vertical: true)
         .background(
             RoundedRectangle(cornerRadius: MW.rSmall, style: .continuous)
                 .fill(isActive ? MW.idle.opacity(0.08) : Color.clear)
@@ -1615,6 +1578,332 @@ struct MainSettingsView: View {
             RoundedRectangle(cornerRadius: MW.rSmall, style: .continuous)
                 .stroke(isActive ? MW.idle.opacity(0.4) : MW.border, lineWidth: 0.5)
         )
+    }
+
+    /// Tiny always-visible status row that tells the user where their AI
+    /// is running RIGHT NOW. Computed from `localLLMActiveModelID` +
+    /// `LocalLLMService.isReady` + license + API-key state. Three flavors:
+    ///   - **LOCAL** (green): a downloaded MLX model is loaded and ready,
+    ///     OR Foundation Models is selected on Tahoe.
+    ///   - **CLOUD** (blue): no local model active; Pro proxy or user's
+    ///     own API key is the active LLM path.
+    ///   - **INACTIVE** (dim): no API key, no Pro, no local — AI features
+    ///     are silently no-op for this user.
+    /// The row also names the specific provider/model so the user doesn't
+    /// have to play detective: «Cerebras Qwen 3 235B (Pro)» vs
+    /// «Phi-4 Mini Instruct (on M4 Max)».
+    @ViewBuilder
+    private var currentAIRoutingIndicator: some View {
+        let (label, detail, color) = aiRoutingState()
+        HStack(spacing: 6) {
+            Circle().fill(color).frame(width: 5, height: 5)
+            Text(label)
+                .font(.system(size: 9, weight: .bold))
+                .tracking(0.8)
+                .foregroundStyle(color)
+            Text(detail)
+                .font(MW.monoSm)
+                .foregroundStyle(MW.textSecondary)
+                .lineLimit(1)
+                .truncationMode(.tail)
+        }
+        .padding(.horizontal, 8).padding(.vertical, 4)
+        // macOS 26 layout-engine workaround: pinning vertical sizing breaks
+        // the NSISEngine constraint cycle this view contributed to (crash
+        // 2026-05-19 NSISEngine excessive recursion).
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .fixedSize(horizontal: false, vertical: true)
+        .background(
+            RoundedRectangle(cornerRadius: MW.rTiny, style: .continuous)
+                .fill(color.opacity(0.08))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: MW.rTiny, style: .continuous)
+                .stroke(color.opacity(0.25), lineWidth: 0.5)
+        )
+    }
+
+    /// Pure resolver — derive the (label, detail, color) tuple from current
+    /// settings/license/local-model state. Kept separate from the View so
+    /// the same routing logic can be re-used later (Dashboard widget,
+    /// telemetry, status menu, etc.) without UI baggage.
+    private func aiRoutingState() -> (label: String, detail: String, color: Color) {
+        // Local path takes priority — if user activated a local model,
+        // that's what's running (or about to run after warm-up).
+        if !settings.localLLMActiveModelID.isEmpty,
+           let spec = ModelRegistry.model(byID: settings.localLLMActiveModelID) {
+            let chipBit = SystemSpecs.chipName  // e.g. "M4 Max"
+            if spec.isFoundationModels {
+                return (
+                    "LOCAL",
+                    "\(spec.displayName) (\(chipBit) Neural Engine)",
+                    MW.idle
+                )
+            }
+            // MLX model. `isReady` reflects whether weights are loaded
+            // into RAM; until that's true we're technically still on
+            // cloud for this tick (Phase 4 will flip isReady to true).
+            if LocalLLMService.shared.isReady {
+                return (
+                    "LOCAL",
+                    "\(spec.displayName) on \(chipBit)",
+                    MW.idle
+                )
+            } else {
+                return (
+                    "LOADING",
+                    "\(spec.displayName) — warming up…",
+                    MW.processing
+                )
+            }
+        }
+
+        // No local model — figure out which cloud path is active.
+        if license.isPro {
+            let providerLabel = settings.llmProvider == "cerebras"
+                ? "Cerebras Qwen 3 235B"
+                : "OpenAI GPT-4o-mini"
+            return (
+                "CLOUD",
+                "\(providerLabel) via Pro proxy",
+                MW.postProcess
+            )
+        }
+
+        // Non-Pro: check user-supplied API key (BYOK path).
+        if !settings.activeAPIKey.isEmpty {
+            let providerLabel = settings.llmProvider == "cerebras"
+                ? "Cerebras (your key)"
+                : "OpenAI (your key)"
+            return ("CLOUD", providerLabel, MW.postProcess)
+        }
+
+        // Nothing wired — AI features no-op for this user.
+        return (
+            "INACTIVE",
+            "No API key, no Pro, no local model — AI features silently disabled",
+            MW.textDim
+        )
+    }
+
+    @ViewBuilder
+    private func compatBadge(_ verdict: CompatibilityVerdict) -> some View {
+        HStack(spacing: 4) {
+            switch verdict {
+            case .recommended:
+                Image(systemName: "checkmark.circle.fill").font(.system(size: 9))
+                    .foregroundStyle(MW.idle)
+                Text("Recommended for your Mac")
+                    .font(MW.monoSm).foregroundStyle(MW.idle)
+            case .slow(let reason):
+                Image(systemName: "exclamationmark.triangle.fill").font(.system(size: 9))
+                    .foregroundStyle(MW.processing)
+                Text(reason)
+                    .font(MW.monoSm).foregroundStyle(MW.processing)
+                    .lineLimit(2).fixedSize(horizontal: false, vertical: true)
+            case .incompatible(let reason):
+                Image(systemName: "xmark.circle.fill").font(.system(size: 9))
+                    .foregroundStyle(MW.recording)
+                Text(reason)
+                    .font(MW.monoSm).foregroundStyle(MW.recording)
+                    .lineLimit(3).fixedSize(horizontal: false, vertical: true)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func actionButton(for spec: ModelSpec, verdict: CompatibilityVerdict, isActive: Bool) -> some View {
+        if spec.isFoundationModels {
+            // Foundation Models: no download — just Make Active when compatible.
+            if case .recommended = verdict {
+                Button(isActive ? "Active" : "Make active") {
+                    settings.localLLMActiveModelID = isActive ? "" : spec.id
+                }
+                .buttonStyle(.plain)
+                .font(MW.label).tracking(0.6)
+                .padding(.horizontal, 8).padding(.vertical, 3)
+                .foregroundStyle(isActive ? .black : MW.textPrimary)
+                .background(isActive ? MW.idle : Color.clear)
+                .overlay(RoundedRectangle(cornerRadius: MW.rSmall, style: .continuous)
+                            .stroke(MW.border, lineWidth: 0.5))
+            } else {
+                Text(spec.downloadSizeDisplay)
+                    .font(MW.label).tracking(0.6)
+                    .foregroundStyle(MW.textDim)
+                    .padding(.horizontal, 8).padding(.vertical, 3)
+            }
+        } else if verdict.isDownloadable {
+            // MLX model. v1.3.5 ships the download path for Phi-4 Mini only
+            // — other model architectures land in v1.4.0 with the full MLX
+            // inference loop. So we render two flavors of "Download":
+            //   - phi-4-mini → live button calling MLXModelManager
+            //   - everything else → disabled with a "shipping later" tooltip
+            mlxDownloadButton(spec: spec)
+        } else {
+            // Incompatible — show size as plain label, no button.
+            Text(spec.downloadSizeDisplay)
+                .font(MW.label).tracking(0.6)
+                .foregroundStyle(MW.textDim)
+                .padding(.horizontal, 8).padding(.vertical, 3)
+        }
+    }
+
+    /// Download/Make-active control for an MLX model card. Three states:
+    ///   - downloading (this spec) → progress label "53% · 1.2/2.3 GB"
+    ///   - downloaded → "Make active" (or "Active") — once Step 4 wires
+    ///     LocalLLMService into hasLLMAccess this actually starts using
+    ///     the model
+    ///   - not downloaded → "Download · 2.3 GB"
+    /// Phi-4 Mini is the only model whose Download is wired in v1.3.5 — the
+    /// other 3 MLX cards stay disabled until v1.4.0 ships their architecture
+    /// adapters (see specs/iterations/ITER-039-local-llm.md → Step 4).
+    @ViewBuilder
+    private func mlxDownloadButton(spec: ModelSpec) -> some View {
+        let isDownloading = mlxManager.activeDownloadID == spec.id
+        let isDownloaded = mlxManager.downloadedIDs.contains(spec.id)
+        let anotherDownloading = mlxManager.activeDownloadID != nil && !isDownloading
+        // v1.3.5 ships Phi-4 Mini's download flow only. Other MLX models
+        // need per-architecture inference code (Step 4) before their
+        // weights are useful — until then we leave their Download dimmed.
+        let isWiredInV135 = (spec.id == "phi-4-mini")
+
+        if isDownloading {
+            // Progress + Cancel pair. Progress label is informational; the
+            // small ✕ button beside it cancels and surfaces a confirm-y
+            // state via `MLXModelManager.cancelActiveDownload()`. Partial
+            // shards stay on disk so the next Download resumes via Hub's
+            // ETag check (no re-download of finished shards).
+            VStack(alignment: .trailing, spacing: 2) {
+                HStack(spacing: 4) {
+                    let pct = Int((mlxManager.progress * 100).rounded())
+                    let mb = Double(mlxManager.bytesCompleted) / 1_048_576
+                    Text("\(pct)% · \(String(format: "%.0f", mb)) MB")
+                        .font(MW.label).tracking(0.6)
+                        .foregroundStyle(MW.processing)
+                    Button {
+                        mlxManager.cancelActiveDownload()
+                    } label: {
+                        Image(systemName: "xmark.circle.fill")
+                            .font(.system(size: 11))
+                            .foregroundStyle(MW.textMuted)
+                    }
+                    .buttonStyle(.plain)
+                    .help("Cancel download (partial files stay on disk for resume)")
+                }
+                .padding(.horizontal, 8).padding(.vertical, 3)
+                .overlay(RoundedRectangle(cornerRadius: MW.rSmall, style: .continuous)
+                            .stroke(MW.processing.opacity(0.4), lineWidth: 0.5))
+                if mlxManager.retryAttempt > 1 {
+                    Text("Retry \(mlxManager.retryAttempt)/3")
+                        .font(.system(size: 9, weight: .medium))
+                        .foregroundStyle(MW.recording)
+                }
+            }
+        } else if isDownloaded {
+            let isActive = settings.localLLMActiveModelID == spec.id
+            let isReady = LocalLLMService.shared.isReady && LocalLLMService.shared.currentModelID == spec.id
+            // Three-state button label:
+            //   • selected + loaded   → «Active» (click deactivates + unloads)
+            //   • selected + not loaded → «Load now» (click triggers loadModel,
+            //     keeps ID. Happens after app restart since auto-load on
+            //     launch was disabled to prevent watchdog SIGKILL.)
+            //   • not selected         → «Make active» (sets ID + loads)
+            let label: String = {
+                if isActive && isReady { return "Active" }
+                if isActive && !isReady { return "Load now" }
+                return "Make active"
+            }()
+            HStack(spacing: 4) {
+                Button(label) {
+                    if isActive && isReady {
+                        // Deactivating — also unload from memory.
+                        settings.localLLMActiveModelID = ""
+                        Task { @MainActor in LocalLLMService.shared.unloadModel() }
+                    } else {
+                        // Either «Load now» (ID already set, just reload) or
+                        // «Make active» (set ID + load). Either way: load.
+                        settings.localLLMActiveModelID = spec.id
+                        Task { @MainActor in
+                            try? await LocalLLMService.shared.loadModel(id: spec.id)
+                        }
+                    }
+                }
+                .buttonStyle(.plain)
+                .font(MW.label).tracking(0.6)
+                .padding(.horizontal, 8).padding(.vertical, 3)
+                .foregroundStyle((isActive && isReady) ? .black : MW.textPrimary)
+                .background((isActive && isReady) ? MW.idle :
+                            (isActive ? MW.processing.opacity(0.18) : Color.clear))
+                .overlay(RoundedRectangle(cornerRadius: MW.rSmall, style: .continuous)
+                            .stroke(MW.border, lineWidth: 0.5))
+                Button {
+                    removeDownloadedModel(spec)
+                } label: {
+                    Image(systemName: "trash")
+                        .font(.system(size: 10))
+                        .foregroundStyle(MW.textMuted)
+                }
+                .buttonStyle(.plain)
+                .help("Delete downloaded weights (\(spec.downloadSizeDisplay)) to free disk space")
+            }
+        } else if isWiredInV135 {
+            VStack(alignment: .trailing, spacing: 2) {
+                Button("Download · \(spec.downloadSizeDisplay)") {
+                    Task {
+                        do {
+                            _ = try await mlxManager.download(spec)
+                        } catch {
+                            NSLog("[ITER-039] download failed for \(spec.id): \(error.localizedDescription)")
+                        }
+                    }
+                }
+                .buttonStyle(.plain)
+                .font(MW.label).tracking(0.6)
+                .foregroundStyle(anotherDownloading ? MW.textDim : MW.textPrimary)
+                .padding(.horizontal, 8).padding(.vertical, 3)
+                .overlay(RoundedRectangle(cornerRadius: MW.rSmall, style: .continuous)
+                            .stroke(MW.border, lineWidth: 0.5))
+                .disabled(anotherDownloading)
+                .help(anotherDownloading ? "Another model is downloading — wait for it to finish." :
+                      "Downloads ~\(spec.downloadSizeDisplay) from HuggingFace. Resumes if interrupted.")
+                // Show last error inline, if any.
+                if let err = mlxManager.lastError[spec.id] {
+                    Text(err)
+                        .font(.system(size: 9, weight: .medium))
+                        .foregroundStyle(MW.recording)
+                        .lineLimit(2)
+                        .multilineTextAlignment(.trailing)
+                }
+            }
+        } else {
+            Button("Download · \(spec.downloadSizeDisplay)") { }
+                .buttonStyle(.plain)
+                .font(MW.label).tracking(0.6)
+                .foregroundStyle(MW.textDim)
+                .padding(.horizontal, 8).padding(.vertical, 3)
+                .overlay(RoundedRectangle(cornerRadius: MW.rSmall, style: .continuous)
+                            .stroke(MW.border.opacity(0.5), lineWidth: 0.5))
+                .disabled(true)
+                .help("Inference for \(spec.displayName) ships in v1.4.0. v1.3.5 enables Phi-4 Mini only.")
+        }
+    }
+
+    /// Tear-down helper for the trash-icon button on a downloaded model
+    /// card. Two-stage: (1) if this model is currently active, deactivate
+    /// + unload it; (2) remove the on-disk weight shards via
+    /// `MLXModelManager.remove(_:)`. Errors get logged but don't bubble to
+    /// the UI — worst case the directory partially survives and the next
+    /// download fully overwrites it.
+    private func removeDownloadedModel(_ spec: ModelSpec) {
+        if settings.localLLMActiveModelID == spec.id {
+            settings.localLLMActiveModelID = ""
+            Task { @MainActor in LocalLLMService.shared.unloadModel() }
+        }
+        do {
+            try mlxManager.remove(spec)
+        } catch {
+            NSLog("[ITER-039] failed to remove \(spec.id): \(error.localizedDescription)")
+        }
     }
 
     private var calendarSection: some View {

@@ -1,4 +1,179 @@
 
+## Session 2026-05-20 night — Transcription 502 RCA + OpenAI fallback (ITER-043 unblocker)
+
+**Symptom:** user reported `PRO ❌ HTTP 502: {"error":"Transcription failed on all providers"}` on every Cmd-tap recording. Two patches over the day (60s timeout, then bindings sanity) didn't move the needle.
+
+### Root cause (verified via debug endpoint on the live worker)
+
+Both transcription providers in the Cloudflare proxy are dead at the **billing layer**, not the code layer:
+
+- **Deepgram Nova-3 (`@cf/deepgram/nova-3`)** → HTTP 429 from CF AI:
+  `"you have used up your daily free allocation of 10,000 neurons, please upgrade to Cloudflare's Workers Paid plan"`
+- **Groq `whisper-large-v3-turbo`** → HTTP 400 from Groq:
+  `"Organization has blocked API access because a spend alert threshold was met"`
+
+Worker did `try { Deepgram } catch { try { Groq } }` — both `catch` triggered → 502 in ~537 ms (not a timeout). The 12s/15s `setTimeout` I patched earlier was the wrong layer.
+
+### Fix shipped (worker, deployment `5cc62d3609b04b17a275737f0adafc50`)
+
+1. **Third fallback: OpenAI `whisper-1`** (key already in `env.OPENAI_API_KEY`). Order: Deepgram → Groq → OpenAI. Verified with a 12.3s recovery WAV — Russian text returned correctly.
+2. **Detailed 502 envelope** — `{"error": "...", "details": {"deepgram": "...", "groq": "...", "openai": "..."}}`. Future debugging no longer needs a separate route.
+3. **Per-provider gating** — fallback skipped if its env var is missing (`env.GROQ_API_KEY`, `env.OPENAI_API_KEY`).
+4. **Observability `head_sampling_rate: 1`** enabled on the worker.
+
+### Test scaffolding added
+
+- `scripts/test-transcribe-proxy.sh` — POSTs a WAV to `/api/pro/transcribe` with `MW_LICENSE_KEY` env var, asserts non-empty `text`. Exits 0/1/2/3/4 with distinct meanings. Default WAV = newest file in `~/Library/Application Support/MetaWhisp/Recovery/`. Failing-test-first proved the 502; same script will re-verify after billing fixes.
+
+### Action items for user (NOT code, billing)
+
+- **Cloudflare Workers Paid plan** ($5/mo) — unlocks Workers AI past 10k neurons/day, restores Deepgram as primary.
+- **Groq billing** (https://console.groq.com/settings/billing) — clear/raise the spend alert. Without this, Insight + RealtimeReactor (which call Groq via the same proxy) keep returning HTTP 400.
+
+### Files touched
+
+- Cloudflare worker `metawhisp-api` (not in repo) — `index.js` reuploaded twice via CF API; clean state in `/tmp/index.js` (~51 kB).
+- `scripts/test-transcribe-proxy.sh` (new, executable).
+- `specs/WAL.md` (this entry).
+
+### TODO
+
+- Wait for user to clear Groq alert and/or upgrade CF Workers — re-run `scripts/test-transcribe-proxy.sh` to confirm Deepgram returns first (faster + cheaper than OpenAI).
+- Consider rate-of-fallback alerting: if `provider !== "deepgram"` for >N requests in a row, surface a warning in the app.
+
+### Follow-up same session — LLM proxy fallback (Insight/Reactor unblocker)
+
+After the transcription fix landed, `[Insight]` and `[RealtimeReactor]` kept
+hitting Groq directly (3 LLM routes: `/api/pro/process`, `/api/pro/advice`,
+`/api/pro/chat-with-tools`) and returning `HTTP 400` because of the same Groq
+spend alert. Mirrored the transcription pattern:
+
+- Extracted `runChatCompletion(env, body)` helper — Groq primary, Cerebras
+  fallback (`env.CEREBRAS_API_KEY` already bound). Model name normalised:
+  `llama-3.3-70b-versatile` → `llama-3.3-70b` for Cerebras.
+- Replaced the 3 inline Groq fetches with helper calls.
+- Same 502+`details` envelope for all-fail.
+- Deployment `a260127074db4147894e19222952a26b`. Verified live: at 23:41:22 a
+  Cerebras-served Insight surfaced (`✅ surfacing: Set usage alert below $30 (conf=0.85)`).
+
+Documented the chain in `specs/PROVIDERS.md` (new). Rule for future edits:
+do not swap or remove providers without updating the doc and rerunning
+`scripts/test-transcribe-proxy.sh`.
+
+---
+
+## Session 2026-05-13 evening (ITER-039 Phase 4 inference — crash debug in progress)
+
+**Resume in morning with:** read `~/Library/Logs/MetaWhisp.log` — last `[ITER-039 trace]` line shows latest crash point. Phi-4 Mini downloaded at `~/Documents/huggingface/models/mlx-community/Phi-4-mini-instruct-4bit/` (~2.1 GB on disk).
+
+### Diagnosed today (verified working)
+
+- **Window-Space throw bug** — fixed by restoring `[.moveToActiveSpace, .fullScreenAuxiliary]` on `MainWindowController.windowBehavior` + same on `RecordingOverlay`. User confirmed «не перекидывает». Memory note added to `~/.claude/projects/-Users-android-Code-MetaWhisp/memory/feedback_window_space_throw_bug.md`.
+- **Snippets UX** — click-to-copy on tags + `LOAD DEFAULTS` button for Snippets tab seeds 17 RU+EN preset triggers (моя почта · мой LinkedIn · my email · my phone …) as empty templates. Tap an empty preset → pre-fills Add form. Filled snippets copy expansion to clipboard with «✓ copied» flash. `apply(...)` skips empty values so unfilled presets don't clobber transcription.
+- **Trimmed AI Models catalog** to 2 cards (Phi-4 Mini + Apple Foundation Models). Other 3 deferred to v1.4+ — `Services/LLM/ModelRegistry.swift` has the entries in a comment block for restore.
+- **Routing indicator** — always-visible banner at top of AI Models section: `● CLOUD Cerebras Qwen 3 235B via Pro proxy` (current state) / `● LOCAL Phi-4 Mini on M4 Max` (once activated) / `● LOADING warming up...` / `● INACTIVE`.
+- **Download path** complete (Hub-based, disk + RAM precheck, retry-with-backoff, Cancel/Delete buttons, background-safe). User successfully downloaded Phi-4 Mini.
+
+### BLOCKER for tomorrow — Phi3Model init crash
+
+User reports «крашится при включении локальной модели». Repro:
+1. Settings → AI Models → Phi-4 Mini → press **Make active**
+2. App SIGKILLs ~1-3 seconds later
+3. macOS auto-relaunches; previous attempts looped (now mitigated — auto-load on launch is disabled, see `App/AppDelegate.swift:201`)
+
+**Pinpoint:** added `[ITER-039 trace]` NSLogs at every stage. Last successful trace before crash:
+```
+[ITER-039 trace] step 0 — entered performHeavyLoad on thread background ✓
+[ITER-039 trace] step 1 — config decoded (vocab=200064, layers=32, heads=24/8, headDim=128, ropeDim=96, isQuantized=yes)
+[ITER-039 trace] step 2a — building Phi3Model
+```
+No `step 2b — Phi3Model built` log. **Crash is INSIDE `Phi3Model(phiConfig)` init**, NOT inside `quantize()` / `update()` / `eval()`.
+
+**Suspected cause (current fix, untested overnight):** the vendored `SuScaledRotaryEmbedding` in `Services/LLM/Vendored/MLXSupport.swift` extends `Module` and stores `invFreq: MLXArray` as a non-`@ModuleInfo` property. mlx-swift's Module-introspection at init time may mis-classify it as a learnable parameter and fail. **Workaround applied 2026-05-13 02:08:** in `Services/LLM/Vendored/Phi3.swift`, ignore `ropeScaling.type == "longrope"` and always fall back to MLXNN's stock `RoPE`. Trade-off: long-context (>4k tokens) quality degrades; short prompts work identically. Build + hot-swap pending verification.
+
+### If fallback doesn't fix the crash (morning checklist)
+
+In order of cost:
+1. Read `~/Library/Logs/MetaWhisp.log` for fresh trace lines — narrows down which property of Phi3Model is crashing.
+2. Try `bash audit-daily.sh` first per the daily-audit memory rule.
+3. If still crashing at `Phi3Model(phiConfig)`: pare down further — instantiate just 1 layer instead of 32, see if it lives.
+4. If init succeeds but `eval(model)` crashes: weight name mismatch — print mismatched keys via `model.parameters()` vs the `weights: [String: MLXArray]` we loaded.
+5. If all stages succeed but generation produces garbage: check tokenizer chat template vs Phi-4's `<|im_start|>user\n...<|im_end|>` framing (it's NOT Phi-3's `<|user|>...<|end|>`).
+6. Nuclear option: ditch Phi-4-mini-instruct-4bit and ship `mlx-community/Phi-3-mini-4k-instruct-4bit` instead — simpler config (no longrope, no GQA), proven to work with vendored Phi3.swift.
+
+### Files in flux (uncommitted)
+
+- `Package.swift` (mlx-swift + swift-transformers explicit + MLXFast)
+- `App/AppDelegate.swift` (auto-load disabled comment)
+- `Services/LLM/LocalLLMService.swift` (real loadModel/generate + Task.detached + trace logs)
+- `Services/LLM/MLXModelManager.swift` (full download infra)
+- `Services/LLM/ModelRegistry.swift` (2-card catalog + macOSName helper)
+- `Services/LLM/Vendored/Phi3.swift` (MIT, longrope→RoPE fallback applied)
+- `Services/LLM/Vendored/MLXSupport.swift` (KVCache + RoPE helpers + LLMModel/LoRA stubs — likely buggy, under investigation)
+- `Services/Intelligence/StructuredGenerator.swift` (Local→Pro→BYOK priority order, `callLocalLLM` helper)
+- `Services/Processing/CorrectionDictionary.swift` (defaultSnippetPresets + loadDefaultSnippets + allow empty values)
+- `Services/System/SystemSpecs.swift` (chip/RAM/macOS snapshot)
+- `Views/Windows/MainSettingsView.swift` (collapsable AI Models + 2-col cards + routing indicator + Cancel/Delete + click-to-copy + tap-to-fill)
+- `Views/Windows/MainWindowController.swift` (windowBehavior restored to `.moveToActiveSpace + .fullScreenAuxiliary`)
+- `Views/Windows/MainWindowView.swift` (`@ObservedObject` for LocalLLMService + 6-state footer pip)
+- `Views/Components/RecordingOverlay.swift` (+`.fullScreenAuxiliary`)
+
+## Session 2026-05-13 (ITER-039 local-LLM — Phase 1 UI + Phase 2 download infrastructure)
+
+**Branch:** `architecture-phase-1-3` (uncommitted; build + hot-swap green; v1.3.5 not yet cut).
+
+### Done this session
+
+- ✅ **Audit:** full state-of-the-feature pass (see agent report transcript). Verdict: download path complete, inference + service wire-up not started.
+- ✅ **Phase 1 UI redesign** (per user feedback): collapsable `aiModelsSection` (toggle OFF → only summary line; toggle ON → expands), 2-column compact cards, removed RU-language emphasis, macOS Tahoe naming clarified in Foundation Models error. Hot-swapped + user-verified visually.
+- ✅ **Package.swift deps:** bare `mlx-swift` (tensor framework only, no transformers dep) + explicit `swift-transformers` at 1.1.6 (matches WhisperKit's transitive resolution at 1.1.9 → no conflict). Earlier attempt with `mlx-swift-examples main` failed: WhisperKit 0.16.0 needs `swift-transformers 1.1.x`, every `mlx-swift-examples` tag pins 0.1.x / 1.0.x / 1.3.x — never overlaps. Diagnosed + reverted, current resolution clean.
+- ✅ **MLXModelManager** (full Hub-based download path):
+  - Disk-space precheck (2× download size headroom) — throws `insufficientDiskSpace` with human-readable GB message
+  - Compatibility-verdict precheck — `incompatibleHost` if `ModelCompatibility.verdict` returns `.incompatible`
+  - Retry-with-backoff: 3 attempts at 2s/4s/8s on network failure; `retryAttempt` published for UI ("Retry 2/3")
+  - `cancelActiveDownload()` — kills in-flight Task; partial shards stay on disk (Hub resumes via ETag)
+  - `remove(_:)` — deletes weight directory; clears `downloadedIDs`
+  - Background-safe: download Task owned by singleton, survives Settings window close (app is menu-bar resident)
+- ✅ **MainSettingsView download UX:**
+  - Live `Download · 2.1 GB` button for Phi-4 Mini only (other MLX cards stay disabled with v1.4.0 tooltip)
+  - During download: progress label `53% · 1.2 MB`, `xmark.circle.fill` cancel button, "Retry N/3" sub-label when retrying
+  - After download: `Make active` button + trash icon (calls `removeDownloadedModel`)
+  - `lastError[spec.id]` surfaced inline below the Download button when present
+- ✅ **AppDelegate auto-load:** on `applicationDidFinishLaunching`, if `settings.localLLMEnabled && !settings.localLLMActiveModelID.isEmpty`, fires `LocalLLMService.shared.loadModel(id:)`. Currently no-ops because LocalLLMService is a stub (Phase 4) — but the hook is in place.
+- ✅ **LocalLLMService stub:** `isReady`, `currentModelID`, `loadModel(id:)`, `unloadModel()`, `generate(prompt:)` API surface defined. Placeholder `private final class ModelContainer {}` so file compiles standalone. All `throw .modelNotDownloaded` until Phase 4 lands the real Phi-3 architecture.
+
+### NOT DONE — open scope for next session(s)
+
+1. **Phase 4 — real inference (~3-4 hrs focused):** vendor `Phi3.swift` + needed `MLXLMCommon` helpers (`KVCache.swift`, `AttentionUtils.swift`, `SuScaledRotaryEmbedding`, `RopeScalingWithFactorArrays`) from `mlx-swift-examples 2.29.1` into `Services/LLM/Vendored/` (MIT-attributed). Implement `LocalLLMService.loadModel` (safetensors→MLX, tokenizer init) and `generate(prompt:) -> AsyncStream<String>` (real token loop). **Risk:** vendored Transformer code can produce garbage if tensor shapes / RoPE / attention-mask are off — needs careful smoke test against known prompt.
+
+2. **Phase 5 — service wire-up (~1 hr):** 11+ services with `hasLLMAccess` getters need third clause `|| LocalLLMService.shared.isReady`. Confirmed sites: `AdviceService.swift:43`, `MemoryExtractor.swift:503`, `DailySummaryService.swift:907`, plus `ChatService`, `StructuredGenerator`, `MeetingCoachService`, `LiveMeetingAdvisor`, indexing services. For each: also need to route the actual prompt through `LocalLLMService.generate` when no API key / no Pro is available.
+
+3. **Phase 5a — Foundation Models adapter (~1 hr):** `#if canImport(FoundationModels)` gated bridge over Apple's macOS 26+ `LanguageModelSession` API. Currently `loadModel("apple-foundation-models")` throws `.notSupportedYet`. User runs Sequoia so won't hit this path; ship the adapter for Tahoe users.
+
+4. **Phase 5b — footer pip (~15 min):** `MainWindowView.processingModeLabel` already has the `"local"` / `"on-device+local"` / `"on-device+local+cloud"` cases, but they fire from `settings.localLLMEnabled && !settings.localLLMActiveModelID.isEmpty`. Should also gate on `LocalLLMService.shared.isReady` so the pip reflects whether the model is actually loaded (not just configured).
+
+5. **Phase 6 — smoke test + commit + v1.3.5 release:** real prompt → real output via Phi-4 Mini; then build.sh + notarize + DMG + GitHub Release + `website/src/appcast.xml` update + appcast pivot to GitHub raw (per `memory/state_appcast_stale_since_1_3_3.md`).
+
+### Pending fixes from prior sessions (still on branch, separate from ITER-039)
+
+The 9 fixes from earlier rounds — shadow envelopes (4 floating views), meeting overrun cards, call-detection cooldown, SF Symbol fix, hallucination strip, StructuredGen backfill cost-control, project picker, etc. — all on this same `architecture-phase-1-3` branch and ship with v1.3.5. Need to verify nothing regressed during today's `MainSettingsView` edits before tagging.
+
+### Files touched today
+
+- `Package.swift` (mlx-swift + swift-transformers deps)
+- `Models/AppSettings.swift` (already had `localLLMEnabled_iter039` + `localLLMActiveModelID_iter039`)
+- `Services/System/SystemSpecs.swift` (chip / RAM / macOS snapshot)
+- `Services/LLM/ModelRegistry.swift` (5 model catalog + `CompatibilityVerdict` + `macOSName` helper)
+- `Services/LLM/LocalLLMService.swift` (stub w/ placeholder `ModelContainer`)
+- `Services/LLM/MLXModelManager.swift` (full Hub-based download with retry/precheck/cancel/remove)
+- `Views/Windows/MainWindowView.swift` (6-state footer pip — doesn't yet gate on isReady)
+- `Views/Windows/MainSettingsView.swift` (collapsable section, 2-col cards, live Phi-4 Download)
+- `App/AppDelegate.swift` (auto-load on launch hook)
+
+### Resume next session with
+
+Open `specs/iterations/ITER-039-local-llm.md`, jump to Step 4 (Phase 4 — real inference). Vendor `Phi3.swift` + helpers from `mlx-swift-examples 2.29.1`. Add `Services/LLM/Vendored/` directory with MIT attribution headers. Then wire `LocalLLMService.loadModel` to call `LLMModelFactory.shared.loadContainer(directory: MLXModelManager.shared.localPath(for: spec))`. First smoke test target: `mlx-community/Phi-4-mini-instruct-4bit` from a clean download.
+
 ## Released v1.3.3 — 2026-05-10 (proactive insights + privacy + history scrub)
 
 **Status: SHIPPED via:**

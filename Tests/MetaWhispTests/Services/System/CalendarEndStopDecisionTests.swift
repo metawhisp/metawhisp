@@ -240,18 +240,42 @@ final class CalendarEndStopDecisionTests: XCTestCase {
         XCTAssertEqual(decision, .stopNow)
     }
 
-    /// `hardStop` budget cap STILL wins over `recentAudioActive` — the whole
-    /// point of `maxNotifyAttempts` is to bound the recording at ~15-30 min
-    /// past calendar end (3 attempts × 5 min extension). Without this cap,
-    /// a forgotten music session would record forever even when the
-    /// "audio active" signal is real.
-    func test_hardStop_wins_over_recentAudioActive() {
+    /// After the notify budget is exhausted, the decision splits on
+    /// `recentAudioActive`:
+    ///   - audio active → `silentExtend` (don't kill a still-going call;
+    ///     user keeps getting cards every 5 min and can stop manually)
+    ///   - audio quiet  → `hardStop` (anti-zombie safety valve)
+    ///
+    /// Originally `hardStop` ALWAYS won past the budget. That regressed
+    /// real Google-Meet-in-Chrome calls: `meetingAppVisible` returns false
+    /// for browser-tab meetings, so a loud 46-min call got hard-stopped at
+    /// notify #3 even though the user was still talking. The current
+    /// contract preserves the anti-zombie cap (audio-quiet branch) while
+    /// keeping live calls alive (audio-active branch).
+
+    func test_silentExtend_whenBudgetExhaustedButAudioActive() {
         let decision = CalendarEndStopDecision.evaluate(
             now: now.addingTimeInterval(2000),
             eventEnd: now,
             audioRMSLastNSec: 0.05,
             notifyAttemptsSoFar: 3,
             recentAudioActive: true,
+            meetingAppVisible: true
+        )
+        if case .silentExtend = decision {
+            // pass
+        } else {
+            XCTFail("Expected .silentExtend when audio active past budget, got \(decision)")
+        }
+    }
+
+    func test_hardStop_whenBudgetExhaustedAndAudioQuiet() {
+        let decision = CalendarEndStopDecision.evaluate(
+            now: now.addingTimeInterval(2000),
+            eventEnd: now,
+            audioRMSLastNSec: 0.05,
+            notifyAttemptsSoFar: 3,
+            recentAudioActive: false,
             meetingAppVisible: true
         )
         XCTAssertEqual(decision, .hardStop)

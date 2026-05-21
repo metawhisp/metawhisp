@@ -11,6 +11,10 @@ struct MainWindowView: View {
     /// when @AppStorage-backed properties flip, so the footer recomposes
     /// the moment the user toggles e.g. "Proactive insights" in Settings.
     @ObservedObject private var settings = AppSettings.shared
+    /// ITER-039 — pip flips to "local" the moment Phi-4 finishes loading
+    /// into RAM. Observed so the footer animates the green dot instantly
+    /// instead of staying blue until next re-render.
+    @ObservedObject private var localLLM = LocalLLMService.shared
     /// Drives the tier pip ("free" / "pro"). LicenseService publishes
     /// `isPro` after license activation/deactivation.
     @ObservedObject private var license = LicenseService.shared
@@ -175,7 +179,14 @@ struct MainWindowView: View {
     ///   - "on-device+local" — fully local stack (Whisper + local LLM)
     private var processingModeLabel: String {
         let primaryCloud = settings.transcriptionEngine == "cloud"
-        let hasLocalLLM = settings.localLLMEnabled && !settings.localLLMActiveModelID.isEmpty
+        // ITER-039 Phase 5b — pip says "local" ONLY when the model weights
+        // are actually loaded into RAM. `localLLMActiveModelID` non-empty
+        // means the user picked one; `isReady` means it's truly serving
+        // tokens. Without the `isReady` gate, the pip would lie during the
+        // ~5-10s warm-up between Make active and first inference.
+        let hasLocalLLM = settings.localLLMEnabled
+            && !settings.localLLMActiveModelID.isEmpty
+            && LocalLLMService.shared.isReady
         let cloudFeatures = settings.processingMode == "structured"
             || settings.proactiveEnabled
             || settings.ttsCloudEnabled

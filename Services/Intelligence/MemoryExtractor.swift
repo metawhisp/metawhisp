@@ -97,7 +97,14 @@ final class MemoryExtractor: ObservableObject {
 
         do {
             let response: String
-            if LicenseService.shared.isPro, let licenseKey = LicenseService.shared.licenseKey {
+            // ITER-039 — local LLM takes priority when loaded.
+            if LocalLLMService.shared.isReady {
+                NSLog("[MemoryExtractor] Extracting via local Phi (convo %@, %d fragments)",
+                      conversationId.uuidString.prefix(8) as CVarArg, fragments.count)
+                response = try await LocalLLMService.shared.completeBlocking(
+                    system: Self.systemPrompt, user: prompt, maxTokens: 384
+                )
+            } else if LicenseService.shared.isPro, let licenseKey = LicenseService.shared.licenseKey {
                 NSLog("[MemoryExtractor] Extracting via Pro proxy (convo %@, %d fragments, %d chars)",
                       conversationId.uuidString.prefix(8) as CVarArg, fragments.count, totalChars)
                 response = try await callProProxy(system: Self.systemPrompt, user: prompt, licenseKey: licenseKey)
@@ -501,7 +508,9 @@ final class MemoryExtractor: ObservableObject {
     // MARK: - Access check
 
     private var hasLLMAccess: Bool {
-        !settings.activeAPIKey.isEmpty || LicenseService.shared.isPro
+        !settings.activeAPIKey.isEmpty
+            || LicenseService.shared.isPro
+            || LocalLLMService.shared.isReady
     }
 }
 

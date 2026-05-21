@@ -141,8 +141,10 @@ final class StructuredGenerator: ObservableObject {
             conv.emoji = nil
             try? ctx.save()
             // Pass the transcript we already have — avoids generate() doing
-            // a second DB fetch for the same data.
-            await generate(conversationId: conv.id, knownTranscript: transcript)
+            // a second DB fetch for the same data. `preferCloud: true` keeps
+            // accumulated backfill OFF the local model — large prompts × N
+            // conversations would otherwise freeze a freshly-activated Phi-4.
+            await generate(conversationId: conv.id, knownTranscript: transcript, preferCloud: true)
         }
     }
 
@@ -207,7 +209,15 @@ final class StructuredGenerator: ObservableObject {
     /// cross-ModelContext race that produced "Quick note (empty)" placeholders
     /// when the new context didn't see the just-committed HistoryItem row.
     /// Backfill / manual paths leave it nil and fall back to the DB fetch.
-    func generate(conversationId: UUID, knownTranscript: String? = nil) async {
+    /// Run structuring for one conversation.
+    ///
+    /// - Parameter preferCloud: when `true`, bypasses the local-LLM path
+    ///   even if `LocalLLMService.isReady`. Used by the launch backfill —
+    ///   processing 10-50 accumulated conversations through a freshly
+    ///   activated local model right after «Make active» froze user's
+    ///   Mac 2026-05-13 (3k-token prefill × N conversations). Backfill
+    ///   stays on cloud; only fresh user-initiated dictations route local.
+    func generate(conversationId: UUID, knownTranscript: String? = nil, preferCloud: Bool = false) async {
         guard !isRunning else { return }
         guard hasLLMAccess else {
             NSLog("[StructuredGenerator] No LLM access — skipping")
@@ -302,7 +312,15 @@ final class StructuredGenerator: ObservableObject {
 
         do {
             let response: String
-            if LicenseService.shared.isPro, let licenseKey = LicenseService.shared.licenseKey {
+            // ITER-039 — local LLM takes priority for FRESH dictations
+            // user just produced. Backfill paths (preferCloud=true) bypass
+            // local because pumping 10-50 accumulated conversations through
+            // a freshly-activated Phi-4 has frozen user's Mac in testing —
+            // each conversation can be 2-5k tokens, KV cache compounds, GPU
+            // queue saturates.
+            if !preferCloud, LocalLLMService.shared.isReady {
+                response = try await callLocalLLM(system: Self.systemPrompt, user: userPrompt)
+            } else if LicenseService.shared.isPro, let licenseKey = LicenseService.shared.licenseKey {
                 response = try await callProProxy(system: Self.systemPrompt, user: userPrompt, licenseKey: licenseKey)
             } else {
                 let apiKey = settings.activeAPIKey
@@ -415,12 +433,25 @@ final class StructuredGenerator: ObservableObject {
 
     A word mentioned ONCE or TWICE in a service phrase («у меня по X завал
     был», «потому что X не успел», «между делом по X занимался») is NOT the
-    meeting's main topic. It's context, not the subject. Examples of REAL
-    user transcripts that got mis-titled before this rule:
-    -  «Я больше работал по атомику, поэтому билд не успел собрать» — main
-       topic is «build delay» or «MetaWhisp release», NOT «Atomic Bot».
-    -  «Вчера встретил Алекса, он рассказал про конференцию» — main topic
-       is whatever was discussed AFTER that opener, NOT Alex.
+    meeting's main topic. It's CONTEXT, not the subject.
+
+    Generic patterns (use these abstract placeholders to learn the pattern;
+    do NOT echo the literal placeholder names into your output):
+    -  «I worked on <SIDE-PROJECT-X>, so I couldn't finish <MAIN-WORK-Y>»
+       → main topic is <MAIN-WORK-Y> (the build/release/feature delay), NOT
+       <SIDE-PROJECT-X>.
+    -  «Met <PERSON-X> yesterday, they told me about <TOPIC-Z>» → main
+       topic is <TOPIC-Z>, NOT <PERSON-X>.
+    -  Brand / project / app names mentioned in apology or excuse position
+       («busy with X», «behind on X», «X took longer than expected») are
+       background context. The MAIN topic is whatever the speaker is
+       actually trying to communicate: a status, decision, blocker, or ask.
+
+    CRITICAL: do NOT use any project or brand name AS the title unless that
+    name dominates the transcript word count AND the substantive content
+    revolves around it. When in doubt, prefer a verb-based title that
+    describes what the speaker was DOING or DECIDING.
+
     To qualify as main topic, the subject must:
     - Appear ≥30% of the transcript word-count, OR
     - Be the explicit answer to «what was this conversation about»
@@ -739,7 +770,46 @@ final class StructuredGenerator: ObservableObject {
     }
 
     private var hasLLMAccess: Bool {
-        !settings.activeAPIKey.isEmpty || LicenseService.shared.isPro
+        // ITER-039 — `LocalLLMService.isReady` is the third clause. Free
+        // users with a downloaded + activated MLX model now get
+        // StructuredGenerator (structured-text cleanup, the most-used LLM
+        // call in the app) working without any API key or Pro subscription.
+        !settings.activeAPIKey.isEmpty
+            || LicenseService.shared.isPro
+            || LocalLLMService.shared.isReady
+    }
+
+    /// Route system + user prompt through the local Phi-4 (or whichever
+    /// MLX model is loaded).
+    ///
+    /// **Prompt size hard cap (2026-05-13 freeze incident).** The transcript
+    /// can hit 5k+ chars in real use; combined with the structured-output
+    /// system prompt that's ~3k+ tokens. Sending the whole thing to local
+    /// Phi-4 froze the user's Mac for 30+ seconds (prefill on 32-layer GQA
+    /// model with 3k context = massive KV-cache materialization + main-
+    /// thread block). We cap at ~2k chars (~600-700 tokens) for the user
+    /// transcript and let cloud handle the rare larger ones via Pro.
+    ///
+    /// **Output cap.** 384 tokens is enough for our structured JSON
+    /// response (title + overview + actionItems + …). Anything bigger
+    /// suggests the model is hallucinating off-track — fail fast.
+    private func callLocalLLM(system: String, user: String) async throws -> String {
+        let cappedUser = user.count > 2000 ? String(user.prefix(2000)) + "\n[transcript truncated for local model]" : user
+        let combined = system + "\n\n" + cappedUser
+        var collected = ""
+        for await chunk in LocalLLMService.shared.generate(
+            prompt: combined,
+            maxTokens: 384,
+            temperature: 0.3
+        ) {
+            collected += chunk
+        }
+        if collected.isEmpty {
+            throw NSError(domain: "LocalLLM", code: -1, userInfo: [
+                NSLocalizedDescriptionKey: "Local model returned no tokens — check Settings → AI Models that Phi-4 is downloaded and active."
+            ])
+        }
+        return collected
     }
 
     /// Ensure the LLM-supplied icon is an SF Symbol string, not a Unicode emoji.
