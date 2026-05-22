@@ -220,30 +220,41 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         // crash-on-activate every time.
         LocalLLMService.prewarmMLX()
 
-        // ITER-039 — auto-load DISABLED AGAIN 2026-05-21 evening.
+        // ITER-039 — auto-load re-enabled 2026-05-22 after rooting out
+        // the 35 GB MLX memory blow-up from earlier (commit 656de4a).
         //
-        // First enabled this evening after refactoring loadModel onto a real
-        // GCD thread (not Swift Concurrency cooperative pool). The load
-        // itself succeeded in ~12 s without blocking main, and the model
-        // was generating tokens correctly. HOWEVER within minutes the app's
-        // resident memory climbed to ~35 GB and the system froze; user had
-        // to force-kill MetaWhisp. Not yet diagnosed — likely candidates:
-        //   - KV cache not being released between generate() calls
-        //     (Insight + RealtimeReactor + ScreenExtractor fire frequently,
-        //     each with multi-thousand-token prompts → unbounded growth)
-        //   - MLX quantized weights being de-quantized into a separate
-        //     full-precision copy on every forward pass
-        //   - Concurrent generation queue holding strong references to
-        //     completed-but-not-collected MLXArrays
+        // Real root cause (was hidden behind "looks like a leak"):
+        // mlx-swift defaults `Memory.cacheLimit` to `Memory.memoryLimit`,
+        // which on 64 GB Macs is effectively unbounded. MLX's buffer
+        // reuse only matches IDENTICAL shapes — our Insight/Reactor/
+        // Extractor calls fire with varied prompt sizes (3426, 3607,
+        // 2768, 3582, …), so every prefill spawns fresh-sized arenas
+        // that pile into the "recently used" pool without ever being
+        // reclaimed. Six back-to-back generations accreted ~35 GB.
         //
-        // Until the memory profile is understood and fixed, the user must
-        // press «Make active» from Settings → AI Models manually. This
-        // gives them a controlled one-shot test, not an auto-on-every-launch
-        // resource sink.
+        // Fix in `LocalLLMService.prewarmMLX` + `runGenerationSync`:
+        //   - `Memory.cacheLimit = 512 MB`  (bounded reuse pool)
+        //   - `Memory.memoryLimit = 6 GB`   (hard ceiling)
+        //   - `Memory.clearCache()` at the end of every generation
+        //   - Memory snapshot logged per generation: `[ITER-039 mem] …`
+        //
+        // loadModel itself was already on a `DispatchQueue.global(qos:
+        // .userInitiated)` thread (since 2026-05-13), so main thread
+        // is not blocked. The auto-load completes ~12 s after launch
+        // and any service that sees `isReady = true` will use local
+        // Phi-4 instead of the cloud path.
         if AppSettings.shared.localLLMEnabled,
            !AppSettings.shared.localLLMActiveModelID.isEmpty {
-            NSLog("[ITER-039] auto-load DISABLED (memory leak under investigation 2026-05-21); use Settings → AI Models → Make active (last active id: %@)",
-                  AppSettings.shared.localLLMActiveModelID)
+            let modelID = AppSettings.shared.localLLMActiveModelID
+            NSLog("[ITER-039] auto-loading %@ in background…", modelID)
+            Task { @MainActor in
+                do {
+                    try await LocalLLMService.shared.loadModel(id: modelID)
+                    NSLog("[ITER-039] ✅ auto-load complete — local LLM is now the priority generator")
+                } catch {
+                    NSLog("[ITER-039] ❌ auto-load failed: %@ — falling back to cloud", error.localizedDescription)
+                }
+            }
         }
 
         // Register URL scheme handler (metawhisp://auth?token=...)

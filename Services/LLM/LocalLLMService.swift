@@ -74,9 +74,33 @@ final class LocalLLMService: ObservableObject {
     /// allocation here teaches the process-wide MLX state to use the
     /// already-initialized Metal device on subsequent background-thread
     /// calls. Cheap (~10 ms) and idempotent — safe to call multiple times.
+    ///
+    /// **Memory bounds.** MLX defaults `cacheLimit = memoryLimit` (uncapped
+    /// on Macs with plenty of RAM). This means every `eval()` accretes
+    /// Metal command-buffer arenas into a reuse pool that never shrinks.
+    /// On 2026-05-21 the user's app climbed to 35 GB resident after six
+    /// 3000-token Phi-4 prefills back-to-back — system froze. Root cause:
+    /// uncapped MLX buffer pool. Fix: bound both limits to sane values
+    /// matching Phi-4 mini's working set (model ~2 GB + KV cache ~500 MB
+    /// + activations ~500 MB + headroom).
+    ///
+    /// Cache 512 MB — Metal kernel cache for buffer reuse; small but real
+    ///   perf win on repeated shapes. 0 would disable reuse entirely.
+    /// MemoryLimit 6 GB — hard ceiling for all MLX allocations. Beyond
+    ///   this the next allocation triggers cache eviction first; if
+    ///   still over, MLX may abort. 6 GB comfortably fits the working
+    ///   set with overhead, well below user pressure even on 16 GB Macs.
     static func prewarmMLX() {
         NSLog("[ITER-039] pre-warming MLX on main thread")
         MLXRandom.seed(0x4D575F50484934)
+
+        // Bound memory BEFORE the first allocation so the limits are in
+        // effect for prewarm itself. `Memory` is top-level in mlx-swift
+        // (the `GPU` namespace has deprecated forwarders only).
+        MLX.Memory.cacheLimit = 512 * 1024 * 1024            // 512 MB buffer reuse pool
+        MLX.Memory.memoryLimit = 6 * 1024 * 1024 * 1024      // 6 GB total ceiling
+        NSLog("[ITER-039] MLX memory bounds: cacheLimit=512MB, memoryLimit=6GB")
+
         let probe = MLXArray.zeros([1], dtype: .float32)
         eval(probe)
         NSLog("[ITER-039] ✅ MLX warmed up (Metal context initialized)")
@@ -328,6 +352,10 @@ final class LocalLLMService: ObservableObject {
         }
         NSLog("[ITER-039] prompt tokens: %d (on GCD)", inputIds.count)
 
+        // Memory diagnostic — before generation. Useful for spotting cache
+        // creep. Logged as activeMB/cacheMB pair.
+        let memBefore = MLX.Memory.snapshot()
+
         // 2. KV cache (one per attention layer).
         let numLayers = model.kvHeads.count
         let cache: [KVCache] = (0..<numLayers).map { _ in KVCache() }
@@ -351,6 +379,27 @@ final class LocalLLMService: ObservableObject {
             eval(logits)
             lastLogit = logits[0..., -1, 0...]
         }
+
+        // 5. Release the MLX buffer pool. Without this, mlx-swift retains
+        // Metal arenas from intermediate compute across calls. On 2026-05-21
+        // six 3000-token Phi-4 prefills with DIFFERENT prompt sizes (3426,
+        // 3607, 2768, 3582, 3250, 3245) accreted ~35 GB of "recently used"
+        // buffers because MLX's reuse heuristic only matches identical
+        // shapes — and our prompt sizes vary per Insight tick. The
+        // `Memory.cacheLimit = 512MB` cap set in `prewarmMLX` already
+        // bounds growth, but explicit `clearCache()` here drops cached
+        // buffers immediately so each generation returns to a clean
+        // baseline. mlx-swift docs (Memory.swift:355) confirm this is
+        // the supported reclaim path.
+        MLX.Memory.clearCache()
+
+        let memAfter = MLX.Memory.snapshot()
+        NSLog("[ITER-039 mem] active=%dMB→%dMB  cache=%dMB→%dMB  peak=%dMB",
+              memBefore.activeMemory / (1024 * 1024),
+              memAfter.activeMemory / (1024 * 1024),
+              memBefore.cacheMemory / (1024 * 1024),
+              memAfter.cacheMemory / (1024 * 1024),
+              memAfter.peakMemory / (1024 * 1024))
     }
 
     /// Blocking convenience wrapper used by services that need a single
