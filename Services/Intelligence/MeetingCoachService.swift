@@ -15,6 +15,13 @@ import SwiftData
 ///   advisor already runs, so there's no NEW per-meeting LLM spend.
 @MainActor
 final class MeetingCoachService {
+    /// ITER-041 — live meeting coach overlay is the user-visible flagship
+    /// surface. Stays on heavy tier (llama-3.3-70b) where quality is
+    /// non-negotiable. Phase D will add a mini gate to skip ticks where
+    /// no coachable moment exists.
+    static let llmTier: LLMTier = .heavy
+    static let llmServiceId: String = "MeetingCoachService"
+
     static let shared = MeetingCoachService()
 
     private let llm = OpenAIService()
@@ -52,7 +59,23 @@ final class MeetingCoachService {
     /// partial transcribe. Updates the overlay's transcript tail immediately
     /// and kicks off (at most one) LLM call to extract the next suggestion.
     func process(partialText: String) async {
-        let trimmed = partialText.trimmingCharacters(in: .whitespacesAndNewlines)
+        // Strip Whisper hallucination tokens (DimaTorzok / Subtitles by /
+        // amara.org / ♪ music markers) BEFORE anything else looks at the
+        // text. Otherwise the rolling transcript tail shows garbage AND
+        // the LLM coach invents «ASK» questions about non-existent topics
+        // («Как связана проблема с видео MetaWhisp 1000 и ошибкой в vision
+        // seed?» — observed 2026-05-23 from a transcript that was 80%
+        // «Субтитры сделал DimaTorzok»). Reuses the same patterns the
+        // dictation coordinator already strips so we don't duplicate the
+        // toxic-token list.
+        var trimmed = partialText.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !trimmed.isEmpty {
+            let lower = trimmed.lowercased()
+            if TranscriptionCoordinator.toxicHallucinationTokens.contains(where: { lower.contains($0) }) {
+                trimmed = TranscriptionCoordinator.stripHallucinationTokens(trimmed)
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+            }
+        }
         guard !trimmed.isEmpty else { return }
 
         allPartials.append(trimmed)
@@ -208,7 +231,11 @@ final class MeetingCoachService {
         request.setValue("Bearer \(licenseKey)", forHTTPHeaderField: "Authorization")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.timeoutInterval = 25
-        request.httpBody = try JSONSerialization.data(withJSONObject: ["system": system, "user": user])
+        let body = LLMRequestBody.proAdviceBody(
+            system: system, user: user,
+            tier: Self.llmTier, serviceId: Self.llmServiceId
+        )
+        request.httpBody = try JSONSerialization.data(withJSONObject: body)
 
         let (data, response) = try await URLSession.shared.data(for: request)
         if let http = response as? HTTPURLResponse, http.statusCode != 200 {

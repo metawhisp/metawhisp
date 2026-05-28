@@ -23,6 +23,12 @@ import SwiftData
 /// spec://iterations/ITER-022-G5-weekly-patterns
 @MainActor
 final class WeeklyPatternDetector: ObservableObject {
+    /// ITER-041 — Sunday roll-up synthesis on medium tier. Future
+    /// optimization: incremental daily theme extraction on mini, only
+    /// synthesize on Sunday — but that's a separate iteration.
+    static let llmTier: LLMTier = .medium
+    static let llmServiceId: String = "WeeklyPatternDetector"
+
     @Published var isRunning = false
     @Published var lastError: String?
     @Published var lastGenerationAt: Date?
@@ -424,7 +430,10 @@ final class WeeklyPatternDetector: ObservableObject {
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.timeoutInterval = 60
 
-        let body: [String: Any] = ["system": system, "user": user]
+        let body = LLMRequestBody.proAdviceBody(
+            system: system, user: user,
+            tier: Self.llmTier, serviceId: Self.llmServiceId
+        )
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
 
         let (data, response) = try await URLSession.shared.data(for: request)

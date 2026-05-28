@@ -5,6 +5,13 @@ import SwiftData
 /// Uses the existing OpenAIService (Pro) or can work with local LLM when available.
 @MainActor
 final class AdviceService: ObservableObject {
+    /// ITER-041 — user-facing advice generation on the medium tier
+    /// (gpt-oss-20b on Groq). Quality preserved for notification copy;
+    /// ~50% cheaper than heavy. Phase C will gate this with a mini
+    /// relevance check before generate.
+    static let llmTier: LLMTier = .medium
+    static let llmServiceId: String = "AdviceService"
+
     @Published var latestAdvice: AdviceItem?
     @Published var isGenerating = false
     /// Last error surfaced from a generation attempt (network, HTTP, parse).
@@ -102,6 +109,20 @@ final class AdviceService: ObservableObject {
                     system: prompt, user: contextBlock, maxTokens: 256
                 )
             } else if LicenseService.shared.isPro, let licenseKey = LicenseService.shared.licenseKey {
+                // ITER-041 Phase C — cheap relevance gate before the
+                // medium-tier advice generate. Skip when score < 0.65.
+                let gate = await GateClient.call(
+                    context: contextBlock,
+                    purpose: .advice,
+                    recentTopics: [],
+                    serviceId: Self.llmServiceId,
+                    licenseKey: licenseKey
+                )
+                guard gate.shouldFire else {
+                    NSLog("[Advice] gate-skipped score=%.2f — %@",
+                          gate.score, String(gate.reasoning.prefix(80)))
+                    return nil
+                }
                 NSLog("[Advice] Generating via Pro proxy (mode=%@)", mode)
                 response = try await callProProxy(system: prompt, user: contextBlock, licenseKey: licenseKey)
             } else {
@@ -532,7 +553,10 @@ final class AdviceService: ObservableObject {
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.timeoutInterval = 30
 
-        let body: [String: Any] = ["system": system, "user": user]
+        let body = LLMRequestBody.proAdviceBody(
+            system: system, user: user,
+            tier: Self.llmTier, serviceId: Self.llmServiceId
+        )
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
 
         let (data, response) = try await URLSession.shared.data(for: request)

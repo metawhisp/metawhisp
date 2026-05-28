@@ -15,6 +15,11 @@ import UserNotifications
 /// spec://iterations/ITER-009-daily-summary
 @MainActor
 final class DailySummaryService: ObservableObject {
+    /// ITER-041 — daily synthesis from already-processed Memories/Tasks
+    /// on medium tier. Synthesis-only, not re-analysis.
+    static let llmTier: LLMTier = .medium
+    static let llmServiceId: String = "DailySummaryService"
+
     @Published var isRunning = false
     @Published var lastError: String?
     @Published var lastGenerationAt: Date?
@@ -891,7 +896,10 @@ final class DailySummaryService: ObservableObject {
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.timeoutInterval = 30
 
-        let body: [String: Any] = ["system": system, "user": user]
+        let body = LLMRequestBody.proAdviceBody(
+            system: system, user: user,
+            tier: Self.llmTier, serviceId: Self.llmServiceId
+        )
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
 
         let (data, response) = try await URLSession.shared.data(for: request)

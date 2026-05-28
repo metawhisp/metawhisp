@@ -61,7 +61,13 @@ final class ObsidianMarkdownRendererTests: XCTestCase {
         XCTAssertTrue(out.contains("## Raw transcription"))
         XCTAssertTrue(out.contains("raw text"))
         // Wikilink to conversation
-        XCTAssertTrue(out.contains("[[Conversations/\(fixedConvID.uuidString)]]"))
+        // Phase-2: Voice/task/memory body no longer emits the legacy
+        // `[[Conversations/<UUID>]]` link. Conversation reference is now a
+        // readable `Conversation: [[…hub-slug…]]` wikilink set by the
+        // exporter via `conversationHubLink`. The UUID still appears in
+        // YAML frontmatter as `conversation_id:` for traceability — verify
+        // that instead.
+        XCTAssertTrue(out.contains("conversation_id: \(fixedConvID.uuidString)"))
     }
 
     func test_renderVoice_dropsCleanedSectionWhenSameAsRaw() {
@@ -146,7 +152,13 @@ final class ObsidianMarkdownRendererTests: XCTestCase {
         XCTAssertTrue(out.contains("project: \"MetaWhisp\""))
         XCTAssertTrue(out.contains("# [ ] T-0001: Починить окно"))
         XCTAssertTrue(out.contains("**Due:**"))
-        XCTAssertTrue(out.contains("[[Conversations/\(fixedConvID.uuidString)]]"))
+        // Phase-2: Voice/task/memory body no longer emits the legacy
+        // `[[Conversations/<UUID>]]` link. Conversation reference is now a
+        // readable `Conversation: [[…hub-slug…]]` wikilink set by the
+        // exporter via `conversationHubLink`. The UUID still appears in
+        // YAML frontmatter as `conversation_id:` for traceability — verify
+        // that instead.
+        XCTAssertTrue(out.contains("conversation_id: \(fixedConvID.uuidString)"))
     }
 
     func test_renderTask_completedHasCheckedBox() {
@@ -189,11 +201,22 @@ final class ObsidianMarkdownRendererTests: XCTestCase {
         XCTAssertTrue(out.contains("subject: \"Sam Smith\""))
         XCTAssertTrue(out.contains("project: \"MetaWhisp\""))
         XCTAssertTrue(out.contains("confidence: 0.92"))
-        XCTAssertTrue(out.contains("tags: [memory, metawhisp, team, comms]"))
+        // Phase-1 graph linking: tagsCSV + project tag both end up in the
+        // YAML tag list. `project/metawhisp` lets Obsidian's Tags pane
+        // cluster every memory/voice/task touching MetaWhisp together.
+        XCTAssertTrue(out.contains("tags: [memory, metawhisp, team, comms, project/metawhisp]"))
         XCTAssertTrue(out.contains("# Sam — async pref"))
         XCTAssertTrue(out.contains("Prefers async-first comms."))
         XCTAssertTrue(out.contains("## Reasoning"))
-        XCTAssertTrue(out.contains("[[Conversations/\(fixedConvID.uuidString)]]"))
+        // Phase-1 graph linking: human-readable wikilink to the project hub.
+        XCTAssertTrue(out.contains("Project: [[Projects/MetaWhisp]]"))
+        // Phase-2: Voice/task/memory body no longer emits the legacy
+        // `[[Conversations/<UUID>]]` link. Conversation reference is now a
+        // readable `Conversation: [[…hub-slug…]]` wikilink set by the
+        // exporter via `conversationHubLink`. The UUID still appears in
+        // YAML frontmatter as `conversation_id:` for traceability — verify
+        // that instead.
+        XCTAssertTrue(out.contains("conversation_id: \(fixedConvID.uuidString)"))
     }
 
     func test_renderMemory_minimal() {

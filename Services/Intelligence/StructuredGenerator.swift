@@ -12,6 +12,15 @@ import SwiftData
 /// spec://BACKLOG#C1.2
 @MainActor
 final class StructuredGenerator: ObservableObject {
+    /// ITER-041 — per-conversation extraction schema is the most complex
+    /// in the codebase (title+project+category+decisions+nextSteps+
+    /// participants+keyQuotes). 8B-instant failed parse in production
+    /// (2026-05-28 17:13 — 2 consecutive parse failures right after the
+    /// mini migration). Moved to medium tier; still ~7× cheaper than the
+    /// heavy default since this is the highest-volume background caller.
+    static let llmTier: LLMTier = .medium
+    static let llmServiceId: String = "StructuredGenerator"
+
     @Published var isRunning = false
     @Published var lastError: String?
 
@@ -757,7 +766,10 @@ final class StructuredGenerator: ObservableObject {
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.timeoutInterval = 30
 
-        let body: [String: Any] = ["system": system, "user": user]
+        let body = LLMRequestBody.proAdviceBody(
+            system: system, user: user,
+            tier: Self.llmTier, serviceId: Self.llmServiceId
+        )
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
 
         let (data, response) = try await URLSession.shared.data(for: request)

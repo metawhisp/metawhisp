@@ -20,9 +20,25 @@ import SwiftUI
 /// weren't there.
 final class ClickThroughHostingView<Content: View>: NSHostingView<Content> {
     /// Pixel margin around the card that's transparent shadow padding.
-    /// Set from the owning window controller after init.
+    /// Fallback path — only used when `cardRect` has not been pushed in
+    /// by the SwiftUI view (i.e. for views that don't emit `CardFrameKey`).
     var shadowInset: CGFloat = 0 {
         didSet { needsUpdateTrackingArea = true; updateTrackingAreas() }
+    }
+
+    /// Exact card rect inside `bounds` published by the SwiftUI side via
+    /// `CardFrameKey`. Takes precedence over `shadowInset` when non-zero.
+    /// 2026-05-23 — added because the panel-inset heuristic over-counted
+    /// the click area for dynamically-sized cards (Meeting Copilot), leaving
+    /// a 30-40pt invisible halo above and below the visible pill that still
+    /// consumed clicks. With the real card rect, the tracking area matches
+    /// what the user actually sees.
+    var cardRect: CGRect = .zero {
+        didSet {
+            guard cardRect != oldValue else { return }
+            needsUpdateTrackingArea = true
+            updateTrackingAreas()
+        }
     }
 
     private var cardTrackingArea: NSTrackingArea?
@@ -60,9 +76,15 @@ final class ClickThroughHostingView<Content: View>: NSHostingView<Content> {
             cardTrackingArea = nil
         }
 
-        // The inner rect is the card-sized region; outside it = shadow
-        // envelope = pass-through.
-        let inner = bounds.insetBy(dx: shadowInset, dy: shadowInset)
+        // Prefer the exact card rect emitted by SwiftUI (`CardFrameKey`).
+        // Fall back to the panel-inset heuristic only when no rect has
+        // been published — keeps non-migrated views working.
+        let inner: CGRect
+        if cardRect.width > 0 && cardRect.height > 0 {
+            inner = cardRect
+        } else {
+            inner = bounds.insetBy(dx: shadowInset, dy: shadowInset)
+        }
         guard inner.width > 0, inner.height > 0 else { return }
 
         let area = NSTrackingArea(

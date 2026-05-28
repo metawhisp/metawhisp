@@ -55,7 +55,8 @@ final class MeetingCoachWindowController {
             state: MeetingCoachState.shared,
             onStop: { [weak self] in
                 self?.handleStopTap()
-            }
+            },
+            onCardFrameChange: nil  // re-bound below after `hosting` exists
         )
         let hosting = ClickThroughHostingView(rootView: view)
         // Wider/taller than the visible card so shadow (radius 28, y offset 14)
@@ -64,10 +65,20 @@ final class MeetingCoachWindowController {
         // room on every side even with 3 suggestions + transcript footer.
         hosting.frame = NSRect(x: 0, y: 0, width: 540, height: 440)
         hosting.autoresizingMask = [.width, .height]
-        // The MeetingCoachView wraps its card in `.padding(42)` (the shadow
-        // envelope). Tell the hosting view about it so clicks inside that
-        // 42-pt transparent border fall through to whatever app is below
-        // (Zoom, browser, etc.) instead of being eaten by the floating panel.
+        // Re-bind rootView with a callback closure that pushes the real card
+        // frame (emitted by SwiftUI via CardFrameKey) into the hosting view's
+        // `cardRect`. The tracking area then matches the visible card +
+        // shadow envelope exactly — no more phantom click halo around it.
+        hosting.rootView = MeetingCoachView(
+            state: MeetingCoachState.shared,
+            onStop: { [weak self] in self?.handleStopTap() },
+            onCardFrameChange: { [weak hosting] rect in
+                hosting?.cardRect = rect
+            }
+        )
+        // Fallback shadowInset stays set so first-paint (before SwiftUI emits
+        // the real frame) has a sane tracking area instead of the entire
+        // panel being click-through.
         hosting.shadowInset = 42
 
         // Borderless, non-activating panel — appears over Zoom etc. without

@@ -1389,7 +1389,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
 
             do {
                 let lang = AppSettings.shared.transcriptionLanguage == "auto" ? nil : AppSettings.shared.transcriptionLanguage
-                let result = try await engine.transcribe(audioSamples: chunk, language: lang, promptWords: ["MetaWhisp"])
+                // Brand glossary as prompt bias (BrandGlossary.canonicalNames).
+                // Forwarded to Whisper as initial_prompt and to Deepgram as
+                // keyterm (worker-side) — improves brand recognition (Brevo,
+                // Claude, ChatGPT, etc.) in meeting transcripts.
+                let result = try await engine.transcribe(audioSamples: chunk, language: lang, promptWords: BrandGlossary.canonicalNames())
                 let text = result.text.trimmingCharacters(in: .whitespacesAndNewlines)
                 guard !text.isEmpty else { continue }
 
@@ -1416,15 +1420,43 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
                 // Each Whisper segment becomes its own StreamSegment with
                 // absolute timing = chunkStartSec + whisperSeg.start so the
                 // merger interleaves at real-utterance grain.
+                //
+                // 2026-05-28: also strip mid-text hallucination artifacts
+                // (DimaTorzok / «Субтитры создавал …» / «Продолжение
+                // следует» / «Спасибо за просмотр») at the per-utterance
+                // grain. Meeting path used to skip strip entirely — 14×
+                // DimaTorzok in last 10 meetings traced to this gap.
+                // Regression-pinned by `HallucinationStripTests`.
                 let whisperSegments = result.segments
                 if whisperSegments.isEmpty {
                     // Fallback for engines that don't populate segments —
                     // emit one segment covering the chunk (old behaviour).
-                    segments.append(StreamSegment(text: text, startSec: chunkStartSec, endSec: chunkEndSec, speaker: speaker))
+                    let stripped = TranscriptionCoordinator.stripHallucinationTokens(text)
+                    if stripped.isEmpty {
+                        NSLog("[MetaWhisp] 🧹 %@ chunk %d: emptied by strip (was '%@')", label, i + 1, String(text.prefix(80)))
+                        continue
+                    }
+                    if stripped != text {
+                        NSLog("[MetaWhisp] 🧹 %@ chunk %d: stripped hallucination (was %d → %d chars)", label, i + 1, text.count, stripped.count)
+                    }
+                    // Brand-name auto-correct (Brevo for unambiguous
+                    // Cyrillic mangles). Conservative — see BrandGlossary
+                    // header for rationale.
+                    let cleanedText = BrandGlossary.applyCorrections(stripped)
+                    segments.append(StreamSegment(text: cleanedText, startSec: chunkStartSec, endSec: chunkEndSec, speaker: speaker))
                 } else {
                     for w in whisperSegments {
-                        let utteranceText = w.text.trimmingCharacters(in: .whitespacesAndNewlines)
-                        guard !utteranceText.isEmpty else { continue }
+                        let rawUtterance = w.text.trimmingCharacters(in: .whitespacesAndNewlines)
+                        guard !rawUtterance.isEmpty else { continue }
+                        let stripped = TranscriptionCoordinator.stripHallucinationTokens(rawUtterance)
+                        if stripped.isEmpty {
+                            NSLog("[MetaWhisp] 🧹 %@ chunk %d utt: emptied by strip (was '%@')", label, i + 1, String(rawUtterance.prefix(80)))
+                            continue
+                        }
+                        if stripped != rawUtterance {
+                            NSLog("[MetaWhisp] 🧹 %@ chunk %d utt: stripped hallucination (was %d → %d chars)", label, i + 1, rawUtterance.count, stripped.count)
+                        }
+                        let utteranceText = BrandGlossary.applyCorrections(stripped)
                         let absStart = chunkStartSec + w.start
                         let absEnd = chunkStartSec + w.end
                         segments.append(StreamSegment(text: utteranceText, startSec: absStart, endSec: absEnd, speaker: speaker))
@@ -1546,15 +1578,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
 
         do {
             let lang = AppSettings.shared.transcriptionLanguage == "auto" ? nil : AppSettings.shared.transcriptionLanguage
-            let result = try await engine.transcribe(audioSamples: tailMixed, language: lang, promptWords: ["MetaWhisp"])
-            let text = result.text.trimmingCharacters(in: .whitespacesAndNewlines)
+            let result = try await engine.transcribe(audioSamples: tailMixed, language: lang, promptWords: BrandGlossary.canonicalNames())
+            let rawText = result.text.trimmingCharacters(in: .whitespacesAndNewlines)
             // Apply the same hallucination filter as the chunked path.
-            if !text.isEmpty,
-               !TranscriptionCoordinator.isAlwaysHallucination(text),
-               !(rms < 0.003 && TranscriptionCoordinator.isHallucination(text)) {
-                if !fullText.isEmpty { fullText += "\n\n" }
-                fullText += text
-                NSLog("[MetaWhisp] Meeting tail transcribed (%.1fs, %d chars)", Double(tailMixed.count) / 16000.0, text.count)
+            // 2026-05-28: also strip mid-text artifacts so the tail can't
+            // re-introduce DimaTorzok / «Продолжение следует» that the
+            // chunked path now removes.
+            if !rawText.isEmpty,
+               !TranscriptionCoordinator.isAlwaysHallucination(rawText),
+               !(rms < 0.003 && TranscriptionCoordinator.isHallucination(rawText)) {
+                let stripped = TranscriptionCoordinator.stripHallucinationTokens(rawText)
+                if stripped.isEmpty {
+                    NSLog("[MetaWhisp] Meeting tail emptied by strip (was '%@')", String(rawText.prefix(80)))
+                } else {
+                    if stripped != rawText {
+                        NSLog("[MetaWhisp] 🧹 Meeting tail: stripped hallucination (was %d → %d chars)", rawText.count, stripped.count)
+                    }
+                    // Brand-name auto-correct (Brevo, etc.).
+                    let text = BrandGlossary.applyCorrections(stripped)
+                    if !fullText.isEmpty { fullText += "\n\n" }
+                    fullText += text
+                    NSLog("[MetaWhisp] Meeting tail transcribed (%.1fs, %d chars)", Double(tailMixed.count) / 16000.0, text.count)
+                }
             } else {
                 NSLog("[MetaWhisp] Meeting tail filtered (empty or hallucination)")
             }

@@ -170,6 +170,63 @@ enum ObsidianPath {
         return slug.isEmpty ? defaultUntaggedConversation : slug
     }
 
+    // MARK: - Project graph linking (Phase 1: ITER-035 cross-linking)
+
+    /// Top-level folder where the user keeps per-project hub notes
+    /// (`Projects/Acme.md`, `Projects/ProjectAlpha.md`, …). Obsidian resolves
+    /// wikilinks of the form `[[Projects/<Name>]]` to a file in this dir
+    /// — or to `<Name>/<Name>.md` if the project is laid out as a folder
+    /// with an in-folder index file (the user's current convention for
+    /// some projects).
+    static let projectsHubSubdir = "Projects"
+
+    /// Wikilink target string for a project — i.e. the part that goes
+    /// inside `[[ … ]]`. Returns nil when the project string is empty/
+    /// "Untagged" so the caller can skip emitting an orphan link.
+    ///
+    /// Result form: `"Projects/<Name>"`. Preserves the project name AS
+    /// USED BY THE USER, including spaces — Obsidian wikilinks support
+    /// spaces and resolving via `[[Projects/Acme Corp]]` will then
+    /// point at the user's existing `Projects/Acme Corp/` folder
+    /// (or `Projects/Acme Corp.md` stub) instead of creating a
+    /// hyphenated parallel `Acme-Corp` node.
+    ///
+    /// Only strips characters that actually break the wikilink/path
+    /// parser: `[`, `]`, `|`, `#`, `^`, `/`, `\`, line breaks. Trims
+    /// surrounding whitespace. Examples:
+    ///   - `"Acme"`         → `"Projects/Acme"`
+    ///   - `"Acme Corp"`    → `"Projects/Acme Corp"`
+    ///   - `"SEO Offers"`   → `"Projects/SEO Offers"`
+    static func projectWikilinkTarget(_ rawProject: String?) -> String? {
+        guard let p = rawProject?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !p.isEmpty else { return nil }
+        let forbidden: Set<Character> = ["[", "]", "|", "#", "^", "/", "\\", "\n", "\r", "\t"]
+        let cleaned = String(p.filter { !forbidden.contains($0) })
+            .trimmingCharacters(in: .whitespaces)
+        guard !cleaned.isEmpty else { return nil }
+        return "\(projectsHubSubdir)/\(cleaned)"
+    }
+
+    /// Tag string for a project, lowercased + slugged + nested under
+    /// `project/` so the Obsidian Tags pane groups them. Example:
+    /// `"Acme"` → `"project/acme"`. Returns nil for empty input.
+    static func projectTag(_ rawProject: String?) -> String? {
+        guard let p = rawProject?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !p.isEmpty else { return nil }
+        let slug = slugForFilename(p, maxLength: 40, keepingCase: false)
+        guard !slug.isEmpty else { return nil }
+        return "project/\(slug)"
+    }
+
+    /// Vault-relative path where the project's stub hub-note would live
+    /// if MetaWhisp had to create one (caller checks for existence first).
+    /// Used by `ObsidianExporter.ensureProjectStub` to materialize the
+    /// wikilink target so the link isn't dangling in the graph.
+    static func projectStubPath(_ rawProject: String?) -> String? {
+        guard let target = projectWikilinkTarget(rawProject) else { return nil }
+        return "\(target).md"
+    }
+
     // MARK: - Full path builders (relative to vault root)
 
     /// `MetaWhisp/2026-05-12/meetings/14h00--standup-with-sam.md`
@@ -182,6 +239,60 @@ enum ObsidianPath {
         let time = timestampPrefix(for: date, calendar: calendar)
         let slug = slugForFilename(title)
         return "\(rootSubdir)/\(day)/meetings/\(time)--\(slug).md"
+    }
+
+    /// `MetaWhisp/2026-05-12/conversations/14h32--metawhisp-deploy-discussion.md`
+    ///
+    /// Conversation hub aggregating multiple voices into one structured note.
+    /// Title comes from Conversation.title (filled by StructuredGenerator)
+    /// or falls back to a snippet of the first voice's text. Slugged via
+    /// the same rules as meeting filenames.
+    static func conversationHubPath(
+        date: Date,
+        title: String,
+        calendar: Calendar = .current
+    ) -> String {
+        let day = dateFolder(for: date, calendar: calendar)
+        let time = timestampPrefix(for: date, calendar: calendar)
+        let slug = slugForFilename(title)
+        return "\(rootSubdir)/\(day)/conversations/\(time)--\(slug).md"
+    }
+
+    /// `MetaWhisp/2026-05-12/_summary.md`
+    ///
+    /// One per active day. Aggregates all the day's voice/task/memory/insight
+    /// entries as a quick scan. Underscore prefix so it sorts to the top of
+    /// the day folder in any file browser.
+    static func dailySummaryPath(
+        date: Date,
+        calendar: Calendar = .current
+    ) -> String {
+        let day = dateFolder(for: date, calendar: calendar)
+        return "\(rootSubdir)/\(day)/_summary.md"
+    }
+
+    /// Wikilink target string for a conversation hub — `<date>/conversations/<HHhMM>--<slug>`
+    /// (no `.md`, no leading `MetaWhisp/`). Obsidian resolves these from
+    /// wikilinks in voice/task/memory body sections.
+    static func conversationHubWikilink(
+        date: Date,
+        title: String,
+        calendar: Calendar = .current
+    ) -> String {
+        let day = dateFolder(for: date, calendar: calendar)
+        let time = timestampPrefix(for: date, calendar: calendar)
+        let slug = slugForFilename(title)
+        return "\(rootSubdir)/\(day)/conversations/\(time)--\(slug)"
+    }
+
+    /// Wikilink target for a day's `_summary.md` hub. Voices/tasks/memories
+    /// link here as `Day: [[MetaWhisp/<date>/_summary]]`.
+    static func dailySummaryWikilink(
+        date: Date,
+        calendar: Calendar = .current
+    ) -> String {
+        let day = dateFolder(for: date, calendar: calendar)
+        return "\(rootSubdir)/\(day)/_summary"
     }
 
     /// `MetaWhisp/2026-05-12/voices/09h15--MetaWhisp.md`

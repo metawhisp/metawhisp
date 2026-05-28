@@ -12,6 +12,14 @@ import SwiftData
 /// spec://iterations/ITER-001#architecture.extractor
 @MainActor
 final class MemoryExtractor: ObservableObject {
+    /// ITER-041 — memory extraction schema is complex enough
+    /// (kind+text+confidence+evidence) that 8B-instant truncated the JSON
+    /// in production (2026-05-28 17:15: `{"memories": [` cutoff). Moved to
+    /// medium tier (gpt-oss-20b on Groq, $0.075/$0.30). Still ~7× cheaper
+    /// than heavy. TaskExtractor with simpler schema stays on mini.
+    static let llmTier: LLMTier = .medium
+    static let llmServiceId: String = "MemoryExtractor"
+
     @Published var isRunning = false
     @Published var lastRun: Date?
     @Published var lastError: String?
@@ -493,7 +501,10 @@ final class MemoryExtractor: ObservableObject {
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.timeoutInterval = 30
 
-        let body: [String: Any] = ["system": system, "user": user]
+        let body = LLMRequestBody.proAdviceBody(
+            system: system, user: user,
+            tier: Self.llmTier, serviceId: Self.llmServiceId
+        )
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
 
         let (data, response) = try await URLSession.shared.data(for: request)

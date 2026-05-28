@@ -9,6 +9,14 @@ import SwiftData
 /// spec://BACKLOG#Phase2.R1 + R2
 @MainActor
 final class ScreenExtractor: ObservableObject {
+    /// ITER-041 — schema is the most complex in the codebase (3 arrays:
+    /// observations + memories + tasks, with per-element nested fields).
+    /// 8B-instant produced malformed JSON in production (PID 24170 ran with
+    /// mini before today's fix: «Parse failed» repeated). Moved to medium
+    /// tier; still ~4× cheaper than the historical heavy default.
+    static let llmTier: LLMTier = .medium
+    static let llmServiceId: String = "ScreenExtractor"
+
     @Published var isRunning = false
     @Published var lastRun: Date?
     @Published var lastError: String?
@@ -501,7 +509,10 @@ final class ScreenExtractor: ObservableObject {
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.timeoutInterval = 60
 
-        let body: [String: Any] = ["system": system, "user": user]
+        let body = LLMRequestBody.proAdviceBody(
+            system: system, user: user,
+            tier: Self.llmTier, serviceId: Self.llmServiceId
+        )
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
 
         let (data, response) = try await URLSession.shared.data(for: request)

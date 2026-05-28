@@ -64,12 +64,15 @@ final class ObsidianExporter: ObservableObject {
         // (those go through `exportConversation` as part of the meeting file).
         if item.source == "meeting" { return }
 
-        // Resolve project via parent conversation (если есть)
-        let project: String? = {
+        // Resolve parent conversation once — we need its project AND a
+        // wikilink target to the conversation hub for graph linking.
+        let parent: Conversation? = {
             guard let cid = item.conversationId else { return nil }
             let cdesc = FetchDescriptor<Conversation>(predicate: #Predicate { $0.id == cid })
-            return (try? ctx.fetch(cdesc))?.first?.primaryProject
+            return (try? ctx.fetch(cdesc))?.first
         }()
+        let project = parent?.primaryProject
+        let convHubLink: String? = parent.flatMap { conversationHubWikilink(for: $0, ctx: ctx) }
 
         let input = ObsidianMarkdownRenderer.VoiceInput(
             id: item.id,
@@ -80,22 +83,71 @@ final class ObsidianExporter: ObservableObject {
             sourceApp: item.source,
             textRaw: item.text,
             textProcessed: item.processedText,
-            durationSec: item.audioDuration > 0 ? item.audioDuration : nil
+            durationSec: item.audioDuration > 0 ? item.audioDuration : nil,
+            conversationHubLink: convHubLink
         )
         let md = ObsidianMarkdownRenderer.renderVoice(input)
         let path = ObsidianPath.voicePath(date: item.createdAt, project: project)
         write(md, to: path, kind: "voice")
+        ensureProjectStub(for: project)
     }
 
-    /// Meeting Conversation — one self-contained file with summary, action items,
-    /// memories inline, transcript. Skips non-meeting conversations (their
-    /// HistoryItems go through `exportHistoryItem` individually).
+    /// Resolve a conversation to a readable hub wikilink target
+    /// (`MetaWhisp/<date>/conversations/<HHhMM>--<slug>`). Falls back to
+    /// snippet of first HistoryItem text if `conversation.title` is nil
+    /// — which is the common case until StructuredGenerator runs on every
+    /// conversation. Slug computed from the same string used for the file
+    /// path, so wikilink ↔ file path agree.
+    private func conversationHubWikilink(for conv: Conversation, ctx: ModelContext) -> String? {
+        let title = conversationDisplayTitle(for: conv, ctx: ctx)
+        guard !title.isEmpty else { return nil }
+        return ObsidianPath.conversationHubWikilink(date: conv.startedAt, title: title)
+    }
+
+    /// Title to use when rendering a conversation hub OR a wikilink to it.
+    /// Single source of truth so the hub file's path and every voice's
+    /// wikilink stay consistent across runs.
+    private func conversationDisplayTitle(for conv: Conversation, ctx: ModelContext) -> String {
+        if let t = conv.title?.trimmingCharacters(in: .whitespacesAndNewlines), !t.isEmpty {
+            return t
+        }
+        // Fallback: snippet from the first HistoryItem text.
+        let cid = conv.id
+        var hDesc = FetchDescriptor<HistoryItem>()
+        hDesc.fetchLimit = 1
+        // We can't filter+sort+limit in one FetchDescriptor predicate easily
+        // for @Model with this Swift version; cheap workaround — pull a
+        // small page and pick min.
+        var allDesc = FetchDescriptor<HistoryItem>()
+        allDesc.fetchLimit = 50
+        let candidates = ((try? ctx.fetch(allDesc)) ?? [])
+            .filter { $0.conversationId == cid }
+            .sorted { $0.createdAt < $1.createdAt }
+        let firstText = candidates.first?.processedText ?? candidates.first?.text
+        let snippet = ObsidianMarkdownRenderer.firstSnippet(firstText, maxLength: 60)
+            ?? "conversation"
+        return snippet
+    }
+
+    /// Meeting OR dictation Conversation — writes a single hub file
+    /// aggregating everything that happened during that conversation.
+    /// Meetings keep their current rich rendering (summary + action items +
+    /// transcript); non-meeting (dictation) conversations get the lighter
+    /// `renderConversation` layout (project link + voice timeline).
+    /// Discarded conversations are skipped.
     func exportConversation(_ id: UUID) async {
         guard let ctx = makeContext() else { return }
         let convDesc = FetchDescriptor<Conversation>(predicate: #Predicate { $0.id == id })
         guard let conv = (try? ctx.fetch(convDesc))?.first else { return }
-        guard conv.source == "meeting" else { return }
         guard !conv.discarded else { return }
+
+        // Branch by source: meetings get the existing rich rendering;
+        // everything else (dictation, screen-derived) goes through the
+        // new conversation-hub renderer (voice timeline + project link).
+        if conv.source != "meeting" {
+            await exportConversationHub(conv, ctx: ctx)
+            return
+        }
 
         // Tasks tied to this conversation — collect short summaries.
         var tDesc = FetchDescriptor<TaskItem>()
@@ -153,6 +205,173 @@ final class ObsidianExporter: ObservableObject {
         write(md, to: path, kind: "meeting")
     }
 
+    /// Non-meeting Conversation hub. Aggregates a series of voices that
+    /// landed in the same `Conversation` (grouped by `ConversationGrouper`
+    /// — 2-min silence split + topic continuity). Replaces the "5611 raw
+    /// voice files in the graph" feeling with ~1800 topic-level hubs.
+    private func exportConversationHub(_ conv: Conversation, ctx: ModelContext) async {
+        let title = conversationDisplayTitle(for: conv, ctx: ctx)
+        guard !title.isEmpty else { return }
+
+        // Voices in this conversation, oldest first.
+        var allHistory = FetchDescriptor<HistoryItem>()
+        allHistory.fetchLimit = 1000
+        let voices = ((try? ctx.fetch(allHistory)) ?? [])
+            .filter { $0.conversationId == conv.id && $0.source != "meeting" }
+            .sorted { $0.createdAt < $1.createdAt }
+
+        let voiceLines: [ObsidianMarkdownRenderer.VoiceLine] = voices.map { v in
+            let snippet = ObsidianMarkdownRenderer.firstSnippet(v.processedText ?? v.text, maxLength: 80) ?? "(voice)"
+            let voicePath = ObsidianPath.voicePath(date: v.createdAt, project: conv.primaryProject)
+            return .init(
+                createdAt: v.createdAt,
+                snippet: snippet,
+                voiceFileRelativePath: voicePath
+            )
+        }
+
+        // Tasks tied to this conversation (short summaries).
+        var tDesc = FetchDescriptor<TaskItem>()
+        tDesc.fetchLimit = 500
+        let actionItems = ((try? ctx.fetch(tDesc)) ?? [])
+            .filter { $0.conversationId == conv.id && !$0.isDismissed }
+            .map { $0.taskDescription }
+
+        // Memories tied to this conversation.
+        var mDesc = FetchDescriptor<UserMemory>()
+        mDesc.fetchLimit = 500
+        let memoriesInline = ((try? ctx.fetch(mDesc)) ?? [])
+            .filter { $0.conversationId == conv.id && !$0.isDismissed }
+            .map { mem -> String in
+                if let s = mem.subject, !s.isEmpty,
+                   let c = mem.characterization, !c.isEmpty {
+                    return "\(s) — \(c)"
+                }
+                return mem.content
+            }
+
+        let input = ObsidianMarkdownRenderer.ConversationHubInput(
+            id: conv.id,
+            title: title,
+            emoji: conv.emoji,
+            startedAt: conv.startedAt,
+            finishedAt: conv.finishedAt,
+            project: conv.primaryProject,
+            category: conv.category,
+            overview: conv.overview,
+            voices: voiceLines,
+            actionItems: actionItems,
+            memoriesInline: memoriesInline
+        )
+        let md = ObsidianMarkdownRenderer.renderConversation(input)
+        let path = ObsidianPath.conversationHubPath(date: conv.startedAt, title: title)
+        write(md, to: path, kind: "conversation")
+        ensureProjectStub(for: conv.primaryProject)
+    }
+
+    /// Daily summary hub — `MetaWhisp/<date>/_summary.md`. Aggregates
+    /// pointers to every voice/conversation/task/memory/insight of a given
+    /// day. Lets the graph cluster by date as well as by project/topic.
+    /// Idempotent (overwrites by path).
+    func exportDailySummary(for day: Date) async {
+        guard let ctx = makeContext() else { return }
+        let dayStart = Calendar.current.startOfDay(for: day)
+        let dayEnd = Calendar.current.date(byAdding: .day, value: 1, to: dayStart) ?? day.addingTimeInterval(86400)
+
+        func timeStr(_ d: Date) -> String {
+            let f = DateFormatter()
+            f.locale = Locale(identifier: "en_US_POSIX")
+            f.dateFormat = "HH:mm"
+            return f.string(from: d)
+        }
+
+        // Voices: non-meeting HistoryItems landing this day.
+        var hDesc = FetchDescriptor<HistoryItem>()
+        hDesc.fetchLimit = 2000
+        let dayVoices = ((try? ctx.fetch(hDesc)) ?? [])
+            .filter { $0.createdAt >= dayStart && $0.createdAt < dayEnd && $0.source != "meeting" }
+            .sorted { $0.createdAt < $1.createdAt }
+        let voiceItems: [ObsidianMarkdownRenderer.DailySummaryInput.Item] = dayVoices.map { v in
+            let label = ObsidianMarkdownRenderer.firstSnippet(v.processedText ?? v.text, maxLength: 80) ?? "(voice)"
+            let projForPath: String? = {
+                guard let cid = v.conversationId else { return nil }
+                let cdesc = FetchDescriptor<Conversation>(predicate: #Predicate { $0.id == cid })
+                return (try? ctx.fetch(cdesc))?.first?.primaryProject
+            }()
+            let path = ObsidianPath.voicePath(date: v.createdAt, project: projForPath)
+            let link = path.hasSuffix(".md") ? String(path.dropLast(3)) : path
+            return .init(timeOfDay: timeStr(v.createdAt), label: label, wikilink: link)
+        }
+
+        // Conversations starting this day (both meetings + dictation hubs).
+        var cDesc = FetchDescriptor<Conversation>()
+        cDesc.fetchLimit = 500
+        let dayConvs = ((try? ctx.fetch(cDesc)) ?? [])
+            .filter { $0.startedAt >= dayStart && $0.startedAt < dayEnd && !$0.discarded }
+            .sorted { $0.startedAt < $1.startedAt }
+        let convItems: [ObsidianMarkdownRenderer.DailySummaryInput.Item] = dayConvs.map { c in
+            let title = conversationDisplayTitle(for: c, ctx: ctx)
+            let link: String
+            if c.source == "meeting" {
+                let p = ObsidianPath.meetingPath(date: c.startedAt, title: title)
+                link = p.hasSuffix(".md") ? String(p.dropLast(3)) : p
+            } else {
+                link = ObsidianPath.conversationHubWikilink(date: c.startedAt, title: title)
+            }
+            return .init(timeOfDay: timeStr(c.startedAt), label: title, wikilink: link)
+        }
+
+        // Tasks created this day, non-dismissed.
+        var tDesc = FetchDescriptor<TaskItem>()
+        tDesc.fetchLimit = 500
+        let dayTasks = ((try? ctx.fetch(tDesc)) ?? [])
+            .filter { $0.createdAt >= dayStart && $0.createdAt < dayEnd && !$0.isDismissed }
+            .sorted { $0.createdAt < $1.createdAt }
+        let taskItems: [ObsidianMarkdownRenderer.DailySummaryInput.Item] = dayTasks.map { t in
+            let input = toTaskInput(t)
+            let path = ObsidianPath.taskPath(date: t.createdAt, taskID: input.taskID, description: t.taskDescription)
+            let link = path.hasSuffix(".md") ? String(path.dropLast(3)) : path
+            return .init(timeOfDay: timeStr(t.createdAt), label: "\(input.taskID): \(t.taskDescription)", wikilink: link)
+        }
+
+        // Memories + Insights created this day.
+        var mDesc = FetchDescriptor<UserMemory>()
+        mDesc.fetchLimit = 1000
+        let dayMems = ((try? ctx.fetch(mDesc)) ?? [])
+            .filter { $0.createdAt >= dayStart && $0.createdAt < dayEnd && !$0.isDismissed }
+            .sorted { $0.createdAt < $1.createdAt }
+        var memItems: [ObsidianMarkdownRenderer.DailySummaryInput.Item] = []
+        var insItems: [ObsidianMarkdownRenderer.DailySummaryInput.Item] = []
+        for mem in dayMems {
+            let label = mem.headline?.isEmpty == false ? mem.headline! : mem.content
+            if isInsightTagged(mem) {
+                let path = ObsidianPath.insightPath(date: mem.createdAt, headline: mem.headline, body: mem.content)
+                let link = path.hasSuffix(".md") ? String(path.dropLast(3)) : path
+                insItems.append(.init(timeOfDay: timeStr(mem.createdAt), label: label, wikilink: link))
+            } else {
+                let path = ObsidianPath.memoryPath(date: mem.createdAt, project: mem.project, content: mem.content)
+                let link = path.hasSuffix(".md") ? String(path.dropLast(3)) : path
+                memItems.append(.init(timeOfDay: timeStr(mem.createdAt), label: label, wikilink: link))
+            }
+        }
+
+        // Skip empty days entirely — no point in a hub with zero items.
+        let total = voiceItems.count + convItems.count + taskItems.count + memItems.count + insItems.count
+        guard total > 0 else { return }
+
+        let summary = ObsidianMarkdownRenderer.DailySummaryInput(
+            date: dayStart,
+            voices: voiceItems,
+            conversations: convItems,
+            tasks: taskItems,
+            memories: memItems,
+            insights: insItems
+        )
+        let md = ObsidianMarkdownRenderer.renderDailySummary(summary)
+        let path = ObsidianPath.dailySummaryPath(date: dayStart)
+        write(md, to: path, kind: "daily-summary")
+    }
+
     func exportTask(_ id: UUID) async {
         guard let ctx = makeContext() else { return }
         let desc = FetchDescriptor<TaskItem>(predicate: #Predicate { $0.id == id })
@@ -170,6 +389,7 @@ final class ObsidianExporter: ObservableObject {
             description: task.taskDescription
         )
         write(md, to: path, kind: "task")
+        ensureProjectStub(for: input.project)
     }
 
     /// `UserMemory` rows are split: `tagsCSV` contains "insight" → goes to
@@ -282,6 +502,21 @@ final class ObsidianExporter: ObservableObject {
             }
         }
 
+        // Phase 2 — Daily summary hubs. One per active day. Cheap: iterates
+        // a Set of unique day-anchors across all entities already fetched
+        // above, then renders/writes each. exportDailySummary skips empty
+        // days by itself so we won't pollute the vault.
+        var dayAnchors: Set<Date> = []
+        let cal = Calendar.current
+        for e in history { dayAnchors.insert(cal.startOfDay(for: e.createdAt)) }
+        for e in convs   { dayAnchors.insert(cal.startOfDay(for: e.startedAt)) }
+        for e in tasks   { dayAnchors.insert(cal.startOfDay(for: e.createdAt)) }
+        for e in mems    { dayAnchors.insert(cal.startOfDay(for: e.createdAt)) }
+        for day in dayAnchors.sorted() {
+            await exportDailySummary(for: day)
+        }
+        NSLog("[ObsidianExporter] ✅ wrote %d daily summary hubs", dayAnchors.count)
+
         stats = s
         NSLog("[ObsidianExporter] ✅ bulk export done: voices=%d meetings=%d tasks=%d memories=%d insights=%d",
               s.voices, s.meetings, s.tasks, s.memories, s.insights)
@@ -357,7 +592,13 @@ final class ObsidianExporter: ObservableObject {
     }
 
     private func exportRegularMemory(_ mem: UserMemory) {
-        let input = ObsidianMarkdownRenderer.MemoryInput(
+        let convHubLink: String? = {
+            guard let ctx = makeContext(), let cid = mem.conversationId else { return nil }
+            let cdesc = FetchDescriptor<Conversation>(predicate: #Predicate { $0.id == cid })
+            guard let conv = (try? ctx.fetch(cdesc))?.first else { return nil }
+            return conversationHubWikilink(for: conv, ctx: ctx)
+        }()
+        var input = ObsidianMarkdownRenderer.MemoryInput(
             id: mem.id,
             content: mem.content,
             headline: mem.headline,
@@ -373,6 +614,7 @@ final class ObsidianExporter: ObservableObject {
             tagsCSV: mem.tagsCSV,
             conversationId: mem.conversationId
         )
+        input.conversationHubLink = convHubLink
         let md = ObsidianMarkdownRenderer.renderMemory(input)
         let path = ObsidianPath.memoryPath(
             date: mem.createdAt,
@@ -380,6 +622,7 @@ final class ObsidianExporter: ObservableObject {
             content: mem.content
         )
         write(md, to: path, kind: "memory")
+        ensureProjectStub(for: mem.project)
     }
 
     private func exportInsightMemory(_ mem: UserMemory) {
@@ -416,7 +659,13 @@ final class ObsidianExporter: ObservableObject {
     // MARK: - Internal: mapping helpers
 
     private func toTaskInput(_ task: TaskItem) -> ObsidianMarkdownRenderer.TaskInput {
-        return ObsidianMarkdownRenderer.TaskInput(
+        let convHubLink: String? = {
+            guard let ctx = makeContext(), let cid = task.conversationId else { return nil }
+            let cdesc = FetchDescriptor<Conversation>(predicate: #Predicate { $0.id == cid })
+            guard let conv = (try? ctx.fetch(cdesc))?.first else { return nil }
+            return conversationHubWikilink(for: conv, ctx: ctx)
+        }()
+        var input = ObsidianMarkdownRenderer.TaskInput(
             id: task.id,
             taskID: shortTaskID(task.id),
             description: task.taskDescription,
@@ -429,6 +678,8 @@ final class ObsidianExporter: ObservableObject {
             conversationId: task.conversationId,
             sourceApp: task.sourceApp
         )
+        input.conversationHubLink = convHubLink
+        return input
     }
 
     /// `T-<first 8 hex of UUID>`. Stable across description edits.
@@ -467,6 +718,61 @@ final class ObsidianExporter: ObservableObject {
             lastError = "Write failed for \(kind) at \(relativePath): \(error.localizedDescription)"
             stats.errors += 1
             NSLog("[ObsidianExporter] ❌ write failed (%@): %@", kind, error.localizedDescription)
+        }
+    }
+
+    /// Create `<vault>/Projects/<Project>.md` if the user doesn't already
+    /// have a hub note (or hub folder) for that project. Called every time
+    /// we emit a `[[Projects/<Project>]]` wikilink so the link isn't
+    /// dangling in the graph view.
+    ///
+    /// Idempotent: skips entirely when any of these exist:
+    ///   - `Projects/<Project>.md` (file at the wikilink target)
+    ///   - `Projects/<Project>/` (folder convention some users prefer,
+    ///     where the hub note lives inside as `<Project>/<Project>.md`)
+    ///
+    /// The stub is intentionally minimal — just the H1 and project tag.
+    /// Users are expected to expand it themselves; MetaWhisp must not
+    /// overwrite hub notes the user wrote.
+    func ensureProjectStub(for rawProject: String?) {
+        guard let project = rawProject?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !project.isEmpty,
+              let stubRel = ObsidianPath.projectStubPath(project),
+              let target = ObsidianPath.projectWikilinkTarget(project),
+              let vault = vaultURL() else { return }
+
+        let stubURL = vault.appendingPathComponent(stubRel)
+        // Skip if either `Projects/<P>.md` or `Projects/<P>/` already exists.
+        if FileManager.default.fileExists(atPath: stubURL.path) { return }
+        let folderURL = vault.appendingPathComponent(target, isDirectory: true)
+        var isDir: ObjCBool = false
+        if FileManager.default.fileExists(atPath: folderURL.path, isDirectory: &isDir), isDir.boolValue {
+            return
+        }
+        let projectTag = ObsidianPath.projectTag(project) ?? "project"
+        let stub = """
+        ---
+        type: project
+        created: \(ISO8601DateFormatter().string(from: Date()))
+        tags: [\(projectTag), hub, metawhisp]
+        ---
+
+        # \(project)
+
+        _MetaWhisp auto-stub. Replace with your own project notes; the wikilinks from voice/task/memory files will keep working as long as this file (or `\(target)/\(project).md`) exists._
+
+        ## Recent
+        ```dataview
+        list from #\(projectTag) sort file.ctime desc limit 20
+        ```
+        """
+        do {
+            let dirURL = stubURL.deletingLastPathComponent()
+            try FileManager.default.createDirectory(at: dirURL, withIntermediateDirectories: true)
+            try stub.write(to: stubURL, atomically: true, encoding: .utf8)
+            NSLog("[ObsidianExporter] ✅ created project stub: %@", stubRel)
+        } catch {
+            NSLog("[ObsidianExporter] ⚠️ failed to create project stub %@: %@", stubRel, error.localizedDescription)
         }
     }
 

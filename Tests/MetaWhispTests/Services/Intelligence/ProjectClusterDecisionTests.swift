@@ -31,8 +31,8 @@ final class ProjectClusterDecisionTests: XCTestCase {
 
     /// Punctuation only difference — both canonicalize to `chatapp`.
     /// (Note: `AcmeProject.ai` vs `AcmeProject ai` does NOT merge here — period is
-    /// dropped without inserting a space, so canonicals are `skygenai`
-    /// vs `skygen ai` which differ. That case is a typo merge candidate
+    /// dropped without inserting a space, so canonicals are `acmeprojectai`
+    /// vs `acmeproject ai` which differ. That case is a typo merge candidate
     /// and goes through user-approval UI, not auto-decision.)
     func test_punctuationOnly_merges() {
         XCTAssertTrue(ProjectClusterDecision.canMerge("ChatApp.", "ChatApp,"))
@@ -48,9 +48,11 @@ final class ProjectClusterDecisionTests: XCTestCase {
         XCTAssertFalse(ProjectClusterDecision.canMerge("Island Expand", "Island Expend"))
     }
 
-    /// REGRESSION GUARD: HallucinatedName vs Example Project — different canonicals
-    /// (atomicbata vs atomic bot), don't merge.
-    func test_atomicBataNotMergedWithExampleProject() {
+    /// REGRESSION GUARD: HallucinatedName vs Example Project — different
+    /// canonicals, don't merge. Pinned against a real production incident
+    /// where an LLM-hallucinated alias swallowed an existing canonical
+    /// cluster (see WAL ITER-032.1 «HallucinatedName regression»).
+    func test_hallucinatedAliasNotMergedWithExampleProject() {
         XCTAssertFalse(ProjectClusterDecision.canMerge("HallucinatedName", "Example Project"))
         XCTAssertFalse(ProjectClusterDecision.canMerge("HallucinatedName", "ExampleProject.ai"))
     }

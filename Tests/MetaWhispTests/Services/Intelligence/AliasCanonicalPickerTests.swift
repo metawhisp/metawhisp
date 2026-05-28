@@ -62,13 +62,14 @@ final class AliasCanonicalPickerTests: XCTestCase {
         XCTAssertEqual(result, "Solo")
     }
 
-    /// Case-insensitive count lookup — "Example Project" and "atomic bot" should
-    /// be treated as the same key when summing counts. (LLM may emit either
-    /// case; conversation count sources may store either case.)
+    /// Case-insensitive count lookup — canonical-name lookups should
+    /// treat the same alias in different cases as the same key when
+    /// summing counts. (LLM may emit either case; conversation count
+    /// sources may store either case.)
     func test_pickByConversationCount_caseInsensitiveCounts() {
         let result = AliasCanonicalPicker.pickByConversationCount(
             variants: ["Example Project", "HallucinatedName"],
-            counts: ["atomic bot": 24, "atomicbata": 0]   // lowercase keys
+            counts: ["example project": 24, "hallucinatedname": 0]   // lowercase keys
         )
         XCTAssertEqual(result, "Example Project")
     }

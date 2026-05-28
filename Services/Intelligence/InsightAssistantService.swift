@@ -23,6 +23,11 @@ import SwiftData
 /// #2 (Focus / Memory / Goals) ships — not before.
 @MainActor
 final class InsightAssistantService: ObservableObject {
+    /// ITER-041 — proactive insight generation on medium tier
+    /// (gpt-oss-20b). Phase C will add a mini `/api/pro/gate` step before
+    /// this call; ~80% of contexts get filtered out then.
+    static let llmTier: LLMTier = .medium
+    static let llmServiceId: String = "InsightAssistantService"
 
     // MARK: - Tunables
 
@@ -64,6 +69,28 @@ final class InsightAssistantService: ObservableObject {
         guard !isEvaluating else { return nil }
         isEvaluating = true
         defer { isEvaluating = false }
+
+        // ITER-041 Phase C — cheap relevance gate (mini tier). Default to
+        // skip unless the gate scores >= 0.65. Fail-open on errors so a
+        // gate outage doesn't silently drop real signals. Most contexts
+        // are uneventful — this is the primary cost-reduction lever.
+        let gateContext = """
+        \(appName) — \(windowTitle ?? "")
+        OCR: \(String(ocr.prefix(2000)))
+        Activity: \(activitySummary)
+        """
+        let gate = await GateClient.call(
+            context: gateContext,
+            purpose: .proactive,
+            recentTopics: recentInsights.prefix(5).map { $0.body },
+            serviceId: Self.llmServiceId,
+            licenseKey: licenseKey
+        )
+        guard gate.shouldFire else {
+            NSLog("[Insight] gate-skipped score=%.2f — %@",
+                  gate.score, String(gate.reasoning.prefix(80)))
+            return nil
+        }
 
         let userPrompt = InsightPrompts.buildUserPrompt(
             appName: appName,
@@ -152,7 +179,10 @@ final class InsightAssistantService: ObservableObject {
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.timeoutInterval = 30
 
-        let body: [String: Any] = ["system": system, "user": user]
+        let body = LLMRequestBody.proAdviceBody(
+            system: system, user: user,
+            tier: Self.llmTier, serviceId: Self.llmServiceId
+        )
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
 
         let (data, response) = try await URLSession.shared.data(for: request)

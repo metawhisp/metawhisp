@@ -266,8 +266,12 @@ final class TranscriptionCoordinator: ObservableObject {
         do {
             let lang = settings.transcriptionLanguage == "auto" ? nil : settings.transcriptionLanguage
             var promptWords = correctionDictionary.map { Array(Set($0.corrections.values)) } ?? []
-            // Always include our brand in prompt to bias Whisper toward it
-            promptWords.append("MetaWhisp")
+            // 2026-05-28: bias the decoder toward our known brand glossary
+            // (Brevo/MailChimp/Claude/ChatGPT/Ahrefs/…) so production
+            // mangles seen in meeting transcripts ('Бриво', etc.) get less
+            // weight. Whisper-family uses this as `initial_prompt`; CF
+            // Worker forwards to Deepgram `keyterm`.
+            promptWords.append(contentsOf: BrandGlossary.canonicalNames())
             let result = try await currentEngine.transcribe(audioSamples: samples, language: lang, promptWords: promptWords)
 
             var trimmed = result.text.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -373,6 +377,16 @@ final class TranscriptionCoordinator: ObservableObject {
                         }
                     }
                 }
+            }
+
+            // 2026-05-28: brand-name auto-correct (BrandGlossary) BEFORE
+            // the user dictionary apply so an explicit user override still
+            // wins. Only unambiguous Cyrillic mangles (Бриво→Brevo, etc.)
+            // — see BrandGlossary header for the conservative list.
+            let glossaryCorrected = BrandGlossary.applyCorrections(finalText)
+            if glossaryCorrected != finalText {
+                NSLog("[Coordinator] 📚 BrandGlossary corrected: %@", String(glossaryCorrected.prefix(80)))
+                finalText = glossaryCorrected
             }
 
             // Apply learned corrections (before paste, after all processing)
@@ -547,20 +561,57 @@ final class TranscriptionCoordinator: ObservableObject {
 
         // Order matters — longer / more specific patterns first so we don't
         // leave «Subtitles by» behind after removing «DimaTorzok».
+        //
+        // 2026-05-28 expansion: meeting transcripts in production were
+        // leaking «Субтитры сделал DimaTorzok», «Субтитры создавал
+        // DimaTorzok», «Продолжение следует…», «Спасибо за просмотр»,
+        // «Подписывайтесь». 14× DimaTorzok in last 10 long meetings. The
+        // old regex only covered «by/от» attribution; Whisper actually
+        // emits the verb forms «сделал/создавал/делал/подогнал/писал/
+        // предоставил/корректировал/написал». Added verb-attribution
+        // branch + standalone YouTube boilerplate patterns. Regression-
+        // pinned by `HallucinationStripTests`.
         let patterns: [String] = [
-            // Attribution boilerplate (Whisper YouTube artifact):
-            #"(?i)\s*\b(subtitles?|субтитры|перевод|translated)\s+(by\s+|от\s+)?(dima\s*torzok|dimatorzok|amara\.org)\b\.?"#,
-            // Standalone «DimaTorzok» / variants:
+            // 1. Full attribution with name — Whisper YouTube artifact.
+            //    Covers both English «by/от» and Russian verb forms.
+            #"(?i)\s*\b(subtitles?|субтитры|перевод(ил)?|translated)\s+(by\s+|от\s+|сделал\s+|создавал\s+|делал\s+|подогнал\s+|писал\s+|предоставил\s+|корректировал\s+|написал\s+)?(dima\s*torzok|dimatorzok|amara\.org)\b\.?"#,
+
+            // 2. Bare verb-attribution (no name after, or name was already
+            //    stripped by pattern 3 below). «Субтитры сделал» on its own
+            //    is never real meeting speech.
+            #"(?i)\s*\b(subtitles?|субтитры|перевод(ил)?)\s+(by|от|сделал|создавал|делал|подогнал|писал|предоставил|корректировал|написал)\b\.?"#,
+
+            // 3. Standalone «DimaTorzok» / variants
             #"(?i)\bdima\s*torzok\b"#,
             #"(?i)\bdimatorzok\b"#,
             #"(?i)\bторзок\b"#,
-            // Translator attribution:
+
+            // 4. Translator attribution
             #"(?i)переводчик:\s*\S+"#,
             #"(?i)translator:\s*\S+"#,
-            // Music notation runs:
+
+            // 5. «Продолжение следует» / «To be continued» — YouTube outro
+            //    that Whisper inserts on silence at chunk boundaries.
+            //    Trailing ellipsis (3 dots OR single … char) optional.
+            #"(?i)\bпродолжение\s+следует\b\.{0,3}…?"#,
+            #"(?i)\bto\s+be\s+continued\b\.{0,3}…?"#,
+
+            // 6. YouTube subscribe boilerplate. Specific multi-word framings
+            //    only — bare «subscribe» can be a legit business word.
+            #"(?i)\bподписывайтесь(\s+на\s+канал)?\b\.?"#,
+            #"(?i)\bplease\s+like\s+and\s+subscribe\b\.?"#,
+            #"(?i)\blike\s+and\s+subscribe\b\.?"#,
+            #"(?i)\bplease\s+subscribe\b\.?"#,
+
+            // 7. YouTube thanks-for-watching boilerplate
+            #"(?i)\bспасибо\s+за\s+просмотр\b\.?"#,
+            #"(?i)\bthanks?\s+for\s+watching\b\.?"#,
+
+            // 8. Music notation runs
             "♪+",
             "♫+",
-            // amara.org standalone:
+
+            // 9. amara.org standalone
             #"(?i)\bamara\.org\b"#,
         ]
 

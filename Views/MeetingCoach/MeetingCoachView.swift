@@ -13,6 +13,13 @@ struct MeetingCoachView: View {
     /// Closure to fire when the user clicks the STOP pill in the header.
     /// Wired by the window controller to `AppDelegate.toggleMeetingRecording`.
     var onStop: (() -> Void)?
+    /// Callback that publishes the actual rendered frame of the visible card
+    /// (including its shadow envelope) so the enclosing `ClickThroughHostingView`
+    /// can match its tracking area to it. Wired by `MeetingCoachWindowController`.
+    /// Without this, clicks in the empty space inside the panel but outside the
+    /// pill still got swallowed (user-reported «огромные края кликабельные»
+    /// 2026-05-23).
+    var onCardFrameChange: ((CGRect) -> Void)?
 
     var body: some View {
         // Outer container fills the entire NSHostingView so the SwiftUI canvas
@@ -32,6 +39,10 @@ struct MeetingCoachView: View {
             Spacer(minLength: 0)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .coordinateSpace(name: CardCoordinateSpace.name)
+        .onPreferenceChange(CardFrameKey.self) { rect in
+            onCardFrameChange?(rect)
+        }
     }
 
     private var pillContent: some View {
@@ -60,6 +71,19 @@ struct MeetingCoachView: View {
         // fill the window vertically. 2026-05-12 — proactive fix matching
         // FloatingVoiceView / MeetingRecapView.
         .padding(42)
+        // Publish the real rendered card+envelope frame so the enclosing
+        // ClickThroughHostingView can size its tracking area to match. Inset
+        // the measured frame by ~6pt so the cursor must actually be over
+        // the visible shadow halo (not the outer transparent edge) — keeps
+        // the «click-through phantom border» from creeping back.
+        .background(
+            GeometryReader { geo in
+                Color.clear.preference(
+                    key: CardFrameKey.self,
+                    value: geo.frame(in: .named(CardCoordinateSpace.name))
+                )
+            }
+        )
     }
 
     private var header: some View {

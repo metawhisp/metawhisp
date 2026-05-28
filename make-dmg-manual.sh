@@ -50,7 +50,13 @@ mkdir -p /tmp/mw-mount
 # DMG it just created. Workaround: create writable image, mount under /tmp
 # (no TCC), ditto contents in, detach, convert to compressed UDZO.
 echo "==> Creating writable DMG..."
-hdiutil create -size 50m -fs HFS+ -volname "MetaWhisp" -ov "$SCRIPT_DIR/$APP_NAME.tmp.dmg" >/dev/null
+# DMG size: app size + 20 MB headroom (HFS+ overhead, /Applications symlink,
+# alignment). Was hardcoded 50 MB; broke 2026-05-21 when app grew past
+# 50 MB (Phi-4 vendored MLX code + MCP server pushed bundle to 52 MB).
+APP_KB=$(du -sk "$STAGING/$APP_NAME.app" | cut -f1)
+DMG_MB=$(( APP_KB / 1024 + 20 ))
+echo "    app=${APP_KB}KB → DMG=${DMG_MB}MB (with 20 MB headroom)"
+hdiutil create -size "${DMG_MB}m" -fs HFS+ -volname "MetaWhisp" -ov "$SCRIPT_DIR/$APP_NAME.tmp.dmg" >/dev/null
 
 echo "==> Attaching at /tmp/mw-mount (bypasses /Volumes TCC)..."
 hdiutil attach "$SCRIPT_DIR/$APP_NAME.tmp.dmg" -mountroot /tmp/mw-mount -nobrowse -noverify -noautoopen >/dev/null

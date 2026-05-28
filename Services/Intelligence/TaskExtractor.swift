@@ -12,6 +12,10 @@ import SwiftData
 /// spec://BACKLOG#B1
 @MainActor
 final class TaskExtractor: ObservableObject {
+    /// ITER-041 — structured JSON action-item extraction on the cheapest tier.
+    static let llmTier: LLMTier = .mini
+    static let llmServiceId: String = "TaskExtractor"
+
     @Published var isRunning = false
     @Published var lastRun: Date?
     @Published var lastError: String?
@@ -557,7 +561,10 @@ final class TaskExtractor: ObservableObject {
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.timeoutInterval = 30
 
-        let body: [String: Any] = ["system": system, "user": user]
+        let body = LLMRequestBody.proAdviceBody(
+            system: system, user: user,
+            tier: Self.llmTier, serviceId: Self.llmServiceId
+        )
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
 
         let (data, response) = try await URLSession.shared.data(for: request)

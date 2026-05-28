@@ -13,6 +13,11 @@ import SwiftData
 /// spec://iterations/ITER-006-realtime-screen-reaction
 @MainActor
 final class RealtimeScreenReactor: ObservableObject {
+    /// ITER-041 — actionable-task extraction from screen OCR on medium
+    /// tier. Phase C will prepend a mini gate to filter "no action" frames.
+    static let llmTier: LLMTier = .medium
+    static let llmServiceId: String = "RealtimeScreenReactor"
+
     @Published var isProcessing = false
     @Published var lastFireAt: Date?
     @Published var lastError: String?
@@ -86,6 +91,27 @@ final class RealtimeScreenReactor: ObservableObject {
                     system: Self.systemPrompt, user: prompt, maxTokens: 256
                 )
             } else if LicenseService.shared.isPro, let key = LicenseService.shared.licenseKey {
+                // ITER-041 Phase C — relevance gate. Skip the medium-tier
+                // extraction when the cheap gate sees no action signal.
+                let gate = await GateClient.call(
+                    context: prompt,
+                    purpose: .reactor,
+                    recentTopics: [],
+                    serviceId: Self.llmServiceId,
+                    licenseKey: key
+                )
+                guard gate.shouldFire else {
+                    NSLog("[RealtimeReactor] gate-skipped score=%.2f on %@ — %@",
+                          gate.score, context.appName, String(gate.reasoning.prefix(80)))
+                    // ITER-041 code-review fix: refund the rate-limit slot we
+                    // reserved at the top. The cheap gate (mini tier) is NOT an
+                    // expensive call — counting skips toward maxCallsPerHour
+                    // would silence the reactor after 30 app-switches/hour even
+                    // though almost nothing was spent. Only EXPENSIVE calls
+                    // (the proxy/local LLM below) should consume the budget.
+                    if !callTimestamps.isEmpty { callTimestamps.removeLast() }
+                    return
+                }
                 response = try await callProProxy(system: Self.systemPrompt, user: prompt, licenseKey: key)
             } else {
                 let apiKey = settings.activeAPIKey
@@ -455,7 +481,10 @@ final class RealtimeScreenReactor: ObservableObject {
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.timeoutInterval = 20
 
-        let body: [String: Any] = ["system": system, "user": user]
+        let body = LLMRequestBody.proAdviceBody(
+            system: system, user: user,
+            tier: Self.llmTier, serviceId: Self.llmServiceId
+        )
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
 
         let (data, response) = try await URLSession.shared.data(for: request)
