@@ -1,4 +1,35 @@
 
+## Released v1.3.8 — 2026-05-29 (meeting cleanup + LLM cost routing + MetaChat hardening)
+
+**Status: SHIPPED (download) via:**
+- ✅ Commit `69d7f01` on `architecture-phase-1-3`, pushed.
+- ✅ GitHub Release [v1.3.8](https://github.com/metawhisp/metawhisp/releases/tag/v1.3.8)
+  — DMG 16,615,689 bytes, notarized + stapled (Apple: Accepted), smoke-test passed.
+  Sparkle edSig `CDxRrnu/wsFHVa36UnuRAE4RdQfiTnjhQIGCe6rP69VjbEUJ3KaYozj5DewwJEJmQDbDPVJrscRvvU6QGLoFDA==`.
+- ✅ Download path verified: `metawhisp.com/downloads/MetaWhisp.dmg` → 302 →
+  `releases/latest/download` → serves 16,615,689 bytes (= v1.3.8). New users +
+  website button get 1.3.8 with ZERO site edits (Cloudflare Page Rule).
+- ✅ Release invariants all passed (metallib present, bundle integrity,
+  codesign --deep --strict, smoke test).
+- ✅ Pre-commit identifying-names audit clean (Swift/specs/scripts/WAL diff/
+  ChatService prompt).
+
+**Content:** v1.3.8 bundles the three 2026-05-28/29 workstreams — meeting
+hallucination strip + BrandGlossary, ITER-041 LLM tier routing + 2-stage
+gate, MetaChat empty-bubble + prompt-injection fix, RealtimeReactor
+rate-limit fix. 341 tests green.
+
+**⚠️ Sparkle auto-update (appcast) — NOT deployed (decision pending):**
+- Live `metawhisp.com/appcast.xml` still advertises **1.3.7**. Existing
+  users won't auto-update to 1.3.8 until the appcast gains the 1.3.8 item.
+- appcast.xml lives on the website (NOT in repo — GitHub-raw pivot still
+  not done), so updating it requires a website deploy — the exact
+  "touch site during release" action banned after the 2026-05-09 incident.
+  Left for the user to do as a deliberate, careful step.
+- Ready-to-paste 1.3.8 `<item>` saved at `/tmp/appcast-1.3.8-item.xml`
+  (correct edSignature + length + URL). Insert at top of the `<channel>`
+  items, then deploy website ONLY (no blog/src churn).
+
 ## Session 2026-05-28 night — MetaChat + Tasks QA (50 corner cases + empty-bubble fix)
 
 User: «метачат вообще какая-то хуета и tasks тоже. давай 50 юзер стори и 50
