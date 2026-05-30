@@ -756,6 +756,50 @@ final class StructuredGenerator: ObservableObject {
         return stripped.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
+    // MARK: - Action plan (2026-05-29 feature)
+
+    /// On-demand "meeting write-up + action plan" for the conversation detail
+    /// page. Free-form markdown (Summary + Action-plan checklist) the user can
+    /// read or copy — replaces the manual "paste transcript into ChatGPT" loop.
+    ///
+    /// Runs on the HEAVY tier (user-facing quality, unlike the mini-tier
+    /// structured extraction). Local LLM takes priority when loaded.
+    func generateActionPlan(transcript: String, title: String?) async throws -> String {
+        let trimmed = transcript.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.count >= 40 else {
+            throw ProcessingError.apiError("Transcript too short for a plan")
+        }
+        let (system, user) = ConversationTextAssembler.actionPlanPrompt(transcript: trimmed, title: title)
+
+        // Local LLM first (free + private) when active.
+        if LocalLLMService.shared.isReady {
+            return try await LocalLLMService.shared.completeBlocking(system: system, user: user, maxTokens: 1024)
+        }
+        guard LicenseService.shared.isPro, let licenseKey = LicenseService.shared.licenseKey else {
+            throw ProcessingError.apiError("Pro required to generate an action plan")
+        }
+        let url = URL(string: "https://api.metawhisp.com/api/pro/advice")!
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("Bearer \(licenseKey)", forHTTPHeaderField: "Authorization")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.timeoutInterval = 60  // plan generation is longer than extraction
+        let body = LLMRequestBody.proAdviceBody(
+            system: system, user: user,
+            tier: .heavy, serviceId: "ActionPlan"
+        )
+        request.httpBody = try JSONSerialization.data(withJSONObject: body)
+        let (data, response) = try await URLSession.shared.data(for: request)
+        if let http = response as? HTTPURLResponse, http.statusCode != 200 {
+            throw ProcessingError.apiError("Action-plan proxy HTTP \(http.statusCode)")
+        }
+        struct ProResponse: Decodable { let text: String }
+        let result = try JSONDecoder().decode(ProResponse.self, from: data)
+        let plan = result.text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !plan.isEmpty else { throw ProcessingError.apiError("Empty plan from LLM") }
+        return plan
+    }
+
     // MARK: - Pro proxy
 
     private func callProProxy(system: String, user: String, licenseKey: String) async throws -> String {

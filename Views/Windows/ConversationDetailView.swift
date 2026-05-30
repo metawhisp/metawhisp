@@ -1,3 +1,4 @@
+import AppKit
 import SwiftData
 import SwiftUI
 
@@ -41,6 +42,23 @@ struct ConversationDetailView: View {
     @State private var existingProjects: [String] = []
     @State private var showingNewProjectAlert = false
     @State private var newProjectName: String = ""
+    /// 2026-05-29 — one-click copy feedback + on-demand action-plan generation.
+    @State private var copiedFlash = false
+    @State private var actionPlan: String?
+    @State private var isGeneratingPlan = false
+    @State private var planCopiedFlash = false
+
+    /// Full transcript as one plain-text block — feeds both the COPY button
+    /// and the action-plan LLM input.
+    private var fullTranscriptText: String {
+        ConversationTextAssembler.plainTranscript(transcript.map { $0.displayText })
+    }
+
+    private func copyToClipboard(_ text: String) {
+        let pb = NSPasteboard.general
+        pb.clearContents()
+        pb.setString(text, forType: .string)
+    }
 
     private enum Tab: String, CaseIterable {
         case summary = "SUMMARY"
@@ -123,6 +141,46 @@ struct ConversationDetailView: View {
 
     private func actionBar(_ conv: Conversation) -> some View {
         HStack(spacing: 6) {
+            // 2026-05-29 — one-click copy of the whole transcript (no select-all).
+            Button {
+                copyToClipboard(fullTranscriptText)
+                copiedFlash = true
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1.4) { copiedFlash = false }
+            } label: {
+                HStack(spacing: 4) {
+                    Image(systemName: copiedFlash ? "checkmark" : "doc.on.doc").font(.system(size: 10))
+                    Text(copiedFlash ? "COPIED" : "COPY")
+                        .font(MW.label).tracking(0.6)
+                }
+                .foregroundStyle(MW.textSecondary)
+                .padding(.horizontal, 8).padding(.vertical, 4)
+                .overlay(RoundedRectangle(cornerRadius: MW.rSmall, style: .continuous).stroke(MW.border, lineWidth: 0.5))
+            }
+            .buttonStyle(.plain)
+            .disabled(transcript.isEmpty)
+            .help("Copy the full transcript to the clipboard")
+
+            // 2026-05-29 — generate meeting write-up + action-plan in-app.
+            Button {
+                Task { await generatePlan(conv) }
+            } label: {
+                HStack(spacing: 4) {
+                    if isGeneratingPlan {
+                        ProgressView().controlSize(.mini)
+                    } else {
+                        Image(systemName: "checklist").font(.system(size: 10))
+                    }
+                    Text(isGeneratingPlan ? "WRITING…" : "PLAN")
+                        .font(MW.label).tracking(0.6)
+                }
+                .foregroundStyle(MW.textSecondary)
+                .padding(.horizontal, 8).padding(.vertical, 4)
+                .overlay(RoundedRectangle(cornerRadius: MW.rSmall, style: .continuous).stroke(MW.border, lineWidth: 0.5))
+            }
+            .buttonStyle(.plain)
+            .disabled(isGeneratingPlan || transcript.isEmpty)
+            .help("Generate a meeting summary + action plan from the transcript")
+
             Button {
                 Task { await regenerate() }
             } label: {
@@ -190,6 +248,9 @@ struct ConversationDetailView: View {
 
     private func summaryTab(_ conv: Conversation) -> some View {
         VStack(alignment: .leading, spacing: MW.sp16) {
+            if let plan = actionPlan {
+                actionPlanCard(plan)
+            }
             section(label: "DECISIONS", icon: "checkmark.circle", items: conv.decisions)
             section(label: "ACTION ITEMS", icon: "arrow.forward.circle", items: conv.actionItems)
             participantsSection(conv.participants)
@@ -281,6 +342,50 @@ struct ConversationDetailView: View {
                 .mwCard(radius: MW.rMedium, elevation: .raised)
             }
         }
+    }
+
+    /// 2026-05-29 — the generated meeting write-up + action plan. Shown at the
+    /// top of SUMMARY after the user taps PLAN. Monospace + selectable, with a
+    /// one-tap copy of the whole plan (markdown the user can paste anywhere).
+    private func actionPlanCard(_ plan: String) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 6) {
+                Image(systemName: "checklist").font(.system(size: 11)).foregroundStyle(MW.textSecondary)
+                Text("MEETING + ACTION PLAN").font(MW.label).tracking(0.6).foregroundStyle(MW.textSecondary)
+                Spacer()
+                Button {
+                    copyToClipboard(plan)
+                    planCopiedFlash = true
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.4) { planCopiedFlash = false }
+                } label: {
+                    HStack(spacing: 4) {
+                        Image(systemName: planCopiedFlash ? "checkmark" : "doc.on.doc").font(.system(size: 10))
+                        Text(planCopiedFlash ? "COPIED" : "COPY").font(MW.label).tracking(0.6)
+                    }
+                    .foregroundStyle(MW.textSecondary)
+                    .padding(.horizontal, 6).padding(.vertical, 2)
+                    .overlay(RoundedRectangle(cornerRadius: MW.rSmall, style: .continuous).stroke(MW.border, lineWidth: 0.5))
+                }
+                .buttonStyle(.plain)
+                Button {
+                    actionPlan = nil
+                } label: {
+                    Image(systemName: "xmark").font(.system(size: 10)).foregroundStyle(MW.textMuted)
+                        .padding(4)
+                }
+                .buttonStyle(.plain)
+                .help("Dismiss the plan")
+            }
+            Text(plan)
+                .font(MW.mono)
+                .foregroundStyle(MW.textPrimary)
+                .textSelection(.enabled)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .padding(MW.sp12)
+        .frame(maxWidth: .infinity, alignment: .topLeading)
+        .mwCard(radius: MW.rMedium, elevation: .raised)
     }
 
     private func emptySummary(_ conv: Conversation) -> some View {
@@ -552,6 +657,29 @@ struct ConversationDetailView: View {
         if let conv = conversation,
            conv.title == "Quick note" || (conv.overview ?? "") == "(empty)" {
             lastError = "Regenerate produced no useful output. The transcript may be too short or the LLM proxy is unavailable."
+        }
+    }
+
+    /// 2026-05-29 — generate "meeting write-up + action plan" from the
+    /// transcript via `StructuredGenerator.generateActionPlan` (heavy tier).
+    /// Result renders in a card with its own copy button; the user no longer
+    /// pastes the transcript into ChatGPT by hand.
+    private func generatePlan(_ conv: Conversation) async {
+        guard let appDelegate = AppDelegate.shared else { return }
+        isGeneratingPlan = true
+        defer { isGeneratingPlan = false }
+        lastError = nil
+        actionPlan = nil
+        do {
+            let plan = try await appDelegate.structuredGenerator.generateActionPlan(
+                transcript: fullTranscriptText,
+                title: conv.title
+            )
+            actionPlan = plan
+            // Plan is most useful next to the structured summary.
+            selectedTab = .summary
+        } catch {
+            lastError = "Couldn't generate the plan: \(error.localizedDescription)"
         }
     }
 }
