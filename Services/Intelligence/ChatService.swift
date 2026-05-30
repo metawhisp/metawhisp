@@ -363,10 +363,20 @@ final class ChatService: ObservableObject {
        Don't generate plausible-sounding details. Don't offer to "reconstruct".
        Don't speculate "maybe it wasn't recorded" / "maybe it was bundled in another convo" — keep it simple.
 
-    2. Questions about people: never fabricate traits, relationships, past interactions, personality
-       unless found verbatim in the context blocks. For "what should I know about X?" with no results
-       just say: "I don't have anything about X." Don't invent "they're emotionally tuned-in",
-       "you trust them" etc.
+    2. Questions about people — STRICT separation by workspace, zero fabrication.
+       Each <recent_screen_activity> line carries its app and WINDOW TITLE. Treat the
+       window title as the WORKSPACE / company context for any person named on that line.
+       - People seen under DIFFERENT WINDOW TITLES belong to DIFFERENT WORKSPACES.
+         NEVER merge them into one team, list, roster, or relationship. A person from
+         one company must not appear in an answer about another company.
+       - If the workspace / company of a person is not clear from the window title, say
+         "company unclear" — do NOT guess which company or project they belong to.
+       - NEVER invent a person's name, and NEVER invent a relationship or action
+         between two people ("X added Y", "X reports to Y") unless stated verbatim.
+       - The app's owner — the user you are talking to — is NOT a colleague or employee.
+         Never list the user themselves as a team member.
+       - Never fabricate traits, past interactions, or personality unless found verbatim.
+         For "what should I know about X?" with no results: "I don't have anything about X."
 
     3. Sound like a human, NOT a robotic database. BANNED phrases (do not use any of these):
        - "in the logs"
@@ -1034,23 +1044,31 @@ final class ChatService: ObservableObject {
             predicate: #Predicate { $0.timestamp >= cutoff },
             sortBy: [SortDescriptor(\.timestamp, order: .reverse)]
         )
-        desc.fetchLimit = limit
+        // Over-fetch: the app's own-window rows get dropped below, so pull a
+        // buffer to still yield ~`limit` real snippets. ITER-042.
+        desc.fetchLimit = limit * 3
         let items = (try? ctx.fetch(desc)) ?? []
         let now = Date()
-        return items.compactMap { ctx in
+        // The app's own window OCR is a feedback loop — it captures our own prior
+        // answers / people lists and re-feeds them as "facts on screen". Drop it
+        // regardless of question type.
+        let ownApp = (Bundle.main.object(forInfoDictionaryKey: "CFBundleName") as? String) ?? "MetaWhisp"
+        let snippets = items.compactMap { row -> ScreenSnippet? in
+            if ScreenContextNoiseFilter.isOwnWindow(appName: row.appName, ownAppName: ownApp) { return nil }
             // Skip near-empty OCR rows — they add noise, no signal.
-            let trimmed = ctx.ocrText.trimmingCharacters(in: .whitespacesAndNewlines)
+            let trimmed = row.ocrText.trimmingCharacters(in: .whitespacesAndNewlines)
             guard trimmed.count >= 20 else { return nil }
             let clipped = trimmed.count > maxCharsPerSnippet
                 ? String(trimmed.prefix(maxCharsPerSnippet)) + "…"
                 : trimmed
             return ScreenSnippet(
-                appName: ctx.appName,
-                windowTitle: ctx.windowTitle,
+                appName: row.appName,
+                windowTitle: row.windowTitle,
                 text: clipped.replacingOccurrences(of: "\n", with: " "),
-                relativeTime: Self.relativeTimeString(from: ctx.timestamp, to: now)
+                relativeTime: Self.relativeTimeString(from: row.timestamp, to: now)
             )
         }
+        return Array(snippets.prefix(limit))
     }
 
     /// Compact representation of a matched file for the LLM prompt.
