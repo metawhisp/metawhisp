@@ -938,9 +938,15 @@ final class ChatToolExecutor: ObservableObject {
     private func fetchOne<T: PersistentModel>(_ type: T.Type, id: UUID, in ctx: ModelContext) -> T? where T: Identifiable {
         // SwiftData predicate requires T.id compare; use runtime filter since
         // AnyPersistentModel's id type varies.
-        var desc = FetchDescriptor<T>()
-        desc.fetchLimit = 300
-        let all = (try? ctx.fetch(desc)) ?? []
+        //
+        // 2026-05-29 FIX: removed `fetchLimit = 300`. With >300 rows (a real
+        // account had 625 tasks) the target — even one the user can SEE in the
+        // <my_tasks> context block — could fall outside the arbitrary, unsorted
+        // 300-row window, so dismissTask / completeTask / updateGoalProgress
+        // returned "not found" for valid items. That was the user-reported
+        // "MetaChat can't delete tasks". Fetch-all + filter is O(n) but n is
+        // tiny for a per-tool-call lookup and is now correct at any task count.
+        let all = (try? ctx.fetch(FetchDescriptor<T>())) ?? []
         return all.first { ($0.id as? UUID) == id }
     }
 }
