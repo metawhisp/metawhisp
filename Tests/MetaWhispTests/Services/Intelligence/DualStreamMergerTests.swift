@@ -60,4 +60,28 @@ final class DualStreamMergerTests: XCTestCase {
         let rendered = DualStreamMerger.renderTranscript(segs)
         XCTAssertEqual(rendered, "Me: hello world\nThem: hi")
     }
+
+    func test_render_empty_isEmptyString() {
+        XCTAssertEqual(DualStreamMerger.renderTranscript([]), "")
+    }
+
+    func test_render_single() {
+        let segs = [StreamSegment(text: "solo", startSec: 0, endSec: 1, speaker: .them)]
+        XCTAssertEqual(DualStreamMerger.renderTranscript(segs), "Them: solo")
+    }
+
+    /// The user's real daily pattern: the facilitator (Me) announces a name,
+    /// then the named person (Them) reports. The "Me announces → Them reports"
+    /// ORDER must survive merge+render — it's the foundation for later
+    /// attributing the report's tasks to the announced person (2026-05-31).
+    func test_render_dailyHandoff_preservesOrder() {
+        let merged = DualStreamMerger.mergeStreams(
+            mic: [StreamSegment(text: "Катя, твои задачи?", startSec: 0, endSec: 2, speaker: .me)],
+            system: [StreamSegment(text: "Я закончила лендинг, сегодня API", startSec: 3, endSec: 6, speaker: .them)]
+        )
+        XCTAssertEqual(
+            DualStreamMerger.renderTranscript(merged),
+            "Me: Катя, твои задачи?\nThem: Я закончила лендинг, сегодня API"
+        )
+    }
 }

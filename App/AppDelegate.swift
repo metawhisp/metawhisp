@@ -1262,19 +1262,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         // or collected nothing, in which case we fall back to a full pass.
         let liveResult = liveMeetingAdvisor.finalize()
 
-        // Snapshot the tail audio (samples since the advisor's last successful
-        // tick) BEFORE `recorder.stop()` wipes the buffers. ≤ chunkSeconds of
-        // audio. peekSamples is non-destructive and safe while mic still runs.
-        let tailMic: [Float]
-        let tailSys: [Float]
-        if let live = liveResult {
-            tailMic = meetingRecorder.mic.peekSamples(from: live.micOffsetAtFinalize)
-            tailSys = meetingRecorder.systemAudio.peekSamples(from: live.sysOffsetAtFinalize)
-        } else {
-            tailMic = []
-            tailSys = []
-        }
-
+        // 2026-05-31 — the saved transcript now always comes from the full-buffer
+        // dual-stream pass below (per-channel, Me:/Them: labels), so the live
+        // advisor's tail snapshot is no longer needed for persistence.
         let (micSamples, sysSamples) = meetingRecorder.stop()
         NSLog("[MetaWhisp] Meeting stopped: mic=%d samples, system=%d samples",
               micSamples.count, sysSamples.count)
@@ -1295,21 +1285,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             }
 
             let startTime = CFAbsoluteTimeGetCurrent()
-            let fullText: String
-
+            // 2026-05-31 — ALWAYS save via the per-channel dual-stream pass so the
+            // stored transcript carries Me:/Them: speaker labels ("who said what").
+            // The live advisor's partials already powered the real-time copilot
+            // DURING the meeting, but they're a single MIXED stream (no labels), so
+            // they're no longer reused for the saved transcript. Cost: re-transcribes
+            // both channels at finalize (~2×) — accepted trade for speaker accuracy.
+            // (`assembleMeetingTranscriptFromLive` is now dormant; kept as fallback.)
             if let live = liveResult {
-                NSLog("[MetaWhisp] Meeting reusing LiveAdvisor partials (%d collected, %d chars) — only tail needs transcribe",
-                      live.partialCount, live.text.count)
-                fullText = await self.assembleMeetingTranscriptFromLive(
-                    liveText: live.text,
-                    tailMic: tailMic,
-                    tailSys: tailSys,
-                    engine: engine
-                )
-            } else {
-                NSLog("[MetaWhisp] Meeting transcribing via %@ (no live partials — dual-stream pass)", engine.name)
-                fullText = await self.transcribeMeetingDualStream(mic: micSamples, system: sysSamples, engine: engine)
+                NSLog("[MetaWhisp] Meeting: %d live partials drove the copilot; saving via dual-stream for Me/Them labels", live.partialCount)
             }
+            let fullText = await self.transcribeMeetingDualStream(mic: micSamples, system: sysSamples, engine: engine)
 
             let elapsed = CFAbsoluteTimeGetCurrent() - startTime
             let duration = Double(max(micSamples.count, sysSamples.count)) / 16000.0
@@ -1393,7 +1379,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
                 // Forwarded to Whisper as initial_prompt and to Deepgram as
                 // keyterm (worker-side) — improves brand recognition (Brevo,
                 // Claude, ChatGPT, etc.) in meeting transcripts.
-                let result = try await engine.transcribe(audioSamples: chunk, language: lang, promptWords: BrandGlossary.canonicalNames())
+                // Retry the transcribe up to 2× — a transient cloud/engine blip must
+                // NOT silently drop this chunk from the SAVED meeting. The live path
+                // could retry by not advancing its offset; this one-shot finalize pass
+                // has no such safety net, so it retries here. (Code-review 2026-05-31.)
+                let result: TranscriptionResult = try await { () async throws -> TranscriptionResult in
+                    var attempt = 0
+                    while true {
+                        attempt += 1
+                        do {
+                            return try await engine.transcribe(audioSamples: chunk, language: lang, promptWords: BrandGlossary.canonicalNames())
+                        } catch {
+                            NSLog("[MetaWhisp] ❌ Meeting %@ chunk %d transcribe attempt %d/2 failed: %@",
+                                  label, i + 1, attempt, error.localizedDescription)
+                            if attempt >= 2 { throw error }
+                            try? await Task.sleep(for: .milliseconds(800))
+                        }
+                    }
+                }()
                 let text = result.text.trimmingCharacters(in: .whitespacesAndNewlines)
                 guard !text.isEmpty else { continue }
 
