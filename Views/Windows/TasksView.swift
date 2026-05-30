@@ -25,7 +25,16 @@ struct TasksView: View {
     /// Voice / calendar / user-promoted.
     private var committedTasks: [TaskItem] { tasks.filter { $0.effectiveStatus == "committed" } }
     /// REVIEW bin = status=="staged". Screen-inferred candidates awaiting user decision.
-    private var stagedTasks: [TaskItem] { tasks.filter { $0.effectiveStatus == "staged" } }
+    /// 2026-05-29 — auto-hide candidates left unreviewed > 7 days (`TaskHygiene`)
+    /// so the review pile stops growing unbounded (was 286 staged). Hidden ≠
+    /// deleted: the rows stay in SwiftData, just drop out of this list.
+    private var stagedTasks: [TaskItem] {
+        let now = Date()
+        return tasks.filter {
+            $0.effectiveStatus == "staged"
+                && !TaskHygiene.isStaleUnreviewedCandidate(status: "staged", createdAt: $0.createdAt, now: now)
+        }
+    }
 
     /// ITER-013 — split committed list by ownership.
     /// MY tasks: assignee == nil (or empty whitespace). Owner is the user.
