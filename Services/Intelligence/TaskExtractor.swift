@@ -13,7 +13,11 @@ import SwiftData
 @MainActor
 final class TaskExtractor: ObservableObject {
     /// ITER-041 — structured JSON action-item extraction on the cheapest tier.
-    static let llmTier: LLMTier = .mini
+    // 2026-05-31 — bumped mini→medium. The 8B mini model ignored the nuanced
+    // EXCLUDE rules (esp. "work commands dictated to an AI/dev" — the #1 noise
+    // source) and over-extracted ~100 garbage tasks/day. medium follows the
+    // selective criteria far better, matching the other extractors already on it.
+    static let llmTier: LLMTier = .medium
     static let llmServiceId: String = "TaskExtractor"
 
     @Published var isRunning = false
@@ -325,6 +329,19 @@ final class TaskExtractor: ObservableObject {
     - Back-and-forth clarification or decision-making about something happening right now
     - Requests and responses between people who are together and handling the matter on the spot
     - If the entire conversation is a brief in-person exchange that will be resolved within minutes, extract 0 items
+    - **WORK COMMANDS DICTATED TO AN AI / DEVELOPER / TOOL — the #1 noise source, SKIP ALL.**
+      This user dictates to DIRECT an AI assistant or developer to build / fix / change / check /
+      improve / review software, websites, designs, code, or content. Those imperative commands are
+      work being EXECUTED right now by the AI or tool — they are NOT the user's personal to-do list.
+      SKIP every such command. Examples to SKIP:
+        "make the text larger", "check the website metadata", "read claude.md", "find more tools",
+        "fix the layout", "create a plan and show the architecture", "increase the card size",
+        "write CLAUDE instead of OPUS", "review and improve the website", "structure the text",
+        "make elements more neutral", "transcribe the videos".
+      Heuristic: if the action is about producing/modifying software, a website, a design, content,
+      or code, and the user is plainly instructing it to be done now, it is a COMMAND, not a task → SKIP.
+      Extract one of these ONLY if the user EXPLICITLY frames it as their own reminder/task
+      ("remind me", "add task", "don't forget", "напомни", "запиши задачу", "не забудь").
 
     FORMAT REQUIREMENTS:
     - ≤15 words per description (strict)

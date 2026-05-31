@@ -80,9 +80,12 @@ final class LLMTierTests: XCTestCase {
     // 8B-instant truncates the JSON. Moved those two to medium; only the
     // simple-schema extractors stay on mini.
 
-    func test_taskExtractor_usesMiniTier() {
-        // Simple schema: {tasks: [...]}. Verified working in production.
-        XCTAssertEqual(TaskExtractor.llmTier, .mini)
+    func test_taskExtractor_usesMediumTier() {
+        // 2026-05-31 — bumped mini→medium. The 8B mini model ignored the nuanced
+        // EXCLUDE rules (esp. "work commands dictated to an AI/dev") and
+        // over-extracted ~100 garbage tasks/day. medium follows the selective
+        // criteria far better.
+        XCTAssertEqual(TaskExtractor.llmTier, .medium)
         XCTAssertEqual(TaskExtractor.llmServiceId, "TaskExtractor")
     }
 
