@@ -789,6 +789,14 @@ final class ObsidianExporter: ObservableObject {
     // MARK: - SwiftData
 
     private func makeContext() -> ModelContext? {
+        // AUD-042 — the v2 Obsidian exporter ONLY writes to the vault; it has no
+        // read-only path. When the user turns Obsidian Sync off, no exporter
+        // operation may run, so gate the single shared entry point here — this
+        // covers every public export path (per-item auto-exports AND the manual
+        // bulkExportAll). The vault path can still be configured while sync is
+        // off; `obsidianSyncEnabled` is the master switch. The legacy writers
+        // already check this toggle; the v2 exporter previously did not.
+        guard AppSettings.shared.obsidianSyncEnabled else { return nil }
         guard let container = modelContainer else { return nil }
         return ModelContext(container)
     }
