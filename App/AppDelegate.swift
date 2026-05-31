@@ -604,7 +604,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         }
         if AppSettings.shared.screenContextEnabled {
             let interval = AppSettings.shared.screenContextInterval
-            screenContext.startMonitoring(interval: interval)
+            // AUD-021 — apply the user's Settings blacklist/whitelist choice.
+            let screenPolicy = ScreenContextPolicy.resolve(mode: AppSettings.shared.screenContextMode, appList: AppSettings.shared.screenContextAppList)
+            screenContext.startMonitoring(interval: interval, blacklist: screenPolicy.blacklist, whitelist: screenPolicy.whitelist)
         }
 
         // 9a. Configure MemoryExtractor + TaskExtractor — both trigger-based on voice transcription.
@@ -860,7 +862,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
                         if newScreenContext {
                             // Proactively request permission so user sees TCC dialog
                             _ = await PermissionsService.shared.requestScreenRecording()
-                            self.screenContext.startMonitoring(interval: AppSettings.shared.screenContextInterval)
+                            let screenPolicy = ScreenContextPolicy.resolve(mode: AppSettings.shared.screenContextMode, appList: AppSettings.shared.screenContextAppList)
+                            self.screenContext.startMonitoring(interval: AppSettings.shared.screenContextInterval, blacklist: screenPolicy.blacklist, whitelist: screenPolicy.whitelist)
                             NSLog("[MetaWhisp] Screen context enabled")
                         } else {
                             self.screenContext.stopMonitoring()
@@ -1669,7 +1672,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
 
             if hasScreen && AppSettings.shared.screenContextEnabled && !screenContext.isActive {
                 NSLog("[MetaWhisp] 🔄 Screen Recording granted — restarting ScreenContext monitor")
-                screenContext.startMonitoring(interval: AppSettings.shared.screenContextInterval)
+                let screenPolicy = ScreenContextPolicy.resolve(mode: AppSettings.shared.screenContextMode, appList: AppSettings.shared.screenContextAppList)
+                screenContext.startMonitoring(interval: AppSettings.shared.screenContextInterval, blacklist: screenPolicy.blacklist, whitelist: screenPolicy.whitelist)
             }
         }
     }
