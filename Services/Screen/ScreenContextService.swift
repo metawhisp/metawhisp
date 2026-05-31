@@ -249,7 +249,7 @@ final class ScreenContextService: ObservableObject {
         let windowTitle = getActiveWindowTitle(pid: frontApp.processIdentifier) ?? ""
 
         // Capture screenshot of the active window
-        guard let image = await captureScreenshot() else {
+        guard let image = await captureScreenshot(frontPID: frontApp.processIdentifier) else {
             // Fallback: create context with just app/window info (no OCR)
             return ScreenContextSnapshot(
                 timestamp: Date(),
@@ -276,14 +276,26 @@ final class ScreenContextService: ObservableObject {
     }
 
     /// Capture a screenshot of the screen using ScreenCaptureKit.
-    private func captureScreenshot() async -> CGImage? {
+    private func captureScreenshot(frontPID: pid_t) async -> CGImage? {
         guard #available(macOS 14.0, *) else { return nil }
 
         do {
             let content = try await SCShareableContent.current
             guard let display = content.displays.first else { return nil }
 
-            let filter = SCContentFilter(display: display, excludingWindows: [])
+            // AUD-022 — capture only the front app's content. Exclude every window
+            // not owned by the front app so a password manager / private chat
+            // visible beside the focused app is never OCR'd into history or AI.
+            let refs = content.windows.map {
+                ActiveAppCaptureFilter.WindowRef(
+                    id: Int($0.windowID),
+                    ownerPID: Int($0.owningApplication?.processID ?? -1)
+                )
+            }
+            let excludeIDs = Set(ActiveAppCaptureFilter.windowsToExclude(refs, frontPID: Int(frontPID)))
+            let excludeWindows = content.windows.filter { excludeIDs.contains(Int($0.windowID)) }
+
+            let filter = SCContentFilter(display: display, excludingWindows: excludeWindows)
             let config = SCStreamConfiguration()
             config.width = Int(display.width)
             config.height = Int(display.height)
