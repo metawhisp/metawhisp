@@ -166,7 +166,19 @@ final class ScreenContextService: ObservableObject {
 
     /// Force capture current screen context.
     func captureNow() async -> ScreenContextSnapshot? {
-        return await captureActiveWindow(blacklist: defaultBlacklist, whitelist: nil)
+        // AUD-023 — respect the master toggle. If the user turned Screen Context
+        // off, do NOT capture the screen even for an on-demand voice question.
+        guard AppSettings.shared.screenContextEnabled else { return nil }
+        // AUD-021 — apply the user's blacklist/whitelist here too (not only the
+        // default password-app list), so an excluded app isn't captured on demand.
+        let policy = ScreenContextPolicy.resolve(
+            mode: AppSettings.shared.screenContextMode,
+            appList: AppSettings.shared.screenContextAppList
+        )
+        return await captureActiveWindow(
+            blacklist: defaultBlacklist.union(policy.blacklist),
+            whitelist: policy.whitelist
+        )
     }
 
     // MARK: - Private
