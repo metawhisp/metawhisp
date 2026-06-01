@@ -85,8 +85,74 @@ Complete: report-only full-app static audit is ready for bugfix handoff.
 - AUD-063: release readiness does not enforce Sparkle feed publication
 - AUD-064: release smoke ends before local-model auto-load completes
 
+## Bugfix Session Log
+
+### Fixed + committed (16 findings) — branch `architecture-phase-1-3`
+
+Privacy / secrets cluster (11):
+- AUD-018 staged OCR candidates excluded from MCP snapshot
+- AUD-021 Screen Context blacklist/whitelist wired
+- AUD-022 capture only the front app's windows
+- AUD-023 no OCR for voice questions when Screen Context off
+- AUD-024 secrets → real macOS Keychain + safe migration (`a5f817a`)
+- AUD-025 tokens out of URLs/logs
+- AUD-026 clear persisted license on authoritative inactive response (`7a307fb`)
+- AUD-029 MCP snapshot opt-in + purge + 0600 (`0ba5e22`)
+- AUD-042 Obsidian Sync OFF stops the v2 exporter
+- AUD-050 private content out of durable logs
+- AUD-051 stored OCR retired from MetaChat when Screen Context off
+
+Data-loss / crash cluster (5):
+- AUD-002 mark meeting transcript incomplete when chunks fail (`4a16469`)
+- AUD-016 stop truncating "full transcript" at 200 items (`eeefb38`)
+- AUD-032 inverted goal bounds can't crash Goals (`8cd6690`)
+- AUD-035 extract from the whole conversation, not first 100 rows (`2f46953`)
+- AUD-043 stable id suffix in Obsidian filenames, no overwrite (`e36fbdf`)
+
+All committed atomically with tests where unit-testable. Suite: 404 green.
+
+**NOT LIVE until a signed 1.3.10 build** — secrets are still plaintext in
+`~/Library/Application Support/MetaWhisp/.secrets` on disk until the migration
+runs in a signed app; every other fix activates only when a build with this code
+ships. Keychain/MCP-toggle/degraded-storage UI cannot be verified by `swift test`
+(needs a hot-swap).
+
+### AUD-007 — ROOT CAUSE found (NOT yet fixed; deferred to its own task)
+
+The audit's "surface a degraded-storage warning" is symptom-treatment. The real
+cause: **there is NO SwiftData migration plan** (verified: 0 hits for
+`SchemaMigrationPlan`/`VersionedSchema`; `HistoryService.swift:16` builds the
+container with no `migrationPlan:`). The app relies on implicit lightweight
+migration, which silently handles additive/optional changes but THROWS on
+breaking ones (non-optional field w/o default, rename, type/relationship change).
+On the first release that ships such a `@Model` change, an existing user's
+on-disk store can't be opened → `catch` falls back to `isStoredInMemoryOnly` →
+their history vanishes on restart.
+
+Verified current state (2026-06-01): the live store
+`~/Library/Application Support/MetaWhisp.store` is **119 MB and written today** →
+persistence is HEALTHY right now; degraded mode is NOT active. So this is a
+**latent time-bomb**, not an active incident.
+
+Root-cause fix (dedicated task, must be tested on a COPY of the real 119MB store
+so V1 doesn't itself break the healthy DB):
+1. Define `VersionedSchema` V1 capturing the current 14 models exactly.
+2. Add `SchemaMigrationPlan` (empty stages for V1 baseline); pass
+   `migrationPlan:` to `ModelContainer`.
+3. Each future `@Model` change adds Vn + a migration stage.
+4. Keep a degraded-mode flag + visible warning as a backstop for the genuinely
+   unrecoverable cases (disk corruption, disk full) migration can't fix.
+
+## Remaining open findings
+
+Not started: AUD-007 (above), AUD-008, and the P2/P3 remainder (Obsidian
+orphans AUD-044, file-index staleness AUD-045, Apple Notes AUD-047/048/049,
+onboarding AUD-054..056, local-model AUD-057..060, release AUD-063/064, etc.).
+See `FULL-APP-AUDIT-2026-05-31.md` for the full list.
+
 ## Next Step
 
-Hand `FULL-APP-AUDIT-2026-05-31.md` to the bugfix agent. Take one finding per
-RED -> GREEN -> REFACTOR iteration and atomic commit. Run the manual-only matrix
-alongside the automated regressions before the next release.
+Decide: (a) build/notarize 1.3.10 to make the 16 committed fixes live (secrets →
+Keychain, crash fix, data-loss fixes), and/or (b) take AUD-007 migration plan as
+a dedicated, store-copy-tested task. Continue remaining findings one per
+RED → GREEN → atomic commit.
