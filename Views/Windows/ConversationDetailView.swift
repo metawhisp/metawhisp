@@ -629,11 +629,13 @@ struct ConversationDetailView: View {
         convDesc.fetchLimit = 1
         conversation = try? modelContext.fetch(convDesc).first
         let id = conversationId
-        var histDesc = FetchDescriptor<HistoryItem>(
+        // AUD-016 — no cap: COPY and PLAN treat this as the FULL transcript, so a
+        // conversation with more than 200 fragments must not silently lose its
+        // tail. The predicate is already conversation-scoped, so this stays cheap.
+        let histDesc = FetchDescriptor<HistoryItem>(
             predicate: #Predicate { $0.conversationId == id },
             sortBy: [SortDescriptor(\.createdAt, order: .forward)]
         )
-        histDesc.fetchLimit = 200
         transcript = (try? modelContext.fetch(histDesc)) ?? []
         let taskDesc = FetchDescriptor<TaskItem>(
             predicate: #Predicate { !$0.isDismissed && $0.conversationId == id },

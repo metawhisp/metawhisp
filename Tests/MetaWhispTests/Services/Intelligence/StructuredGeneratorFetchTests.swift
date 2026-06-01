@@ -71,4 +71,31 @@ final class StructuredGeneratorFetchTests: XCTestCase {
         let results = StructuredGenerator.fetchHistoryItems(conversationId: convId, in: ctx)
         XCTAssertEqual(results.map(\.text), ["linked"])
     }
+
+    /// AUD-016 — a long conversation must not be truncated, and unrelated recent
+    /// activity must not push it out of a global slice. Before the fix,
+    /// fetchHistoryItems pulled only the newest 200 GLOBAL rows then filtered, so
+    /// a 250-row conversation buried under 50 newer unrelated rows came back with
+    /// just its newest ~150 fragments — the head silently lost.
+    func test_fetchHistoryItems_longConversationNotTruncatedByGlobalCap() throws {
+        let container = try makeContainer()
+        let ctx = ModelContext(container)
+        let convId = UUID()
+
+        // 250 rows linked to the conversation (row-0 oldest ... row-249 newest).
+        for i in 0..<250 {
+            ctx.insert(makeItem(text: "row-\(i)", conv: convId, secondsAgo: TimeInterval(1000 - i)))
+        }
+        // 50 unrelated rows that are MORE RECENT than every conversation row, so a
+        // newest-200-global slice would be dominated by them.
+        for i in 0..<50 {
+            ctx.insert(makeItem(text: "noise-\(i)", conv: UUID(), secondsAgo: TimeInterval(i)))
+        }
+        try ctx.save()
+
+        let results = StructuredGenerator.fetchHistoryItems(conversationId: convId, in: ctx)
+        XCTAssertEqual(results.count, 250, "all linked rows must be returned, not a 200-row global slice")
+        XCTAssertEqual(results.first?.text, "row-0", "head must survive (oldest first)")
+        XCTAssertEqual(results.last?.text, "row-249", "tail must survive (newest last)")
+    }
 }

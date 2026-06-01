@@ -82,14 +82,16 @@ final class StructuredGenerator: ObservableObject {
     /// recent 200 rows and filtering in Swift is reliable and cheap.
     /// `static` + `internal` so retroactive tests can call it directly.
     static func fetchHistoryItems(conversationId: UUID, in ctx: ModelContext) -> [HistoryItem] {
-        var desc = FetchDescriptor<HistoryItem>(
-            sortBy: [SortDescriptor(\.createdAt, order: .reverse)]
+        // AUD-016 — fetch ALL rows ascending then filter, with NO cap. The former
+        // newest-200 GLOBAL cap truncated long conversations and, when unrelated
+        // recent rows filled the slice, could drop the target conversation's head
+        // (or all of it). We still filter in Swift rather than predicate on the
+        // Optional<UUID> — see the commit-race note above.
+        let desc = FetchDescriptor<HistoryItem>(
+            sortBy: [SortDescriptor(\.createdAt, order: .forward)]
         )
-        desc.fetchLimit = 200
         let candidates = (try? ctx.fetch(desc)) ?? []
-        return candidates
-            .filter { $0.conversationId == conversationId }
-            .sorted { $0.createdAt < $1.createdAt }
+        return candidates.filter { $0.conversationId == conversationId }
     }
 
     /// Backfill — retries generation for conversations stuck on placeholder fields.
