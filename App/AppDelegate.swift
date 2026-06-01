@@ -643,8 +643,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         // conversations to `~/Library/Application Support/MetaWhisp/mcp-snapshot.json`
         // every 5 min so the standalone `metawhisp-mcp` CLI can answer
         // Claude Desktop tool calls without sharing the SwiftData store.
+        // AUD-029 — applyEnabledState() honours the mcpEnabled opt-in: it starts
+        // the writer only if the user enabled MCP, otherwise it purges any stale
+        // snapshot so opted-out users keep no plaintext copy on disk.
         MCPSnapshotService.shared.configure(container: historyService.modelContainer)
-        MCPSnapshotService.shared.start()
+        MCPSnapshotService.shared.applyEnabledState()
         structuredGenerator.configure(modelContainer: historyService.modelContainer)
         // Wire embedding so StructuredGenerator embeds each closed conversation
         // right after title/overview populate (ITER-011).

@@ -125,6 +125,7 @@ struct MainSettingsView: View {
                 twoColumn(fileIndexingSection, appleNotesSection)
                 calendarSection
                 obsidianSyncSection
+                mcpSection
             }
         }
     }
@@ -1417,6 +1418,26 @@ struct MainSettingsView: View {
         .padding(MW.sp16)
         .frame(maxWidth: .infinity, alignment: .topLeading)
         .mwCard(radius: MW.rMedium, elevation: .raised)
+    }
+
+    /// AUD-029 — MCP snapshot opt-in. Default OFF: no snapshot of memories/tasks/
+    /// conversations is written unless the user enables it here; turning it off
+    /// purges the on-disk file via applyEnabledState().
+    private var mcpSection: some View {
+        VStack(alignment: .leading, spacing: MW.sp10) {
+            toggleRow("MCP Server", isOn: $settings.mcpEnabled)
+            if settings.mcpEnabled {
+                Text("Writes a local snapshot of your memories, tasks and conversation summaries to ~/Library/Application Support/MetaWhisp/mcp-snapshot.json so the standalone metawhisp-mcp tool can answer Claude Desktop / Cursor calls. The file stays on this Mac, owner-only, and is deleted when you turn this off.")
+                    .font(MW.monoSm).foregroundStyle(MW.textMuted)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .padding(MW.sp16)
+        .frame(maxWidth: .infinity, alignment: .topLeading)
+        .mwCard(radius: MW.rMedium, elevation: .raised)
+        .onChange(of: settings.mcpEnabled) { _, _ in
+            MCPSnapshotService.shared.applyEnabledState()
+        }
     }
 
     /// ITER-037 Option A — opens the relevant setup doc from `specs/integrations/`

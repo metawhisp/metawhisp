@@ -204,6 +204,12 @@ final class AppSettings: ObservableObject {
     /// appended must have createdAt > this). Empty on first run.
     @AppStorage("obsidianLastSyncedAt") var obsidianLastSyncedAt: String = ""
 
+    /// AUD-029 — opt-in for the MCP snapshot writer (default OFF). When OFF,
+    /// MetaWhisp writes NO snapshot of memories/tasks/conversations to disk and
+    /// purges any existing file; when ON it exposes a local-only snapshot for
+    /// the standalone `metawhisp-mcp` tool. Honoured by MCPSnapshotService.
+    @AppStorage("mcpEnabled") var mcpEnabled: Bool = false
+
     /// ITER-032 — show one-conversation projects in the Projects view.
     /// Default off so the grid stays clean (LLM hallucinations + typo
     /// duplicates are usually one-offs). Toggle in ProjectsView header

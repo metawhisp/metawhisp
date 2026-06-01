@@ -67,6 +67,27 @@ final class MCPSnapshotService {
         timerTask = nil
     }
 
+    /// AUD-029 — single gate that honours the `mcpEnabled` opt-in. Call at launch
+    /// and whenever the setting toggles. Enabled → start the writer. Disabled →
+    /// stop it and purge the on-disk snapshot, so users who never opted in (or
+    /// opted out) keep no plaintext copy of their data on disk.
+    func applyEnabledState() {
+        if AppSettings.shared.mcpEnabled {
+            start()
+        } else {
+            stop()
+            purgeSnapshot()
+        }
+    }
+
+    /// Delete the on-disk snapshot (used on opt-out / disabled launch).
+    private func purgeSnapshot() {
+        let url = Self.snapshotURL
+        guard FileManager.default.fileExists(atPath: url.path) else { return }
+        try? FileManager.default.removeItem(at: url)
+        NSLog("[MCPSnapshot] 🧹 purged snapshot (MCP disabled)")
+    }
+
     /// Force a write. Called from services that mutate user data after
     /// significant events (new conversation closed, memory extracted,
     /// task completed) — keeps Claude's view fresh without waiting 5 min.
@@ -77,6 +98,9 @@ final class MCPSnapshotService {
     // MARK: - Internals
 
     private func writeSnapshot() async {
+        // AUD-029 — never write unless the user opted into MCP. Guards the public
+        // snapshotNow() path too, not just the timer.
+        guard AppSettings.shared.mcpEnabled else { return }
         guard let container = modelContainer else { return }
         let ctx = ModelContext(container)
 
@@ -152,7 +176,11 @@ final class MCPSnapshotService {
         encoder.dateEncodingStrategy = .iso8601
         do {
             let data = try encoder.encode(snapshot)
-            try data.write(to: Self.snapshotURL, options: .atomic)
+            try data.write(to: Self.snapshotURL, options: [.atomic, .completeFileProtection])
+            // AUD-029 — owner-only (0600). `.atomic` writes a fresh inode under the
+            // default umask (0644) each time, so re-apply after every write.
+            try? FileManager.default.setAttributes([.posixPermissions: 0o600],
+                                                    ofItemAtPath: Self.snapshotURL.path)
             NSLog("[MCPSnapshot] wrote %d memories, %d tasks, %d conversations (%d bytes)",
                   memoryDTOs.count, taskDTOs.count, convoDTOs.count, data.count)
         } catch {
