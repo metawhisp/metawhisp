@@ -52,11 +52,13 @@ final class LicenseService: ObservableObject {
         isActivating = true
         lastError = nil
 
-        NSLog("[License] Activating with token: %@...", String(token.prefix(8)))
-
+        // AUD-025 — never log token material (NSLog goes to a durable file).
         do {
-            let url = URL(string: "\(api)/api/auth/session?token=\(token)&machine_id=\(Self.machineId)&activate=1")!
+            // AUD-025 — the token goes in the Authorization header, NOT the URL
+            // query string. URLs leak to server / proxy / observability logs.
+            let url = URL(string: "\(api)/api/auth/session?machine_id=\(Self.machineId)&activate=1")!
             var request = URLRequest(url: url)
+            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
             request.timeoutInterval = 15
             let (data, response) = try await URLSession.shared.data(for: request)
 
@@ -114,8 +116,10 @@ final class LicenseService: ObservableObject {
     /// Verify existing session token is still valid.
     private func verify(token: String) async {
         do {
-            let url = URL(string: "\(api)/api/auth/session?token=\(token)&machine_id=\(Self.machineId)")!
+            // AUD-025 — token in the Authorization header, not the URL.
+            let url = URL(string: "\(api)/api/auth/session?machine_id=\(Self.machineId)")!
             var request = URLRequest(url: url)
+            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
             request.timeoutInterval = 10
             let (data, response) = try await URLSession.shared.data(for: request)
 

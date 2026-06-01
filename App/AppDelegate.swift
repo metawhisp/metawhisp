@@ -2306,7 +2306,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             return
         }
 
-        NSLog("[DeepLink] Received auth token: %@...", String(token.prefix(8)))
+        NSLog("[DeepLink] Received auth deep link — activating")  // AUD-025: no token material in logs
         Task {
             await LicenseService.shared.activate(token: token)
             // Show the main window so user sees their activated Pro status
