@@ -185,8 +185,11 @@ struct GoalsView: View {
             .buttonStyle(.plain)
 
         case "scale":
-            let lo = goal.minValue ?? 1
-            let hi = goal.maxValue ?? 10
+            // AUD-032 — never build the Slider range straight from raw bounds: an
+            // inverted (min > max) or non-finite min/max would trap `lo...hi` and
+            // crash the Goals screen. safeScaleRange always returns a valid,
+            // ascending, non-empty range.
+            let scaleRange = GoalBounds.safeScaleRange(min: goal.minValue, max: goal.maxValue)
             VStack(alignment: .leading, spacing: 4) {
                 Slider(
                     value: Binding(
@@ -198,7 +201,7 @@ struct GoalsView: View {
                             try? modelContext.save()
                         }
                     ),
-                    in: lo...hi,
+                    in: scaleRange,
                     step: 1
                 )
                 .controlSize(.small)
@@ -392,19 +395,30 @@ private struct GoalEditorSheet: View {
             existing.goalDescription = description.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmptyGoal
             existing.goalType = goalType
             existing.targetValue = Double(targetValue.replacingOccurrences(of: ",", with: "."))
-            existing.minValue = Double(minValue.replacingOccurrences(of: ",", with: "."))
-            existing.maxValue = Double(maxValue.replacingOccurrences(of: ",", with: "."))
+            // AUD-032 — normalize bounds so stored min < max (and finite); an
+            // inverted pair would otherwise crash the scale Slider on render.
+            let existingBounds = GoalBounds.normalizedBounds(
+                min: Double(minValue.replacingOccurrences(of: ",", with: ".")),
+                max: Double(maxValue.replacingOccurrences(of: ",", with: "."))
+            )
+            existing.minValue = existingBounds.min
+            existing.maxValue = existingBounds.max
             existing.unit = unit.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmptyGoal
             onSave(existing)
         } else {
+            // AUD-032 — normalize bounds so stored min < max (and finite).
+            let newBounds = GoalBounds.normalizedBounds(
+                min: Double(minValue.replacingOccurrences(of: ",", with: ".")),
+                max: Double(maxValue.replacingOccurrences(of: ",", with: "."))
+            )
             let goal = Goal(
                 title: trimmedTitle,
                 goalType: goalType,
                 goalDescription: description.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmptyGoal,
                 targetValue: Double(targetValue.replacingOccurrences(of: ",", with: ".")),
                 currentValue: 0,
-                minValue: Double(minValue.replacingOccurrences(of: ",", with: ".")),
-                maxValue: Double(maxValue.replacingOccurrences(of: ",", with: ".")),
+                minValue: newBounds.min,
+                maxValue: newBounds.max,
                 unit: unit.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmptyGoal
             )
             onSave(goal)
