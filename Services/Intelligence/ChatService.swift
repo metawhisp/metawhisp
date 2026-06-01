@@ -1037,6 +1037,10 @@ final class ChatService: ObservableObject {
     /// Per `ITER-003` spec: cap 30 snippets × 200 chars ≈ 6 KB — fits the 24 KB prompt limit.
     /// Reference: `Chat/ChatPrompts.swift` SQL `SELECT substr(ocrText,1,200) FROM screenshots WHERE timestamp > now-24h`.
     private func fetchScreenContextLast24h(limit: Int, maxCharsPerSnippet: Int) -> [ScreenSnippet] {
+        // AUD-051 — when Screen Context is off, stored OCR must NOT be injected
+        // into chat prompts. The rows stay in SwiftData but are unused while off,
+        // so turning the feature off actually stops sharing past screen content.
+        guard AppSettings.shared.screenContextEnabled else { return [] }
         guard let container = modelContainer else { return [] }
         let ctx = ModelContext(container)
         let cutoff = Date().addingTimeInterval(-86400) // 24h
