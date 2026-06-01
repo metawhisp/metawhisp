@@ -75,13 +75,13 @@ final class TaskExtractor: ObservableObject {
         guard let container = modelContainer else { return }
         let ctx = ModelContext(container)
 
-        // Fetch all HistoryItems belonging to this conversation, oldest first.
-        var desc = FetchDescriptor<HistoryItem>(
-            predicate: #Predicate { $0.conversationId == conversationId },
-            sortBy: [SortDescriptor(\.createdAt, order: .forward)]
-        )
-        desc.fetchLimit = 100
-        let items = (try? ctx.fetch(desc)) ?? []
+        // AUD-035 — fetch the WHOLE conversation (uncapped, oldest first) via the
+        // shared, AUD-016-tested helper. The old inline 100-row cap silently
+        // dropped late fragments — exactly where reversals/completions live — so
+        // extraction ran on a prefix while the doc above promised full context.
+        // (Cloud paths get the full block; the local route still caps at the
+        // model's input budget — see the completeBlocking call below.)
+        let items = StructuredGenerator.fetchHistoryItems(conversationId: conversationId, in: ctx)
         let fragments = items
             .map { $0.displayText.trimmingCharacters(in: .whitespacesAndNewlines) }
             .filter { !$0.isEmpty }
