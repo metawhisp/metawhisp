@@ -227,18 +227,32 @@ enum ObsidianPath {
         return "\(target).md"
     }
 
+    // MARK: - Stable entity id suffix (AUD-043)
+
+    /// Short, stable, collision-resistant suffix derived from an entity's UUID.
+    /// Appended to every transient-entity filename so two entities that share the
+    /// same date/minute/project (e.g. two dictations in one minute for one
+    /// project) resolve to DISTINCT files instead of silently overwriting each
+    /// other. 8 hex chars ≈ 4 billion values — ample within one minute bucket.
+    /// Stable across description/title edits because it comes from the id, not
+    /// the content.
+    static func shortID(_ id: UUID) -> String {
+        String(id.uuidString.prefix(8)).lowercased()
+    }
+
     // MARK: - Full path builders (relative to vault root)
 
-    /// `MetaWhisp/2026-05-12/meetings/14h00--standup-with-sam.md`
+    /// `MetaWhisp/2026-05-12/meetings/14h00--standup-with-sam--a1b2c3d4.md`
     static func meetingPath(
         date: Date,
         title: String,
+        id: UUID,
         calendar: Calendar = .current
     ) -> String {
         let day = dateFolder(for: date, calendar: calendar)
         let time = timestampPrefix(for: date, calendar: calendar)
         let slug = slugForFilename(title)
-        return "\(rootSubdir)/\(day)/meetings/\(time)--\(slug).md"
+        return "\(rootSubdir)/\(day)/meetings/\(time)--\(slug)--\(shortID(id)).md"
     }
 
     /// `MetaWhisp/2026-05-12/conversations/14h32--metawhisp-deploy-discussion.md`
@@ -250,12 +264,13 @@ enum ObsidianPath {
     static func conversationHubPath(
         date: Date,
         title: String,
+        id: UUID,
         calendar: Calendar = .current
     ) -> String {
         let day = dateFolder(for: date, calendar: calendar)
         let time = timestampPrefix(for: date, calendar: calendar)
         let slug = slugForFilename(title)
-        return "\(rootSubdir)/\(day)/conversations/\(time)--\(slug).md"
+        return "\(rootSubdir)/\(day)/conversations/\(time)--\(slug)--\(shortID(id)).md"
     }
 
     /// `MetaWhisp/2026-05-12/_summary.md`
@@ -277,12 +292,13 @@ enum ObsidianPath {
     static func conversationHubWikilink(
         date: Date,
         title: String,
+        id: UUID,
         calendar: Calendar = .current
     ) -> String {
         let day = dateFolder(for: date, calendar: calendar)
         let time = timestampPrefix(for: date, calendar: calendar)
         let slug = slugForFilename(title)
-        return "\(rootSubdir)/\(day)/conversations/\(time)--\(slug)"
+        return "\(rootSubdir)/\(day)/conversations/\(time)--\(slug)--\(shortID(id))"
     }
 
     /// Wikilink target for a day's `_summary.md` hub. Voices/tasks/memories
@@ -299,12 +315,13 @@ enum ObsidianPath {
     static func voicePath(
         date: Date,
         project: String?,
+        id: UUID,
         calendar: Calendar = .current
     ) -> String {
         let day = dateFolder(for: date, calendar: calendar)
         let time = timestampPrefix(for: date, calendar: calendar)
         let proj = conversationProjectFolderName(project)
-        return "\(rootSubdir)/\(day)/voices/\(time)--\(proj).md"
+        return "\(rootSubdir)/\(day)/voices/\(time)--\(proj)--\(shortID(id)).md"
     }
 
     /// `MetaWhisp/2026-05-12/tasks/T-0001--починить-окно.md`
@@ -328,12 +345,13 @@ enum ObsidianPath {
         date: Date,
         project: String?,
         content: String,
+        id: UUID,
         calendar: Calendar = .current
     ) -> String {
         let day = dateFolder(for: date, calendar: calendar)
         let slug = slugForFilename(content)
         let proj = projectFolderName(project)
-        return "\(rootSubdir)/\(memoriesSubdir)/\(proj)/\(day)--\(slug).md"
+        return "\(rootSubdir)/\(memoriesSubdir)/\(proj)/\(day)--\(slug)--\(shortID(id)).md"
     }
 
     /// `MetaWhisp/Insights/2026-05-12/09h22--credentials-visible.md`
@@ -341,12 +359,13 @@ enum ObsidianPath {
         date: Date,
         headline: String?,
         body: String,
+        id: UUID,
         calendar: Calendar = .current
     ) -> String {
         let day = dateFolder(for: date, calendar: calendar)
         let time = timestampPrefix(for: date, calendar: calendar)
         let text = (headline?.isEmpty == false) ? headline! : body
         let slug = slugForFilename(text)
-        return "\(rootSubdir)/\(insightsSubdir)/\(day)/\(time)--\(slug).md"
+        return "\(rootSubdir)/\(insightsSubdir)/\(day)/\(time)--\(slug)--\(shortID(id)).md"
     }
 }

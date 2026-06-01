@@ -87,7 +87,7 @@ final class ObsidianExporter: ObservableObject {
             conversationHubLink: convHubLink
         )
         let md = ObsidianMarkdownRenderer.renderVoice(input)
-        let path = ObsidianPath.voicePath(date: item.createdAt, project: project)
+        let path = ObsidianPath.voicePath(date: item.createdAt, project: project, id: item.id)
         write(md, to: path, kind: "voice")
         ensureProjectStub(for: project)
     }
@@ -101,7 +101,7 @@ final class ObsidianExporter: ObservableObject {
     private func conversationHubWikilink(for conv: Conversation, ctx: ModelContext) -> String? {
         let title = conversationDisplayTitle(for: conv, ctx: ctx)
         guard !title.isEmpty else { return nil }
-        return ObsidianPath.conversationHubWikilink(date: conv.startedAt, title: title)
+        return ObsidianPath.conversationHubWikilink(date: conv.startedAt, title: title, id: conv.id)
     }
 
     /// Title to use when rendering a conversation hub OR a wikilink to it.
@@ -201,7 +201,7 @@ final class ObsidianExporter: ObservableObject {
         )
         let md = ObsidianMarkdownRenderer.renderMeeting(input)
         let title = input.title
-        let path = ObsidianPath.meetingPath(date: conv.startedAt, title: title)
+        let path = ObsidianPath.meetingPath(date: conv.startedAt, title: title, id: conv.id)
         write(md, to: path, kind: "meeting")
     }
 
@@ -222,7 +222,7 @@ final class ObsidianExporter: ObservableObject {
 
         let voiceLines: [ObsidianMarkdownRenderer.VoiceLine] = voices.map { v in
             let snippet = ObsidianMarkdownRenderer.firstSnippet(v.processedText ?? v.text, maxLength: 80) ?? "(voice)"
-            let voicePath = ObsidianPath.voicePath(date: v.createdAt, project: conv.primaryProject)
+            let voicePath = ObsidianPath.voicePath(date: v.createdAt, project: conv.primaryProject, id: v.id)
             return .init(
                 createdAt: v.createdAt,
                 snippet: snippet,
@@ -264,7 +264,7 @@ final class ObsidianExporter: ObservableObject {
             memoriesInline: memoriesInline
         )
         let md = ObsidianMarkdownRenderer.renderConversation(input)
-        let path = ObsidianPath.conversationHubPath(date: conv.startedAt, title: title)
+        let path = ObsidianPath.conversationHubPath(date: conv.startedAt, title: title, id: conv.id)
         write(md, to: path, kind: "conversation")
         ensureProjectStub(for: conv.primaryProject)
     }
@@ -298,7 +298,7 @@ final class ObsidianExporter: ObservableObject {
                 let cdesc = FetchDescriptor<Conversation>(predicate: #Predicate { $0.id == cid })
                 return (try? ctx.fetch(cdesc))?.first?.primaryProject
             }()
-            let path = ObsidianPath.voicePath(date: v.createdAt, project: projForPath)
+            let path = ObsidianPath.voicePath(date: v.createdAt, project: projForPath, id: v.id)
             let link = path.hasSuffix(".md") ? String(path.dropLast(3)) : path
             return .init(timeOfDay: timeStr(v.createdAt), label: label, wikilink: link)
         }
@@ -313,10 +313,10 @@ final class ObsidianExporter: ObservableObject {
             let title = conversationDisplayTitle(for: c, ctx: ctx)
             let link: String
             if c.source == "meeting" {
-                let p = ObsidianPath.meetingPath(date: c.startedAt, title: title)
+                let p = ObsidianPath.meetingPath(date: c.startedAt, title: title, id: c.id)
                 link = p.hasSuffix(".md") ? String(p.dropLast(3)) : p
             } else {
-                link = ObsidianPath.conversationHubWikilink(date: c.startedAt, title: title)
+                link = ObsidianPath.conversationHubWikilink(date: c.startedAt, title: title, id: c.id)
             }
             return .init(timeOfDay: timeStr(c.startedAt), label: title, wikilink: link)
         }
@@ -345,11 +345,11 @@ final class ObsidianExporter: ObservableObject {
         for mem in dayMems {
             let label = mem.headline?.isEmpty == false ? mem.headline! : mem.content
             if isInsightTagged(mem) {
-                let path = ObsidianPath.insightPath(date: mem.createdAt, headline: mem.headline, body: mem.content)
+                let path = ObsidianPath.insightPath(date: mem.createdAt, headline: mem.headline, body: mem.content, id: mem.id)
                 let link = path.hasSuffix(".md") ? String(path.dropLast(3)) : path
                 insItems.append(.init(timeOfDay: timeStr(mem.createdAt), label: label, wikilink: link))
             } else {
-                let path = ObsidianPath.memoryPath(date: mem.createdAt, project: mem.project, content: mem.content)
+                let path = ObsidianPath.memoryPath(date: mem.createdAt, project: mem.project, content: mem.content, id: mem.id)
                 let link = path.hasSuffix(".md") ? String(path.dropLast(3)) : path
                 memItems.append(.init(timeOfDay: timeStr(mem.createdAt), label: label, wikilink: link))
             }
@@ -619,7 +619,8 @@ final class ObsidianExporter: ObservableObject {
         let path = ObsidianPath.memoryPath(
             date: mem.createdAt,
             project: mem.project,
-            content: mem.content
+            content: mem.content,
+            id: mem.id
         )
         write(md, to: path, kind: "memory")
         ensureProjectStub(for: mem.project)
@@ -643,7 +644,8 @@ final class ObsidianExporter: ObservableObject {
         let path = ObsidianPath.insightPath(
             date: mem.createdAt,
             headline: mem.headline,
-            body: mem.content
+            body: mem.content,
+            id: mem.id
         )
         write(md, to: path, kind: "insight")
     }
