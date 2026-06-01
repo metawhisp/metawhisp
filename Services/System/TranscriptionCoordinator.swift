@@ -290,7 +290,7 @@ final class TranscriptionCoordinator: ObservableObject {
             // Filter Whisper hallucinations.
             // Phase 1: Always-filter toxic tokens (YouTube artifacts) regardless of RMS.
             if Self.isAlwaysHallucination(trimmed) {
-                NSLog("[Coordinator] ⚠️ Filtered hallucination (always): '%@'", String(trimmed.prefix(80)))
+                NSLog("[Coordinator] ⚠️ Filtered hallucination (always): %d chars", trimmed.count)
                 // CRITICAL: do NOT auto-paste, but DO save text to clipboard +
                 // expose via lastResult so user can recover. Filter is heuristic;
                 // false positives have lost real dictations (3 times today,
@@ -322,7 +322,7 @@ final class TranscriptionCoordinator: ObservableObject {
             // Phase 2: Pattern-match only on near-silence audio (RMS < 0.003).
             // Built-in MacBook mic: silence ~0.0005, quiet speech ~0.002, normal speech ~0.005+
             if rms < 0.003, Self.isHallucination(trimmed) {
-                NSLog("[Coordinator] ⚠️ Filtered hallucination (RMS=%.4f): '%@'", rms, String(trimmed.prefix(80)))
+                NSLog("[Coordinator] ⚠️ Filtered hallucination (RMS=%.4f): %d chars", rms, trimmed.count)
                 // Same recovery path — text on clipboard so user has the
                 // option even on quiet-audio false positives.
                 Self.saveSuspectToClipboard(trimmed)
@@ -334,7 +334,7 @@ final class TranscriptionCoordinator: ObservableObject {
             }
 
             lastResult = result
-            NSLog("[Coordinator] ✅ lang=%@, %.2fs: %@", result.language ?? "?", result.processingTime, String(result.text.prefix(100)))
+            NSLog("[Coordinator] ✅ lang=%@, %.2fs, %d chars", result.language ?? "?", result.processingTime, result.text.count)
 
             // Post-process (translate / clean / polish) if needed
             var finalText = result.text
@@ -348,7 +348,7 @@ final class TranscriptionCoordinator: ObservableObject {
                     if wasProcessed {
                         finalText = processed
                         processedText = processed
-                        NSLog("[Coordinator] ✅ Post-processed: %@", String(processed.prefix(100)))
+                        NSLog("[Coordinator] ✅ Post-processed: %d chars", processed.count)
                     }
                 } catch {
                     NSLog("[Coordinator] ⚠️ Post-processing failed: %@", error.localizedDescription)
@@ -385,7 +385,7 @@ final class TranscriptionCoordinator: ObservableObject {
             // — see BrandGlossary header for the conservative list.
             let glossaryCorrected = BrandGlossary.applyCorrections(finalText)
             if glossaryCorrected != finalText {
-                NSLog("[Coordinator] 📚 BrandGlossary corrected: %@", String(glossaryCorrected.prefix(80)))
+                NSLog("[Coordinator] 📚 BrandGlossary corrected (%d chars)", glossaryCorrected.count)
                 finalText = glossaryCorrected
             }
 
@@ -393,7 +393,7 @@ final class TranscriptionCoordinator: ObservableObject {
             if let dict = correctionDictionary {
                 let corrected = dict.apply(finalText)
                 if corrected != finalText {
-                    NSLog("[Coordinator] 📝 Applied corrections: %@", String(corrected.prefix(80)))
+                    NSLog("[Coordinator] 📝 Applied corrections (%d chars)", corrected.count)
                     finalText = corrected
                 }
             }
@@ -401,7 +401,7 @@ final class TranscriptionCoordinator: ObservableObject {
             // Voice question mode (Phase 6) — route to MetaChat instead of clipboard paste.
             if voiceQuestionMode {
                 voiceQuestionMode = false
-                NSLog("[Coordinator] 🎤 Voice question transcript → MetaChat: %@", String(finalText.prefix(80)))
+                NSLog("[Coordinator] 🎤 Voice question transcript → MetaChat (%d chars)", finalText.count)
                 VoiceQuestionState.shared.thinking(transcript: finalText)
                 if let chat = chatService {
                     Task { await chat.send(finalText, source: .voice) }

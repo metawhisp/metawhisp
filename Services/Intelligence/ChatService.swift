@@ -111,8 +111,8 @@ final class ChatService: ObservableObject {
 
         // Diagnostic — figure out why the LLM sometimes deflects ("ask a clearer
         // question"): log what context it actually got. ITER-013: tasks now split.
-        NSLog("[ChatService] Q=%@ ctx: mem=%d chars · tx=%d · mtg=%d · my=%d wait=%d · goals=%d · screen=%d · files=%d",
-              String(trimmed.prefix(80)),
+        NSLog("[ChatService] Q=%d chars ctx: mem=%d chars · tx=%d · mtg=%d · my=%d wait=%d · goals=%d · screen=%d · files=%d",
+              trimmed.count,
               memories.count, recentTranscripts.count, recentMeetings.count,
               pendingTasks.myTasks.count, pendingTasks.waitingOn.count,
               activeGoals.count, screenSnippets.count, relevantFiles.count)

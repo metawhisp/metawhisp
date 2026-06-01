@@ -109,7 +109,7 @@ final class CorrectionDictionary: ObservableObject {
             return text
         }
 
-        NSLog("[CorrectionDict] Applying %d replacements to: '%@'", all.count, String(text.prefix(80)))
+        NSLog("[CorrectionDict] Applying %d replacements to %d chars", all.count, text.count)
 
         // Pass 1: exact replacement with word boundaries (longest-first to avoid partial matches)
         var result = text
@@ -123,7 +123,7 @@ final class CorrectionDictionary: ObservableObject {
                 result = regex.stringByReplacingMatches(in: result, range: range, withTemplate: replacement)
             }
             if result != before {
-                NSLog("[CorrectionDict] ✅ Exact: '%@' → '%@'", original, replacement)
+                NSLog("[CorrectionDict] ✅ Exact replacement (%d→%d chars)", original.count, replacement.count)
             }
         }
 
@@ -159,7 +159,7 @@ final class CorrectionDictionary: ObservableObject {
                     // Preserve case pattern from original word
                     let cased = Self.preserveCase(from: stripped, to: replacement)
                     changed = true
-                    NSLog("[CorrectionDict] 🔍 Fuzzy: '%@' → '%@' (dist=%d, key='%@')", stripped, cased, dist, key)
+                    NSLog("[CorrectionDict] 🔍 Fuzzy replacement (%d→%d chars, dist=%d)", stripped.count, cased.count, dist)
                     return leadingPunct + cased + trailingPunct
                 }
             }
@@ -168,7 +168,7 @@ final class CorrectionDictionary: ObservableObject {
 
         if changed {
             let finalResult = fuzzyResult.joined(separator: " ")
-            NSLog("[CorrectionDict] Result: '%@'", String(finalResult.prefix(80)))
+            NSLog("[CorrectionDict] Result: %d chars", finalResult.count)
             return finalResult
         }
         return result
@@ -264,13 +264,13 @@ final class CorrectionDictionary: ObservableObject {
         let origLower = origPhrase.lowercased()
         let corrLower = corrPhrase.lowercased()
         if corrLower.contains(origLower) || origLower.contains(corrLower) {
-            NSLog("[CorrectionDict] Skipping insertion: '%@' → '%@'", origPhrase, corrPhrase)
+            NSLog("[CorrectionDict] Skipping insertion (%d→%d chars)", origPhrase.count, corrPhrase.count)
             return
         }
 
         corrections[origLower] = corrPhrase
         save()
-        NSLog("[CorrectionDict] ✅ Learned: '%@' → '%@'", origPhrase, corrPhrase)
+        NSLog("[CorrectionDict] ✅ Learned correction (%d→%d chars)", origPhrase.count, corrPhrase.count)
     }
 
     /// Manually add a correction entry.
@@ -279,7 +279,7 @@ final class CorrectionDictionary: ObservableObject {
         guard !key.isEmpty, !replacement.isEmpty else { return }
         corrections[key] = replacement
         save()
-        NSLog("[CorrectionDict] ✅ Manual add: '%@' → '%@'", key, replacement)
+        NSLog("[CorrectionDict] ✅ Manual add (%d→%d chars)", key.count, replacement.count)
     }
 
     func remove(_ key: String) {

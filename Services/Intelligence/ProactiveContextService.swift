@@ -140,8 +140,8 @@ final class ProactiveContextService: ObservableObject {
             proactiveItems: nil
         )
         MWNotificationStack.shared.push(note)
-        NSLog("[Proactive] ✅ surfaced insight in %@: %@",
-              ctx.appName, String(insight.body.prefix(120)))
+        NSLog("[Proactive] ✅ surfaced insight in %@ (%d chars)",
+              ctx.appName, insight.body.count)
     }
 
     // MARK: - Activity summary
