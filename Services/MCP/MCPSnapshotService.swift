@@ -119,7 +119,14 @@ final class MCPSnapshotService {
             sortBy: [SortDescriptor(\.createdAt, order: .reverse)]
         )
         taskDesc.fetchLimit = 500
-        let tasks: [TaskItem] = (try? ctx.fetch(taskDesc)) ?? []
+        // AUD-018 — export only COMMITTED tasks. `staged` rows are weak-signal OCR
+        // review-candidates the app hides from the main list until the user
+        // confirms them; surfacing them via MCP would present screen guesses as
+        // the user's real task list. Filtered in Swift (not the #Predicate) to
+        // match the rest of the codebase and avoid optional-String predicate
+        // pitfalls; `effectiveStatus` maps legacy nil → "committed".
+        let tasks: [TaskItem] = ((try? ctx.fetch(taskDesc)) ?? [])
+            .filter { $0.effectiveStatus == "committed" }
 
         // Conversations: last 100 finished, NOT discarded, with title or overview.
         var convoDesc = FetchDescriptor<Conversation>(
