@@ -96,12 +96,9 @@ final class LicenseService: ObservableObject {
                 }
                 NSLog("[License] ✅ Pro activated: %@ (%@)", result.email, license.plan)
             } else {
-                // Signed in but no active subscription
-                isPro = false
-                licenseKey = nil
-                plan = nil
-                renewalDate = nil
-                cancelAtPeriodEnd = false
+                // Signed in but no active subscription.
+                // AUD-026 — clear the persisted license too, not just memory.
+                clearInactiveLicense()
                 NSLog("[License] Signed in as %@ — no active subscription", result.email)
             }
 
@@ -143,11 +140,10 @@ final class LicenseService: ObservableObject {
                     cancelAtPeriodEnd = sub.cancelAtPeriodEnd ?? false
                 }
             } else {
-                isPro = false
-                licenseKey = nil
-                plan = nil
-                renewalDate = nil
-                cancelAtPeriodEnd = false
+                // AUD-026 — authoritative inactive response (HTTP 200, no active
+                // license): clear the PERSISTED license too, so a later offline
+                // launch can't restore a stale Pro from the Keychain.
+                clearInactiveLicense()
             }
 
             NSLog("[License] Verified: %@, pro=%@", result.email, isPro ? "YES" : "NO")
@@ -155,6 +151,22 @@ final class LicenseService: ObservableObject {
             NSLog("[License] Verify failed (offline?): %@", error.localizedDescription)
             // Keep existing state if offline
         }
+    }
+
+    /// AUD-026 — react to an authoritative "not subscribed" response (HTTP 200,
+    /// no active license). Clears the persisted license key and plan in addition
+    /// to in-memory state, so a later offline launch can't restore a stale Pro
+    /// from the Keychain. The session token and email are intentionally kept (the
+    /// user is still signed in, just not subscribed), and the offline grace path
+    /// in `verify`'s catch block — which keeps existing state — is untouched.
+    private func clearInactiveLicense() {
+        isPro = false
+        licenseKey = nil
+        plan = nil
+        renewalDate = nil
+        cancelAtPeriodEnd = false
+        KeychainHelper.save(key: "com.metawhisp.licenseKey", value: "")
+        KeychainHelper.save(key: "com.metawhisp.proPlan", value: "")
     }
 
     /// Sign out and clear all stored credentials.
