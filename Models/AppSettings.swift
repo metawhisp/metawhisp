@@ -352,43 +352,113 @@ final class AppSettings: ObservableObject {
 
 // MARK: - Keychain Helper
 
-/// Stores secrets in an encrypted plist in Application Support.
-/// Avoids Keychain password prompts caused by code signature changes during development.
+/// AUD-024 — stores secrets (license key, session token, BYOK API keys) in the
+/// macOS Keychain via the Security framework.
+///
+/// Previously this wrote a PLAINTEXT JSON file at
+/// `~/Library/Application Support/MetaWhisp/.secrets` (readable by any process
+/// running as the same user) — the old doc comment claimed "encrypted plist",
+/// which was false. On first use we migrate every value from that legacy file
+/// into the Keychain, verify each one, and delete the file only when ALL are
+/// confirmed. `load` falls back to the legacy file until migration completes, so
+/// the user never loses access.
+///
+/// Note: Keychain ACLs are bound to the code signature, so builds must keep a
+/// stable signing identity (release Developer ID + `hot-swap.sh` provide this).
 enum KeychainHelper {
-    private static var storage: [String: String] = {
-        load() ?? [:]
-    }()
-
-    private static var storeURL: URL {
-        let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
-        let dir = appSupport.appendingPathComponent("MetaWhisp", isDirectory: true)
-        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        return dir.appendingPathComponent(".secrets")
-    }
+    private static let service = "com.metawhisp.secrets"
 
     static func save(key: String, value: String) {
-        if value.isEmpty {
-            storage.removeValue(forKey: key)
-        } else {
-            storage[key] = value
-        }
-        persist()
+        if value.isEmpty { keychainDelete(key); return }
+        keychainWrite(key: key, value: value)
     }
 
     static func load(key: String) -> String? {
-        storage[key]
+        if let v = keychainRead(key) { return v }
+        // Safety net: until migration is confirmed, the legacy file may still
+        // hold the value — read it so the user never loses access.
+        return legacyDict()?[key]
     }
 
-    private static func persist() {
-        if let data = try? JSONEncoder().encode(storage) {
-            try? data.write(to: storeURL, options: [.atomic, .completeFileProtection])
-            // Set file permissions to owner-only (600)
-            try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: storeURL.path)
-        }
+    // MARK: - Keychain primitives
+
+    @discardableResult
+    private static func keychainWrite(key: String, value: String) -> Bool {
+        guard let data = value.data(using: .utf8) else { return false }
+        let base: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: key,
+        ]
+        SecItemDelete(base as CFDictionary)
+        var add = base
+        add[kSecValueData as String] = data
+        add[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
+        return SecItemAdd(add as CFDictionary, nil) == errSecSuccess
     }
 
-    private static func load() -> [String: String]? {
-        guard let data = try? Data(contentsOf: storeURL) else { return nil }
+    private static func keychainRead(_ key: String) -> String? {
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: key,
+            kSecReturnData as String: true,
+            kSecMatchLimit as String: kSecMatchLimitOne,
+        ]
+        var out: AnyObject?
+        guard SecItemCopyMatching(query as CFDictionary, &out) == errSecSuccess,
+              let data = out as? Data else { return nil }
+        return String(data: data, encoding: .utf8)
+    }
+
+    private static func keychainDelete(_ key: String) {
+        SecItemDelete([
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: key,
+        ] as CFDictionary)
+    }
+
+    // MARK: - Legacy plaintext file (.secrets) — migration source + read fallback
+
+    private static var legacyURL: URL {
+        let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
+        return appSupport
+            .appendingPathComponent("MetaWhisp", isDirectory: true)
+            .appendingPathComponent(".secrets")
+    }
+
+    private static func legacyDict() -> [String: String]? {
+        guard let data = try? Data(contentsOf: legacyURL) else { return nil }
         return try? JSONDecoder().decode([String: String].self, from: data)
+    }
+
+    // MARK: - One-time migration
+
+    private static var migrated = false
+
+    /// Call once at app launch (signed app → Keychain ACLs valid). Imports the
+    /// legacy plaintext `.secrets` file into the Keychain, verifies each value,
+    /// and deletes the file only when every secret is confirmed. Safe to call
+    /// repeatedly; no-op once the legacy file is gone.
+    static func migrateLegacySecretsIfNeeded() {
+        guard !migrated else { return }
+        migrated = true
+        guard let dict = legacyDict(), !dict.isEmpty else { return }
+        var allConfirmed = true
+        for (k, v) in dict {
+            // Write AND verify (read back) before trusting the Keychain copy.
+            if !(keychainWrite(key: k, value: v) && keychainRead(k) == v) {
+                allConfirmed = false
+            }
+        }
+        // Delete the plaintext file ONLY when every secret is confirmed in the
+        // Keychain; otherwise keep it as the read fallback in `load`.
+        if allConfirmed {
+            try? FileManager.default.removeItem(at: legacyURL)
+            NSLog("[Keychain] ✅ migrated %d secrets to Keychain; legacy .secrets removed", dict.count)
+        } else {
+            NSLog("[Keychain] ⚠️ secret migration incomplete — keeping legacy .secrets as fallback")
+        }
     }
 }

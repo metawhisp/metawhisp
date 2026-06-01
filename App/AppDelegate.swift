@@ -195,6 +195,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             return
         }
 
+        // AUD-024 — one-time migration of secrets from the legacy plaintext
+        // `.secrets` file into the Keychain. Runs in the signed app (valid
+        // Keychain ACLs) and only after the single-instance guard, so two
+        // instances never race on the file. No-op once already migrated.
+        KeychainHelper.migrateLegacySecretsIfNeeded()
+
         // Sparkle auto-updater
         updaterController = SPUStandardUpdaterController(startingUpdater: true, updaterDelegate: nil, userDriverDelegate: nil)
 
