@@ -84,4 +84,27 @@ final class DualStreamMergerTests: XCTestCase {
             "Me: Катя, твои задачи?\nThem: Я закончила лендинг, сегодня API"
         )
     }
+
+    // MARK: - AUD-002 — markIncomplete (failed meeting chunks must not be hidden)
+
+    func test_markIncomplete_noFailures_returnsTranscriptUnchanged() {
+        XCTAssertEqual(
+            DualStreamMerger.markIncomplete("Me: hi\nThem: hey", failedChunks: 0),
+            "Me: hi\nThem: hey"
+        )
+    }
+
+    func test_markIncomplete_withFailures_appendsWarningWithCount() {
+        let out = DualStreamMerger.markIncomplete("Me: hi", failedChunks: 3)
+        XCTAssertTrue(out.hasPrefix("Me: hi"), "original transcript must be preserved")
+        XCTAssertTrue(out.contains("3"), "must state how many segments were lost")
+        XCTAssertNotEqual(out, "Me: hi", "must add an incomplete marker")
+    }
+
+    func test_markIncomplete_emptyTranscript_returnsBareNote() {
+        let out = DualStreamMerger.markIncomplete("", failedChunks: 1)
+        XCTAssertFalse(out.isEmpty)
+        XCTAssertFalse(out.hasPrefix("\n"), "no leading blank lines when the transcript was empty")
+        XCTAssertTrue(out.contains("1"))
+    }
 }

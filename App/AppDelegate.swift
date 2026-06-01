@@ -1307,17 +1307,31 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             if let live = liveResult {
                 NSLog("[MetaWhisp] Meeting: %d live partials drove the copilot; saving via dual-stream for Me/Them labels", live.partialCount)
             }
-            let fullText = await self.transcribeMeetingDualStream(mic: micSamples, system: sysSamples, engine: engine)
+            let dual = await self.transcribeMeetingDualStream(mic: micSamples, system: sysSamples, engine: engine)
 
             let elapsed = CFAbsoluteTimeGetCurrent() - startTime
             let duration = Double(max(micSamples.count, sysSamples.count)) / 16000.0
 
-            guard !fullText.isEmpty else {
-                NSLog("[MetaWhisp] Meeting transcription empty (all chunks silent or hallucinated)")
-                meetingRecorder.lastError = "🎤 No speech detected in recording"
+            guard !dual.text.isEmpty else {
+                // AUD-002 — distinguish "genuinely silent" from "every chunk failed
+                // to transcribe". The latter is an error, not an empty meeting.
+                if dual.failedChunks > 0 {
+                    meetingRecorder.lastError = "❌ Meeting couldn't be transcribed (\(dual.failedChunks) segment(s) failed) — nothing saved"
+                    NSLog("[MetaWhisp] ❌ Meeting transcription fully failed: %d chunk(s) errored", dual.failedChunks)
+                } else {
+                    NSLog("[MetaWhisp] Meeting transcription empty (all chunks silent or hallucinated)")
+                    meetingRecorder.lastError = "🎤 No speech detected in recording"
+                }
                 return
             }
 
+            // AUD-002 — partial success: mark the saved transcript incomplete so a
+            // dropped chunk is never hidden behind an apparently complete meeting.
+            let fullText = DualStreamMerger.markIncomplete(dual.text, failedChunks: dual.failedChunks)
+            if dual.failedChunks > 0 {
+                meetingRecorder.lastError = "⚠️ \(dual.failedChunks) segment(s) couldn't be transcribed — saved transcript is incomplete"
+                NSLog("[MetaWhisp] ⚠️ Meeting saved with %d failed chunk(s) — marked incomplete", dual.failedChunks)
+            }
             self.persistMeetingTranscript(fullText: fullText, duration: duration, elapsed: elapsed)
             NSLog("[MetaWhisp] ✅ Meeting transcribed: %.0fs audio → %d words in %.1fs", duration, fullText.split(separator: " ").count, elapsed)
         }
@@ -1343,13 +1357,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         mic: [Float],
         system: [Float],
         engine: TranscriptionEngine
-    ) async -> String {
-        let micSegments = await transcribeStreamChunked(samples: mic, engine: engine, speaker: .me)
-        let sysSegments = await transcribeStreamChunked(samples: system, engine: engine, speaker: .them)
-        let merged = DualStreamMerger.mergeStreams(mic: micSegments, system: sysSegments)
-        NSLog("[MetaWhisp] Meeting dual-stream: mic=%d segments, system=%d segments → %d merged",
-              micSegments.count, sysSegments.count, merged.count)
-        return DualStreamMerger.renderTranscript(merged)
+    ) async -> (text: String, failedChunks: Int) {
+        let micResult = await transcribeStreamChunked(samples: mic, engine: engine, speaker: .me)
+        let sysResult = await transcribeStreamChunked(samples: system, engine: engine, speaker: .them)
+        let merged = DualStreamMerger.mergeStreams(mic: micResult.segments, system: sysResult.segments)
+        let failedChunks = micResult.failedChunks + sysResult.failedChunks
+        NSLog("[MetaWhisp] Meeting dual-stream: mic=%d segments, system=%d segments → %d merged (%d failed chunks)",
+              micResult.segments.count, sysResult.segments.count, merged.count, failedChunks)
+        return (DualStreamMerger.renderTranscript(merged), failedChunks)
     }
 
     /// Transcribe ONE channel (mic or system) into per-chunk StreamSegments.
@@ -1361,12 +1376,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         samples: [Float],
         engine: TranscriptionEngine,
         speaker: Speaker
-    ) async -> [StreamSegment] {
-        guard !samples.isEmpty else { return [] }
+    ) async -> (segments: [StreamSegment], failedChunks: Int) {
+        guard !samples.isEmpty else { return ([], 0) }
         let chunks = AppDelegate.splitOnSilenceBoundaries(samples: samples, targetChunkSec: 300, searchWindowSec: 15)
         let label = speaker == .me ? "Me" : "Them"
 
         var segments: [StreamSegment] = []
+        // AUD-002 — count chunks that fail every retry so the caller can mark the
+        // saved transcript incomplete instead of presenting a partial as full.
+        var failedChunks = 0
         var offsetSamples = 0
         for (i, rawChunk) in chunks.enumerated() {
             let chunkStartSec = Double(offsetSamples) / 16000.0
@@ -1478,10 +1496,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
                     }
                 }
             } catch {
-                NSLog("[MetaWhisp] ❌ Meeting %@ chunk %d failed: %@", label, i + 1, error.localizedDescription)
+                // AUD-002 — both retries failed; record the loss so it isn't hidden.
+                failedChunks += 1
+                NSLog("[MetaWhisp] ❌ Meeting %@ chunk %d failed (lost from transcript): %@", label, i + 1, error.localizedDescription)
             }
         }
-        return segments
+        return (segments, failedChunks)
     }
 
     /// Decode a JSON `[String]` array stored on `Conversation`'s structured

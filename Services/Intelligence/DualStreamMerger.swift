@@ -49,4 +49,13 @@ enum DualStreamMerger {
         flush()
         return lines.joined(separator: "\n")
     }
+
+    /// AUD-002 — annotate a meeting transcript that lost chunks to transcription
+    /// failures, so a partial result is never silently presented as the complete
+    /// meeting. No-op when nothing failed.
+    static func markIncomplete(_ transcript: String, failedChunks: Int) -> String {
+        guard failedChunks > 0 else { return transcript }
+        let note = "⚠️ \(failedChunks) audio segment(s) could not be transcribed after retries and are missing from this transcript."
+        return transcript.isEmpty ? note : "\(transcript)\n\n— \(note)"
+    }
 }
