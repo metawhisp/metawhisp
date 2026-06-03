@@ -336,18 +336,19 @@ final class TranscriptionCoordinator: ObservableObject {
             lastResult = result
             NSLog("[Coordinator] ✅ lang=%@, %.2fs, %d chars", result.language ?? "?", result.processingTime, result.text.count)
 
-            // Post-process (translate / clean / polish) if needed
-            var finalText = result.text
-            var processedText: String?
+            // AUD-011 — establish ONE normalized transcript value, used for
+            // post-processing, history, Obsidian export, downstream AI and paste.
+            // Start from the sanitized `trimmed` (hallucination tokens already
+            // stripped), NOT the raw result.text which would re-introduce them.
+            var finalText = trimmed
 
             let needsProcess = (textProcessor?.needsProcessing ?? false) || shouldTranslate
             if let processor = textProcessor, needsProcess {
                 stage = .postProcessing
                 do {
-                    let (processed, wasProcessed) = try await processor.process(result.text, translate: shouldTranslate)
+                    let (processed, wasProcessed) = try await processor.process(finalText, translate: shouldTranslate)
                     if wasProcessed {
                         finalText = processed
-                        processedText = processed
                         NSLog("[Coordinator] ✅ Post-processed: %d chars", processed.count)
                     }
                 } catch {
@@ -356,45 +357,45 @@ final class TranscriptionCoordinator: ObservableObject {
                 }
             }
 
-            // Save to history (with processed text if available).
-            if let hs = historyService {
-                let item = hs.save(result)
-                item?.processedText = processedText
-                item?.translatedTo = shouldTranslate ? settings.translateTo : nil
-                item?.modelName = settings.selectedModel
-                item?.source = audioSourceLabel
-                // Assign to Conversation (C1.1) — sets conversationId on the item.
-                if let item {
-                    conversationGrouper?.assign(historyItem: item)
-                    // ITER-035 v2 — export this dictation as a markdown file
-                    // in the user's Obsidian vault. Fire-and-forget;
-                    // ObsidianExporter handles all gates (sync enabled, path
-                    // valid, etc) and silently no-ops otherwise.
-                    if let exporter = obsidianExporter {
-                        let itemID = item.id
-                        Task { @MainActor in
-                            await exporter.exportHistoryItem(itemID)
-                        }
-                    }
-                }
-            }
-
-            // 2026-05-28: brand-name auto-correct (BrandGlossary) BEFORE
-            // the user dictionary apply so an explicit user override still
-            // wins. Only unambiguous Cyrillic mangles (Бриво→Brevo, etc.)
-            // — see BrandGlossary header for the conservative list.
+            // 2026-05-28: brand-name auto-correct (BrandGlossary) BEFORE the user
+            // dictionary apply so an explicit user override still wins. Only
+            // unambiguous Cyrillic mangles (Бриво→Brevo, etc.) — see BrandGlossary.
             let glossaryCorrected = BrandGlossary.applyCorrections(finalText)
             if glossaryCorrected != finalText {
                 NSLog("[Coordinator] 📚 BrandGlossary corrected (%d chars)", glossaryCorrected.count)
                 finalText = glossaryCorrected
             }
 
-            // Apply learned corrections (before paste, after all processing)
+            // Apply learned corrections (after all processing, before paste).
             if let dict = correctionDictionary {
                 let corrected = dict.apply(finalText)
                 if corrected != finalText {
                     NSLog("[Coordinator] 📝 Applied corrections (%d chars)", corrected.count)
                     finalText = corrected
+                }
+            }
+
+            // AUD-011 — save history with the SAME normalized value used for paste,
+            // so Library, Obsidian export and downstream AI extraction all match it.
+            // processedText carries the normalized string whenever it differs from the
+            // raw transcript (displayText falls back to the raw text otherwise).
+            if let hs = historyService {
+                let item = hs.save(result)
+                item?.processedText = (finalText == result.text) ? nil : finalText
+                item?.translatedTo = shouldTranslate ? settings.translateTo : nil
+                item?.modelName = settings.selectedModel
+                item?.source = audioSourceLabel
+                // Assign to Conversation (C1.1) — sets conversationId on the item.
+                if let item {
+                    conversationGrouper?.assign(historyItem: item)
+                    // ITER-035 v2 — export this dictation as a markdown file in the
+                    // user's Obsidian vault. Fire-and-forget; ObsidianExporter gates.
+                    if let exporter = obsidianExporter {
+                        let itemID = item.id
+                        Task { @MainActor in
+                            await exporter.exportHistoryItem(itemID)
+                        }
+                    }
                 }
             }
 
