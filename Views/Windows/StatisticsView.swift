@@ -89,13 +89,17 @@ struct StatisticsView: View {
             // --- streakDays ---
             let allDays = Set(items.map { cal.startOfDay(for: $0.createdAt) }).sorted(by: >)
             var streakDays = 0
-            if let latest = allDays.first {
-                let today = cal.startOfDay(for: Date())
-                let yesterday = cal.date(byAdding: .day, value: -1, to: today)!
+            // AUD — never force-unwrap Calendar arithmetic: cal.date(byAdding:) is
+            // legitimately Optional (returns nil on edge-case/corrupt dates) and
+            // force-unwrapping it traps the whole app. Skip gracefully instead.
+            if let latest = allDays.first,
+               let yesterday = cal.date(byAdding: .day, value: -1, to: cal.startOfDay(for: Date())) {
                 if latest >= yesterday {
                     streakDays = 1
-                    for i in 1..<allDays.count {
-                        let expected = cal.date(byAdding: .day, value: -1, to: allDays[i - 1])!
+                    // stride (not 1..<count) so an empty/one-element array can't form
+                    // an invalid `1..<0` Range and trap.
+                    for i in stride(from: 1, to: allDays.count, by: 1) {
+                        guard let expected = cal.date(byAdding: .day, value: -1, to: allDays[i - 1]) else { break }
                         if cal.isDate(allDays[i], inSameDayAs: expected) { streakDays += 1 }
                         else { break }
                     }
@@ -106,8 +110,10 @@ struct StatisticsView: View {
             let asc = allDays.reversed().map { $0 }
             var maxStreak = asc.isEmpty ? 0 : 1
             var run = 1
-            for i in 1..<asc.count {
-                let expected = cal.date(byAdding: .day, value: 1, to: asc[i - 1])!
+            // stride so an empty `asc` (e.g. @Query not yet loaded) can't form an
+            // invalid `1..<0` Range and trap the whole app.
+            for i in stride(from: 1, to: asc.count, by: 1) {
+                guard let expected = cal.date(byAdding: .day, value: 1, to: asc[i - 1]) else { run = 1; continue }
                 if cal.isDate(asc[i], inSameDayAs: expected) {
                     run += 1; if run > maxStreak { maxStreak = run }
                 } else { run = 1 }
@@ -120,7 +126,9 @@ struct StatisticsView: View {
             let words = curr.reduce(0) { $0 + $1.wordCount }
             let audio = curr.reduce(0) { $0 + $1.audioDuration }
             let mins = audio / 60.0
-            let wpm = mins > 0 ? Int(Double(words) / mins) : 0
+            // Guard the Double->Int conversion: Int(non-finite or out-of-range) traps.
+            let rawWpm = mins > 0 ? Double(words) / mins : 0
+            let wpm = (rawWpm.isFinite && rawWpm >= 0 && rawWpm < Double(Int.max)) ? Int(rawWpm) : 0
 
             // --- popularHour on current ---
             var hourCounts = [Int: Int]()
