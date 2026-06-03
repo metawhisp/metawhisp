@@ -52,6 +52,10 @@ final class MeetingRecorder: ObservableObject {
 
     let mic: AudioRecordingService
     let systemAudio: SystemAudioCaptureService
+    /// AUD-008 — bumped on every start()/stop(); the async start task bails after
+    /// each suspension point if it no longer matches, so a STOP during startup can't
+    /// resurrect a recording (start the mic / set isRecording) after the fact.
+    private var startGeneration = 0
 
     private var cancellables = Set<AnyCancellable>()
 
@@ -133,6 +137,8 @@ final class MeetingRecorder: ObservableObject {
         micOnlyMode = false
         isStarting = true
         isManualMode = manualMode
+        startGeneration += 1
+        let gen = startGeneration  // AUD-008
 
         Task { [weak self] in
             guard let self else { return }
@@ -157,6 +163,7 @@ final class MeetingRecorder: ObservableObject {
                     return
                 }
                 try? await Task.sleep(for: .milliseconds(100))
+                if self.startGeneration != gen { return }  // AUD-008: stopped during startup wait
             }
 
             guard self.systemAudio.isRecording else {
@@ -164,6 +171,10 @@ final class MeetingRecorder: ObservableObject {
                 self.isStarting = false
                 return
             }
+
+            // AUD-008 — final checkpoint: if the user stopped while we waited for
+            // system audio, do NOT start the mic or mark the recording active.
+            guard self.startGeneration == gen else { return }
 
             // 3. Start microphone in parallel. If mic fails (permission denied, etc.)
             //    keep recording system audio only — the user still gets the other side.
@@ -247,6 +258,8 @@ final class MeetingRecorder: ObservableObject {
     /// two streams. `Self.mix` is still available for callers that need a
     /// single-channel mixdown (e.g. `assembleMeetingTranscriptFromLive` tail).
     func stop() -> (mic: [Float], system: [Float]) {
+        startGeneration += 1  // AUD-008: invalidate any in-flight start task
+
         // Disarm backstops first — otherwise a stale silence-timer fire after manual
         // stop could try to fire `onAutoStop` against an already-stopped recorder.
         disarmAutoStopGuards()

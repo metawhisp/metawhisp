@@ -23,6 +23,10 @@ final class SystemAudioCaptureService: NSObject, ObservableObject, AudioSource {
     private var stream: SCStream?
     private let audioQueue = DispatchQueue(label: "com.metawhisp.system-audio", qos: .userInteractive)
     private var streamOutput: AudioStreamOutput?
+    /// AUD-008 — bumped on every start()/stop(). The async setup task captures its
+    /// value and bails after each suspension point if it no longer matches, so a
+    /// STOP during setup cannot resurrect a recording the user already cancelled.
+    private var startGeneration = 0
 
     /// Based on Screen Recording permission — system audio via SCStream needs it.
     var hasPermission: Bool { CGPreflightScreenCaptureAccess() }
@@ -40,6 +44,8 @@ final class SystemAudioCaptureService: NSObject, ObservableObject, AudioSource {
         samples.reserveCapacity(Int(targetSampleRate) * 300) // ~5 min pre-alloc
         lastError = nil
         isStarting = true
+        startGeneration += 1
+        let gen = startGeneration  // AUD-008
 
         // ScreenCaptureKit setup happens async. If permission is missing,
         // SCShareableContent will either trigger the dialog or throw.
@@ -51,6 +57,7 @@ final class SystemAudioCaptureService: NSObject, ObservableObject, AudioSource {
             if !CGPreflightScreenCaptureAccess() {
                 NSLog("[SystemAudio] No Screen Recording permission — requesting...")
                 _ = await PermissionsService.shared.requestScreenRecording()
+                guard self.startGeneration == gen else { return }  // AUD-008: stopped during permission prompt
 
                 if !CGPreflightScreenCaptureAccess() {
                     // Keep the popover open — surface error in UI with a clickable hint.
@@ -65,6 +72,13 @@ final class SystemAudioCaptureService: NSObject, ObservableObject, AudioSource {
 
             do {
                 try await self.setupStream()
+                guard self.startGeneration == gen else {
+                    // AUD-008 — user stopped during setup; tear down the stream we just made.
+                    try? await self.stream?.stopCapture()
+                    self.stream = nil
+                    self.streamOutput = nil
+                    return
+                }
                 self.isRecording = true
                 self.isStarting = false
                 NSLog("[SystemAudio] ✅ Capture started via ScreenCaptureKit")
@@ -89,6 +103,8 @@ final class SystemAudioCaptureService: NSObject, ObservableObject, AudioSource {
 
     /// Stop capturing and return collected PCM samples.
     func stop() -> [Float] {
+        startGeneration += 1  // AUD-008: invalidate any in-flight start
+        isStarting = false
         Task {
             try? await stream?.stopCapture()
         }
