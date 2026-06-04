@@ -45,7 +45,7 @@ final class WhisperKitEngine: TranscriptionEngine, @unchecked Sendable {
 
         let startTime = CFAbsoluteTimeGetCurrent()
 
-        let lang = (language == nil || language == "auto") ? nil : language
+        let lang = TranscriptionLanguageResolver.resolveLanguage(language)
 
         // Encode dictionary words as prompt tokens for better recognition
         var promptTokens: [Int]?
@@ -64,8 +64,9 @@ final class WhisperKitEngine: TranscriptionEngine, @unchecked Sendable {
             task: .transcribe,
             language: lang,
             temperature: 0,
-            usePrefillPrompt: lang != nil || promptTokens != nil,
+            usePrefillPrompt: true,
             usePrefillCache: lang != nil,
+            detectLanguage: TranscriptionLanguageResolver.whisperDetectLanguage(language: lang),
             skipSpecialTokens: true,
             wordTimestamps: false,
             promptTokens: promptTokens,

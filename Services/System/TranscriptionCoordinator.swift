@@ -264,14 +264,20 @@ final class TranscriptionCoordinator: ObservableObject {
         NSLog("[Coordinator] Transcribing %d samples via %@...", samples.count, currentEngine.name)
 
         do {
-            let lang = settings.transcriptionLanguage == "auto" ? nil : settings.transcriptionLanguage
+            let lang = TranscriptionLanguageResolver.resolveLanguage(settings.transcriptionLanguage)
             var promptWords = correctionDictionary.map { Array(Set($0.corrections.values)) } ?? []
             // 2026-05-28: bias the decoder toward our known brand glossary
             // (Brevo/MailChimp/Claude/ChatGPT/Ahrefs/…) so production
             // mangles seen in meeting transcripts ('Бриво', etc.) get less
             // weight. Whisper-family uses this as `initial_prompt`; CF
             // Worker forwards to Deepgram `keyterm`.
-            promptWords.append(contentsOf: BrandGlossary.canonicalNames())
+            // RU→EN fix: this glossary is English-only, so injecting it on
+            // non-English / auto-detect audio biases decoding toward English.
+            // Gate it by language (brand names elsewhere are fixed post-hoc by
+            // BrandGlossary.applyCorrections below).
+            if TranscriptionLanguageResolver.shouldIncludeBrandGlossary(language: lang) {
+                promptWords.append(contentsOf: BrandGlossary.canonicalNames())
+            }
             let result = try await currentEngine.transcribe(audioSamples: samples, language: lang, promptWords: promptWords)
 
             var trimmed = result.text.trimmingCharacters(in: .whitespacesAndNewlines)
