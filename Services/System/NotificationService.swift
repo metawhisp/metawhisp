@@ -49,7 +49,7 @@ final class NotificationService: NSObject, ObservableObject {
             title: title,
             body: String(task.taskDescription.prefix(200)),
             onTap: {
-                NSApp.activate(ignoringOtherApps: true)
+                NSApp.activate()
                 NotificationCenter.default.post(
                     name: .switchMainTab,
                     object: MainWindowView.SidebarTab.tasks
@@ -71,7 +71,7 @@ final class NotificationService: NSObject, ObservableObject {
             title: "\(appName) detected",
             body: body,
             onTap: {
-                NSApp.activate(ignoringOtherApps: true)
+                NSApp.activate()
             }
         )
         MWNotificationStack.shared.push(note)
@@ -119,7 +119,7 @@ final class NotificationService: NSObject, ObservableObject {
             title: advice.category.capitalized,
             body: String(advice.content.prefix(200)),
             onTap: {
-                NSApp.activate(ignoringOtherApps: true)
+                NSApp.activate()
                 NotificationCenter.default.post(
                     name: .switchMainTab,
                     object: MainWindowView.SidebarTab.tasks

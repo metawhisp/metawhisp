@@ -356,7 +356,7 @@ final class WeeklyPatternDetector: ObservableObject {
             title: "Weekly patterns ready",
             body: body,
             onTap: {
-                NSApp.activate(ignoringOtherApps: true)
+                NSApp.activate()
                 NotificationCenter.default.post(
                     name: .switchMainTab,
                     object: MainWindowView.SidebarTab.tasks

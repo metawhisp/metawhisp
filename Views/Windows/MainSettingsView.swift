@@ -928,8 +928,10 @@ struct MainSettingsView: View {
         panel.allowedContentTypes = [.audio]
         panel.allowsMultipleSelection = false
         panel.message = "Choose a sound file for \(role)"
-        // Activate so the panel renders in front, not hidden behind windows.
-        NSApp.activate(ignoringOtherApps: true)
+        // NO NSApp.activate(ignoringOtherApps:) — its aggressive form throws the
+        // user to the main window's bound Space (see MainWindowController). The
+        // panel keys itself from the already-foreground window — same as the
+        // Obsidian-vault picker below, which has no activate and works fine.
         panel.begin { response in
             guard response == .OK, let url = panel.url else { return }
             // Copy to App Support so file persists
@@ -2258,10 +2260,10 @@ struct MainSettingsView: View {
         panel.canChooseDirectories = true
         panel.allowsMultipleSelection = false
         panel.canCreateDirectories = false
-        // Activate app first — on macOS Sonoma/Sequoia menu bar apps, NSOpenPanel sometimes
-        // renders BEHIND the main window if app isn't frontmost → UI appears frozen.
-        // Also use async .begin() instead of .runModal() so we don't block the main thread.
-        NSApp.activate(ignoringOtherApps: true)
+        // NO NSApp.activate(ignoringOtherApps:) — its aggressive form throws the user
+        // to the main window's bound Space (see MainWindowController). Use async .begin()
+        // (not .runModal()) so we don't block the main thread; the panel keys itself
+        // from the already-foreground window.
         panel.begin { response in
             guard response == .OK, let url = panel.url else { return }
             Task { @MainActor in settings.addIndexedFolder(url.path) }

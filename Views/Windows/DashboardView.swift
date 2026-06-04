@@ -1500,10 +1500,11 @@ private struct TomorrowCard: View {
             return
         }
 
-        // 3. notDetermined (or unknown) → request. Activate first so dialog
-        //    shows on top of the foreground window (menu-bar app quirk).
-        NSApp.activate(ignoringOtherApps: true)
-
+        // 3. notDetermined (or unknown) → request. NO NSApp.activate here:
+        //    the aggressive (ignoringOtherApps:) form yanks the user to the
+        //    main window's bound Space/display (see MainWindowController's
+        //    documented rule). The TCC permission dialog is system-presented
+        //    regardless of app activation.
         Task { @MainActor in
             let store = EKEventStore()
             let granted: Bool
