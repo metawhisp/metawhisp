@@ -1474,7 +1474,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
                     while true {
                         attempt += 1
                         do {
-                            return try await engine.transcribe(audioSamples: chunk, language: lang, promptWords: BrandGlossary.canonicalNames())
+                            return try await engine.transcribe(audioSamples: chunk, language: lang, promptWords: TranscriptionLanguageResolver.filterPromptWords(BrandGlossary.canonicalNames(), language: lang))
                         } catch {
                             NSLog("[MetaWhisp] ❌ Meeting %@ chunk %d transcribe attempt %d/2 failed: %@",
                                   label, i + 1, attempt, error.localizedDescription)
@@ -1669,7 +1669,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
 
         do {
             let lang = AppSettings.shared.transcriptionLanguage == "auto" ? nil : AppSettings.shared.transcriptionLanguage
-            let result = try await engine.transcribe(audioSamples: tailMixed, language: lang, promptWords: BrandGlossary.canonicalNames())
+            let result = try await engine.transcribe(audioSamples: tailMixed, language: lang, promptWords: TranscriptionLanguageResolver.filterPromptWords(BrandGlossary.canonicalNames(), language: lang))
             let rawText = result.text.trimmingCharacters(in: .whitespacesAndNewlines)
             // Apply the same hallucination filter as the chunked path.
             // 2026-05-28: also strip mid-text artifacts so the tail can't

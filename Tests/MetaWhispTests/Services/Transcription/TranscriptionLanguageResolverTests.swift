@@ -65,4 +65,68 @@ final class TranscriptionLanguageResolverTests: XCTestCase {
         XCTAssertFalse(TranscriptionLanguageResolver.shouldIncludeBrandGlossary(language: "de"))
         XCTAssertFalse(TranscriptionLanguageResolver.shouldIncludeBrandGlossary(language: nil))
     }
+
+    // MARK: - promptWordSafeForNonEnglish (TR-3)
+
+    func testSafeWord_asciiLatinIsUnsafe() {
+        // English brand names are exactly the tokens that bias the decoder to <|en|>.
+        XCTAssertFalse(TranscriptionLanguageResolver.promptWordSafeForNonEnglish("Brevo"))
+        XCTAssertFalse(TranscriptionLanguageResolver.promptWordSafeForNonEnglish("MailChimp"))
+        XCTAssertFalse(TranscriptionLanguageResolver.promptWordSafeForNonEnglish("ChatGPT"))
+        XCTAssertFalse(TranscriptionLanguageResolver.promptWordSafeForNonEnglish(""))
+        // Pure punctuation/digits are still ASCII → not a safe non-English seed.
+        XCTAssertFalse(TranscriptionLanguageResolver.promptWordSafeForNonEnglish("123"))
+    }
+
+    func testSafeWord_nonAsciiIsSafe() {
+        // Cyrillic and other non-ASCII words don't pull detection toward English.
+        XCTAssertTrue(TranscriptionLanguageResolver.promptWordSafeForNonEnglish("Бриво"))
+        XCTAssertTrue(TranscriptionLanguageResolver.promptWordSafeForNonEnglish("Озон"))
+        // A single non-ASCII scalar anywhere is enough (mixed token).
+        XCTAssertTrue(TranscriptionLanguageResolver.promptWordSafeForNonEnglish("Sтудия"))
+    }
+
+    // MARK: - filterPromptWords (TR-3: glossary + correction-dict gating)
+
+    func testFilterPromptWords_englishKeepsEverything() {
+        let words = ["Brevo", "MailChimp", "Бриво"]
+        XCTAssertEqual(TranscriptionLanguageResolver.filterPromptWords(words, language: "en"), words)
+        XCTAssertEqual(TranscriptionLanguageResolver.filterPromptWords(words, language: "EN"), words)
+    }
+
+    func testFilterPromptWords_nonEnglishDropsAsciiKeepsCyrillic() {
+        let words = ["Brevo", "MailChimp", "Бриво", "Озон"]
+        XCTAssertEqual(
+            TranscriptionLanguageResolver.filterPromptWords(words, language: "ru"),
+            ["Бриво", "Озон"]
+        )
+    }
+
+    func testFilterPromptWords_autoOrNilDropsAsciiBrandTokens() {
+        // The RU→EN regression path: auto-detect must NOT receive English seeds.
+        let words = ["Brevo", "Claude", "Контур"]
+        XCTAssertEqual(TranscriptionLanguageResolver.filterPromptWords(words, language: nil), ["Контур"])
+    }
+
+    func testFilterPromptWords_emptyStaysEmpty() {
+        XCTAssertTrue(TranscriptionLanguageResolver.filterPromptWords([], language: "ru").isEmpty)
+        XCTAssertTrue(TranscriptionLanguageResolver.filterPromptWords([], language: "en").isEmpty)
+    }
+
+    // MARK: - A1: integration guard against the REAL (all-English) brand glossary
+
+    func testFilterPromptWords_realGlossaryEmptyForRussianAndAuto() {
+        // The actual glossary is the production prompt source. It's 100% ASCII, so
+        // gating it on RU/auto must yield an EMPTY prompt — no EN seed. This pins
+        // the behavior so a future non-ASCII glossary addition can't silently leak.
+        let glossary = BrandGlossary.canonicalNames()
+        XCTAssertFalse(glossary.isEmpty, "precondition: glossary is non-empty")
+        XCTAssertTrue(TranscriptionLanguageResolver.filterPromptWords(glossary, language: "ru").isEmpty)
+        XCTAssertTrue(TranscriptionLanguageResolver.filterPromptWords(glossary, language: nil).isEmpty)
+    }
+
+    func testFilterPromptWords_realGlossaryFullForEnglish() {
+        let glossary = BrandGlossary.canonicalNames()
+        XCTAssertEqual(TranscriptionLanguageResolver.filterPromptWords(glossary, language: "en"), glossary)
+    }
 }

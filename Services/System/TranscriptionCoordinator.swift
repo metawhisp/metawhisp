@@ -275,7 +275,15 @@ final class TranscriptionCoordinator: ObservableObject {
 
         do {
             let lang = TranscriptionLanguageResolver.resolveLanguage(settings.transcriptionLanguage)
-            var promptWords = correctionDictionary.map { Array(Set($0.corrections.values)) } ?? []
+            // TR-3c: the correction-dictionary values are user-defined replacement
+            // targets that are usually English brand names too. Feeding ASCII/Latin
+            // words as an `initial_prompt` on non-English audio biases the decoder
+            // toward `<|en|>` exactly like the glossary does — so gate them the same
+            // way (EN → all; otherwise keep only non-ASCII words like Cyrillic).
+            var promptWords = TranscriptionLanguageResolver.filterPromptWords(
+                correctionDictionary.map { Array(Set($0.corrections.values)) } ?? [],
+                language: lang
+            )
             // 2026-05-28: bias the decoder toward our known brand glossary
             // (Brevo/MailChimp/Claude/ChatGPT/Ahrefs/…) so production
             // mangles seen in meeting transcripts ('Бриво', etc.) get less
@@ -283,8 +291,9 @@ final class TranscriptionCoordinator: ObservableObject {
             // Worker forwards to Deepgram `keyterm`.
             // RU→EN fix: this glossary is English-only, so injecting it on
             // non-English / auto-detect audio biases decoding toward English.
-            // Gate it by language (brand names elsewhere are fixed post-hoc by
-            // BrandGlossary.applyCorrections below).
+            // Gate it by language — see shouldIncludeBrandGlossary for the
+            // deliberate trade-off (non-EN brand names lose prompt bias and only
+            // unambiguous Cyrillic mangles are repaired post-hoc below).
             if TranscriptionLanguageResolver.shouldIncludeBrandGlossary(language: lang) {
                 promptWords.append(contentsOf: BrandGlossary.canonicalNames())
             }
