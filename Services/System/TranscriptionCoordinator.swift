@@ -21,10 +21,11 @@ final class TranscriptionCoordinator: ObservableObject {
     @Published var translateNext = false
 
     private let recorder: any AudioSource
-    /// Whether the on-device WhisperKit engine currently has a model loaded and
-    /// ready to transcribe. FREE-1: onboarding gates on "engine ready", not just
-    /// "model downloaded" — a downloaded-but-unloaded model still fails.
-    @Published var whisperModelLoaded: Bool = false
+    /// The on-device WhisperKit model id currently loaded and ready (nil = none).
+    /// FREE-1/FREE-7: onboarding gates on "the SELECTED model is loaded", not just
+    /// "downloaded" or "some model loaded" — downloading Tiny then Large must load
+    /// Large, not silently keep Tiny.
+    @Published var loadedWhisperModelId: String? = nil
     /// FREE-2: set true once a BYOK cloud key has validated against the provider,
     /// so the onboarding gate reacts (an @AppStorage key write doesn't publish).
     /// Onboarding-transient: onboarding has no provider switcher (so it can't go

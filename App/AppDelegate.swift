@@ -397,10 +397,34 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
 
         // Watch for engine changes to load/unload WhisperKit model dynamically
         var lastEngine = AppSettings.shared.transcriptionEngine
+        var lastSelectedModel = AppSettings.shared.selectedModel
         NotificationCenter.default.publisher(for: UserDefaults.didChangeNotification)
             .sink { [weak self] _ in
                 guard let self else { return }
                 let newEngine = AppSettings.shared.transcriptionEngine
+                // FREE-7 (beyond onboarding): selecting a different downloaded
+                // model in Settings must reload the engine — otherwise dictation
+                // keeps using the previously-loaded model while history records
+                // the newly-selected one.
+                let newModel = AppSettings.shared.selectedModel
+                if newModel != lastSelectedModel {
+                    lastSelectedModel = newModel
+                    if newEngine != "cloud" {
+                        Task { @MainActor in
+                            guard self.modelManager.isDownloaded(newModel),
+                                  let variant = self.modelManager.variantName(newModel),
+                                  let engine = self.whisperEngine,
+                                  self.coordinator.loadedWhisperModelId != newModel else { return }
+                            do {
+                                try await engine.loadModel(variant, progressHandler: nil)
+                                self.coordinator.loadedWhisperModelId = newModel
+                                NSLog("[MetaWhisp] ✅ Reloaded on model select: \(variant)")
+                            } catch {
+                                NSLog("[MetaWhisp] ❌ Reload-on-select failed: \(error)")
+                            }
+                        }
+                    }
+                }
                 guard newEngine != lastEngine else { return }
                 lastEngine = newEngine
                 Task { @MainActor in
@@ -409,19 +433,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
                         await self.whisperEngine?.unloadModel()
                         self.whisperEngine = nil
                         self.coordinator.whisperEngine = nil
-                        self.coordinator.whisperModelLoaded = false
+                        self.coordinator.loadedWhisperModelId = nil
                     } else {
                         NSLog("[MetaWhisp] 💻 Switched to On-device — creating WhisperKit engine...")
                         let engine = WhisperKitEngine()
                         self.whisperEngine = engine
                         self.coordinator.whisperEngine = engine
-                        self.coordinator.whisperModelLoaded = false
+                        self.coordinator.loadedWhisperModelId = nil
                         let modelId = AppSettings.shared.selectedModel
                         if self.modelManager.isDownloaded(modelId),
                            let variant = self.modelManager.variantName(modelId) {
                             do {
                                 try await engine.loadModel(variant, progressHandler: nil)
-                                self.coordinator.whisperModelLoaded = true
+                                self.coordinator.loadedWhisperModelId = modelId
                                 NSLog("[MetaWhisp] ✅ Model loaded successfully")
                             } catch {
                                 NSLog("[MetaWhisp] ❌ Failed to load model: \(error)")
@@ -447,11 +471,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
                 guard self.modelManager.isDownloaded(modelId),
                       let variant = self.modelManager.variantName(modelId),
                       let engine = self.whisperEngine,
-                      !engine.isModelLoaded else { return }
+                      self.coordinator.loadedWhisperModelId != modelId else { return }
                 Task { @MainActor in
                     do {
                         try await engine.loadModel(variant, progressHandler: nil)
-                        self.coordinator.whisperModelLoaded = true
+                        self.coordinator.loadedWhisperModelId = modelId
                         NSLog("[MetaWhisp] ✅ Auto-loaded downloaded model: \(variant)")
                     } catch {
                         NSLog("[MetaWhisp] ❌ Auto-load failed: \(error)")
@@ -573,7 +597,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
                 NSLog("[MetaWhisp] Loading model: \(variant)...")
                 do {
                     try await engine.loadModel(variant, progressHandler: nil)
-                    coordinator.whisperModelLoaded = true
+                    coordinator.loadedWhisperModelId = modelId
                     NSLog("[MetaWhisp] ✅ Model loaded successfully")
                     if coordinator.lastError?.contains("model") == true {
                         coordinator.lastError = nil

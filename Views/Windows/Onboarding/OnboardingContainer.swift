@@ -4,6 +4,7 @@ import SwiftUI
 struct OnboardingContainer: View {
     @State private var page = 0
     @State private var appeared = false
+    @State private var setupDeferred = false
     @ObservedObject var coordinator: TranscriptionCoordinator
     @ObservedObject var modelManager: ModelManagerService
     @ObservedObject private var settings = AppSettings.shared
@@ -49,7 +50,7 @@ struct OnboardingContainer: View {
         let path: OnboardingReadiness.Path = settings.transcriptionEngine == "cloud" ? .cloud : .local
         return OnboardingReadiness.isReady(
             path: path,
-            localModelReady: coordinator.whisperModelLoaded,
+            localModelReady: coordinator.loadedWhisperModelId == settings.selectedModel,
             cloudKeyValidated: coordinator.cloudKeyValidated,
             isPro: license.isPro
         )
@@ -58,7 +59,9 @@ struct OnboardingContainer: View {
     /// Block leaving the setup page (2) AND final completion until ready —
     /// owned here so the bottom NEXT can't bypass a page-level check.
     private var nextBlocked: Bool {
-        (page == 2 || page == totalPages - 1) && !setupReady
+        // FREE-9: "Set up later" lets the user finish without an engine; the
+        // first dictation then shows the existing "set up transcription" error.
+        (page == 2 || page == totalPages - 1) && !setupReady && !setupDeferred
     }
 
     private func goNext() {
@@ -86,6 +89,19 @@ struct OnboardingContainer: View {
 
             HStack {
                 OnboardingDots(total: totalPages, current: page)
+                if nextBlocked {
+                    Text("Set up a working engine, or")
+                        .font(.system(size: 9, design: .monospaced))
+                        .foregroundStyle(MW.textMuted)
+                        .padding(.leading, MW.sp8)
+                    Button { setupDeferred = true } label: {
+                        Text("set up later")
+                            .font(.system(size: 9, design: .monospaced))
+                            .underline()
+                            .foregroundStyle(MW.textMuted)
+                    }
+                    .buttonStyle(.plain)
+                }
                 Spacer()
 
                 if page > 0 {

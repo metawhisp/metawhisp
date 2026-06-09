@@ -171,6 +171,11 @@ struct OnboardingModelPage: View {
                     .padding(10)
                     .mwCard(radius: MW.rSmall, elevation: .flat)
                     .disabled(validating)
+                    .onChange(of: cloudKey) { _, _ in
+                        // FREE-10: editing the key invalidates a prior ✓.
+                        coordinator.cloudKeyValidated = false
+                        validationError = nil
+                    }
 
                 Button {
                     verifyCloudKey()
@@ -195,7 +200,11 @@ struct OnboardingModelPage: View {
     /// FREE-2: actually validate the key against the provider before counting
     /// cloud as ready (was a no-op that just flipped the engine to "cloud").
     private func verifyCloudKey() {
-        let provider = AppSettings.shared.cloudTranscriptionProvider
+        // FREE-6: pick the provider from the key prefix so an OpenAI sk-… key
+        // isn't validated against Groq (and vice versa), and align the app's
+        // transcription provider to it.
+        let provider = CloudKeyValidator.detectProvider(key: cloudKey)
+        AppSettings.shared.cloudTranscriptionProvider = provider
         validating = true
         validationError = nil
         coordinator.cloudKeyValidated = false

@@ -32,10 +32,4 @@ final class OnboardingReadinessTests: XCTestCase {
         XCTAssertFalse(OnboardingReadiness.isReady(path: .cloud, localModelReady: false, cloudKeyValidated: false, isPro: false))
     }
 
-    // MARK: - Pro
-
-    func testPro_readyOnlyWhenActive() {
-        XCTAssertTrue(OnboardingReadiness.isReady(path: .pro, localModelReady: false, cloudKeyValidated: false, isPro: true))
-        XCTAssertFalse(OnboardingReadiness.isReady(path: .pro, localModelReady: false, cloudKeyValidated: false, isPro: false))
-    }
 }

@@ -17,6 +17,17 @@ enum CloudKeyValidator {
         }
     }
 
+    /// FREE-6: infer the provider from the key's prefix so a BYOK user isn't
+    /// validated against the wrong endpoint — OpenAI keys are `sk-…`
+    /// (incl. `sk-proj-…`), Groq keys are `gsk_…`. Unknown formats default to
+    /// groq (the app's default provider).
+    static func detectProvider(key: String) -> String {
+        let k = key.trimmingCharacters(in: .whitespacesAndNewlines)
+        if k.hasPrefix("gsk_") { return "groq" }
+        if k.hasPrefix("sk-")  { return "openai" }
+        return "groq"
+    }
+
     /// `true` iff the key authenticates (HTTP 200) against the provider. Empty
     /// key, network error, timeout, or non-200 → `false` (never let an unproven
     /// key pass the onboarding gate).

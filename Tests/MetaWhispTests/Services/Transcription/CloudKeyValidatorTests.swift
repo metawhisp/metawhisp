@@ -22,4 +22,19 @@ final class CloudKeyValidatorTests: XCTestCase {
         let ok = await CloudKeyValidator.validate(key: "   ", provider: "groq")
         XCTAssertFalse(ok)
     }
+
+    // FREE-6 — provider auto-detect by key prefix.
+    func testDetectProvider_openAIPrefixes() {
+        XCTAssertEqual(CloudKeyValidator.detectProvider(key: "sk-abc123"), "openai")
+        XCTAssertEqual(CloudKeyValidator.detectProvider(key: "sk-proj-abc123"), "openai")
+    }
+
+    func testDetectProvider_groqPrefix() {
+        XCTAssertEqual(CloudKeyValidator.detectProvider(key: "gsk_abc123"), "groq")
+        XCTAssertEqual(CloudKeyValidator.detectProvider(key: "  gsk_xyz  "), "groq")
+    }
+
+    func testDetectProvider_unknownDefaultsToGroq() {
+        XCTAssertEqual(CloudKeyValidator.detectProvider(key: "weirdkey"), "groq")
+    }
 }

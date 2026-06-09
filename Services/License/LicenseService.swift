@@ -135,6 +135,11 @@ final class LicenseService: ObservableObject {
                 plan = license.plan
                 KeychainHelper.save(key: "com.metawhisp.licenseKey", value: license.licenseKey)
                 KeychainHelper.save(key: "com.metawhisp.proPlan", value: license.plan)
+                // Match activate()/init: a verified Pro user runs on cloud (skips
+                // the local model) and onboarding readiness reacts to the switch.
+                if AppSettings.shared.transcriptionEngine == "ondevice" {
+                    AppSettings.shared.transcriptionEngine = "cloud"
+                }
                 if let sub = result.subscription, let end = sub.currentPeriodEnd {
                     renewalDate = Date(timeIntervalSince1970: end)
                     cancelAtPeriodEnd = sub.cancelAtPeriodEnd ?? false

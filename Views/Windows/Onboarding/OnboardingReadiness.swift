@@ -11,14 +11,12 @@ enum OnboardingReadiness {
     /// Which transcription path the user picked on the setup page.
     enum Path: Equatable {
         case local   // on-device WhisperKit model
-        case cloud   // bring-your-own-key (OpenAI/Groq-compatible)
-        case pro     // MetaWhisp Pro proxy
+        case cloud   // bring-your-own-key, or the Pro proxy (both use the cloud engine)
     }
 
     /// Ready iff the chosen path can transcribe right now:
     /// - `.local` → the on-device model is loaded and ready (not just on disk);
-    /// - `.cloud` → a validated API key is present, or Pro covers cloud;
-    /// - `.pro`   → Pro is active.
+    /// - `.cloud` → a validated API key is present, or Pro covers cloud.
     static func isReady(
         path: Path,
         localModelReady: Bool,
@@ -28,7 +26,6 @@ enum OnboardingReadiness {
         switch path {
         case .local: return localModelReady
         case .cloud: return cloudKeyValidated || isPro
-        case .pro:   return isPro
         }
     }
 }
