@@ -110,11 +110,19 @@ final class ModelManagerService: ObservableObject {
                 await MainActor.run {
                     Self.log.info("Download complete: \(url.path)")
                     manager.downloadProgress = 1.0
-                    manager.phase = .done
                     manager.isDownloading = false
                     manager.currentDownloadModel = nil
                     manager.downloadSpeed = ""
                     manager.refreshDownloaded()
+                    // FREE-4: only mark done if the model is actually on disk; an
+                    // interrupted/partial download must surface as failed + retry,
+                    // not a false "ready".
+                    if manager.isDownloaded(modelId) {
+                        manager.phase = .done
+                    } else {
+                        manager.phase = .failed("Download finished but model files are missing — tap to retry")
+                        Self.log.error("Reported success but model not on disk: \(variant)")
+                    }
                 }
             } catch {
                 await MainActor.run {

@@ -5,6 +5,9 @@ struct OnboardingContainer: View {
     @State private var page = 0
     @State private var appeared = false
     @ObservedObject var coordinator: TranscriptionCoordinator
+    @ObservedObject var modelManager: ModelManagerService
+    @ObservedObject private var settings = AppSettings.shared
+    @ObservedObject private var license = LicenseService.shared
     var onComplete: () -> Void
 
     private let totalPages = 7
@@ -15,7 +18,7 @@ struct OnboardingContainer: View {
                 switch page {
                 case 0: OnboardingWelcomePage(appeared: appeared)
                 case 1: OnboardingFeaturesPage(appeared: appeared)
-                case 2: OnboardingModelPage(appeared: appeared)
+                case 2: OnboardingModelPage(appeared: appeared, modelManager: modelManager, coordinator: coordinator)
                 case 3: OnboardingPermissionsPage(appeared: appeared)
                 case 4: OnboardingTryItPage(appeared: appeared, coordinator: coordinator)
                 case 5: OnboardingMenuBarPage(appeared: appeared)
@@ -40,7 +43,26 @@ struct OnboardingContainer: View {
         }
     }
 
+    /// FREE-1/2: gate on a working transcription engine. A path counts as ready
+    /// only when it can actually transcribe (see `OnboardingReadiness`).
+    private var setupReady: Bool {
+        let path: OnboardingReadiness.Path = settings.transcriptionEngine == "cloud" ? .cloud : .local
+        return OnboardingReadiness.isReady(
+            path: path,
+            localModelReady: coordinator.whisperModelLoaded,
+            cloudKeyValidated: coordinator.cloudKeyValidated,
+            isPro: license.isPro
+        )
+    }
+
+    /// Block leaving the setup page (2) AND final completion until ready —
+    /// owned here so the bottom NEXT can't bypass a page-level check.
+    private var nextBlocked: Bool {
+        (page == 2 || page == totalPages - 1) && !setupReady
+    }
+
     private func goNext() {
+        guard !nextBlocked else { return }
         if page < totalPages - 1 {
             appeared = false
             withAnimation(.easeInOut(duration: 0.2)) { page += 1 }
@@ -84,8 +106,10 @@ struct OnboardingContainer: View {
                         .padding(.horizontal, MW.sp24)
                         .padding(.vertical, 10)
                         .background(Color.white)
+                        .opacity(nextBlocked ? 0.4 : 1)
                 }
                 .buttonStyle(.plain)
+                .disabled(nextBlocked)
             }
             .padding(.horizontal, MW.sp24)
             .padding(.vertical, MW.sp16)

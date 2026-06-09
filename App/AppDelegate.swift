@@ -388,6 +388,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         // window explicitly via the menubar icon → Settings/Dashboard/etc.
         if !AppSettings.shared.hasCompletedOnboarding {
             onboardingWindow.coordinator = coordinator
+            onboardingWindow.modelManager = modelManager
             onboardingWindow.show()
         }
 
@@ -408,22 +409,52 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
                         await self.whisperEngine?.unloadModel()
                         self.whisperEngine = nil
                         self.coordinator.whisperEngine = nil
+                        self.coordinator.whisperModelLoaded = false
                     } else {
                         NSLog("[MetaWhisp] 💻 Switched to On-device — creating WhisperKit engine...")
                         let engine = WhisperKitEngine()
                         self.whisperEngine = engine
                         self.coordinator.whisperEngine = engine
+                        self.coordinator.whisperModelLoaded = false
                         let modelId = AppSettings.shared.selectedModel
                         if self.modelManager.isDownloaded(modelId),
                            let variant = self.modelManager.variantName(modelId) {
                             do {
                                 try await engine.loadModel(variant, progressHandler: nil)
+                                self.coordinator.whisperModelLoaded = true
                                 NSLog("[MetaWhisp] ✅ Model loaded successfully")
                             } catch {
                                 NSLog("[MetaWhisp] ❌ Failed to load model: \(error)")
                                 self.coordinator.lastError = "Failed to load model: \(error.localizedDescription)"
                             }
                         }
+                    }
+                }
+            }
+            .store(in: &cancellables)
+
+        // FREE-1: a model finishing download must also be LOADED into the engine.
+        // The engine-change observer above only fires on an engine SWITCH;
+        // onboarding sets "ondevice" (already the default), so a freshly-
+        // downloaded model would sit on disk unloaded → "Engine not ready" on the
+        // first dictation. Auto-load it here and publish readiness.
+        modelManager.$phase
+            .receive(on: RunLoop.main)
+            .sink { [weak self] phase in
+                guard let self, phase == .done else { return }
+                guard AppSettings.shared.transcriptionEngine != "cloud" else { return }
+                let modelId = AppSettings.shared.selectedModel
+                guard self.modelManager.isDownloaded(modelId),
+                      let variant = self.modelManager.variantName(modelId),
+                      let engine = self.whisperEngine,
+                      !engine.isModelLoaded else { return }
+                Task { @MainActor in
+                    do {
+                        try await engine.loadModel(variant, progressHandler: nil)
+                        self.coordinator.whisperModelLoaded = true
+                        NSLog("[MetaWhisp] ✅ Auto-loaded downloaded model: \(variant)")
+                    } catch {
+                        NSLog("[MetaWhisp] ❌ Auto-load failed: \(error)")
                     }
                 }
             }
@@ -542,6 +573,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
                 NSLog("[MetaWhisp] Loading model: \(variant)...")
                 do {
                     try await engine.loadModel(variant, progressHandler: nil)
+                    coordinator.whisperModelLoaded = true
                     NSLog("[MetaWhisp] ✅ Model loaded successfully")
                     if coordinator.lastError?.contains("model") == true {
                         coordinator.lastError = nil

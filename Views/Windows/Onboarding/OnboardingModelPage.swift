@@ -3,9 +3,12 @@ import SwiftUI
 /// Screen 2: Choose transcription model — Local / Cloud / Pro.
 struct OnboardingModelPage: View {
     let appeared: Bool
+    @ObservedObject var modelManager: ModelManagerService
+    @ObservedObject var coordinator: TranscriptionCoordinator
     @State private var selected: Tab = .local
-    @State private var downloadProgress: Double? = nil
-    @State private var downloadDone = false
+    @State private var cloudKey = ""
+    @State private var validating = false
+    @State private var validationError: String?
 
     enum Tab: String { case local, cloud, pro }
 
@@ -83,34 +86,39 @@ struct OnboardingModelPage: View {
             Text("100% private — audio never leaves your Mac")
                 .font(MW.monoSm).foregroundStyle(MW.textSecondary)
 
-            modelCard(
-                name: "Large V3 Turbo",
-                size: "~950 MB",
-                badge: "RECOMMENDED",
-                badgeColor: MW.idle
-            )
+            modelCard(modelId: "large-v3-turbo", name: "Large V3 Turbo", size: "~950 MB",
+                      badge: "RECOMMENDED", badgeColor: MW.idle)
+            modelCard(modelId: "tiny", name: "Tiny", size: "~40 MB",
+                      badge: "FAST", badgeColor: MW.textMuted)
 
-            modelCard(
-                name: "Tiny",
-                size: "~40 MB",
-                badge: "FAST",
-                badgeColor: MW.textMuted
-            )
-
-            if let progress = downloadProgress {
+            // Live state from the real downloader.
+            if modelManager.isDownloading || modelManager.phase == .verifying {
                 VStack(spacing: 6) {
-                    ProgressView(value: progress)
-                        .tint(MW.idle)
-                    Text(downloadDone ? "✓ Ready" : "Downloading model...")
+                    ProgressView(value: modelManager.downloadProgress).tint(MW.idle)
+                    Text(progressLabel)
                         .font(.system(size: 10, design: .monospaced))
-                        .foregroundStyle(downloadDone ? MW.idle : MW.textMuted)
+                        .foregroundStyle(MW.textMuted)
                 }
+            } else if case .failed(let msg) = modelManager.phase {
+                Text("Download failed — tap DOWNLOAD to retry.")
+                    .font(.system(size: 10, design: .monospaced))
+                    .foregroundStyle(MW.recording)
+                    .help(msg)
             }
         }
     }
 
-    private func modelCard(name: String, size: String, badge: String, badgeColor: Color) -> some View {
-        HStack {
+    private var progressLabel: String {
+        if modelManager.phase == .verifying { return "Verifying model…" }
+        let pct = Int((modelManager.downloadProgress * 100).rounded())
+        let speed = modelManager.downloadSpeed.isEmpty ? "" : " · \(modelManager.downloadSpeed)"
+        return "Downloading model… \(pct)%\(speed)"
+    }
+
+    private func modelCard(modelId: String, name: String, size: String, badge: String, badgeColor: Color) -> some View {
+        let isDone = modelManager.isDownloaded(modelId)
+        let isThis = modelManager.isDownloading && modelManager.currentDownloadModel == modelId
+        return HStack {
             VStack(alignment: .leading, spacing: 3) {
                 HStack(spacing: 8) {
                     Text(name).font(.system(size: 12, weight: .medium, design: .monospaced))
@@ -124,35 +132,29 @@ struct OnboardingModelPage: View {
             }
             Spacer()
             Button {
-                startDownload()
+                startLocalModel(modelId)
             } label: {
-                Text(downloadDone ? "✓" : "DOWNLOAD")
+                Text(isDone ? "✓" : (isThis ? "…" : "DOWNLOAD"))
                     .font(.system(size: 9, weight: .bold, design: .monospaced)).tracking(0.5)
-                    .foregroundStyle(downloadDone ? MW.idle : .black)
+                    .foregroundStyle(isDone ? MW.idle : .black)
                     .padding(.horizontal, 12).padding(.vertical, 6)
-                    .background(downloadDone ? .clear : Color.white)
-                    .overlay(downloadDone ? Rectangle().stroke(MW.idle, lineWidth: MW.hairline) : nil)
+                    .background(isDone ? .clear : Color.white)
+                    .overlay(isDone ? Rectangle().stroke(MW.idle, lineWidth: MW.hairline) : nil)
             }
             .buttonStyle(.plain)
-            .disabled(downloadDone)
+            .disabled(isDone || modelManager.isDownloading)
         }
         .padding(12)
         .mwCard(radius: MW.rSmall, elevation: .flat)
     }
 
-    private func startDownload() {
-        downloadProgress = 0
-        // TODO: wire up real ModelManagerService.download()
-        // For now simulate progress
-        Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { t in
-            if let p = downloadProgress, p < 1.0 {
-                downloadProgress = min(1.0, p + 0.02)
-            } else {
-                t.invalidate()
-                downloadDone = true
-                AppSettings.shared.transcriptionEngine = "ondevice"
-            }
-        }
+    /// FREE-1: real on-device model download (replaces a fake `Timer`). Pins the
+    /// model + on-device engine so the onboarding readiness gate only goes ready
+    /// once the model is actually on disk.
+    private func startLocalModel(_ modelId: String) {
+        AppSettings.shared.selectedModel = modelId
+        AppSettings.shared.transcriptionEngine = "ondevice"
+        modelManager.startDownload(modelId)
     }
 
     // MARK: - Cloud
@@ -163,22 +165,53 @@ struct OnboardingModelPage: View {
                 .font(MW.monoSm).foregroundStyle(MW.textSecondary)
 
             HStack(spacing: 8) {
-                TextField("API Key", text: .constant(""))
+                SecureField("API Key", text: $cloudKey)
                     .textFieldStyle(.plain)
                     .font(.system(size: 12, design: .monospaced))
                     .padding(10)
                     .mwCard(radius: MW.rSmall, elevation: .flat)
+                    .disabled(validating)
 
                 Button {
-                    AppSettings.shared.transcriptionEngine = "cloud"
+                    verifyCloudKey()
                 } label: {
-                    Text("VERIFY")
+                    Text(coordinator.cloudKeyValidated ? "✓" : (validating ? "…" : "VERIFY"))
                         .font(.system(size: 9, weight: .bold, design: .monospaced)).tracking(0.5)
-                        .foregroundStyle(.black)
+                        .foregroundStyle(coordinator.cloudKeyValidated ? MW.idle : .black)
                         .padding(.horizontal, 12).padding(.vertical, 8)
-                        .background(Color.white)
+                        .background(coordinator.cloudKeyValidated ? .clear : Color.white)
+                        .overlay(coordinator.cloudKeyValidated ? Rectangle().stroke(MW.idle, lineWidth: MW.hairline) : nil)
                 }
                 .buttonStyle(.plain)
+                .disabled(validating || cloudKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            }
+
+            if let err = validationError {
+                Text(err).font(.system(size: 10, design: .monospaced)).foregroundStyle(MW.recording)
+            }
+        }
+    }
+
+    /// FREE-2: actually validate the key against the provider before counting
+    /// cloud as ready (was a no-op that just flipped the engine to "cloud").
+    private func verifyCloudKey() {
+        let provider = AppSettings.shared.cloudTranscriptionProvider
+        validating = true
+        validationError = nil
+        coordinator.cloudKeyValidated = false
+        Task { @MainActor in
+            let ok = await CloudKeyValidator.validate(key: cloudKey, provider: provider)
+            validating = false
+            if ok {
+                if provider == "openai" {
+                    AppSettings.shared.openaiKey = cloudKey
+                } else {
+                    AppSettings.shared.groqKey = cloudKey
+                }
+                AppSettings.shared.transcriptionEngine = "cloud"
+                coordinator.cloudKeyValidated = true
+            } else {
+                validationError = "Key didn't validate — check it and try again."
             }
         }
     }

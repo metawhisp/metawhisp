@@ -197,11 +197,13 @@ final class WhisperKitEngine: TranscriptionEngine, @unchecked Sendable {
 // Shared transcription errors (used by WhisperKitEngine + CloudWhisperEngine)
 enum TranscriptionError: LocalizedError {
     case modelNotLoaded
+    case noAPIKey
     case transcriptionFailed(String)
 
     var errorDescription: String? {
         switch self {
         case .modelNotLoaded: "No model loaded. Download a model first."
+        case .noAPIKey: "No API key set — add one in Settings, or upgrade to Pro."
         case .transcriptionFailed(let msg): "Transcription failed: \(msg)"
         }
     }

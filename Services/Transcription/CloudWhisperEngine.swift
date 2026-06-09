@@ -74,7 +74,7 @@ final class CloudWhisperEngine: TranscriptionEngine, @unchecked Sendable {
         }
 
         guard !apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-            throw TranscriptionError.modelNotLoaded
+            throw TranscriptionError.noAPIKey
         }
 
         return try await transcribeDirect(audioSamples: audioSamples, language: language, promptWords: promptWords, provider: provider, apiKey: apiKey)

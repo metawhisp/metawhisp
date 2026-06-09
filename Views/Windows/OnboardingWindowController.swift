@@ -6,6 +6,7 @@ import SwiftUI
 final class OnboardingWindowController {
     private var window: NSWindow?
     var coordinator: TranscriptionCoordinator?
+    var modelManager: ModelManagerService?
 
     func show() {
         if let window, window.isVisible {
@@ -13,12 +14,12 @@ final class OnboardingWindowController {
             return
         }
 
-        guard let coordinator else {
-            NSLog("[Onboarding] No coordinator — skipping")
+        guard let coordinator, let modelManager else {
+            NSLog("[Onboarding] No coordinator/modelManager — skipping")
             return
         }
 
-        let onboardingView = OnboardingContainer(coordinator: coordinator) {
+        let onboardingView = OnboardingContainer(coordinator: coordinator, modelManager: modelManager) {
             self.complete()
         }
 

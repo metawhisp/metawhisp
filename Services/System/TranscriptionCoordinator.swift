@@ -21,6 +21,15 @@ final class TranscriptionCoordinator: ObservableObject {
     @Published var translateNext = false
 
     private let recorder: any AudioSource
+    /// Whether the on-device WhisperKit engine currently has a model loaded and
+    /// ready to transcribe. FREE-1: onboarding gates on "engine ready", not just
+    /// "model downloaded" — a downloaded-but-unloaded model still fails.
+    @Published var whisperModelLoaded: Bool = false
+    /// FREE-2: set true once a BYOK cloud key has validated against the provider,
+    /// so the onboarding gate reacts (an @AppStorage key write doesn't publish).
+    /// Onboarding-transient: onboarding has no provider switcher (so it can't go
+    /// stale there) and this flag is not consulted after onboarding completes.
+    @Published var cloudKeyValidated: Bool = false
     var whisperEngine: WhisperKitEngine?
     private let cloudEngine = CloudWhisperEngine()
     private let textInserter: TextInsertionService
