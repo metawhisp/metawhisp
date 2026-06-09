@@ -13,36 +13,21 @@ struct MeetingCoachView: View {
     /// Closure to fire when the user clicks the STOP pill in the header.
     /// Wired by the window controller to `AppDelegate.toggleMeetingRecording`.
     var onStop: (() -> Void)?
-    /// Callback that publishes the actual rendered frame of the visible card
-    /// (including its shadow envelope) so the enclosing `ClickThroughHostingView`
-    /// can match its tracking area to it. Wired by `MeetingCoachWindowController`.
-    /// Without this, clicks in the empty space inside the panel but outside the
-    /// pill still got swallowed (user-reported «огромные края кликабельные»
-    /// 2026-05-23).
-    var onCardFrameChange: ((CGRect) -> Void)?
-
     var body: some View {
-        // Outer container fills the entire NSHostingView so the SwiftUI canvas
-        // matches the window content rect (540×440). Without this, SwiftUI
-        // sizes the root to intrinsic content (pill + padding only), and the
-        // 28-radius shadow rendered beyond that boundary gets clipped by the
-        // transparent window edge — visible as straight shadow cut-offs in
-        // the screenshot user reported 2026-05-12. With maxWidth/maxHeight
-        // .infinity, the shadow extends freely inside the full canvas.
-        VStack {
-            Spacer(minLength: 0)
-            HStack {
-                Spacer(minLength: 0)
-                pillContent
-                Spacer(minLength: 0)
-            }
-            Spacer(minLength: 0)
+        // Just the card, sized to its content. The drop shadow + envelope live
+        // in a separate pass-through shadow window so THIS card window can be
+        // sized exactly to the card (only the card is clickable/draggable; the
+        // halo + empty space click through). Sizing is measured on the AppKit
+        // side by SelfSizingHostingView — see MeetingCoachWindowController.
+        //
+        // The pill is wrapped in a ZStack so it is NOT the NSHostingView root
+        // (NSHostingView stretches its root to the window bounds, ignoring
+        // `.fixedSize`); as a non-root child the pill's `.fixedSize` is honored.
+        ZStack(alignment: .topLeading) {
+            pillContent
+                .fixedSize(horizontal: false, vertical: true)
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .coordinateSpace(name: CardCoordinateSpace.name)
-        .onPreferenceChange(CardFrameKey.self) { rect in
-            onCardFrameChange?(rect)
-        }
+        .fixedSize(horizontal: false, vertical: true)
     }
 
     private var pillContent: some View {
@@ -65,25 +50,10 @@ struct MeetingCoachView: View {
             RoundedRectangle(cornerRadius: MW.rLarge, style: .continuous)
                 .strokeBorder(MW.border, lineWidth: 0.5)
         )
-        .shadow(color: .black.opacity(0.35), radius: 28, y: 14)
-        // Explicit shadow envelope (42pt = radius 28 + |y| 14) so it doesn't
-        // clip when full state (3+ suggestions + transcript) makes the pill
-        // fill the window vertically. 2026-05-12 — proactive fix matching
-        // FloatingVoiceView / MeetingRecapView.
-        .padding(42)
-        // Publish the real rendered card+envelope frame so the enclosing
-        // ClickThroughHostingView can size its tracking area to match. Inset
-        // the measured frame by ~6pt so the cursor must actually be over
-        // the visible shadow halo (not the outer transparent edge) — keeps
-        // the «click-through phantom border» from creeping back.
-        .background(
-            GeometryReader { geo in
-                Color.clear.preference(
-                    key: CardFrameKey.self,
-                    value: geo.frame(in: .named(CardCoordinateSpace.name))
-                )
-            }
-        )
+        // No `.shadow`/`.padding` envelope here: the shadow is drawn by a
+        // separate pass-through window (CardShadowView) behind this card, so
+        // the card window stays exactly card-sized and only the card is
+        // interactive.
     }
 
     private var header: some View {

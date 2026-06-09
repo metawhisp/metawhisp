@@ -2,20 +2,36 @@ import AppKit
 import Combine
 import SwiftUI
 
-/// Controls the floating Meeting Copilot overlay window (ITER-019.2).
+/// Controls the floating Meeting Copilot overlay (ITER-019.2).
 ///
-/// Architecture:
-/// - Shows when `MeetingCoachState.shared.isVisible` flips to true (driven by
-///   `LiveMeetingAdvisor.arm/disarm` via `meetingRecorder.isRecording`).
-/// - Borderless, non-activating panel anchored to bottom-right of the main
-///   screen. Floats above call windows (Zoom/Meet/Teams) but never grabs focus.
-/// - Click-through-friendly: ignores mouse events except hover (so the user
-///   can dismiss or read without interrupting the meeting).
+/// **Two-window design (2026-06-05).** Click-through is a *structural*
+/// property here, not a runtime toggle:
+///   - `cardWindow` — sized exactly to the visible card. Interactive and
+///     draggable; receives every click that lands on the card.
+///   - `shadowWindow` — a child window `shadowPadding` larger on each side that
+///     renders ONLY the drop shadow (`CardShadowView`) and has
+///     `ignoresMouseEvents = true`. Every click in the shadow halo / empty
+///     space passes straight through to the app beneath (Zoom/Meet/etc).
+///
+/// Replaces the previous single-panel `ClickThroughHostingView` approach, whose
+/// `NSTrackingArea` (+ `.inVisibleRect`) made the whole 540×440 canvas
+/// clickable — user-reported: clicking the empty space around the card dragged
+/// it. The shared `ClickThroughHostingView` (still used by FloatingVoice +
+/// MeetingRecap) is intentionally left untouched.
 @MainActor
 final class MeetingCoachWindowController {
-    private var window: NSPanel?
-    private var hostingView: ClickThroughHostingView<MeetingCoachView>?
+    private var cardWindow: NSPanel?
+    private var shadowWindow: NSPanel?
+    private var shadowView: CardShadowView?
+    private var hostingView: SelfSizingHostingView<MeetingCoachView>?
     private var visibilityCancellable: AnyCancellable?
+
+    /// Transparent shadow breathing room around the card, in points. Sized to
+    /// fully contain the drop shadow (radius 28 + |offset| 14): a blurred
+    /// CoreAnimation shadow has a soft tail beyond radius+offset, so
+    /// 2·radius + |offset| = 70 is the no-hard-clip value. The shadow window is
+    /// `ignoresMouseEvents`, so enlarging it never affects click-through.
+    private let shadowPadding: CGFloat = 70
 
     init() {
         // Subscribe once at app launch — state changes drive show/hide.
@@ -28,89 +44,126 @@ final class MeetingCoachWindowController {
     }
 
     private func show() {
-        if window == nil { createWindow() }
-        guard let window else { return }
-        if !window.isVisible {
-            positionBottomRight(window)
-            window.orderFrontRegardless()
+        if cardWindow == nil { createWindows() }
+        guard let cardWindow else { return }
+        if !cardWindow.isVisible {
+            positionBottomRight(cardWindow)
+            updateShadowFrame()
+            shadowWindow?.orderFrontRegardless()
+            cardWindow.orderFrontRegardless()
         }
     }
 
     private func hide() {
-        window?.orderOut(nil)
+        cardWindow?.orderOut(nil)
+        shadowWindow?.orderOut(nil)
     }
 
     /// User clicked STOP on the overlay. Route to `AppDelegate` so the same
-    /// teardown path runs as the menu-bar STOP button (cancels debounce tasks,
-    /// finalizes transcript, persists, fires recap notif, etc.).
+    /// teardown path runs as the menu-bar STOP button.
     private func handleStopTap() {
         guard let app = AppDelegate.shared else { return }
-        // toggleMeetingRecording is the canonical user-driven path — picks
-        // start vs stop based on current state.
         app.toggleMeetingRecording()
     }
 
-    private func createWindow() {
-        let view = MeetingCoachView(
+    private func createWindows() {
+        let hosting = SelfSizingHostingView(rootView: MeetingCoachView(
             state: MeetingCoachState.shared,
-            onStop: { [weak self] in
-                self?.handleStopTap()
-            },
-            onCardFrameChange: nil  // re-bound below after `hosting` exists
-        )
-        let hosting = ClickThroughHostingView(rootView: view)
-        // Wider/taller than the visible card so shadow (radius 28, y offset 14)
-        // doesn't clip at the window boundary. The card itself has internal
-        // padding to push it away from these edges. 540×440 leaves comfortable
-        // room on every side even with 3 suggestions + transcript footer.
-        hosting.frame = NSRect(x: 0, y: 0, width: 540, height: 440)
-        hosting.autoresizingMask = [.width, .height]
-        // Re-bind rootView with a callback closure that pushes the real card
-        // frame (emitted by SwiftUI via CardFrameKey) into the hosting view's
-        // `cardRect`. The tracking area then matches the visible card +
-        // shadow envelope exactly — no more phantom click halo around it.
-        hosting.rootView = MeetingCoachView(
-            state: MeetingCoachState.shared,
-            onStop: { [weak self] in self?.handleStopTap() },
-            onCardFrameChange: { [weak hosting] rect in
-                hosting?.cardRect = rect
-            }
-        )
-        // Fallback shadowInset stays set so first-paint (before SwiftUI emits
-        // the real frame) has a sane tracking area instead of the entire
-        // panel being click-through.
-        hosting.shadowInset = 42
+            onStop: { [weak self] in self?.handleStopTap() }
+        ))
+        hosting.onContentSizeChange = { [weak self] size in
+            self?.updateCardSize(size)
+        }
+        self.hostingView = hosting
 
-        // Borderless, non-activating panel — appears over Zoom etc. without
-        // stealing focus. `nonactivatingPanel` is critical so clicking near it
-        // doesn't switch app focus mid-call.
-        let panel = NSPanel(
-            contentRect: hosting.frame,
+        // Card window — exactly the visible card. Interactive + draggable.
+        // `nonactivatingPanel` so clicking it never steals focus mid-call.
+        let card = NSPanel(
+            contentRect: NSRect(x: 0, y: 0, width: 360, height: 120),
             styleMask: [.borderless, .nonactivatingPanel],
             backing: .buffered,
             defer: false
         )
-        panel.isOpaque = false
-        panel.backgroundColor = .clear
-        panel.hasShadow = false  // shadow is drawn inside SwiftUI for liquid-glass look
-        panel.level = NSWindow.Level(rawValue: Int(CGShieldingWindowLevel()) - 1)
-        panel.collectionBehavior = [.canJoinAllSpaces, .stationary, .fullScreenAuxiliary]
-        panel.ignoresMouseEvents = false  // allow hover for tooltips later; not focus-stealing
-        panel.hidesOnDeactivate = false
-        panel.isMovableByWindowBackground = true  // user can drag it out of the way
-        panel.contentView = hosting
+        card.isOpaque = false
+        card.backgroundColor = .clear
+        card.hasShadow = false
+        card.level = NSWindow.Level(rawValue: Int(CGShieldingWindowLevel()) - 1)
+        card.collectionBehavior = [.canJoinAllSpaces, .stationary, .fullScreenAuxiliary]
+        card.ignoresMouseEvents = false
+        card.hidesOnDeactivate = false
+        card.isMovableByWindowBackground = true   // drag the CARD itself to reposition
+        card.contentView = hosting
 
-        self.window = panel
-        self.hostingView = hosting
+        // Shadow window — child, ordered below the card. Renders only the drop
+        // shadow and is transparent to mouse events, so the halo + empty space
+        // around the card click through to the app underneath.
+        let shadowFrame = card.frame.insetBy(dx: -shadowPadding, dy: -shadowPadding)
+        let shadow = NSPanel(
+            contentRect: shadowFrame,
+            styleMask: [.borderless, .nonactivatingPanel],
+            backing: .buffered,
+            defer: false
+        )
+        let shadowContent = CardShadowView(
+            frame: NSRect(origin: .zero, size: shadowFrame.size),
+            inset: shadowPadding
+        )
+        shadow.isOpaque = false
+        shadow.backgroundColor = .clear
+        shadow.hasShadow = false
+        shadow.level = card.level
+        shadow.collectionBehavior = card.collectionBehavior
+        shadow.ignoresMouseEvents = true
+        shadow.hidesOnDeactivate = false
+        shadow.isMovableByWindowBackground = false
+        shadow.contentView = shadowContent
+
+        // Child window so the shadow follows the card automatically when the
+        // user drags it (isMovableByWindowBackground) — no manual sync needed
+        // for drags; resizes are synced explicitly via `updateShadowFrame`.
+        card.addChildWindow(shadow, ordered: .below)
+
+        self.cardWindow = card
+        self.shadowWindow = shadow
+        self.shadowView = shadowContent
+
+        // Force the first measurement now so the card panel shrinks to the
+        // content immediately (before the window is shown), not on a later
+        // async layout pass.
+        hosting.layoutSubtreeIfNeeded()
+        hosting.reportCurrentSize()
+    }
+
+    /// Resize the card window to the measured card size, keeping the
+    /// bottom-right corner anchored (card grows up/left as suggestions arrive),
+    /// then resync the shadow window.
+    private func updateCardSize(_ size: CGSize) {
+        guard let cardWindow, size.width > 0, size.height > 0 else { return }
+        let newSize = NSSize(width: ceil(size.width), height: ceil(size.height))
+        var frame = cardWindow.frame
+        guard abs(frame.width - newSize.width) > 0.5 ||
+              abs(frame.height - newSize.height) > 0.5 else { return }
+        frame.origin.x = frame.maxX - newSize.width   // keep right edge
+        frame.size = newSize                          // keep bottom edge (origin.y)
+        cardWindow.setFrame(frame, display: true)
+        updateShadowFrame()
+    }
+
+    private func updateShadowFrame() {
+        guard let cardWindow, let shadowWindow else { return }
+        let frame = cardWindow.frame.insetBy(dx: -shadowPadding, dy: -shadowPadding)
+        shadowWindow.setFrame(frame, display: true)
+        shadowView?.frame = NSRect(origin: .zero, size: frame.size)
+        shadowView?.needsLayout = true
     }
 
     private func positionBottomRight(_ window: NSPanel) {
         guard let screen = NSScreen.main else { return }
         let visible = screen.visibleFrame
         let size = window.frame.size
-        // Margin from screen edges; bottom-right per spec to mirror Apple's
-        // own meeting indicators that live in the top-right tray.
-        let margin: CGFloat = 16
+        // Leave room for the shadow envelope so the halo isn't clipped at the
+        // screen edge: 16pt visual margin measured from the shadow's outer edge.
+        let margin: CGFloat = 16 + shadowPadding
         let x = visible.maxX - size.width - margin
         let y = visible.minY + margin
         window.setFrameOrigin(NSPoint(x: x, y: y))
