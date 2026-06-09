@@ -2335,12 +2335,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             return
         }
 
-        NSLog("[DeepLink] Received auth deep link — activating")  // AUD-025: no token material in logs
+        NSLog("[DeepLink] Received auth deep link")  // AUD-025: no token material in logs
         Task {
             await LicenseService.shared.activate(token: token)
-            // Show the main window so user sees their activated Pro status
-            NSApp.activate(ignoringOtherApps: true)
-            self.openMainWindow()
+            // Don't yank the user across Spaces/displays. After a web sign-in the
+            // browser is frontmost on its own Space; force-activating the app and
+            // opening the main window here threw the user onto the window's Space
+            // («кинуло на первый экран, хотя апка была на втором»). Surface the
+            // result as a banner instead — its canJoinAllSpaces panel shows
+            // wherever the user currently is, and tapping it opens the app.
+            let lic = LicenseService.shared
+            if let banner = SignInBannerDecision.resolve(
+                isPro: lic.isPro, lastError: lic.lastError, email: lic.email
+            ) {
+                NotificationService.shared.postSignInResult(title: banner.title, body: banner.body)
+            }
         }
     }
 }

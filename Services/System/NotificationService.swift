@@ -132,6 +132,25 @@ final class NotificationService: NSObject, ObservableObject {
         NSLog("[Notifications] ✅ Posted advice: %@", advice.category)
     }
 
+    /// Result banner for the web sign-in deep link (`metawhisp://auth`). Replaces
+    /// the old force-activate + open-window flow that threw the user onto the
+    /// main window's Space/display after signing in from the browser. The
+    /// banner's `canJoinAllSpaces` panel surfaces wherever the user currently
+    /// is; tapping it opens the app on their terms.
+    func postSignInResult(title: String, body: String) {
+        let note = MWNotification(
+            kind: .signIn,
+            title: title,
+            body: body,
+            onTap: {
+                NSApp.activate()
+                AppDelegate.shared?.openMainWindow()
+            }
+        )
+        MWNotificationStack.shared.push(note)
+        NSLog("[Notifications] ✅ Posted sign-in result: %@", title)
+    }
+
     // NOTE: `postMeetingRecap` was deliberately removed. The recap is shown
     // by `MeetingRecapWindow` (top-center, full structured payload) — adding
     // a parallel banner double-notified the user and was the most visible

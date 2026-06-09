@@ -45,6 +45,7 @@ struct MWNotification: Identifiable {
         case recap            // meeting recap (light variant — heavy block lives in MeetingRecapWindow)
         case advice           // proactive advice item
         case proactive        // multi-row proactive surface (memory / past decision / waiting-on)
+        case signIn           // web sign-in / Pro activation result (post deep-link)
 
         var icon: String {
             switch self {
@@ -55,6 +56,7 @@ struct MWNotification: Identifiable {
             case .recap:            return "doc.text"
             case .advice:           return "sparkles"
             case .proactive:        return "lightbulb.fill"
+            case .signIn:           return "person.crop.circle.badge.checkmark"
             }
         }
 
@@ -67,6 +69,7 @@ struct MWNotification: Identifiable {
             case .recap:            return MW.idle
             case .advice:           return Color(red: 0.65, green: 0.40, blue: 1.00)
             case .proactive:        return Color(red: 1.00, green: 0.80, blue: 0.20)
+            case .signIn:           return MW.idle
             }
         }
 
@@ -79,6 +82,7 @@ struct MWNotification: Identifiable {
             case .recap:            return "MEETING RECAP"
             case .advice:           return "ADVICE"
             case .proactive:        return "CONTEXT"
+            case .signIn:           return "ACCOUNT"
             }
         }
     }

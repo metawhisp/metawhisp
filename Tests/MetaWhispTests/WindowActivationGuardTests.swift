@@ -8,11 +8,12 @@ import XCTest
 /// rule). It has regressed before (2026-05-10 reversion; 2026-06 missed
 /// file-panel + notification-tap sites).
 ///
-/// This test scans the `Views/` and `Services/` source trees and fails if the
-/// aggressive form reappears. Fix by using plain `NSApp.activate()`.
-/// Sanctioned exceptions (the app is genuinely NOT frontmost when these run):
-/// the URL-scheme deep-link handler in `App/AppDelegate.swift` (outside the
-/// scanned dirs) and the allowlist below.
+/// This test scans the `App/`, `Views/` and `Services/` source trees and fails
+/// if the aggressive form reappears. Fix by using plain `NSApp.activate()` —
+/// or, when the app isn't frontmost (e.g. the web sign-in deep-link handler in
+/// `App/AppDelegate.swift`), by surfacing the result as a banner instead of
+/// force-activating a window onto the user's Space. Sanctioned exceptions are
+/// the allowlist below.
 final class WindowActivationGuardTests: XCTestCase {
 
     /// Files permitted to keep the aggressive form.
@@ -24,7 +25,7 @@ final class WindowActivationGuardTests: XCTestCase {
     func testNoAggressiveActivateInUIOrServices() throws {
         let root = try Self.repoRoot()
         var offenders: [String] = []
-        for dir in ["Views", "Services"] {
+        for dir in ["App", "Views", "Services"] {
             let base = root.appendingPathComponent(dir, isDirectory: true)
             guard let walker = FileManager.default.enumerator(
                 at: base, includingPropertiesForKeys: nil
