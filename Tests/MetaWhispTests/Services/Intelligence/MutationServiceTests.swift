@@ -94,6 +94,17 @@ final class MutationServiceTests: XCTestCase {
         XCTAssertEqual(fired, [.memoryDeleted(id)])
     }
 
+    func testDismissCases_flowThroughCommit() throws {
+        // SB-3 — soft-dismiss cases reach the hook (which maps them to vault-file
+        // deletion) without a hard ctx.delete.
+        var fired: [MutationService.Mutation] = []
+        let svc = MutationService(save: { _ in }, runHooks: { fired.append($0) })
+        let tid = UUID(), mid = UUID()
+        try svc.commit(.taskDismissed(tid), in: try makeCtx())
+        try svc.commit(.memoryDismissed(mid), in: try makeCtx())
+        XCTAssertEqual(fired, [.taskDismissed(tid), .memoryDismissed(mid)])
+    }
+
     func testConvenience_saveFailureSkipsHook() throws {
         var fired: [MutationService.Mutation] = []
         let svc = MutationService(save: { _ in throw Boom() }, runHooks: { fired.append($0) })

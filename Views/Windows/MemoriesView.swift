@@ -198,9 +198,16 @@ struct MemoriesView: View {
     }
 
     private func delete(_ memory: UserMemory) {
-        memory.isDismissed = true
-        memory.updatedAt = Date()
-        try? modelContext.save()
+        // SB-3 / AUD-030 — soft dismiss AND remove the vault file (only on a
+        // successful save). Previously the Obsidian .md lingered forever.
+        do {
+            try MutationService.shared.commit(.memoryDismissed(memory.id), in: modelContext) {
+                memory.isDismissed = true
+                memory.updatedAt = Date()
+            }
+        } catch {
+            NSLog("[MemoriesView] dismiss save failed: %@", error.localizedDescription)
+        }
     }
 }
 
@@ -301,9 +308,16 @@ private struct MemoryEditSheet: View {
                 Button("Cancel", action: onDismiss)
                     .font(MW.mono)
                 Button("Save") {
-                    memory.content = editedContent
-                    memory.updatedAt = Date()
-                    try? modelContext.save()
+                    // SB-3 — re-export the edited memory to the vault + refresh MCP
+                    // on a successful save.
+                    do {
+                        try MutationService.shared.commit(.memorySaved(memory.id), in: modelContext) {
+                            memory.content = editedContent
+                            memory.updatedAt = Date()
+                        }
+                    } catch {
+                        NSLog("[MemoriesView] edit save failed: %@", error.localizedDescription)
+                    }
                     onDismiss()
                 }
                 .font(MW.mono)

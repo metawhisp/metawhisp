@@ -221,15 +221,17 @@ struct TasksView: View {
             // completedAt=now). Counts toward Shipped/Done stats. Disappears
             // from staged list. The "right" thing for the "I already did this" case.
             Button {
-                item.status = "committed"
-                item.completed = true
-                item.completedAt = Date()
-                item.updatedAt = Date()
-                try? modelContext.save()
-                // ITER-035 v2 — re-export so the vault file reflects new completed state
-                let id = item.id
-                Task { @MainActor in
-                    await AppDelegate.shared?.obsidianExporter.exportTask(id)
+                // SB-3 — commit + Obsidian re-export + MCP refresh, atomically:
+                // the hook fires only if the save succeeds (no divergence).
+                do {
+                    try MutationService.shared.commit(.taskSaved(item.id), in: modelContext) {
+                        item.status = "committed"
+                        item.completed = true
+                        item.completedAt = Date()
+                        item.updatedAt = Date()
+                    }
+                } catch {
+                    NSLog("[TasksView] mark-done save failed: %@", error.localizedDescription)
                 }
             } label: {
                 Image(systemName: "checkmark")
@@ -244,9 +246,14 @@ struct TasksView: View {
             // + SAVE FOR LATER — promote to MY TASKS active (old ✓ behavior).
             // Use case: screen detected something user wants to do later, not yet.
             Button {
-                item.status = "committed"
-                item.updatedAt = Date()
-                try? modelContext.save()
+                do {
+                    try MutationService.shared.commit(.taskSaved(item.id), in: modelContext) {
+                        item.status = "committed"
+                        item.updatedAt = Date()
+                    }
+                } catch {
+                    NSLog("[TasksView] save-for-later save failed: %@", error.localizedDescription)
+                }
             } label: {
                 Image(systemName: "plus")
                     .font(.system(size: 11, weight: .medium))
@@ -259,14 +266,16 @@ struct TasksView: View {
 
             // ✗ DISMISS — hide, kept for dedup history.
             Button {
-                item.status = "dismissed"
-                item.isDismissed = true
-                item.updatedAt = Date()
-                try? modelContext.save()
-                // ITER-035 v2 — dismissed → delete the markdown file from vault (two-way delete).
-                let id = item.id
-                Task { @MainActor in
-                    await AppDelegate.shared?.obsidianExporter.deleteTaskFile(id)
+                // SB-3 — soft dismiss; the vault file is removed by the hook ONLY
+                // if the save succeeded (was: unconditional delete after try? save).
+                do {
+                    try MutationService.shared.commit(.taskDismissed(item.id), in: modelContext) {
+                        item.status = "dismissed"
+                        item.isDismissed = true
+                        item.updatedAt = Date()
+                    }
+                } catch {
+                    NSLog("[TasksView] dismiss save failed: %@", error.localizedDescription)
                 }
             } label: {
                 Image(systemName: "xmark")
@@ -310,10 +319,15 @@ struct TasksView: View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 8) {
                 Button {
-                    item.completed.toggle()
-                    item.completedAt = item.completed ? Date() : nil
-                    item.updatedAt = Date()
-                    try? modelContext.save()
+                    do {
+                        try MutationService.shared.commit(.taskSaved(item.id), in: modelContext) {
+                            item.completed.toggle()
+                            item.completedAt = item.completed ? Date() : nil
+                            item.updatedAt = Date()
+                        }
+                    } catch {
+                        NSLog("[TasksView] toggle save failed: %@", error.localizedDescription)
+                    }
                 } label: {
                     Image(systemName: item.completed ? "checkmark.square.fill" : "square")
                         .font(.system(size: 14))
@@ -336,13 +350,13 @@ struct TasksView: View {
                 }
 
                 Button {
-                    item.isDismissed = true
-                    item.updatedAt = Date()
-                    try? modelContext.save()
-                    // ITER-035 v2 — two-way delete: remove .md file from vault.
-                    let id = item.id
-                    Task { @MainActor in
-                        await AppDelegate.shared?.obsidianExporter.deleteTaskFile(id)
+                    do {
+                        try MutationService.shared.commit(.taskDismissed(item.id), in: modelContext) {
+                            item.isDismissed = true
+                            item.updatedAt = Date()
+                        }
+                    } catch {
+                        NSLog("[TasksView] dismiss save failed: %@", error.localizedDescription)
                     }
                 } label: {
                     Image(systemName: "xmark")

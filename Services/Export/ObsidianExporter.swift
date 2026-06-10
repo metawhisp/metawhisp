@@ -440,6 +440,32 @@ final class ObsidianExporter: ObservableObject {
         }
     }
 
+    /// SB-3 / AUD-030 — remove the on-disk memory (or insight) file when a memory
+    /// is dismissed / deleted. Memory files live at
+    /// `Memories/<project>/<day>--<slug>--<shortID>.md` and insights at
+    /// `Insights/<day>/<time>--<slug>--<shortID>.md`, so we recursively walk both
+    /// trees and match the `--<shortID>.md` filename SUFFIX (the id is a suffix
+    /// for memories, unlike the task `T-xxxx--` prefix).
+    func deleteMemoryFile(_ id: UUID) async {
+        let suffix = "--\(ObsidianPath.shortID(id)).md"
+        guard let vault = vaultURL() else { return }
+        let root = vault.appendingPathComponent(ObsidianPath.rootSubdir, isDirectory: true)
+        for sub in [ObsidianPath.memoriesSubdir, ObsidianPath.insightsSubdir] {
+            let base = root.appendingPathComponent(sub, isDirectory: true)
+            guard FileManager.default.fileExists(atPath: base.path),
+                  let walker = FileManager.default.enumerator(at: base, includingPropertiesForKeys: nil)
+            else { continue }
+            for case let f as URL in walker where f.lastPathComponent.hasSuffix(suffix) {
+                do {
+                    try FileManager.default.removeItem(at: f)
+                    NSLog("[ObsidianExporter] 🗑 Deleted memory file %@", f.path)
+                } catch {
+                    NSLog("[ObsidianExporter] memory delete failed: %@", error.localizedDescription)
+                }
+            }
+        }
+    }
+
     // MARK: - Bulk export
 
     @discardableResult

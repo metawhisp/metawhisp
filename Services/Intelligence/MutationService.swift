@@ -19,10 +19,12 @@ final class MutationService {
 
     /// What was mutated — drives which external surfaces refresh.
     enum Mutation: Equatable {
-        case taskSaved(UUID)      // insert or in-place edit
-        case taskDeleted(UUID)
-        case memorySaved(UUID)
-        case memoryDeleted(UUID)
+        case taskSaved(UUID)        // insert or in-place edit → re-export the file
+        case taskDeleted(UUID)      // hard delete → remove the vault file
+        case taskDismissed(UUID)    // soft dismiss (row kept) → remove the vault file
+        case memorySaved(UUID)      // insert or in-place edit → re-export
+        case memoryDeleted(UUID)    // hard delete → remove the vault file
+        case memoryDismissed(UUID)  // soft dismiss (row kept) → remove the vault file
     }
 
     /// Injection seams. Production defaults below; tests substitute spies so the
@@ -85,14 +87,12 @@ final class MutationService {
     static func productionHooks(_ mutation: Mutation) {
         let exporter = AppDelegate.shared?.obsidianExporter
         switch mutation {
-        case .taskSaved(let id):   Task { await exporter?.exportTask(id) }
-        case .taskDeleted(let id): Task { await exporter?.deleteTaskFile(id) }
-        case .memorySaved(let id): Task { await exporter?.exportMemory(id) }
-        case .memoryDeleted(let id):
-            // SB-3 will add `ObsidianExporter.deleteMemoryFile`; until then the
-            // vault file lingers (AUD-030). MCP still refreshes below.
-            NSLog("[Mutation] memory %@ deleted — Obsidian file delete pending SB-3 (AUD-030)",
-                  id.uuidString.prefix(8) as CVarArg)
+        case .taskSaved(let id):     Task { await exporter?.exportTask(id) }
+        case .taskDeleted(let id),
+             .taskDismissed(let id): Task { await exporter?.deleteTaskFile(id) }
+        case .memorySaved(let id):   Task { await exporter?.exportMemory(id) }
+        case .memoryDeleted(let id),
+             .memoryDismissed(let id): Task { await exporter?.deleteMemoryFile(id) }
         }
         // MCP snapshot refreshes on every committed mutation.
         MCPSnapshotService.shared.snapshotNow()
