@@ -49,11 +49,11 @@ final class NotificationService: NSObject, ObservableObject {
             title: title,
             body: String(task.taskDescription.prefix(200)),
             onTap: {
-                NSApp.activate()
-                NotificationCenter.default.post(
-                    name: .switchMainTab,
-                    object: MainWindowView.SidebarTab.tasks
-                )
+                // Space-throw fix (2026-06-10): NSApp.activate() snapped the
+                // user to the Space of the app's key window («кидает на первый
+                // экран»). openMainWindow re-places the window on the CURRENT
+                // Space and switches the tab itself.
+                AppDelegate.shared?.openMainWindow(tab: .tasks)
             }
         )
         MWNotificationStack.shared.push(note)
@@ -70,9 +70,10 @@ final class NotificationService: NSObject, ObservableObject {
             kind: .call,
             title: "\(appName) detected",
             body: body,
-            onTap: {
-                NSApp.activate()
-            }
+            // Space-throw fix (2026-06-10): the tap did nothing useful —
+            // NSApp.activate() only snapped the user to another Space. The
+            // card itself already says what to do ("Tap the menu bar…").
+            onTap: nil
         )
         MWNotificationStack.shared.push(note)
         NSLog("[Notifications] ✅ Posted call: %@ (autoStart=%@)", appName, autoStart ? "YES" : "NO")
@@ -119,11 +120,8 @@ final class NotificationService: NSObject, ObservableObject {
             title: advice.category.capitalized,
             body: String(advice.content.prefix(200)),
             onTap: {
-                NSApp.activate()
-                NotificationCenter.default.post(
-                    name: .switchMainTab,
-                    object: MainWindowView.SidebarTab.tasks
-                )
+                // Space-throw fix (2026-06-10) — see postNewTask.
+                AppDelegate.shared?.openMainWindow(tab: .tasks)
                 NotificationCenter.default.post(name: .markAdviceAsRead, object: adviceID)
             }
         )
@@ -143,7 +141,9 @@ final class NotificationService: NSObject, ObservableObject {
             title: title,
             body: body,
             onTap: {
-                NSApp.activate()
+                // Space-throw fix (2026-06-10): openMainWindow alone is enough —
+                // it orders the window onto the CURRENT Space; NSApp.activate()
+                // on top of it re-introduced the Space jump.
                 AppDelegate.shared?.openMainWindow()
             }
         )

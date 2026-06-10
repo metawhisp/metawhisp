@@ -92,6 +92,15 @@ final class MainWindowController: NSObject, NSWindowDelegate {
                 NotificationCenter.default.post(name: .switchMainTab, object: tab)
             }
             window.collectionBehavior = Self.windowBehavior
+            // Space-throw fix #2 (2026-06-10): `.moveToActiveSpace` only
+            // applies when a window is ordered IN from an ordered-out state.
+            // If the window is already VISIBLE on another Space,
+            // `makeKeyAndOrderFront` switches the USER to that Space instead
+            // («кидает на первый экран» on any button that routes here).
+            // Order it out first so re-ordering places it on the current Space.
+            if window.isVisible && !window.isOnActiveSpace {
+                window.orderOut(nil)
+            }
             // ORDER MATTERS for Space-throw prevention:
             //   1. makeKeyAndOrderFront FIRST — `.moveToActiveSpace` puts
             //      the window in user's current Space.

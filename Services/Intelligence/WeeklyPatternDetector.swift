@@ -356,11 +356,11 @@ final class WeeklyPatternDetector: ObservableObject {
             title: "Weekly patterns ready",
             body: body,
             onTap: {
-                NSApp.activate()
-                NotificationCenter.default.post(
-                    name: .switchMainTab,
-                    object: MainWindowView.SidebarTab.tasks
-                )
+                // Space-throw fix (2026-06-10): NSApp.activate() snapped the
+                // user to the main window's Space. openMainWindow re-places it
+                // on the CURRENT Space. (Tab destination is still wrong — SB-8
+                // in ITER-045: there is no Insights tab consumer yet.)
+                Task { @MainActor in AppDelegate.shared?.openMainWindow(tab: .tasks) }
             }
         )
         Task { @MainActor in MWNotificationStack.shared.push(note) }
