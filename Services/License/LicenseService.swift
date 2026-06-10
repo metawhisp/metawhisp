@@ -25,7 +25,12 @@ final class LicenseService: ObservableObject {
     @Published var isActivating: Bool = false
     @Published var lastError: String?
 
+    /// LIC-1 — when the server last confirmed an active subscription. Drives the
+    /// cached-Pro grace TTL (see `LicenseEntitlement`). Persisted in the Keychain.
+    @Published var lastVerifiedAt: Date?
+
     private let api = "https://api.metawhisp.com"
+    private static let lastVerifiedKey = "com.metawhisp.lastVerifiedAt"
 
     private init() {
         // Restore from secure storage
@@ -33,7 +38,17 @@ final class LicenseService: ObservableObject {
         email = KeychainHelper.load(key: "com.metawhisp.proEmail")
         licenseKey = KeychainHelper.load(key: "com.metawhisp.licenseKey")
         plan = KeychainHelper.load(key: "com.metawhisp.proPlan")
-        isPro = licenseKey != nil && !(licenseKey?.isEmpty ?? true)
+        lastVerifiedAt = Self.loadLastVerified()
+        // LIC-1 — cached Pro is trusted only within the grace TTL when the flag is
+        // on; with the flag off (default) this is exactly `key present` — today's
+        // behaviour. `verify()` below re-confirms with the server when online.
+        let hasKey = licenseKey != nil && !(licenseKey?.isEmpty ?? true)
+        isPro = LicenseEntitlement.cachedProIsTrusted(
+            hasActiveKey: hasKey,
+            lastVerifiedAt: lastVerifiedAt,
+            now: Date(),
+            enforce: AppSettings.shared.enforceProEntitlementTTL
+        )
 
         // Auto-switch to cloud if Pro (skip loading 3-4 GB local model)
         if isPro && AppSettings.shared.transcriptionEngine == "ondevice" {
@@ -84,6 +99,7 @@ final class LicenseService: ObservableObject {
                 licenseKey = license.licenseKey
                 plan = license.plan
                 isPro = true
+                recordVerified()   // LIC-1 — server confirmed active now
                 // Store subscription dates
                 if let sub = result.subscription, let end = sub.currentPeriodEnd {
                     renewalDate = Date(timeIntervalSince1970: end)
@@ -131,6 +147,7 @@ final class LicenseService: ObservableObject {
 
             if let license = result.license, license.status == "active" {
                 isPro = true
+                recordVerified()   // LIC-1 — server confirmed active now
                 licenseKey = license.licenseKey
                 plan = license.plan
                 KeychainHelper.save(key: "com.metawhisp.licenseKey", value: license.licenseKey)
@@ -170,8 +187,28 @@ final class LicenseService: ObservableObject {
         plan = nil
         renewalDate = nil
         cancelAtPeriodEnd = false
+        clearVerified()   // LIC-1 — no active subscription → drop the verified stamp
         KeychainHelper.save(key: "com.metawhisp.licenseKey", value: "")
         KeychainHelper.save(key: "com.metawhisp.proPlan", value: "")
+    }
+
+    // MARK: - LIC-1 — server-verification timestamp (Keychain-persisted)
+
+    private static func loadLastVerified() -> Date? {
+        guard let s = KeychainHelper.load(key: lastVerifiedKey),
+              let t = TimeInterval(s) else { return nil }
+        return Date(timeIntervalSince1970: t)
+    }
+
+    private func recordVerified() {
+        let now = Date()
+        lastVerifiedAt = now
+        KeychainHelper.save(key: Self.lastVerifiedKey, value: String(now.timeIntervalSince1970))
+    }
+
+    private func clearVerified() {
+        lastVerifiedAt = nil
+        KeychainHelper.save(key: Self.lastVerifiedKey, value: "")
     }
 
     /// Sign out and clear all stored credentials.
@@ -186,6 +223,7 @@ final class LicenseService: ObservableObject {
         plan = nil
         renewalDate = nil
         cancelAtPeriodEnd = false
+        clearVerified()   // LIC-1
         NSLog("[License] Signed out")
     }
 }

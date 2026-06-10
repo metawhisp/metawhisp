@@ -23,6 +23,11 @@ final class AppSettings: ObservableObject {
     @AppStorage("llmProvider") var llmProvider: String = "openai" // openai, cerebras
     @AppStorage("transcriptionEngine") var transcriptionEngine: String = "ondevice" // ondevice, cloud
     @AppStorage("cloudTranscriptionProvider") var cloudTranscriptionProvider: String = "groq" // groq, openai
+    /// LIC-1 — feature flag (default OFF). When ON, a cached Pro state expires after
+    /// `LicenseEntitlement.defaultGraceTTL` (72h) without a fresh server verify, so a
+    /// stale/planted Keychain key can't unlock Pro indefinitely offline. Ships dormant
+    /// so legit offline Pro users aren't locked out at release; enable consciously.
+    @AppStorage("enforceProEntitlementTTL") var enforceProEntitlementTTL: Bool = false
     @AppStorage("hasCompletedOnboarding") var hasCompletedOnboarding: Bool = false
 
     /// One-time migration flag (ITER-026): on first launch after the unified
