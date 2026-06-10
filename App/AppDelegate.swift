@@ -676,6 +676,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         // spec://iterations/ITER-001#architecture.extractor + spec://BACKLOG#B1
         memoryExtractor.configure(screenContext: screenContext, modelContainer: historyService.modelContainer)
         taskExtractor.configure(screenContext: screenContext, modelContainer: historyService.modelContainer)
+        // SB-1 — drain any conversations left queued by a previous session
+        // (app quit/crash before extraction completed), now that the container
+        // is configured.
+        memoryExtractor.backfillPending()
+        taskExtractor.backfillPending()
 
         // 9c. Configure ChatService (RAG over memories + transcripts + tasks + screen OCR).
         // spec://BACKLOG#B2 + spec://iterations/ITER-003-screen-aware-intelligence#scope.1

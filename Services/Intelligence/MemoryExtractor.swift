@@ -29,6 +29,10 @@ final class MemoryExtractor: ObservableObject {
     private weak var screenContext: ScreenContextService?
     private var modelContainer: ModelContainer?
 
+    /// SB-1 — durable queue of conversations awaiting extraction. Replaces the
+    /// silent `guard !isRunning` drop and survives relaunch (startup backfill).
+    private let queue = ExtractionQueueStore(filename: "memory-extraction-queue.json")
+
     /// Min confidence for accepting a memory.
     private let minConfidence: Double = 0.7
 
@@ -44,9 +48,27 @@ final class MemoryExtractor: ObservableObject {
     /// after a conversation closes.
     func triggerOnConversationClose(conversationId: UUID) {
         guard settings.memoriesEnabled else { return }
-        Task { [weak self] in
-            await self?.extractFromConversation(conversationId: conversationId)
-        }
+        queue.enqueue(conversationId)
+        Task { [weak self] in await self?.drainQueue() }
+    }
+
+    /// SB-1 — startup backfill: process conversations left queued by a previous
+    /// session (app quit/crash before extraction finished). Call once after
+    /// `configure(...)`.
+    func backfillPending() {
+        guard settings.memoriesEnabled, !queue.pending().isEmpty else { return }
+        NSLog("[MemoryExtractor] Backfilling %d pending conversation(s)", queue.pending().count)
+        Task { [weak self] in await self?.drainQueue() }
+    }
+
+    /// SB-1 — serial drain of the durable queue. `isRunning` guards re-entrancy
+    /// (a second conversation closing while we work just enqueues; this pass
+    /// picks it up — see `ExtractionQueueStore.drain`) and drives the UI status.
+    private func drainQueue() async {
+        guard !isRunning else { return }
+        isRunning = true
+        defer { isRunning = false; lastRun = Date() }
+        await queue.drain { id in await self.extractFromConversation(conversationId: id) }
     }
 
     /// Manual EXTRACT NOW button. Uses the most recent HistoryItem's conversation.
@@ -66,15 +88,15 @@ final class MemoryExtractor: ObservableObject {
             NSLog("[MemoryExtractor] No recent conversation — skipping")
             return
         }
-        await extractFromConversation(conversationId: convId)
+        queue.enqueue(convId)
+        await drainQueue()
     }
 
     /// Core extraction — collect all transcripts for the conversation, send as one block.
-    private func extractFromConversation(conversationId: UUID) async {
-        guard !isRunning else { return }
-        guard hasLLMAccess else { return }
+    private func extractFromConversation(conversationId: UUID) async -> ExtractionOutcome {
+        guard hasLLMAccess else { return .retryLater }
 
-        guard let container = modelContainer else { return }
+        guard let container = modelContainer else { return .retryLater }
         let ctx = ModelContext(container)
 
         // AUD-035 — fetch the WHOLE conversation (uncapped, oldest first) via the
@@ -86,15 +108,9 @@ final class MemoryExtractor: ObservableObject {
             .map { $0.displayText.trimmingCharacters(in: .whitespacesAndNewlines) }
             .filter { !$0.isEmpty }
 
-        guard !fragments.isEmpty else { return }
+        guard !fragments.isEmpty else { return .completed }
         let totalChars = fragments.reduce(0) { $0 + $1.count }
-        guard totalChars >= 20 else { return }
-
-        isRunning = true
-        defer {
-            isRunning = false
-            lastRun = Date()
-        }
+        guard totalChars >= 20 else { return .completed }
 
         let existing = fetchExistingMemories()
         let prompt = buildPrompt(fragments: fragments, existing: existing)
@@ -119,7 +135,7 @@ final class MemoryExtractor: ObservableObject {
                 let apiKey = settings.activeAPIKey
                 guard !apiKey.isEmpty else {
                     NSLog("[MemoryExtractor] No API key — skipping")
-                    return
+                    return .retryLater
                 }
                 let provider = LLMProvider(rawValue: settings.llmProvider) ?? .openai
                 response = try await llm.complete(
@@ -133,7 +149,7 @@ final class MemoryExtractor: ObservableObject {
             let memories = parseResponse(response, sourceApp: sourceApp, windowTitle: windowTitle, conversationId: conversationId)
             guard !memories.isEmpty else {
                 NSLog("[MemoryExtractor] No new memories from conversation %@", conversationId.uuidString.prefix(8) as CVarArg)
-                return
+                return .completed
             }
 
             var insertedMemories: [UserMemory] = []
@@ -142,7 +158,10 @@ final class MemoryExtractor: ObservableObject {
                 insertedMemories.append(mem)
                 if insertedMemories.count >= maxPerExtraction { break }
             }
-            try? ctx.save()
+            // SB-1: a swallowed save (try?) would return .completed and let the
+            // queue drop the conversation though nothing persisted — the exact
+            // silent loss this iteration fixes. `try` → throw → catch → .retryLater.
+            try ctx.save()
             NSLog("[MemoryExtractor] ✅ Extracted %d memories (inserted: %d) from conversation %@",
                   memories.count, insertedMemories.count, conversationId.uuidString.prefix(8) as CVarArg)
 
@@ -160,9 +179,11 @@ final class MemoryExtractor: ObservableObject {
                     }
                 }
             }
+            return .completed
         } catch {
             lastError = error.localizedDescription
             NSLog("[MemoryExtractor] ❌ Failed: %@", error.localizedDescription)
+            return .retryLater
         }
     }
 
