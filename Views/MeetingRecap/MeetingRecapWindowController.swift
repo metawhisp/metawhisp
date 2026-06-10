@@ -46,16 +46,16 @@ final class MeetingRecapWindowController {
             onToggleTask: { [weak self] id in self?.handleToggleTask(id) }
         )
         let hosting = ClickThroughHostingView(rootView: view)
-        // 480pt pill + 96pt shadow envelope (48 each side, see
-        // MeetingRecapView.recapPill `.padding(48)`). Vertical bumped from 540
-        // → 700 to accommodate dense recap content (header + about + with +
-        // decisions + next steps + memories + actions bar can be ~520pt)
-        // PLUS the 96pt shadow padding without Spacers collapsing to 0.
-        // 2026-05-12 — fixes the clipped shadow visible in user screenshot.
-        hosting.frame = NSRect(x: 0, y: 0, width: 600, height: 700)
+        // 480pt pill + 160pt shadow envelope (80 each side, see
+        // MeetingRecapView.recapPill `.padding(80)`). 2026-06-10 — envelope
+        // follows the 2·radius + |offset| no-clip rule (the old 48 = radius +
+        // offset hard-clipped the soft tail, «тень обрезана криво»). Width
+        // 480 + 160 = 640 (+24 slack); height 700 → 764 keeps the same
+        // ~520pt content room PLUS the bigger envelope.
+        hosting.frame = NSRect(x: 0, y: 0, width: 664, height: 764)
         hosting.autoresizingMask = [.width, .height]
-        // 48-pt transparent shadow padding around the card → click-through.
-        hosting.shadowInset = 48
+        // 80-pt transparent shadow padding around the card → click-through.
+        hosting.shadowInset = 80
 
         let panel = NSPanel(
             contentRect: hosting.frame,

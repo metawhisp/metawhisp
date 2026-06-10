@@ -26,10 +26,16 @@ final class MWNotificationStackController {
     private var cardViews: [UUID: MWNotificationCardView] = [:]
     private var stackCancellable: AnyCancellable?
 
-    private static let cardWidth: CGFloat = 372  // 344 card + 28 envelope
-    private static let edgeInset: CGFloat = 12
+    // Shadow envelope per side: 2·radius 14 + |offset| 6 = 34 (the no-clip
+    // rule from MeetingCoach CardShadowView — a blurred shadow's soft tail
+    // extends beyond radius+offset). The old 14/side + 8 panelPadding
+    // hard-clipped the card shadows («тень обрезана криво», 2026-06-10).
+    private static let cardWidth: CGFloat = 412  // 344 card + 2·34 envelope
+    // 0 window margin: the 34pt transparent envelope already provides the
+    // visual gap (was 12 + 14 = 26 visual; now 0 + 34 ≈ unchanged).
+    private static let edgeInset: CGFloat = 0
     private static let interCardGap: CGFloat = 8
-    private static let panelPadding: CGFloat = 8
+    private static let panelPadding: CGFloat = 34
 
     init() {
         // Observe stack changes, render the AppKit views.
@@ -137,7 +143,7 @@ final class MWNotificationStackController {
         for (id, h) in heights {
             guard let card = cardViews[id] else { continue }
             y -= h
-            let cardX = (Self.cardWidth - 344) / 2  // centre 344-wide card in 372-wide panel
+            let cardX = (Self.cardWidth - 344) / 2  // centre 344-wide card in the panel
             card.frame = NSRect(x: cardX, y: y, width: 344, height: h)
             y -= Self.interCardGap
         }

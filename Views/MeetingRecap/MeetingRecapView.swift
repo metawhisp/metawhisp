@@ -108,10 +108,12 @@ struct MeetingRecapView: View {
             .shadow(color: .black.opacity(0.4), radius: 32, y: 16)
             // Explicit shadow envelope so it doesn't get clipped when the pill
             // content fills the window vertically (Spacer-based centering
-            // collapses to 0 in that case). 48pt = radius 32 + |y| 16. Window
-            // height bumped accordingly so this padding has room (see
-            // MeetingRecapWindowController). 2026-05-12.
-            .padding(48)
+            // collapses to 0 in that case). 80pt = 2·radius 32 + |y| 16 — the
+            // soft tail extends beyond radius+offset, so the old 48
+            // hard-clipped it (same rule as MeetingCoach CardShadowView).
+            // Window size bumped accordingly (see MeetingRecapWindowController).
+            // 2026-06-10.
+            .padding(80)
     }
 
     // MARK: - Header

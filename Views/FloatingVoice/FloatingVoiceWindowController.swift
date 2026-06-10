@@ -76,14 +76,16 @@ final class FloatingVoiceWindowController {
     private func createWindow() {
         let contentView = FloatingVoiceView(state: VoiceQuestionState.shared)
         let hosting = ClickThroughHostingView(rootView: contentView)
-        // 380pt pill + 72pt shadow envelope (36 each side, see
-        // FloatingVoiceView pillContent `.padding(36)`). Vertical bumped from
-        // 180 → 300 so the 36pt padding doesn't get squeezed when the QA
-        // pair fills vertical space. 2026-05-12 — fixes shadow clip.
-        hosting.frame = NSRect(x: 0, y: 0, width: 520, height: 300)
-        // Click-through over the 36-pt shadow padding so clicks land on
+        // 380pt pill + 120pt shadow envelope (60 each side, see
+        // FloatingVoiceView pillContent `.padding(60)`). 2026-06-10 — a
+        // blurred shadow has a soft tail beyond radius+offset; the no-clip
+        // envelope is 2·radius + |offset| = 60 (same rule as the Meeting
+        // Copilot CardShadowView). 36 hard-clipped the tail («тень обрезана
+        // криво»).
+        hosting.frame = NSRect(x: 0, y: 0, width: 568, height: 348)
+        // Click-through over the 60-pt shadow padding so clicks land on
         // whatever is underneath instead of the (mostly-empty) panel.
-        hosting.shadowInset = 36
+        hosting.shadowInset = 60
 
         let panel = NSPanel(
             contentRect: hosting.frame,
@@ -112,15 +114,19 @@ final class FloatingVoiceWindowController {
         if let host = hostingView {
             host.layoutSubtreeIfNeeded()
             let fitting = host.fittingSize
-            let width = max(420, min(fitting.width, 620))
-            let height = max(120, min(fitting.height, 360))
+            // Clamps grew +48 with the 36→60 shadow envelope (2026-06-10) so
+            // the card's usable size is unchanged.
+            let width = max(468, min(fitting.width, 668))
+            let height = max(168, min(fitting.height, 408))
             window.setContentSize(NSSize(width: width, height: height))
         }
         let size = window.frame.size
-        // Top-center, 24pt from top for a bit of breathing room.
+        // Top-center. 0pt window margin: the 60pt transparent shadow envelope
+        // already provides the visual breathing room (was 24 + 36 = 60 visual;
+        // 0 + 60 keeps the card exactly where it was). 2026-06-10.
         let origin = NSPoint(
             x: visible.origin.x + (visible.width - size.width) / 2,
-            y: visible.origin.y + visible.height - size.height - 24
+            y: visible.origin.y + visible.height - size.height - 0
         )
         window.setFrameOrigin(origin)
     }
