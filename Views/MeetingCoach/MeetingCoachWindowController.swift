@@ -45,18 +45,35 @@ final class MeetingCoachWindowController {
 
     private func show() {
         if cardWindow == nil { createWindows() }
-        guard let cardWindow else { return }
+        guard let cardWindow, let shadowWindow else { return }
         if !cardWindow.isVisible {
             positionBottomRight(cardWindow)
-            updateShadowFrame()
-            shadowWindow?.orderFrontRegardless()
+            // Order ONLY the parent — children come along. Explicitly ordering
+            // a child window (orderOut/orderFront) DETACHES it from its parent;
+            // a detached shadow stops following drags. That was the reported
+            // «тень отдельно снизу справа всегда» (2026-06-10): after one
+            // hide/show cycle the shadow stayed at the default bottom-right
+            // spot while the card moved.
             cardWindow.orderFrontRegardless()
+            // Defensive re-attach — orderOut on the parent can also drop the
+            // child relationship on some macOS versions.
+            if cardWindow.childWindows?.contains(shadowWindow) != true {
+                cardWindow.addChildWindow(shadowWindow, ordered: .below)
+            }
+            updateShadowFrame()
         }
     }
 
     private func hide() {
+        // Parent orderOut hides its children too — never order the shadow
+        // child directly (it detaches; see `show`).
         cardWindow?.orderOut(nil)
-        shadowWindow?.orderOut(nil)
+        // Defensive: if the relationship was already broken, the shadow is a
+        // free-standing window now — hiding it explicitly is then safe.
+        if let shadowWindow, shadowWindow.isVisible,
+           cardWindow?.childWindows?.contains(shadowWindow) != true {
+            shadowWindow.orderOut(nil)
+        }
     }
 
     /// User clicked STOP on the overlay. Route to `AppDelegate` so the same
