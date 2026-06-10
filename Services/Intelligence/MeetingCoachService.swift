@@ -108,12 +108,34 @@ final class MeetingCoachService {
 
         do {
             let userPrompt = buildUserPrompt(recent: recent, memoryContext: memoryContext)
-            let response = try await callLLM(systemPrompt: Self.systemPrompt, userPrompt: userPrompt)
-            if let suggestion = parseSuggestion(response) {
+            var usedLocal = LocalLLMService.shared.isReady
+            var response = try await callLLM(systemPrompt: Self.systemPrompt, userPrompt: userPrompt)
+            var suggestion = parseSuggestion(response)
+            // 2026-06-10 — user report: «копайлот не дает рекомендации».
+            // Local Phi takes priority in callLLM, but small local models
+            // routinely fail the strict-JSON suggestion format → parse
+            // returned nil EVERY cycle and the coach stayed silent for the
+            // whole meeting. If the local output didn't parse (and isn't an
+            // explicit "null" verdict), retry ONCE via Pro/BYOK.
+            if suggestion == nil, usedLocal,
+               response.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() != "null",
+               LicenseService.shared.isPro || !settings.activeAPIKey.isEmpty {
+                NSLog("[MeetingCoach] local output unparseable ('%@') — retrying via cloud",
+                      String(response.prefix(120)))
+                usedLocal = false
+                response = try await callLLM(
+                    systemPrompt: Self.systemPrompt, userPrompt: userPrompt, allowLocal: false
+                )
+                suggestion = parseSuggestion(response)
+            }
+            if let suggestion {
                 MeetingCoachState.shared.addSuggestion(suggestion.kind, text: suggestion.text)
                 NSLog("[MeetingCoach] ✅ %@ → %@", suggestion.kind.rawValue, String(suggestion.text.prefix(80)))
             } else {
-                NSLog("[MeetingCoach] LLM returned no actionable suggestion this cycle")
+                // Log the RAW response — "no actionable suggestion" hid the
+                // difference between an honest `null` and a parse failure.
+                NSLog("[MeetingCoach] no suggestion this cycle (local=%@, raw: '%@')",
+                      usedLocal ? "YES" : "NO", String(response.prefix(160)))
             }
         } catch {
             NSLog("[MeetingCoach] ❌ LLM call failed: %@", error.localizedDescription)
@@ -201,12 +223,13 @@ final class MeetingCoachService {
             || LocalLLMService.shared.isReady
     }
 
-    private func callLLM(systemPrompt: String, userPrompt: String) async throws -> String {
+    private func callLLM(systemPrompt: String, userPrompt: String, allowLocal: Bool = true) async throws -> String {
         // ITER-039 — local Phi takes priority for the meeting-coach loop:
         // small prompts, frequent (every 30s during a call), low-stakes
         // (one short hint per cycle). Local cuts ~$0.05/hour meeting cost
-        // to zero.
-        if LocalLLMService.shared.isReady {
+        // to zero. `allowLocal: false` = cloud retry after the local model
+        // produced unparseable output (see `process`).
+        if allowLocal, LocalLLMService.shared.isReady {
             return try await LocalLLMService.shared.completeBlocking(
                 system: systemPrompt, user: userPrompt, maxTokens: 256
             )
