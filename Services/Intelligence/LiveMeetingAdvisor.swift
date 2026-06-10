@@ -215,7 +215,15 @@ final class LiveMeetingAdvisor: ObservableObject {
             let result = try await engine.transcribe(
                 audioSamples: mixed,
                 language: lang,
-                promptWords: BrandGlossary.canonicalNames()
+                // TR-3 (4th site, ITER-046): these live partials feed the Meeting
+                // Copilot AND the assembled recap transcript. The English-only
+                // glossary as an initial_prompt biased RU meetings toward <|en|>,
+                // so the copilot/recap saw EN-bled garbage. Gate like the other
+                // three sites; brand names are still fixed post-hoc by
+                // applyCorrections below.
+                promptWords: TranscriptionLanguageResolver.filterPromptWords(
+                    BrandGlossary.canonicalNames(), language: lang
+                )
             )
             let rawText = result.text.trimmingCharacters(in: .whitespacesAndNewlines)
 
