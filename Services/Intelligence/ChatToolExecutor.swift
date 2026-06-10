@@ -282,7 +282,11 @@ final class ChatToolExecutor: ObservableObject {
                 "wasIsDismissed": mem.isDismissed,
             ])
             do {
-                try mutationService.commit(.memorySaved(mem.id), in: ctx) {
+                // .memoryDismissed (not .memorySaved): the saved-hook calls
+                // exportMemory, which no-ops on a dismissed memory — leaving the
+                // stale .md in the vault (AUD-030). The dismissed-hook deletes it.
+                // (Tasks don't need this: exportTask itself deletes when dismissed.)
+                try mutationService.commit(.memoryDismissed(mem.id), in: ctx) {
                     mem.isDismissed = true
                     mem.updatedAt = Date()
                 }
