@@ -87,6 +87,11 @@ final class ChatToolExecutor: ObservableObject {
     /// the query string. Without it they fall back to substring match (still useful).
     weak var embeddingService: EmbeddingService?
 
+    /// SB-2 — route Task/UserMemory commits through MutationService so a failed
+    /// save propagates (no more `try? + ok = true`) and Obsidian/MCP refresh on
+    /// success. Injectable so tests can substitute no-op hooks.
+    var mutationService: MutationService = .shared
+
     func configure(modelContainer: ModelContainer, embeddingService: EmbeddingService? = nil) {
         self.modelContainer = modelContainer
         self.embeddingService = embeddingService
@@ -227,12 +232,17 @@ final class ChatToolExecutor: ObservableObject {
                 "wasIsDismissed": task.isDismissed,
                 "wasStatus": task.status ?? "committed",
             ])
-            task.isDismissed = true
-            task.status = "dismissed"
-            task.updatedAt = Date()
-            try? ctx.save()
-            ok = true
-            summary = "Dismissed task: \(task.taskDescription)"
+            do {
+                try mutationService.commit(.taskSaved(task.id), in: ctx) {
+                    task.isDismissed = true
+                    task.status = "dismissed"
+                    task.updatedAt = Date()
+                }
+                ok = true
+                summary = "Dismissed task: \(task.taskDescription)"
+            } catch {
+                summary = "Couldn't save — the task wasn't dismissed (\(error.localizedDescription))"
+            }
 
         case "completeTask":
             guard let idStr = call.args["id"], let uuid = UUID(uuidString: idStr),
@@ -247,12 +257,17 @@ final class ChatToolExecutor: ObservableObject {
                 "wasCompleted": task.completed,
                 "wasCompletedAt": task.completedAt.map { ISO8601DateFormatter().string(from: $0) } as Any,
             ])
-            task.completed = true
-            task.completedAt = Date()
-            task.updatedAt = Date()
-            try? ctx.save()
-            ok = true
-            summary = "Marked done: \(task.taskDescription)"
+            do {
+                try mutationService.commit(.taskSaved(task.id), in: ctx) {
+                    task.completed = true
+                    task.completedAt = Date()
+                    task.updatedAt = Date()
+                }
+                ok = true
+                summary = "Marked done: \(task.taskDescription)"
+            } catch {
+                summary = "Couldn't save — the task wasn't marked done (\(error.localizedDescription))"
+            }
 
         case "dismissMemory":
             guard let idStr = call.args["id"], let uuid = UUID(uuidString: idStr),
@@ -266,11 +281,16 @@ final class ChatToolExecutor: ObservableObject {
                 "memoryId": mem.id.uuidString,
                 "wasIsDismissed": mem.isDismissed,
             ])
-            mem.isDismissed = true
-            mem.updatedAt = Date()
-            try? ctx.save()
-            ok = true
-            summary = "Forgot: \(mem.content.prefix(80))"
+            do {
+                try mutationService.commit(.memorySaved(mem.id), in: ctx) {
+                    mem.isDismissed = true
+                    mem.updatedAt = Date()
+                }
+                ok = true
+                summary = "Forgot: \(mem.content.prefix(80))"
+            } catch {
+                summary = "Couldn't save — the memory wasn't forgotten (\(error.localizedDescription))"
+            }
 
         case "updateGoalProgress":
             guard let idStr = call.args["id"], let uuid = UUID(uuidString: idStr),
@@ -308,9 +328,16 @@ final class ChatToolExecutor: ObservableObject {
             }
             goal.lastProgressAt = Date()
             goal.updatedAt = Date()
-            try? ctx.save()
-            ok = true
-            summary = "Updated goal \"\(goal.title)\" → \(goal.progressLabel)"
+            // Goal is outside MutationService's Task/UserMemory scope (it has no
+            // Obsidian export); still propagate the save so a failure isn't
+            // reported as success.
+            do {
+                try ctx.save()
+                ok = true
+                summary = "Updated goal \"\(goal.title)\" → \(goal.progressLabel)"
+            } catch {
+                summary = "Couldn't save — the goal wasn't updated (\(error.localizedDescription))"
+            }
 
         case "addTask":
             guard let desc = call.args["description"]?.trimmingCharacters(in: .whitespacesAndNewlines),
@@ -337,13 +364,16 @@ final class ChatToolExecutor: ObservableObject {
                 sourceApp: "MetaChat",
                 assignee: assignee
             )
-            ctx.insert(task)
-            try? ctx.save()
-            // Snapshot AFTER insert — undo = soft-delete the row we just created.
-            snapshotJSON = encodeSnapshot(["createdTaskId": task.id.uuidString])
-            ok = true
-            let tag = assignee.map { " (waiting on \($0))" } ?? ""
-            summary = "Added task: \(desc)\(tag)"
+            do {
+                try mutationService.insert(task, in: ctx)
+                // Snapshot AFTER insert — undo = soft-delete the row we just created.
+                snapshotJSON = encodeSnapshot(["createdTaskId": task.id.uuidString])
+                ok = true
+                let tag = assignee.map { " (waiting on \($0))" } ?? ""
+                summary = "Added task: \(desc)\(tag)"
+            } catch {
+                summary = "Couldn't save the new task (\(error.localizedDescription))"
+            }
 
         case "addMemory":
             guard let content = call.args["content"]?.trimmingCharacters(in: .whitespacesAndNewlines),
@@ -360,11 +390,14 @@ final class ChatToolExecutor: ObservableObject {
                 sourceApp: "MetaChat",
                 confidence: 1.0
             )
-            ctx.insert(mem)
-            try? ctx.save()
-            snapshotJSON = encodeSnapshot(["createdMemoryId": mem.id.uuidString])
-            ok = true
-            summary = "Stored memory: \(content.prefix(80))"
+            do {
+                try mutationService.insert(mem, in: ctx)
+                snapshotJSON = encodeSnapshot(["createdMemoryId": mem.id.uuidString])
+                ok = true
+                summary = "Stored memory: \(content.prefix(80))"
+            } catch {
+                summary = "Couldn't save the new memory (\(error.localizedDescription))"
+            }
 
         default:
             let r = ExecResult(ok: false, summary: "Unknown tool: \(call.tool)", auditId: nil)
@@ -619,7 +652,13 @@ final class ChatToolExecutor: ObservableObject {
         }
 
         entry.undone = true
-        try? ctx.save()
+        // SB-2: propagate a save failure instead of falsely reporting "Reverted".
+        // (External-surface re-sync after undo — Obsidian/MCP — is SB-3.)
+        do {
+            try ctx.save()
+        } catch {
+            return "Couldn't save the undo — nothing was reverted (\(error.localizedDescription))"
+        }
         return "Reverted: \(entry.resultSummary)"
     }
 
