@@ -233,7 +233,16 @@ final class DailySummaryService: ObservableObject {
         summary.unresolvedQuestionsJSON = unresolved.isEmpty ? nil : DailySummary.encodeStringArray(unresolved)
         summary.dayEmoji = dayEmoji.isEmpty ? nil : dayEmoji
         ctx.insert(summary)
-        try? ctx.save()
+        // SB-7 tail: a silently-failed save here used to return the in-memory
+        // summary anyway — generateForDate would then delete the OLD rows while
+        // the new one never persisted (the exact loss SB-7 fixes). Fail → nil →
+        // caller keeps the previous summary.
+        do {
+            try ctx.save()
+        } catch {
+            NSLog("[DailySummary] ❌ save failed — keeping previous summary: %@", error.localizedDescription)
+            return nil
+        }
 
         NSLog("[DailySummary] ✅ Generated: %@ · L=%d D=%d S=%d Q=%d emoji=%@",
               headline, learned.count, decided.count, shipped.count, unresolved.count, dayEmoji)
