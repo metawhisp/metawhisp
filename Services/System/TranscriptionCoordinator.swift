@@ -358,6 +358,24 @@ final class TranscriptionCoordinator: ObservableObject {
                 return
             }
 
+            // TR-5: metric-based hallucination guard. The pattern filters above
+            // catch known artifacts; this catches SEMANTIC hallucinations they miss,
+            // using Whisper's own per-segment confidence metrics (aggregated over the
+            // clip). Precision-first thresholds, and — critically — it routes to the
+            // SAME clipboard recovery, never the silent-discard path, so a false
+            // positive costs the user a ⌘V, not their dictation.
+            if let reason = TranscriptionConfidenceGate.rejectionReason(
+                TranscriptionConfidenceGate.aggregateMetrics(result.segments)
+            ) {
+                NSLog("[Coordinator] 🎚️ Low-confidence metrics (%@) — saved to clipboard, not pasted", reason)
+                Self.saveSuspectToClipboard(trimmed)
+                lastResult = result
+                lastError = "Low transcription confidence — text saved to clipboard, ⌘V to paste anyway."
+                abortVoiceQuestionIfActive(reason: "Low transcription confidence.")
+                stage = .idle
+                return
+            }
+
             lastResult = result
             NSLog("[Coordinator] ✅ lang=%@, %.2fs, %d chars", result.language ?? "?", result.processingTime, result.text.count)
 

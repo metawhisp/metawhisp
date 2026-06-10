@@ -64,6 +64,12 @@ final class WhisperKitEngine: TranscriptionEngine, @unchecked Sendable {
             task: .transcribe,
             language: lang,
             temperature: 0,
+            // TR-4: cap temperature fallback. The default (5) retries up to t=1.0 and
+            // returns that last high-temp attempt unconditionally even when it still
+            // fails the thresholds — the "fluent hallucination" source. Capped to 2
+            // (not 1) so ONE productive retry can still rescue hard-but-real audio
+            // (accent/noise) before the owner-layer confidence gate judges it.
+            temperatureFallbackCount: 2,
             usePrefillPrompt: true,
             usePrefillCache: lang != nil,
             detectLanguage: TranscriptionLanguageResolver.whisperDetectLanguage(language: lang),
@@ -116,10 +122,19 @@ final class WhisperKitEngine: TranscriptionEngine, @unchecked Sendable {
         let text = deduped.joined(separator: " ")
 
         let segments = results.map { result in
-            TranscriptionResult.Segment(
+            // WhisperKit assigns the SAME window-level metrics to every inner
+            // segment of a VAD window, so the first is representative. Exposed here,
+            // NOT acted on — the owner layers (dictation → clipboard recovery,
+            // meeting → per-utterance drop) apply the confidence gate where speech
+            // can be recovered, so the engine never blanks text.
+            let m = result.segments.first
+            return TranscriptionResult.Segment(
                 text: result.text.trimmingCharacters(in: .whitespacesAndNewlines),
                 start: TimeInterval(result.segments.first?.start ?? 0),
-                end: TimeInterval(result.segments.last?.end ?? Float(audioDuration))
+                end: TimeInterval(result.segments.last?.end ?? Float(audioDuration)),
+                avgLogprob: m?.avgLogprob,
+                compressionRatio: m?.compressionRatio,
+                noSpeechProb: m?.noSpeechProb
             )
         }
 

@@ -1537,6 +1537,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
                     for w in whisperSegments {
                         let rawUtterance = w.text.trimmingCharacters(in: .whitespacesAndNewlines)
                         guard !rawUtterance.isEmpty else { continue }
+                        // TR-5: drop only THIS utterance if Whisper decoded it with
+                        // hallucination metrics (precision-first thresholds; the rest
+                        // of the chunk's real utterances are kept). Logged with text
+                        // so a meeting drop is at least recoverable from the log.
+                        if let reason = TranscriptionConfidenceGate.rejectionReason(TranscriptionConfidenceGate.metrics(for: w)) {
+                            NSLog("[MetaWhisp] 🎚️ %@ chunk %d utt: dropped (%@): '%@'", label, i + 1, reason, String(rawUtterance.prefix(80)))
+                            continue
+                        }
                         let stripped = TranscriptionCoordinator.stripHallucinationTokens(rawUtterance)
                         if stripped.isEmpty {
                             NSLog("[MetaWhisp] 🧹 %@ chunk %d utt: emptied by strip (was '%@')", label, i + 1, String(rawUtterance.prefix(80)))

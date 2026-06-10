@@ -117,7 +117,10 @@ final class CloudWhisperEngine: TranscriptionEngine, @unchecked Sendable {
         NSLog("[CloudWhisper] PRO ✅ %d chars in %.1fs", result.text.count, processingTime)
 
         let segments = (result.segments ?? []).map {
-            TranscriptionResult.Segment(text: $0.text, start: $0.start, end: $0.end)
+            TranscriptionResult.Segment(text: $0.text, start: $0.start, end: $0.end,
+                                        avgLogprob: $0.avgLogprob,
+                                        compressionRatio: $0.compressionRatio,
+                                        noSpeechProb: $0.noSpeechProb)
         }
 
         return TranscriptionResult(
@@ -196,7 +199,10 @@ final class CloudWhisperEngine: TranscriptionEngine, @unchecked Sendable {
               provider.displayName, text.count, processingTime, audioDuration)
 
         let segments = (response.segments ?? []).map {
-            TranscriptionResult.Segment(text: $0.text, start: $0.start, end: $0.end)
+            TranscriptionResult.Segment(text: $0.text, start: $0.start, end: $0.end,
+                                        avgLogprob: $0.avgLogprob,
+                                        compressionRatio: $0.compressionRatio,
+                                        noSpeechProb: $0.noSpeechProb)
         }
 
         return TranscriptionResult(
@@ -216,10 +222,23 @@ private struct WhisperResponse: Decodable {
     let language: String?
     let segments: [WhisperSegment]?
 
+    // B2: `verbose_json` carries per-segment confidence metrics. Optional because
+    // not every provider/format guarantees them — absent → the gate keeps the
+    // segment. Exposed on TranscriptionResult.Segment; the owner layer gates.
     struct WhisperSegment: Decodable {
         let text: String
         let start: Double
         let end: Double
+        let avgLogprob: Float?
+        let compressionRatio: Float?
+        let noSpeechProb: Float?
+
+        enum CodingKeys: String, CodingKey {
+            case text, start, end
+            case avgLogprob = "avg_logprob"
+            case compressionRatio = "compression_ratio"
+            case noSpeechProb = "no_speech_prob"
+        }
     }
 }
 
@@ -233,10 +252,22 @@ private struct ProTranscribeResponse: Decodable {
     let language: String?
     let segments: [ProSegment]?
 
+    // B2: the Pro proxy MAY forward Whisper's per-segment metrics. Optional — the
+    // worker currently omits them, so absent → the gate keeps the segment.
     struct ProSegment: Decodable {
         let text: String
         let start: Double
         let end: Double
+        let avgLogprob: Float?
+        let compressionRatio: Float?
+        let noSpeechProb: Float?
+
+        enum CodingKeys: String, CodingKey {
+            case text, start, end
+            case avgLogprob = "avg_logprob"
+            case compressionRatio = "compression_ratio"
+            case noSpeechProb = "no_speech_prob"
+        }
     }
 }
 
