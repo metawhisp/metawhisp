@@ -71,7 +71,7 @@ final class MutationServiceTests: XCTestCase {
         let task = TaskItem(taskDescription: "drop it")
         ctx.insert(task)
         let id = task.id
-        try svc.delete(task, in: ctx)
+        try svc.hardDelete(task, in: ctx)
         XCTAssertEqual(fired, [.taskDeleted(id)])
     }
 
@@ -90,7 +90,7 @@ final class MutationServiceTests: XCTestCase {
         let mem = UserMemory(content: "x", category: "fact", sourceApp: "test", confidence: 0.9)
         ctx.insert(mem)
         let id = mem.id
-        try svc.delete(mem, in: ctx)
+        try svc.hardDelete(mem, in: ctx)
         XCTAssertEqual(fired, [.memoryDeleted(id)])
     }
 

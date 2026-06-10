@@ -57,7 +57,11 @@ final class MutationService {
         try commit(.taskSaved(task.id), in: ctx) { ctx.insert(task) }
     }
 
-    func delete(_ task: TaskItem, in ctx: ModelContext) throws {
+    /// HARD delete — actually removes the row and the vault file. The app's normal
+    /// "delete" is a SOFT dismiss (`isDismissed`/`status`), which is a `.taskSaved`
+    /// field mutation, not this. Named explicitly so a dismiss path can't call it
+    /// by mistake (Codex CC-1 review).
+    func hardDelete(_ task: TaskItem, in ctx: ModelContext) throws {
         let id = task.id
         try commit(.taskDeleted(id), in: ctx) { ctx.delete(task) }
     }
@@ -66,7 +70,9 @@ final class MutationService {
         try commit(.memorySaved(memory.id), in: ctx) { ctx.insert(memory) }
     }
 
-    func delete(_ memory: UserMemory, in ctx: ModelContext) throws {
+    /// HARD delete — see `hardDelete(_ task:)`. Soft dismiss is a `.memorySaved`
+    /// field mutation, not this.
+    func hardDelete(_ memory: UserMemory, in ctx: ModelContext) throws {
         let id = memory.id
         try commit(.memoryDeleted(id), in: ctx) { ctx.delete(memory) }
     }
