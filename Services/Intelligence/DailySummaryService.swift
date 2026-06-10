@@ -92,17 +92,25 @@ final class DailySummaryService: ObservableObject {
         // Future days have no data — silently skip (UI shows placeholder anyway).
         let today = Calendar.current.startOfDay(for: Date())
         guard dayStart <= today else { return nil }
-        // Delete existing row for the date so the new one takes its place cleanly.
-        if fetchSummary(for: dayStart) != nil, let container = modelContainer {
+        // SB-7: generate FIRST and replace the existing summary ONLY if generation
+        // actually produced one. The old code deleted the existing row up front, so
+        // a nil generation (LLM unavailable / parse fail) lost the day's summary with
+        // nothing to put back.
+        guard let fresh = await generate(for: dayStart, postNotification: false) else {
+            return nil   // generation failed → existing summary (if any) left intact
+        }
+        // Success → drop any OTHER (older) rows for the date so the fresh one stands alone.
+        if let container = modelContainer {
             let ctx = ModelContext(container)
             let nextDay = Calendar.current.date(byAdding: .day, value: 1, to: dayStart) ?? dayStart
-            let rows = (try? ctx.fetch(FetchDescriptor<DailySummary>(
-                predicate: #Predicate { $0.date >= dayStart && $0.date < nextDay }
+            let freshId = fresh.id
+            let stale = (try? ctx.fetch(FetchDescriptor<DailySummary>(
+                predicate: #Predicate { $0.date >= dayStart && $0.date < nextDay && $0.id != freshId }
             ))) ?? []
-            for row in rows { ctx.delete(row) }
-            try? ctx.save()
+            for row in stale { ctx.delete(row) }
+            if !stale.isEmpty { try? ctx.save() }
         }
-        return await generate(for: dayStart, postNotification: false)
+        return fresh
     }
 
     /// ITER-022 G_dashboard — Public read for the carousel.
