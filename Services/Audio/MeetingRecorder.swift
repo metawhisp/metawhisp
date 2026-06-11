@@ -389,6 +389,17 @@ final class MeetingRecorder: ObservableObject {
     /// Both sources started roughly at the same time (within a few hundred ms);
     /// we align them at sample 0 and mix sample-by-sample. Tail of the longer
     /// stream is kept as-is. Soft clipping prevents overflow when both are loud.
+    /// TR-11 (ITER-046 E2): a TRUE soft clip. Identity for |x| ≤ 0.5 — normal
+    /// speech sums pass through bit-exact — then smooth tanh compression with an
+    /// asymptote at ±1. The previous `max(-1, min(1, sum))` was a HARD clip
+    /// mislabelled "soft": it flat-topped loud overlaps (both speakers loud at
+    /// once), adding harsh distortion exactly where ASR needs the waveform most.
+    static func softClip(_ x: Float) -> Float {
+        let a = abs(x)
+        guard a > 0.5 else { return x }
+        return (x < 0 ? -1 : 1) * (0.5 + 0.5 * tanhf((a - 0.5) / 0.5))
+    }
+
     static func mix(mic: [Float], system: [Float]) -> [Float] {
         // If one side is empty, just return the other (no mixing needed)
         if mic.isEmpty { return system }
@@ -400,9 +411,7 @@ final class MeetingRecorder: ObservableObject {
 
         // Overlapping region — mix both
         for i in 0..<common {
-            let sum = mic[i] + system[i]
-            // Soft clip to [-1, 1]
-            mixed[i] = max(-1.0, min(1.0, sum))
+            mixed[i] = softClip(mic[i] + system[i])
         }
 
         // Tail from whichever is longer — keep at full gain
