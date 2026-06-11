@@ -9,6 +9,8 @@ struct OnboardingModelPage: View {
     @State private var cloudKey = ""
     @State private var validating = false
     @State private var validationError: String?
+    /// TR-7 — set when the user picks Tiny with a non-English language.
+    @State private var tinyWarning: String?
 
     enum Tab: String { case local, cloud, pro }
 
@@ -91,6 +93,15 @@ struct OnboardingModelPage: View {
             modelCard(modelId: "tiny", name: "Tiny", size: "~40 MB",
                       badge: "FAST", badgeColor: MW.textMuted)
 
+            // TR-7 — Tiny picked with a non-English language: loud quality
+            // warning (informative, not blocking).
+            if let tinyWarning {
+                Text("⚠️ " + tinyWarning)
+                    .font(.system(size: 10, design: .monospaced))
+                    .foregroundStyle(MW.recording)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
             // Live state from the real downloader.
             if modelManager.isDownloading || modelManager.phase == .verifying {
                 VStack(spacing: 6) {
@@ -152,6 +163,12 @@ struct OnboardingModelPage: View {
     /// model + on-device engine so the onboarding readiness gate only goes ready
     /// once the model is actually on disk.
     private func startLocalModel(_ modelId: String) {
+        // TR-7 — recomputed on every pick: appears for Tiny + non-EN, clears
+        // when the user switches to a proper model.
+        tinyWarning = OnboardingReadiness.tinyModelWarning(
+            modelId: modelId,
+            transcriptionLanguage: AppSettings.shared.transcriptionLanguage
+        )
         AppSettings.shared.selectedModel = modelId
         AppSettings.shared.transcriptionEngine = "ondevice"
         modelManager.startDownload(modelId)
