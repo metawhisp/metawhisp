@@ -369,10 +369,12 @@ final class AppSettings: ObservableObject {
 /// Previously this wrote a PLAINTEXT JSON file at
 /// `~/Library/Application Support/MetaWhisp/.secrets` (readable by any process
 /// running as the same user) — the old doc comment claimed "encrypted plist",
-/// which was false. On first use we migrate every value from that legacy file
+/// which was false. On first read we migrate every value from that legacy file
 /// into the Keychain, verify each one, and delete the file only when ALL are
-/// confirmed. `load` falls back to the legacy file until migration completes, so
-/// the user never loses access.
+/// confirmed. SEC-1: there is NO plaintext read fallback — the legacy file is
+/// only ever read by the migration; if a value fails to verify in the Keychain
+/// the file is kept and migration retries on the next read/launch (worst case
+/// the user re-enters one key — never a silent plaintext read path).
 ///
 /// Note: Keychain ACLs are bound to the code signature, so builds must keep a
 /// stable signing identity (release Developer ID + `hot-swap.sh` provide this).
@@ -385,10 +387,14 @@ enum KeychainHelper {
     }
 
     static func load(key: String) -> String? {
-        if let v = keychainRead(key) { return v }
-        // Safety net: until migration is confirmed, the legacy file may still
-        // hold the value — read it so the user never loses access.
-        return legacyDict()?[key]
+        // SEC-1: migrate-on-first-read (idempotent, no-op once the legacy file
+        // is gone) guarantees the Keychain is populated before ANY read — even
+        // ones that fire before applicationDidFinishLaunching (AppSettings.init
+        // reads keys). The permanent plaintext read fallback is REMOVED: the
+        // legacy `.secrets` file is now only ever read by the migration itself,
+        // so a planted file can no longer feed values into the app.
+        migrateLegacySecretsIfNeeded()
+        return keychainRead(key)
     }
 
     // MARK: - Keychain primitives
@@ -430,7 +436,7 @@ enum KeychainHelper {
         ] as CFDictionary)
     }
 
-    // MARK: - Legacy plaintext file (.secrets) — migration source + read fallback
+    // MARK: - Legacy plaintext file (.secrets) — migration source ONLY (SEC-1)
 
     private static var legacyURL: URL {
         let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
