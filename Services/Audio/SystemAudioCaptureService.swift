@@ -23,6 +23,9 @@ final class SystemAudioCaptureService: NSObject, ObservableObject, AudioSource {
     private var stream: SCStream?
     private let audioQueue = DispatchQueue(label: "com.metawhisp.system-audio", qos: .userInteractive)
     private var streamOutput: AudioStreamOutput?
+    /// TR-9/TR-10 — AVAudioConverter-backed resampler, fresh per capture (clean
+    /// filter state per meeting). Only touched from `audioQueue` after start.
+    private var resampler: StreamingResampler?
     /// AUD-008 — bumped on every start()/stop(). The async setup task captures its
     /// value and bails after each suspension point if it no longer matches, so a
     /// STOP during setup cannot resurrect a recording the user already cancelled.
@@ -42,6 +45,7 @@ final class SystemAudioCaptureService: NSObject, ObservableObject, AudioSource {
         guard !isRecording, !isStarting else { return }
         samples = []
         samples.reserveCapacity(Int(targetSampleRate) * 300) // ~5 min pre-alloc
+        resampler = StreamingResampler(outputRate: targetSampleRate)  // TR-9/TR-10
         lastError = nil
         isStarting = true
         startGeneration += 1
@@ -110,6 +114,7 @@ final class SystemAudioCaptureService: NSObject, ObservableObject, AudioSource {
         }
         stream = nil
         streamOutput = nil
+        resampler = nil   // TR-9/TR-10: late buffers after stop just bail
         isRecording = false
         audioLevel = 0
         audioBars = Array(repeating: 0, count: 24)
@@ -220,19 +225,16 @@ final class SystemAudioCaptureService: NSObject, ObservableObject, AudioSource {
         let rms = sqrtf(sumSq / Float(mono.count))
         let level = sqrtf(min(rms * 12.0, 1.0))
 
-        // Resample to 16kHz (linear interpolation)
-        let ratio = targetSampleRate / sampleRate
-        let outCount = Int(Double(frameCount) * ratio)
-        guard outCount > 0 else { return }
-        var resampled = [Float](repeating: 0, count: outCount)
-        for i in 0..<outCount {
-            let srcIdx = Double(i) / ratio
-            let idx0 = Int(srcIdx)
-            let frac = Float(srcIdx - Double(idx0))
-            let s0 = idx0 < mono.count ? mono[idx0] : 0
-            let s1 = (idx0 + 1) < mono.count ? mono[idx0 + 1] : s0
-            resampled[i] = s0 + frac * (s1 - s0)
-        }
+        // TR-9: resample 48→16 kHz via AVAudioConverter (same mechanism as the
+        // mic path) — proper anti-aliasing low-pass instead of bare linear
+        // interpolation, which folded everything above 8 kHz into the speech
+        // band and degraded the "Them" stream. TR-10: the per-capture converter
+        // carries the fractional source position across buffers, so no samples
+        // are lost at buffer boundaries (the old `Int(frameCount * ratio)`
+        // truncated every buffer and drifted mic/system sync on long calls).
+        guard let resampler else { return }
+        let resampled = resampler.resample(mono, from: sampleRate)
+        guard !resampled.isEmpty else { return }
 
         Task { @MainActor in
             self.samples.append(contentsOf: resampled)
