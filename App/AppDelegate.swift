@@ -1453,8 +1453,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             offsetSamples += rawChunk.count
 
             // VAD trim — strip leading/trailing silence so Whisper has less
-            // material to hallucinate over.
-            let chunk = AppDelegate.trimSilenceEdges(samples: rawChunk)
+            // material to hallucinate over. TR-8: keep the lead offset so the
+            // utterance timestamps below stay anchored to the RAW chunk position.
+            let (chunk, leadOffsetSamples) = AppDelegate.trimSilenceEdges(samples: rawChunk)
+            let leadSec = Double(leadOffsetSamples) / 16000.0
             let rms = TranscriptionCoordinator.calculateRMS(chunk)
             NSLog("[MetaWhisp] Meeting %@ chunk %d/%d: %d→%d samples after trim, RMS=%.4f",
                   label, i + 1, chunks.count, rawChunk.count, chunk.count, rms)
@@ -1559,8 +1561,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
                             NSLog("[MetaWhisp] 🧹 %@ chunk %d utt: stripped hallucination (was %d → %d chars)", label, i + 1, rawUtterance.count, stripped.count)
                         }
                         let utteranceText = BrandGlossary.applyCorrections(stripped)
-                        let absStart = chunkStartSec + w.start
-                        let absEnd = chunkStartSec + w.end
+                        // TR-8: w.start/w.end are relative to the TRIMMED chunk —
+                        // add the trimmed-lead offset to stay on the raw timeline.
+                        let absStart = chunkStartSec + leadSec + w.start
+                        let absEnd = chunkStartSec + leadSec + w.end
                         segments.append(StreamSegment(text: utteranceText, startSec: absStart, endSec: absEnd, speaker: speaker))
                     }
                 }
@@ -1631,11 +1635,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     /// Strip leading/trailing silence from a chunk. Defines silence as
     /// `RMS < 0.005` over a 100ms window. Keeps speech-only audio so Whisper
     /// has less material to hallucinate over.
-    static func trimSilenceEdges(samples: [Float]) -> [Float] {
+    /// TR-8 (ITER-046 E): also reports how many samples were cut from the FRONT.
+    /// Whisper's utterance timestamps are relative to the TRIMMED chunk, while
+    /// `chunkStartSec` is the RAW chunk position — without the lead offset every
+    /// utterance shifted earlier by the trimmed silence (tens of seconds in quiet
+    /// chunks) and DualStreamMerger interleaved Me/Them wrongly.
+    static func trimSilenceEdges(samples: [Float]) -> (samples: [Float], leadOffsetSamples: Int) {
         let sampleRate = 16000
         let win = sampleRate / 10  // 100ms
         let threshold: Float = 0.005
-        guard samples.count > win * 2 else { return samples }
+        guard samples.count > win * 2 else { return (samples, 0) }
 
         // Find first non-silent window.
         var start = 0
@@ -1652,8 +1661,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             end -= win
         }
         let trimmedEnd = min(samples.count, end + win)
-        guard trimmedEnd > start else { return samples }
-        return Array(samples[start..<trimmedEnd])
+        guard trimmedEnd > start else { return (samples, 0) }
+        return (Array(samples[start..<trimmedEnd]), start)
     }
 
     /// Reuse path: take the joined LiveAdvisor partials and append a single
