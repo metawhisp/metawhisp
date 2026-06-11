@@ -1495,10 +1495,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
 
                 if TranscriptionCoordinator.isAlwaysHallucination(text) {
                     NSLog("[MetaWhisp] ⚠️  %@ chunk %d: filtered always-hallucination: '%@'", label, i + 1, String(text.prefix(60)))
+                    SuspectTranscriptLog.append(text, reason: "always-hallucination", context: "\(label) chunk \(i + 1)")  // TR-12
                     continue
                 }
                 if rms < 0.003, TranscriptionCoordinator.isHallucination(text) {
                     NSLog("[MetaWhisp] ⚠️  %@ chunk %d: filtered hallucination (RMS=%.4f): '%@'", label, i + 1, rms, String(text.prefix(60)))
+                    SuspectTranscriptLog.append(text, reason: "low-rms-hallucination", context: "\(label) chunk \(i + 1)")  // TR-12
                     continue
                 }
 
@@ -1550,11 +1552,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
                         // so a meeting drop is at least recoverable from the log.
                         if let reason = TranscriptionConfidenceGate.rejectionReason(TranscriptionConfidenceGate.metrics(for: w)) {
                             NSLog("[MetaWhisp] 🎚️ %@ chunk %d utt: dropped (%@): '%@'", label, i + 1, reason, String(rawUtterance.prefix(80)))
+                            SuspectTranscriptLog.append(rawUtterance, reason: reason, context: "\(label) chunk \(i + 1) utt")  // TR-12
                             continue
                         }
                         let stripped = TranscriptionCoordinator.stripHallucinationTokens(rawUtterance)
                         if stripped.isEmpty {
                             NSLog("[MetaWhisp] 🧹 %@ chunk %d utt: emptied by strip (was '%@')", label, i + 1, String(rawUtterance.prefix(80)))
+                            SuspectTranscriptLog.append(rawUtterance, reason: "strip-emptied", context: "\(label) chunk \(i + 1) utt")  // TR-12
                             continue
                         }
                         if stripped != rawUtterance {
