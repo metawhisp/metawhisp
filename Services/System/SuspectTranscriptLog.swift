@@ -8,6 +8,13 @@ import Foundation
 /// speech with no recoverable trace. Dropped text now also lands in
 /// `Application Support/MetaWhisp/suspect-transcripts.log`, newest at the end,
 /// with a one-file `.old` rotation at ~2 MB so it can't grow unbounded.
+///
+/// PRIVACY (vs AUD-050): AUD-050 redacted user content from the *diagnostics*
+/// log (~/Library/Logs — the file people attach to bug reports). This file is
+/// USER DATA in the user-data directory — the same sensitivity class as the
+/// SwiftData store holding full transcripts — and recoverability is its whole
+/// point. Files are chmod 0600 (owner-only), matching the MCP snapshot
+/// (AUD-029).
 enum SuspectTranscriptLog {
 
     static let maxBytes = 2 * 1024 * 1024
@@ -40,6 +47,9 @@ enum SuspectTranscriptLog {
             try? handle.write(contentsOf: Data(line.utf8))
         } else {
             try? Data(line.utf8).write(to: url)
+            // Owner-only, matching the MCP snapshot (AUD-029) — this file holds
+            // raw (dropped) transcript text.
+            try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
         }
     }
 
