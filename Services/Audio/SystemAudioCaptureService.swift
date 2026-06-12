@@ -23,9 +23,6 @@ final class SystemAudioCaptureService: NSObject, ObservableObject, AudioSource {
     private var stream: SCStream?
     private let audioQueue = DispatchQueue(label: "com.metawhisp.system-audio", qos: .userInteractive)
     private var streamOutput: AudioStreamOutput?
-    /// TR-9/TR-10 — AVAudioConverter-backed resampler, fresh per capture (clean
-    /// filter state per meeting). Only touched from `audioQueue` after start.
-    private var resampler: StreamingResampler?
     /// AUD-008 — bumped on every start()/stop(). The async setup task captures its
     /// value and bails after each suspension point if it no longer matches, so a
     /// STOP during setup cannot resurrect a recording the user already cancelled.
@@ -45,7 +42,6 @@ final class SystemAudioCaptureService: NSObject, ObservableObject, AudioSource {
         guard !isRecording, !isStarting else { return }
         samples = []
         samples.reserveCapacity(Int(targetSampleRate) * 300) // ~5 min pre-alloc
-        resampler = StreamingResampler(outputRate: targetSampleRate)  // TR-9/TR-10
         lastError = nil
         isStarting = true
         startGeneration += 1
@@ -113,8 +109,7 @@ final class SystemAudioCaptureService: NSObject, ObservableObject, AudioSource {
             try? await stream?.stopCapture()
         }
         stream = nil
-        streamOutput = nil
-        resampler = nil   // TR-9/TR-10: late buffers after stop just bail
+        streamOutput = nil   // TR-9/TR-10: drops the per-capture resampler with it
         isRecording = false
         audioLevel = 0
         audioBars = Array(repeating: 0, count: 24)
@@ -149,9 +144,13 @@ final class SystemAudioCaptureService: NSObject, ObservableObject, AudioSource {
 
         let newStream = SCStream(filter: filter, configuration: config, delegate: nil)
 
-        // Create output handler
-        let output = AudioStreamOutput { [weak self] sampleBuffer in
-            self?.processSampleBuffer(sampleBuffer)
+        // Create output handler. TR-9/TR-10: the resampler is OWNED by the output
+        // and only ever touched inside its `stream(...)` callback (the SCStream
+        // sample-handler queue), so it never races with MainActor start()/stop().
+        // Created here, before startCapture establishes the happens-before for the
+        // first callback; a fresh one per capture = clean filter state per meeting.
+        let output = AudioStreamOutput(resampler: StreamingResampler(outputRate: targetSampleRate)) { [weak self] sampleBuffer, resampler in
+            self?.processSampleBuffer(sampleBuffer, resampler: resampler)
         }
         self.streamOutput = output
 
@@ -162,7 +161,7 @@ final class SystemAudioCaptureService: NSObject, ObservableObject, AudioSource {
 
     // MARK: - Audio Processing
 
-    private func processSampleBuffer(_ sampleBuffer: CMSampleBuffer) {
+    private func processSampleBuffer(_ sampleBuffer: CMSampleBuffer, resampler: StreamingResampler) {
         guard let blockBuffer = CMSampleBufferGetDataBuffer(sampleBuffer) else { return }
         let length = CMBlockBufferGetDataLength(blockBuffer)
         guard length > 0 else { return }
@@ -232,7 +231,6 @@ final class SystemAudioCaptureService: NSObject, ObservableObject, AudioSource {
         // carries the fractional source position across buffers, so no samples
         // are lost at buffer boundaries (the old `Int(frameCount * ratio)`
         // truncated every buffer and drifted mic/system sync on long calls).
-        guard let resampler else { return }
         let resampled = resampler.resample(mono, from: sampleRate)
         guard !resampled.isEmpty else { return }
 
@@ -404,14 +402,18 @@ final class SystemAudioCaptureService: NSObject, ObservableObject, AudioSource {
 
 /// Wraps the SCStreamOutput protocol to forward audio buffers via closure.
 private final class AudioStreamOutput: NSObject, SCStreamOutput {
-    let handler: (CMSampleBuffer) -> Void
+    let handler: (CMSampleBuffer, StreamingResampler) -> Void
+    /// TR-9/TR-10 — owned here, passed to `handler` and used ONLY inside
+    /// `stream(...)` (the sample-handler queue), so it never crosses threads.
+    private let resampler: StreamingResampler
 
-    init(handler: @escaping (CMSampleBuffer) -> Void) {
+    init(resampler: StreamingResampler, handler: @escaping (CMSampleBuffer, StreamingResampler) -> Void) {
+        self.resampler = resampler
         self.handler = handler
     }
 
     func stream(_ stream: SCStream, didOutputSampleBuffer sampleBuffer: CMSampleBuffer, of type: SCStreamOutputType) {
         guard type == .audio else { return }
-        handler(sampleBuffer)
+        handler(sampleBuffer, resampler)
     }
 }

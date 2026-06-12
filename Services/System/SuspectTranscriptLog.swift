@@ -47,10 +47,11 @@ enum SuspectTranscriptLog {
             try? handle.write(contentsOf: Data(line.utf8))
         } else {
             try? Data(line.utf8).write(to: url)
-            // Owner-only, matching the MCP snapshot (AUD-029) — this file holds
-            // raw (dropped) transcript text.
-            try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
         }
+        // Owner-only on EVERY write — a pre-existing/beta/user-created file keeps
+        // its old mode otherwise. This file holds raw (dropped) transcript text;
+        // 0600 matches the MCP snapshot (AUD-029).
+        try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
     }
 
     private static func rotateIfNeeded(_ url: URL) {
@@ -59,5 +60,7 @@ enum SuspectTranscriptLog {
         let old = url.deletingPathExtension().appendingPathExtension("old.log")
         try? FileManager.default.removeItem(at: old)
         try? FileManager.default.moveItem(at: url, to: old)
+        // The rotated inode carries the live file's mode; re-assert owner-only.
+        try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: old.path)
     }
 }

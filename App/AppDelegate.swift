@@ -1532,6 +1532,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
                     let stripped = TranscriptionCoordinator.stripHallucinationTokens(text)
                     if stripped.isEmpty {
                         NSLog("[MetaWhisp] 🧹 %@ chunk %d: emptied by strip (was '%@')", label, i + 1, String(text.prefix(80)))
+                        SuspectTranscriptLog.append(text, reason: "strip-emptied", context: "\(label) chunk \(i + 1)")  // TR-12
                         continue
                     }
                     if stripped != text {
@@ -1541,7 +1542,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
                     // Cyrillic mangles). Conservative — see BrandGlossary
                     // header for rationale.
                     let cleanedText = BrandGlossary.applyCorrections(stripped)
-                    segments.append(StreamSegment(text: cleanedText, startSec: chunkStartSec, endSec: chunkEndSec, speaker: speaker))
+                    // TR-8: this whole-chunk fallback covers the TRIMMED audio, which
+                    // begins leadSec into the raw chunk — anchor it on the raw timeline
+                    // like the per-utterance path (was chunkStartSec…chunkEndSec).
+                    let fbStart = chunkStartSec + leadSec
+                    let fbEnd = min(chunkEndSec, fbStart + Double(chunk.count) / 16000.0)
+                    segments.append(StreamSegment(text: cleanedText, startSec: fbStart, endSec: fbEnd, speaker: speaker))
                 } else {
                     for w in whisperSegments {
                         let rawUtterance = w.text.trimmingCharacters(in: .whitespacesAndNewlines)

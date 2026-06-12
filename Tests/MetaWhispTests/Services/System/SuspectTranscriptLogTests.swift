@@ -35,6 +35,15 @@ final class SuspectTranscriptLogTests: XCTestCase {
         XCTAssertFalse(FileManager.default.fileExists(atPath: file.path))
     }
 
+    func testFileIsOwnerOnlyAfterEveryWrite() throws {
+        // Pre-create with loose perms — every write must re-assert 0600 (Codex P2).
+        try Data("old".utf8).write(to: file)
+        try FileManager.default.setAttributes([.posixPermissions: 0o644], ofItemAtPath: file.path)
+        SuspectTranscriptLog.write("dropped speech", reason: "gate", context: "Them chunk 2", to: file)
+        let mode = (try FileManager.default.attributesOfItem(atPath: file.path)[.posixPermissions] as? NSNumber)?.intValue
+        XCTAssertEqual(mode, 0o600)
+    }
+
     func testRotatesAtCap() throws {
         // Pre-fill past the cap, then one more write must rotate to .old.log.
         let big = String(repeating: "a", count: SuspectTranscriptLog.maxBytes + 1)

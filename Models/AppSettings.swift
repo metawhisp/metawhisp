@@ -453,15 +453,22 @@ enum KeychainHelper {
     // MARK: - One-time migration
 
     private static var migrated = false
+    private static let migrationLock = NSLock()
 
-    /// Call once at app launch (signed app → Keychain ACLs valid). Imports the
-    /// legacy plaintext `.secrets` file into the Keychain, verifies each value,
-    /// and deletes the file only when every secret is confirmed. Safe to call
-    /// repeatedly; no-op once the legacy file is gone.
+    /// Imports the legacy plaintext `.secrets` file into the Keychain (called on
+    /// the first `load`, signed app → Keychain ACLs valid), verifies each value,
+    /// and deletes the file only when every secret is confirmed.
+    ///
+    /// SEC-1: the `migrated` flag is set ONLY on full success (or when there's
+    /// nothing to migrate). On a partial failure it stays false, so EVERY later
+    /// `load()` this launch RETRIES — a key that failed to write isn't missing
+    /// for the rest of the run (there is no plaintext fallback anymore). Locked
+    /// so concurrent launch-time reads don't race on the file delete.
     static func migrateLegacySecretsIfNeeded() {
+        migrationLock.lock()
+        defer { migrationLock.unlock() }
         guard !migrated else { return }
-        migrated = true
-        guard let dict = legacyDict(), !dict.isEmpty else { return }
+        guard let dict = legacyDict(), !dict.isEmpty else { migrated = true; return }
         var allConfirmed = true
         for (k, v) in dict {
             // Write AND verify (read back) before trusting the Keychain copy.
@@ -469,13 +476,14 @@ enum KeychainHelper {
                 allConfirmed = false
             }
         }
-        // Delete the plaintext file ONLY when every secret is confirmed in the
-        // Keychain; otherwise keep it as the read fallback in `load`.
+        // Delete the plaintext file ONLY when every secret is confirmed; mark
+        // migrated only then, so a partial failure is retried on the next read.
         if allConfirmed {
             try? FileManager.default.removeItem(at: legacyURL)
+            migrated = true
             NSLog("[Keychain] ✅ migrated %d secrets to Keychain; legacy .secrets removed", dict.count)
         } else {
-            NSLog("[Keychain] ⚠️ secret migration incomplete — keeping legacy .secrets as fallback")
+            NSLog("[Keychain] ⚠️ secret migration incomplete — will retry on next read")
         }
     }
 }
