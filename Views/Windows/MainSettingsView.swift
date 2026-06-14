@@ -2050,7 +2050,7 @@ struct MainSettingsView: View {
                     .labelsHidden()
                     .datePickerStyle(.compact)
                 }
-                Text("Manual trigger: Insights tab → GENERATE WEEKLY DIGEST.")
+                Text("View past recaps in the Weekly Insights tab.")
                     .font(MW.monoSm).foregroundStyle(MW.textMuted)
             }
         }

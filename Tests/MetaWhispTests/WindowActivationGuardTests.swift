@@ -19,7 +19,6 @@ final class WindowActivationGuardTests: XCTestCase {
     /// Files permitted to keep the aggressive form.
     private static let allowlist: Set<String> = [
         "OnboardingWindowController.swift", // first launch — app not yet frontmost
-        "AnimationTestView.swift",          // dead dev-only test bench, no instantiator
     ]
 
     func testNoAggressiveActivateInUIOrServices() throws {
