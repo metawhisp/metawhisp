@@ -13,6 +13,8 @@ struct MemoriesView: View {
     private var memories: [UserMemory]
 
     @ObservedObject private var settings = AppSettings.shared
+    @ObservedObject private var license = LicenseService.shared
+    @ObservedObject private var localLLM = LocalLLMService.shared
     @Environment(\.modelContext) private var modelContext
 
     @State private var selectedFilter: Filter = .all
@@ -26,8 +28,14 @@ struct MemoriesView: View {
         case interesting = "Interesting"
     }
 
+    /// ITER-047 Element B — generic gate (local LLM counts) for the reminder bar.
+    private var hasLLMAccess: Bool {
+        LLMAccess.has(apiKey: settings.activeAPIKey, isPro: license.isPro, localReady: localLLM.isReady)
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
+            if !hasLLMAccess { LLMAccessBar() }
             header
             Rectangle().fill(MW.border).frame(height: MW.hairline)
 

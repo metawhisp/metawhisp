@@ -15,6 +15,8 @@ struct TasksView: View {
     private var tasks: [TaskItem]
 
     @ObservedObject private var settings = AppSettings.shared
+    @ObservedObject private var license = LicenseService.shared
+    @ObservedObject private var localLLM = LocalLLMService.shared
     @State private var isExtracting = false
     @State private var extractionResult: String?
     @State private var candidatesExpanded = true
@@ -60,8 +62,14 @@ struct TasksView: View {
             }
     }
 
+    /// ITER-047 Element B — generic gate (local LLM counts) for the reminder bar.
+    private var hasLLMAccess: Bool {
+        LLMAccess.has(apiKey: settings.activeAPIKey, isPro: license.isPro, localReady: localLLM.isReady)
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
+            if !hasLLMAccess { LLMAccessBar() }
             header
             Rectangle().fill(MW.border).frame(height: MW.hairline)
             content

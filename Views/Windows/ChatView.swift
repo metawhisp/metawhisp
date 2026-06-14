@@ -6,13 +6,22 @@ import SwiftUI
 /// spec://BACKLOG#B2
 struct ChatView: View {
     @Query(sort: \ChatMessage.createdAt, order: .forward) private var messages: [ChatMessage]
+    @ObservedObject private var settings = AppSettings.shared
+    @ObservedObject private var license = LicenseService.shared
     @State private var inputText: String = ""
     @State private var isSending: Bool = false
     @State private var errorMsg: String?
     @FocusState private var inputFocused: Bool
 
+    /// ITER-047 Element B — Chat gate is stricter: a local LLM does NOT unlock
+    /// MetaChat (matches ChatService.hasLLMAccess), so the bar uses hasForChat.
+    private var hasLLMAccess: Bool {
+        LLMAccess.hasForChat(apiKey: settings.activeAPIKey, isPro: license.isPro)
+    }
+
     var body: some View {
         VStack(spacing: 0) {
+            if !hasLLMAccess { LLMAccessBar() }
             header
             Rectangle().fill(MW.border).frame(height: MW.hairline)
 
