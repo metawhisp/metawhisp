@@ -350,7 +350,7 @@ final class WeeklyPatternDetector: ObservableObject {
         if !digest.insights.isEmpty { lines.append("Insights: \(digest.insights.count)") }
         let body = lines.isEmpty
             ? "Quiet week — patterns recap saved."
-            : lines.joined(separator: " · ") + " — open Insights"
+            : lines.joined(separator: " · ") + " — open Weekly Insights"
         let note = MWNotification(
             kind: .advice,
             title: "Weekly patterns ready",
@@ -358,9 +358,9 @@ final class WeeklyPatternDetector: ObservableObject {
             onTap: {
                 // Space-throw fix (2026-06-10): NSApp.activate() snapped the
                 // user to the main window's Space. openMainWindow re-places it
-                // on the CURRENT Space. (Tab destination is still wrong — SB-8
-                // in ITER-045: there is no Insights tab consumer yet.)
-                Task { @MainActor in AppDelegate.shared?.openMainWindow(tab: .tasks) }
+                // on the CURRENT Space. Opens the Weekly Insights tab — the
+                // digest this notification announces now lives there.
+                Task { @MainActor in AppDelegate.shared?.openMainWindow(tab: .weeklyInsights) }
             }
         )
         Task { @MainActor in MWNotificationStack.shared.push(note) }

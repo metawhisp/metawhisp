@@ -38,9 +38,8 @@ struct MainWindowView: View {
     enum SidebarTab: String, CaseIterable, Identifiable {
         case dashboard = "Dashboard"
         case library = "Library"
-        case projects = "Projects"
-        case goals = "Goals"
-        case tasks = "Tasks"
+        case workspace = "Workspace"
+        case weeklyInsights = "Weekly Insights"
         case chat = "MetaChat"
         case dictionary = "Dictionary"
         case settings = "Settings"
@@ -51,9 +50,8 @@ struct MainWindowView: View {
             switch self {
             case .dashboard: "gauge.with.dots.needle.33percent"
             case .library: "books.vertical"
-            case .projects: "folder.badge.person.crop"
-            case .goals: "target"
-            case .tasks: "checklist"
+            case .workspace: "checklist"
+            case .weeklyInsights: "lightbulb"
             case .chat: "message"
             case .dictionary: "character.book.closed"
             case .settings: "gearshape"
@@ -248,12 +246,10 @@ struct MainWindowView: View {
             DashboardView(coordinator: coordinator)
         case .library:
             LibraryView()
-        case .projects:
-            ProjectsView()
-        case .goals:
-            GoalsView()
-        case .tasks:
-            TasksView()
+        case .workspace:
+            WorkspaceView()
+        case .weeklyInsights:
+            WeeklyInsightsView()
         case .chat:
             ChatView()
         case .dictionary:

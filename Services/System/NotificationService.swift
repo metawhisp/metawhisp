@@ -53,7 +53,7 @@ final class NotificationService: NSObject, ObservableObject {
                 // user to the Space of the app's key window («кидает на первый
                 // экран»). openMainWindow re-places the window on the CURRENT
                 // Space and switches the tab itself.
-                AppDelegate.shared?.openMainWindow(tab: .tasks)
+                AppDelegate.shared?.openMainWindow(tab: .workspace)
             }
         )
         MWNotificationStack.shared.push(note)
@@ -121,7 +121,7 @@ final class NotificationService: NSObject, ObservableObject {
             body: String(advice.content.prefix(200)),
             onTap: {
                 // Space-throw fix (2026-06-10) — see postNewTask.
-                AppDelegate.shared?.openMainWindow(tab: .tasks)
+                AppDelegate.shared?.openMainWindow(tab: .workspace)
                 NotificationCenter.default.post(name: .markAdviceAsRead, object: adviceID)
             }
         )
