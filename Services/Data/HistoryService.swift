@@ -9,6 +9,18 @@ final class HistoryService: ObservableObject {
 
     let modelContainer: ModelContainer
 
+    /// AUD-007 / ITER-049 A1 — `.degraded` when the on-disk store couldn't open.
+    /// The UI surfaces a blocking recovery overlay instead of the app silently
+    /// running on a throwaway in-memory store.
+    @Published private(set) var health: StoreHealth = .healthy
+
+    /// Where SwiftData puts the named `"MetaWhisp"` store. Used only to preserve
+    /// the file on a failed open — never to bypass SwiftData's own pathing.
+    private static var storeURL: URL? {
+        FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first?
+            .appendingPathComponent("MetaWhisp.store")
+    }
+
     init() {
         do {
             let schema = Schema([HistoryItem.self, ScreenContext.self, AdviceItem.self, UserMemory.self, TaskItem.self, ChatMessage.self, Conversation.self, ScreenObservation.self, IndexedFile.self, DailySummary.self, Goal.self, ProjectAlias.self, AuditLog.self, PatternDigest.self])
@@ -16,8 +28,15 @@ final class HistoryService: ObservableObject {
             modelContainer = try ModelContainer(for: schema, configurations: [config])
             Self.log.info("History database ready")
         } catch {
-            Self.log.error("Failed to create ModelContainer: \(error)")
-            // Fallback: in-memory only
+            // AUD-007 / ITER-049 A1 — do NOT silently bypass the user's data.
+            // Preserve the on-disk store (a copy; originals untouched) and flag
+            // degraded so the UI warns this is a non-persisting temporary session.
+            Self.log.error("Failed to open persistent store: \(error)")
+            let backupPath = Self.storeURL.flatMap {
+                StoreBackup.preserveUnopenableStore(storeURL: $0, now: Date())?.path
+            }
+            health = .degraded(reason: (error as NSError).localizedDescription, backupPath: backupPath)
+            Self.log.error("Store DEGRADED — running a temporary in-memory session; original store preserved")
             do {
                 modelContainer = try ModelContainer(
                     for: HistoryItem.self, ScreenContext.self, AdviceItem.self, UserMemory.self, TaskItem.self, ChatMessage.self, Conversation.self, ScreenObservation.self, IndexedFile.self, DailySummary.self, Goal.self, ProjectAlias.self, AuditLog.self, PatternDigest.self,

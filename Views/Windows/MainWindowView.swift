@@ -5,7 +5,7 @@ struct MainWindowView: View {
     @ObservedObject var coordinator: TranscriptionCoordinator
     @ObservedObject var modelManager: ModelManagerService
     @ObservedObject var recorder: AudioRecordingService
-    var historyService: HistoryService
+    @ObservedObject var historyService: HistoryService
 
     /// Drives the sidebar footer pips. AppSettings publishes change events
     /// when @AppStorage-backed properties flip, so the footer recomposes
@@ -78,6 +78,13 @@ struct MainWindowView: View {
             }
         }
         .modelContainer(historyService.modelContainer)
+        .overlay {
+            // AUD-007 / ITER-049 A1 — blocking recovery surface when the
+            // persistent store couldn't be opened (temporary in-memory session).
+            if case let .degraded(reason, backupPath) = historyService.health {
+                StoreRecoveryOverlay(reason: reason, backupPath: backupPath)
+            }
+        }
         .onReceive(NotificationCenter.default.publisher(for: .switchMainTab)) { notification in
             if let tab = notification.object as? SidebarTab {
                 selectedTab = tab
