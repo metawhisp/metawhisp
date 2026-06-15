@@ -66,6 +66,11 @@ final class MemoryExtractor: ObservableObject {
     /// picks it up — see `ExtractionQueueStore.drain`) and drives the UI status.
     private func drainQueue() async {
         guard !isRunning else { return }
+        // ITER-049 A2 — never drain the durable queue against a degraded (empty
+        // in-memory) store: it would mark queued conversations .completed and
+        // rewrite the queue file, permanently dropping work whose real data is
+        // safe in the preserved on-disk store. Stays queued for the next launch.
+        guard StoreHealthSignal.shared.isHealthy else { return }
         isRunning = true
         defer { isRunning = false; lastRun = Date() }
         await queue.drain { id in await self.extractFromConversation(conversationId: id) }

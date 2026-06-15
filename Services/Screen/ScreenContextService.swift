@@ -74,6 +74,10 @@ final class ScreenContextService: ObservableObject {
         whitelist: Set<String>? = nil
     ) {
         guard !isActive else { return }
+        // ITER-049 A2 — a degraded (temporary in-memory) session is read-only; don't
+        // capture OCR into the empty store or stage candidates from it. Covers every
+        // start path (launch, Settings toggle, applicationDidBecomeActive re-arm).
+        guard StoreHealthSignal.shared.isHealthy else { return }
 
         let mergedBlacklist = defaultBlacklist.union(blacklist)
 

@@ -24,10 +24,17 @@ enum StoreBackup {
     ) -> URL? {
         guard fileManager.fileExists(atPath: storeURL.path) else { return nil }
 
-        let backupDir = storeURL
-            .deletingLastPathComponent()
-            .appendingPathComponent("\(storeURL.lastPathComponent).unopenable-\(timestamp(now))",
-                                    isDirectory: true)
+        // Uniquify so two preserves within the same second don't reuse a dir —
+        // reusing it would make copyItem fail on existing files and the cleanup
+        // below would then delete the EARLIER good backup.
+        let parent = storeURL.deletingLastPathComponent()
+        let baseName = "\(storeURL.lastPathComponent).unopenable-\(timestamp(now))"
+        var backupDir = parent.appendingPathComponent(baseName, isDirectory: true)
+        var suffix = 2
+        while fileManager.fileExists(atPath: backupDir.path) {
+            backupDir = parent.appendingPathComponent("\(baseName)-\(suffix)", isDirectory: true)
+            suffix += 1
+        }
 
         do {
             try fileManager.createDirectory(at: backupDir, withIntermediateDirectories: true)

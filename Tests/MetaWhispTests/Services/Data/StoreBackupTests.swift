@@ -55,6 +55,18 @@ final class StoreBackupTests: XCTestCase {
         XCTAssertNil(StoreBackup.preserveUnopenableStore(storeURL: missing, now: at(1_700_000_000)))
     }
 
+    func testSameSecondPreservesDoNotClobber() throws {
+        // Two failures within the same second must produce two distinct dirs, both
+        // intact — never reuse a dir and delete the earlier good backup (Codex P3).
+        let store = dir.appendingPathComponent("MetaWhisp.store")
+        try Data("main".utf8).write(to: store)
+        let b1 = try XCTUnwrap(StoreBackup.preserveUnopenableStore(storeURL: store, now: at(1_700_000_000)))
+        let b2 = try XCTUnwrap(StoreBackup.preserveUnopenableStore(storeURL: store, now: at(1_700_000_000)))
+        XCTAssertNotEqual(b1.path, b2.path, "same-second preserves must not reuse a dir")
+        XCTAssertEqual(try String(contentsOf: b1.appendingPathComponent("MetaWhisp.store"), encoding: .utf8), "main")
+        XCTAssertEqual(try String(contentsOf: b2.appendingPathComponent("MetaWhisp.store"), encoding: .utf8), "main")
+    }
+
     func testDistinctBackupDirsForDistinctTimes() throws {
         let store = dir.appendingPathComponent("MetaWhisp.store")
         try Data("main".utf8).write(to: store)

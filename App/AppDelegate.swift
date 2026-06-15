@@ -664,7 +664,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
                 self?.proactiveContextService.onNewContext(ctx)
             }
         }
-        if AppSettings.shared.screenContextEnabled, historyService.health.isHealthy {
+        if AppSettings.shared.screenContextEnabled {
+            // Degraded gating lives inside ScreenContextService.startMonitoring so it
+            // covers every start path (launch / Settings toggle / didBecomeActive).
             let interval = AppSettings.shared.screenContextInterval
             // AUD-021 — apply the user's Settings blacklist/whitelist choice.
             let screenPolicy = ScreenContextPolicy.resolve(mode: AppSettings.shared.screenContextMode, appList: AppSettings.shared.screenContextAppList)
@@ -749,8 +751,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         // context for weeks. The pipeline is gone; here we dismiss whatever
         // it left behind so the user doesn't have to bulk-clean by hand.
         Task { @MainActor [weak self] in
-            self?.migrateCalendarTasksOnce()
-            self?.migrateSilenceStopMinutesOnce()
+            // ITER-049 A2 — these one-time store migrations set persistent @AppStorage
+            // flags; running them against the empty degraded store would mark them done
+            // and skip the real migration forever. cleanupStaleRecoveryWavs is store-free.
+            if storeHealthy {
+                self?.migrateCalendarTasksOnce()
+                self?.migrateSilenceStopMinutesOnce()
+            }
             // ITER-034.2 (2026-05-11) — prune Recovery/ orphans (>7 days old).
             // Daily audit found 12 MB of stale .wav files from May 7-8, no
             // cleanup code anywhere in the project. Idempotent: zero-op when
@@ -774,6 +781,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         // "ChatApp"/"ЧатЭп"/"ChatAppAI" collapse to one canonical row.
         projectAggregator.configure(modelContainer: historyService.modelContainer)
         Task { @MainActor [weak self] in
+            // ITER-049 A2 — skip project backfill + the one-shot curative pass (which
+            // sets a persistent @AppStorage flag) in a degraded session.
+            guard storeHealthy else { return }
             // Wait longer than the embeddings backfill so the centroid pass below has
             // vectors to work with.
             try? await Task.sleep(for: .seconds(15))
