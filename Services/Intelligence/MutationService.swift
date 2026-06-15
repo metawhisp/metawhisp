@@ -48,6 +48,13 @@ final class MutationService {
     /// post-commit hooks only if the commit succeeded. Use the empty-`mutate`
     /// form for an in-place edit (caller already changed the object's fields).
     func commit(_ mutation: Mutation, in ctx: ModelContext, _ mutate: () -> Void = {}) throws {
+        // ITER-049 A2 — refuse mutations at the owner layer in a degraded (temporary
+        // in-memory) session: neither the empty-store save NOR the post-commit hooks
+        // (Obsidian re-export, MCP snapshot) may fire, or the standalone MCP CLI's
+        // mcp-snapshot.json and the user's vault get rewritten from empty data.
+        // Reachable in degraded via the voice-question hotkey, which bypasses the
+        // main-window recovery overlay.
+        guard StoreHealthSignal.shared.isHealthy else { throw MutationError.storeDegraded }
         mutate()
         try save(ctx)        // PROPAGATES — never `try?`
         runHooks(mutation)   // unreachable if the save threw
@@ -97,4 +104,11 @@ final class MutationService {
         // MCP snapshot refreshes on every committed mutation.
         MCPSnapshotService.shared.snapshotNow()
     }
+}
+
+/// Raised by `MutationService.commit` when the persistent store is degraded
+/// (temporary in-memory session) so callers don't persist into a volatile store
+/// or fire external hooks. Callers already wrap `commit` in do/catch.
+enum MutationError: Error {
+    case storeDegraded
 }

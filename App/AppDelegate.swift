@@ -664,7 +664,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
                 self?.proactiveContextService.onNewContext(ctx)
             }
         }
-        if AppSettings.shared.screenContextEnabled {
+        if AppSettings.shared.screenContextEnabled, historyService.health.isHealthy {
             let interval = AppSettings.shared.screenContextInterval
             // AUD-021 — apply the user's Settings blacklist/whitelist choice.
             let screenPolicy = ScreenContextPolicy.resolve(mode: AppSettings.shared.screenContextMode, appList: AppSettings.shared.screenContextAppList)
@@ -707,8 +707,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         // AUD-029 — applyEnabledState() honours the mcpEnabled opt-in: it starts
         // the writer only if the user enabled MCP, otherwise it purges any stale
         // snapshot so opted-out users keep no plaintext copy on disk.
+        // AUD-007 / ITER-049 A2b — in a degraded (temporary in-memory) session the
+        // store is empty; background extractors/exporters would process nothing and
+        // writers like the MCP snapshot would overwrite the on-disk JSON with empty
+        // data. Keep degraded a read-only recovery shell: services are still
+        // configured (so the UI doesn't crash) but their periodic timers / one-shot
+        // writers never start. In a healthy session storeHealthy == true, so the
+        // normal path is unchanged.
+        let storeHealthy = historyService.health.isHealthy
         MCPSnapshotService.shared.configure(container: historyService.modelContainer)
-        MCPSnapshotService.shared.applyEnabledState()
+        if storeHealthy { MCPSnapshotService.shared.applyEnabledState() }
         structuredGenerator.configure(modelContainer: historyService.modelContainer)
         // Wire embedding so StructuredGenerator embeds each closed conversation
         // right after title/overview populate (ITER-011).
@@ -725,9 +733,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         // periodic catches anything that closes WHILE the app is up but the
         // proxy was briefly unavailable. Together they make "Quick note" stuck
         // forever impossible.
-        Task { @MainActor [weak self] in
-            await self?.structuredGenerator.backfillPlaceholders()
-            self?.structuredGenerator.startPeriodicBackfill()
+        if storeHealthy {
+            Task { @MainActor [weak self] in
+                await self?.structuredGenerator.backfillPlaceholders()
+                self?.structuredGenerator.startPeriodicBackfill()
+            }
         }
 
         // 9d+. Embedding service (ITER-008 + ITER-011) — semantic RAG + dedup for Pro users.
@@ -789,14 +799,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
 
         // 9d++. Daily summary (ITER-009) — nightly recap with scheduled delivery.
         dailySummaryService.configure(modelContainer: historyService.modelContainer)
-        if AppSettings.shared.dailySummaryEnabled {
+        if AppSettings.shared.dailySummaryEnabled, storeHealthy {
             dailySummaryService.startScheduler()
         }
 
         // ITER-022 G5 — Weekly cross-conversation pattern digest. Sunday wall-clock
         // scheduler ticks every 5 min; fires once per week.
         weeklyPatternDetector.configure(modelContainer: historyService.modelContainer)
-        if AppSettings.shared.weeklyPatternsEnabled {
+        if AppSettings.shared.weeklyPatternsEnabled, storeHealthy {
             weeklyPatternDetector.startScheduler()
         }
 
@@ -836,20 +846,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
 
         // 9e. Configure ScreenExtractor (Phase 2 R1) — hourly batch analysis of screen activity.
         screenExtractor.configure(modelContainer: historyService.modelContainer)
-        if AppSettings.shared.screenExtractionEnabled {
+        if AppSettings.shared.screenExtractionEnabled, storeHealthy {
             screenExtractor.startPeriodic(interval: AppSettings.shared.screenExtractionInterval)
         }
 
         // 9f. Configure FileIndexer + FileMemoryExtractor (Phase 3 E1).
         fileIndexer.configure(modelContainer: historyService.modelContainer)
         fileMemoryExtractor.configure(modelContainer: historyService.modelContainer)
-        if AppSettings.shared.fileIndexingEnabled {
+        if AppSettings.shared.fileIndexingEnabled, storeHealthy {
             fileIndexer.startPeriodic(interval: AppSettings.shared.fileIndexingInterval)
         }
 
         // 9g. Configure AppleNotesReader (Phase 3 E2).
         appleNotesReader.configure(modelContainer: historyService.modelContainer)
-        if AppSettings.shared.appleNotesEnabled {
+        if AppSettings.shared.appleNotesEnabled, storeHealthy {
             appleNotesReader.startPeriodic(interval: AppSettings.shared.appleNotesInterval)
         }
 
@@ -865,7 +875,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
 
         // 9h. Configure CalendarReader (Phase 3 E3).
         calendarReader.configure(modelContainer: historyService.modelContainer)
-        if AppSettings.shared.calendarReaderEnabled {
+        if AppSettings.shared.calendarReaderEnabled, storeHealthy {
             calendarReader.startPeriodic(interval: AppSettings.shared.calendarReaderInterval)
             // ITER-018 — backfill calendar links for completed conversations
             // that landed before the linker existed. Bounded to last 90 days.

@@ -101,6 +101,10 @@ final class MCPSnapshotService {
         // AUD-029 — never write unless the user opted into MCP. Guards the public
         // snapshotNow() path too, not just the timer.
         guard AppSettings.shared.mcpEnabled else { return }
+        // ITER-049 A2 — defense in depth: never overwrite the on-disk snapshot from
+        // a degraded (empty in-memory) store. Covers any snapshotNow() caller, not
+        // just the timer that AppDelegate already gates.
+        guard StoreHealthSignal.shared.isHealthy else { return }
         guard let container = modelContainer else { return }
         let ctx = ModelContext(container)
 

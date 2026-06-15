@@ -36,6 +36,7 @@ final class HistoryService: ObservableObject {
                 StoreBackup.preserveUnopenableStore(storeURL: $0, now: Date())?.path
             }
             health = .degraded(reason: (error as NSError).localizedDescription, backupPath: backupPath)
+            StoreHealthSignal.shared.set(healthy: false)   // ITER-049 A2 — reachable by singleton hooks
             Self.log.error("Store DEGRADED — running a temporary in-memory session; original store preserved")
             do {
                 modelContainer = try ModelContainer(
@@ -51,6 +52,13 @@ final class HistoryService: ObservableObject {
     /// Save a transcription result to history. Returns the item for further modification.
     @discardableResult
     func save(_ result: TranscriptionResult) -> HistoryItem? {
+        // ITER-049 A2 — in a degraded (temporary in-memory) session don't fake a
+        // persistent save; the dictation paste already happened, history just
+        // can't be kept until the store is recovered.
+        guard health.isHealthy else {
+            Self.log.error("Store degraded — skipping history save (temporary session)")
+            return nil
+        }
         let context = modelContainer.mainContext
         let item = HistoryItem(result: result)
         context.insert(item)
@@ -66,6 +74,7 @@ final class HistoryService: ObservableObject {
 
     /// Delete a single item.
     func delete(_ item: HistoryItem) {
+        guard health.isHealthy else { return }   // ITER-049 A2 — no-op in a temporary session
         let context = modelContainer.mainContext
         context.delete(item)
         try? context.save()
@@ -73,6 +82,7 @@ final class HistoryService: ObservableObject {
 
     /// Delete all history.
     func deleteAll() {
+        guard health.isHealthy else { return }   // ITER-049 A2 — no-op in a temporary session
         let context = modelContainer.mainContext
         do {
             try context.delete(model: HistoryItem.self)
