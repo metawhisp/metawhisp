@@ -23,9 +23,14 @@ final class HistoryService: ObservableObject {
 
     init() {
         do {
-            let schema = Schema([HistoryItem.self, ScreenContext.self, AdviceItem.self, UserMemory.self, TaskItem.self, ChatMessage.self, Conversation.self, ScreenObservation.self, IndexedFile.self, DailySummary.self, Goal.self, ProjectAlias.self, AuditLog.self, PatternDigest.self])
+            // ITER-049 B — versioned schema + migration plan (AUD-007). V1 is the
+            // current 14 models unchanged, so an existing store opens WITHOUT
+            // migrating; future breaking changes add a tested stage to the plan
+            // instead of relying on implicit lightweight migration.
+            let schema = Schema(versionedSchema: MetaWhispSchemaV1.self)
             let config = ModelConfiguration("MetaWhisp", schema: schema)
-            modelContainer = try ModelContainer(for: schema, configurations: [config])
+            modelContainer = try ModelContainer(
+                for: schema, migrationPlan: MetaWhispMigrationPlan.self, configurations: [config])
             Self.log.info("History database ready")
         } catch {
             // AUD-007 / ITER-049 A1 — do NOT silently bypass the user's data.
