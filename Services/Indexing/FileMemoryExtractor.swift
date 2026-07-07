@@ -72,7 +72,13 @@ final class FileMemoryExtractor: ObservableObject {
             let prompt = buildPrompt(filename: file.filename, folder: file.folder, content: content, existing: existingContents)
             do {
                 let response: String
-                if LicenseService.shared.isPro, let licenseKey = LicenseService.shared.licenseKey {
+                // ITER-051 F1.3 — local model first (free + private), same priority
+                // order as MemoryExtractor. Falls to cloud paths when not loaded.
+                if LocalLLMService.shared.isReady {
+                    response = try await LocalLLMService.shared.completeBlocking(
+                        system: Self.systemPrompt, user: prompt,
+                        maxUserChars: 6000, maxTokens: 384)
+                } else if LicenseService.shared.isPro, let licenseKey = LicenseService.shared.licenseKey {
                     response = try await callProProxy(system: Self.systemPrompt, user: prompt, licenseKey: licenseKey)
                 } else {
                     let apiKey = settings.activeAPIKey
@@ -86,7 +92,12 @@ final class FileMemoryExtractor: ObservableObject {
                     )
                 }
 
-                let mems = parse(response)
+                // F1.7 contract — garbage output must NOT stamp the file
+                // as processed (it would be skipped forever); retry next run.
+                guard let mems = parse(response) else {
+                    lastError = "Unparseable LLM output for \(file.filename) — will retry"
+                    continue
+                }
                 var added = 0
                 for m in mems where m.confidence >= minConfidence {
                     let trimmed = m.content.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -202,12 +213,14 @@ final class FileMemoryExtractor: ObservableObject {
         let memories: [MemoryJSON]
     }
 
-    private func parse(_ response: String) -> [MemoryJSON] {
+    /// ITER-051 review fix (F1.7 contract) — `nil` = undecodable LLM output
+    /// (don't stamp the file processed); `[]` = valid JSON, nothing found.
+    private func parse(_ response: String) -> [MemoryJSON]? {
         let extracted = extractJSONObject(from: response)
-        guard let data = extracted.data(using: .utf8) else { return [] }
+        guard let data = extracted.data(using: .utf8) else { return nil }
         guard let result = try? JSONDecoder().decode(Result.self, from: data) else {
             NSLog("[FileMemoryExtractor] ⚠️ Parse failed: %@", String(extracted.prefix(200)))
-            return []
+            return nil
         }
         return result.memories.filter { mem in
             let wc = mem.content.split(separator: " ").count
@@ -263,6 +276,10 @@ final class FileMemoryExtractor: ObservableObject {
     }
 
     private var hasLLMAccess: Bool {
+        // ITER-051 F1.3 — the local model is a first-class access path, same
+        // as MemoryExtractor/TaskExtractor (the Memories screen already told
+        // local-only users these readers work).
         !settings.activeAPIKey.isEmpty || LicenseService.shared.isPro
+            || LocalLLMService.shared.isReady
     }
 }

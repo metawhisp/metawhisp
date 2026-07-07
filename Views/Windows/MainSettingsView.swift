@@ -8,6 +8,10 @@ struct MainSettingsView: View {
     /// ITER-039 — local-LLM download progress + downloaded set. Drives the
     /// Download/Make-active state machine inside `aiModelCard`.
     @ObservedObject private var mlxManager = MLXModelManager.shared
+    /// ITER-051 F1.4 — live isReady/isLoading for the model cards (they used
+    /// to read `LocalLLMService.shared` without observation, so load state
+    /// changes never refreshed the UI).
+    @ObservedObject private var localLLM = LocalLLMService.shared
 
     // Screen Context app picker sheet
     @State private var showAppPicker = false
@@ -99,7 +103,10 @@ struct MainSettingsView: View {
             VStack(spacing: MW.sp12) {
                 accountSection
                 cloudSection
-                twoColumn(hotkeySection, overlaySection)
+                twoColumn(hotkeySection, VStack(spacing: MW.sp12) {
+                    overlaySection
+                    githubStarSection
+                })
                 optionsSection
             }
         case .dictation:
@@ -1006,6 +1013,25 @@ struct MainSettingsView: View {
         .mwCard(radius: MW.rMedium, elevation: .raised)
     }
 
+    /// Community CTA tucked into the otherwise-empty right-column space under the
+    /// overlay card. Header + button only — no card border, no section label, no
+    /// star count (per design). Uses the shared `GlassChipButton(accent:)` so the
+    /// button follows the user's selected accent preset (mono / orange / electric
+    /// / mint / violet) instead of any hardcoded colour.
+    private var githubStarSection: some View {
+        VStack(spacing: MW.sp12) {
+            Text("Star us on GitHub")
+                .font(MW.mono)
+                .foregroundStyle(MW.textPrimary)
+
+            GlassChipButton(label: "Star on GitHub", icon: "star", accent: true, radius: MW.rSmall) {
+                NSWorkspace.shared.open(URL(string: "https://github.com/metawhisp/metawhisp")!)
+            }
+        }
+        .frame(maxWidth: .infinity)
+        .padding(MW.sp16)
+    }
+
     private func pillStyleRow(_ style: (label: String, value: String, desc: String)) -> some View {
         let isSelected = settings.pillStyle == style.value
         return HStack {
@@ -1478,6 +1504,16 @@ struct MainSettingsView: View {
     private var aiModelsSection: some View {
         VStack(alignment: .leading, spacing: MW.sp10) {
             Text("AI MODELS").blocksLabel()
+                // ITER-051 F1.6 migration — clear a stale Foundation-Models
+                // selection persisted by the old fake-activatable card, so the
+                // localLLMEnabled toggle doesn't try to load an unshipped
+                // adapter (loadModel throws notSupportedYet for FM specs).
+                .onAppear {
+                    if let spec = ModelRegistry.model(byID: settings.localLLMActiveModelID),
+                       spec.isFoundationModels {
+                        settings.localLLMActiveModelID = ""
+                    }
+                }
 
             // ALWAYS-VISIBLE routing indicator — TEMPORARILY DISABLED
             // 2026-05-19 on macOS 26 Tahoe. The view triggered NSISEngine
@@ -1489,8 +1525,23 @@ struct MainSettingsView: View {
             // currentAIRoutingIndicator
 
             // Master toggle — collapsed/expanded state driver.
+            // ITER-051 F1.4 — the toggle now has the side effect it always
+            // implied: OFF unloads the model (frees ~3 GB RAM and, since every
+            // service gates on `isReady`, actually stops local routing); ON
+            // with a persisted selection reloads it.
             toggleRow("Use local model for AI features",
                       isOn: $settings.localLLMEnabled)
+                .onChange(of: settings.localLLMEnabled) { _, enabled in
+                    if enabled {
+                        let id = settings.localLLMActiveModelID
+                        guard !id.isEmpty else { return }
+                        Task { @MainActor in
+                            try? await LocalLLMService.shared.loadModel(id: id)
+                        }
+                    } else {
+                        LocalLLMService.shared.unloadModel()
+                    }
+                }
 
             if !settings.localLLMEnabled {
                 // Collapsed — one-line summary so user knows the section exists
@@ -1737,24 +1788,17 @@ struct MainSettingsView: View {
     @ViewBuilder
     private func actionButton(for spec: ModelSpec, verdict: CompatibilityVerdict, isActive: Bool) -> some View {
         if spec.isFoundationModels {
-            // Foundation Models: no download — just Make Active when compatible.
-            if case .recommended = verdict {
-                Button(isActive ? "Active" : "Make active") {
-                    settings.localLLMActiveModelID = isActive ? "" : spec.id
-                }
-                .buttonStyle(.plain)
+            // ITER-051 F1.6 — the adapter isn't shipped (ITER-044):
+            // `loadModel` throws `notSupportedYet` for FM specs, so «Make
+            // active» used to produce an ACTIVE badge with zero inference
+            // behind it. Honest state until the adapter lands.
+            Text("Coming soon")
                 .font(MW.label).tracking(0.6)
+                .foregroundStyle(MW.textDim)
                 .padding(.horizontal, 8).padding(.vertical, 3)
-                .foregroundStyle(isActive ? .black : MW.textPrimary)
-                .background(isActive ? MW.idle : Color.clear)
                 .overlay(RoundedRectangle(cornerRadius: MW.rSmall, style: .continuous)
                             .stroke(MW.border, lineWidth: 0.5))
-            } else {
-                Text(spec.downloadSizeDisplay)
-                    .font(MW.label).tracking(0.6)
-                    .foregroundStyle(MW.textDim)
-                    .padding(.horizontal, 8).padding(.vertical, 3)
-            }
+                .help("Apple Foundation Models support ships in a later update — the on-device adapter isn't wired yet.")
         } else if verdict.isDownloadable {
             // MLX model. v1.3.5 ships the download path for Phi-4 Mini only
             // — other model architectures land in v1.4.0 with the full MLX
@@ -1831,7 +1875,9 @@ struct MainSettingsView: View {
             //     keeps ID. Happens after app restart since auto-load on
             //     launch was disabled to prevent watchdog SIGKILL.)
             //   • not selected         → «Make active» (sets ID + loads)
+            let isLoadingThis = localLLM.isLoading && settings.localLLMActiveModelID == spec.id
             let label: String = {
+                if isLoadingThis { return "Loading…" }
                 if isActive && isReady { return "Active" }
                 if isActive && !isReady { return "Load now" }
                 return "Make active"
@@ -1859,6 +1905,7 @@ struct MainSettingsView: View {
                             (isActive ? MW.processing.opacity(0.18) : Color.clear))
                 .overlay(RoundedRectangle(cornerRadius: MW.rSmall, style: .continuous)
                             .stroke(MW.border, lineWidth: 0.5))
+                .disabled(localLLM.isLoading)   // F1.4 — no double-load
                 Button {
                     removeDownloadedModel(spec)
                 } label: {

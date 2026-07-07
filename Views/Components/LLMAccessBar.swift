@@ -13,7 +13,7 @@ struct LLMAccessBar: View {
             Image(systemName: "key")
                 .font(.system(size: 12, weight: .semibold))
                 .foregroundStyle(MW.recording)
-            Text("Smart features are off — add an API key or Pro")
+            Text("Smart features are off — add an API key, Pro, or a local model")
                 .font(MW.monoSm)
                 .foregroundStyle(MW.recording)
                 .frame(maxWidth: .infinity, alignment: .leading)

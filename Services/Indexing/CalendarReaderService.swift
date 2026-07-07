@@ -361,7 +361,13 @@ final class CalendarReaderService: ObservableObject {
 
         do {
             let response: String
-            if LicenseService.shared.isPro, let licenseKey = LicenseService.shared.licenseKey {
+            // ITER-051 F1.3 — local model first (free + private), same priority
+            // order as MemoryExtractor. Falls to cloud paths when not loaded.
+            if LocalLLMService.shared.isReady {
+                response = try await LocalLLMService.shared.completeBlocking(
+                    system: Self.memorySystemPrompt, user: prompt,
+                    maxUserChars: 6000, maxTokens: 384)
+            } else if LicenseService.shared.isPro, let licenseKey = LicenseService.shared.licenseKey {
                 response = try await callProProxy(system: Self.memorySystemPrompt, user: prompt, licenseKey: licenseKey)
             } else {
                 let apiKey = settings.activeAPIKey
@@ -539,6 +545,10 @@ final class CalendarReaderService: ObservableObject {
     }
 
     private var hasLLMAccess: Bool {
+        // ITER-051 F1.3 — the local model is a first-class access path, same
+        // as MemoryExtractor/TaskExtractor (the Memories screen already told
+        // local-only users these readers work).
         !settings.activeAPIKey.isEmpty || LicenseService.shared.isPro
+            || LocalLLMService.shared.isReady
     }
 }

@@ -15,10 +15,10 @@ enum LLMAccess {
         !apiKey.isEmpty || isPro || localReady
     }
 
-    /// Chat gate — a ready local LLM does NOT count (too weak for the tool-call
-    /// loop), matching `ChatService.hasLLMAccess`. Only a cloud key or Pro grant
-    /// MetaChat access.
-    static func hasForChat(apiKey: String, isPro: Bool) -> Bool {
-        !apiKey.isEmpty || isPro
+    /// Chat gate. ITER-051 F1.5 — a ready local LLM now COUNTS: MetaChat runs
+    /// through the text agentic loop (read-only search tools work; mutations
+    /// use the same confirm flow). Keep in sync with `ChatService.hasLLMAccess`.
+    static func hasForChat(apiKey: String, isPro: Bool, localReady: Bool) -> Bool {
+        !apiKey.isEmpty || isPro || localReady
     }
 }

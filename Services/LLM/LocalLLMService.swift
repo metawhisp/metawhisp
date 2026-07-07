@@ -40,6 +40,9 @@ final class LocalLLMService: ObservableObject {
     @Published private(set) var isReady: Bool = false
     /// Currently active model's `ModelSpec.id`, or nil if none loaded.
     @Published private(set) var currentModelID: String?
+    /// ITER-051 F1.4 — true while a model build/load is in flight; drives the
+    /// Settings card's «Loading…» state and the re-entrancy guard.
+    @Published private(set) var isLoading: Bool = false
     /// `true` while a `generate(...)` call is mid-stream. Single-stream
     /// guarantee: a `ModelContainer` is single-tenant for MLX inference.
     @Published private(set) var isGenerating: Bool = false
@@ -52,7 +55,7 @@ final class LocalLLMService: ObservableObject {
     private var tokenizer: (any Tokenizer)?
     /// EOS token id sniffed from `tokenizer_config.json` (Phi-3 uses 32007;
     /// Phi-4 uses 200020 or similar — varies). Filled in during loadModel.
-    private var eosTokenId: Int = 0
+    private var stopTokens: Set<Int> = []
 
     /// Serialization fence for `generate(...)`. MLX is a single-tenant
     /// process-wide context — running two prefills/decode loops in parallel
@@ -108,7 +111,27 @@ final class LocalLLMService: ObservableObject {
 
     // MARK: - Load
 
+    /// ITER-051 F1.4 — re-entrancy-safe wrapper. A second click on «Load now»
+    /// during the ~12 s load used to spawn a concurrent build; loading the
+    /// already-ready model was a full silent reload. Both are no-ops now, and
+    /// failures land in `lastError` so the Settings card can show WHY.
     func loadModel(id: String) async throws {
+        if isLoading {
+            NSLog("[ITER-039] loadModel(%@) ignored — a load is already in flight", id)
+            return
+        }
+        if isReady, currentModelID == id { return }
+        isLoading = true
+        defer { isLoading = false }
+        do {
+            try await performLoad(id: id)
+        } catch {
+            lastError = (error as? LocalLLMError) ?? .mlxFailure(error.localizedDescription)
+            throw error
+        }
+    }
+
+    private func performLoad(id: String) async throws {
         guard let spec = ModelRegistry.model(byID: id) else {
             throw LocalLLMError.unknownModelID(id)
         }
@@ -160,22 +183,31 @@ final class LocalLLMService: ObservableObject {
                 "Tokenizer init failed: \(error.localizedDescription)"
             )
         }
-        let resolvedEos = tokenizer.eosTokenId ?? buildResult.fallbackEos
+        // ITER-051 F1.1 fix — a single eos id is NOT enough. Phi-4's chat
+        // template ends every turn with `<|end|>` (200020, config.json's
+        // eos_token_id) while the tokenizer reports `<|endoftext|>` (199999).
+        // The old code stopped only on the tokenizer's id, so chat-formatted
+        // generations never hit EOS and always ran to maxTokens. Collect ALL
+        // plausible stop ids and stop on any of them.
+        var stops = buildResult.configEos
+        if let tokEos = tokenizer.eosTokenId { stops.insert(tokEos) }
+        if let endId = tokenizer.convertTokenToId("<|end|>") { stops.insert(endId) }
+        stops.remove(0)  // never treat id 0 as a stop (parse-failure sentinel)
 
         self.model = buildResult.model
         self.tokenizer = tokenizer
-        self.eosTokenId = resolvedEos
+        self.stopTokens = stops
         self.currentModelID = id
         self.isReady = true
         self.lastError = nil
-        NSLog("[ITER-039] ✅ %@ ready (eos=%d)", spec.displayName, resolvedEos)
+        NSLog("[ITER-039] ✅ %@ ready (stops=%@)", spec.displayName, stops.sorted().description)
     }
 
     /// Result of the synchronous MLX build phase. Crossed back to MainActor
     /// after the dispatch-queue work completes.
     private struct MLXBuildResult: @unchecked Sendable {
         let model: Phi3Model
-        let fallbackEos: Int    // From tokenizer_config.json — used if Tokenizer's own eosTokenId is nil.
+        let configEos: Set<Int>  // eos_token_id from config.json (Int or [Int])
     }
 
     /// Synchronous MLX build — runs on a `DispatchQueue.global` thread.
@@ -237,16 +269,18 @@ final class LocalLLMService: ObservableObject {
         eval(model)
         NSLog("[ITER-039 trace] sync.5b — eval(model) done")
 
-        // 6. EOS hint from config (tokenizer's own resolution happens on main).
-        var fallbackEos = 0
-        let tcURL = modelDir.appending(path: "tokenizer_config.json")
-        if let tcData = try? Data(contentsOf: tcURL),
-           let tcDict = try? JSONSerialization.jsonObject(with: tcData) as? [String: Any],
-           let n = tcDict["eos_token_id"] as? Int {
-            fallbackEos = n
+        // 6. EOS ids from config.json — the authoritative source (the old
+        // code read `eos_token_id` from tokenizer_config.json, which doesn't
+        // carry that key for Phi-4 → fallback was always 0). HF configs use
+        // either a single Int or an array of Ints here.
+        var configEos: Set<Int> = []
+        if let n = rawConfig["eos_token_id"] as? Int {
+            configEos.insert(n)
+        } else if let arr = rawConfig["eos_token_id"] as? [Int] {
+            configEos.formUnion(arr)
         }
 
-        return MLXBuildResult(model: model, fallbackEos: fallbackEos)
+        return MLXBuildResult(model: model, configEos: configEos)
     }
 
     // (Old `performHeavyLoad` removed 2026-05-13: it ran on Swift
@@ -260,7 +294,7 @@ final class LocalLLMService: ObservableObject {
         currentModelID = nil
         isReady = false
         lastError = nil
-        eosTokenId = 0
+        stopTokens = []
         NSLog("[ITER-039] model unloaded")
     }
 
@@ -287,6 +321,14 @@ final class LocalLLMService: ObservableObject {
             // Swift Concurrency's cooperative pool; running it directly on
             // MainActor froze the user's Mac for 30+ s on a 3k-prompt
             // (2026-05-13 incident).
+            // ITER-051 F1.9 — consumer-driven cancellation. When the caller
+            // stops iterating the stream (task cancelled, Esc on the pill,
+            // popup dismissed), `onTermination` fires and the decode loop
+            // exits within one token instead of burning through maxTokens
+            // into the void while the next caller waits in the FIFO queue.
+            let cancelFlag = CancelFlag()
+            continuation.onTermination = { _ in cancelFlag.set() }
+
             let predecessor = self.pendingGeneration
             let myTask = Task { @MainActor in
                 // Wait for the prior generation (if any) to finish before
@@ -299,9 +341,15 @@ final class LocalLLMService: ObservableObject {
                     continuation.finish()
                     return
                 }
+                // Cancelled while queued behind a predecessor — skip the MLX
+                // work entirely.
+                guard !cancelFlag.isSet() else {
+                    continuation.finish()
+                    return
+                }
                 isGenerating = true
 
-                let eosId = self.eosTokenId
+                let stops = self.stopTokens
                 // Hop to a real GCD thread for the inference loop. To make
                 // the @MainActor task block until that work completes (so
                 // the next queued caller sees us as still in-flight via
@@ -313,9 +361,10 @@ final class LocalLLMService: ObservableObject {
                             prompt: prompt,
                             maxTokens: maxTokens,
                             temperature: temperature,
-                            eosId: eosId,
+                            stopTokens: stops,
                             model: model,
                             tokenizer: tokenizer,
+                            isCancelled: { cancelFlag.isSet() },
                             yield: { continuation.yield($0) }
                         )
                         cont.resume()
@@ -332,13 +381,23 @@ final class LocalLLMService: ObservableObject {
     /// NOT on MainActor (would freeze UI) and NOT on Swift Concurrency
     /// cooperative pool (MLX state init issue). Mirrors the same pattern
     /// as `buildModelSync`.
+    /// Thread-safe cancellation flag bridged from the AsyncStream's
+    /// `onTermination` (arbitrary thread) into the GCD decode loop.
+    private final class CancelFlag: @unchecked Sendable {
+        private let lock = NSLock()
+        private var value = false
+        func set() { lock.lock(); value = true; lock.unlock() }
+        func isSet() -> Bool { lock.lock(); defer { lock.unlock() }; return value }
+    }
+
     private nonisolated static func runGenerationSync(
         prompt: String,
         maxTokens: Int,
         temperature: Float,
-        eosId: Int,
+        stopTokens: Set<Int>,
         model: Phi3Model,
         tokenizer: any Tokenizer,
+        isCancelled: @escaping @Sendable () -> Bool,
         yield: @escaping @Sendable (String) -> Void
     ) {
         // 1. Apply chat template (wraps in <|user|>…<|assistant|> for Phi).
@@ -366,14 +425,21 @@ final class LocalLLMService: ObservableObject {
         eval(logits)
         var lastLogit = logits[0..., -1, 0...]
 
-        // 4. Decode loop.
+        // 4. Decode loop. F1.9 — cancellation checked every token so a
+        // dismissed consumer stops costing GPU time within ~1 token.
+        var generated = 0
         for _ in 0..<maxTokens {
+            if isCancelled() {
+                NSLog("[ITER-039] generation cancelled after %d tokens", generated)
+                break
+            }
             let next = Self.sampleTokenSync(logits: lastLogit, temperature: temperature)
-            if next == eosId { break }
+            if stopTokens.contains(next) { break }
             let piece = tokenizer.decode(tokens: [next], skipSpecialTokens: true)
             if !piece.isEmpty {
                 yield(piece)
             }
+            generated += 1
             input = MLXArray([Int32(next)]).expandedDimensions(axis: 0)
             logits = model(input, cache: cache)
             eval(logits)
@@ -441,6 +507,10 @@ final class LocalLLMService: ObservableObject {
         ) {
             collected += chunk
         }
+        // F1.9 — the consuming task being cancelled ends stream iteration
+        // (and cancels the decode loop via onTermination). Report that as
+        // CancellationError, not a scary "no tokens" failure.
+        try Task.checkCancellation()
         if collected.isEmpty {
             throw NSError(domain: "LocalLLM", code: -1, userInfo: [
                 NSLocalizedDescriptionKey: "Local model returned no tokens. Check Settings → AI Models."
@@ -449,14 +519,150 @@ final class LocalLLMService: ObservableObject {
         return collected
     }
 
+    /// ITER-051 F1.2 — chunked processing of long inputs so on-device results
+    /// cover the WHOLE text instead of the first `chunkChars` characters.
+    /// ≤1 chunk short-circuits to a single `completeBlocking` call.
+    ///
+    /// Two modes:
+    ///   - `concatPartials: false` (default) — map-reduce for SYNTHESIS tasks
+    ///     (action plan, summary): map each chunk, fold, final reduce pass.
+    ///     Review fix: map outputs are capped tight (≤512 tokens) so the fold
+    ///     shrinks geometrically and converges within the round bound even on
+    ///     repetitive hour-long transcripts; a failed/empty chunk is skipped,
+    ///     not fatal.
+    ///   - `concatPartials: true` — map-and-JOIN for TRANSFORM tasks (cleanup,
+    ///     translation) where the output IS the processed text: one map round,
+    ///     partials joined in order, no reduce (re-processing already-processed
+    ///     text degrades it).
+    func completeChunked(
+        system: String,
+        user: String,
+        chunkChars: Int = 6000,
+        maxTokensPerChunk: Int = 1024,
+        temperature: Float = 0.3,
+        concatPartials: Bool = false
+    ) async throws -> String {
+        let text = user.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard text.count > chunkChars else {
+            return try await completeBlocking(
+                system: system, user: text,
+                maxUserChars: chunkChars, maxTokens: maxTokensPerChunk,
+                temperature: temperature)
+        }
+
+        func mapPass(_ pieces: [String], maxTokens: Int) async throws -> [String] {
+            var partials: [String] = []
+            for (i, piece) in pieces.enumerated() {
+                let mapSystem = system
+                    + " NOTE: this is part \(i + 1) of \(pieces.count) of a longer text — process just this part."
+                do {
+                    let part = try await completeBlocking(
+                        system: mapSystem, user: piece,
+                        maxUserChars: chunkChars, maxTokens: maxTokens,
+                        temperature: temperature)
+                    partials.append(part)
+                } catch {
+                    // Review fix — one bad chunk must not kill the whole job.
+                    NSLog("[ITER-051] completeChunked: chunk %d/%d failed (%@) — skipped",
+                          i + 1, pieces.count, error.localizedDescription)
+                }
+            }
+            guard !partials.isEmpty else {
+                throw NSError(domain: "LocalLLM", code: -3, userInfo: [
+                    NSLocalizedDescriptionKey: "All chunks failed to process."
+                ])
+            }
+            return partials
+        }
+
+        var pieces = Self.splitBySentences(text, limit: chunkChars)
+        NSLog("[ITER-051] completeChunked: %d chars → %d chunks (concat=%@)",
+              text.count, pieces.count, concatPartials ? "yes" : "no")
+
+        if concatPartials {
+            // Transform mode: output ≈ input per chunk, single round, join.
+            let partials = try await mapPass(pieces, maxTokens: maxTokensPerChunk)
+            return partials.joined(separator: "\n\n")
+        }
+
+        // Synthesis mode: tight map outputs → geometric fold convergence.
+        let mapTokens = min(512, maxTokensPerChunk)
+        var round = 0
+        while pieces.count > 1 {
+            round += 1
+            guard round <= 4 else {
+                throw NSError(domain: "LocalLLM", code: -2, userInfo: [
+                    NSLocalizedDescriptionKey: "Chunked reduction did not converge."
+                ])
+            }
+            let partials = try await mapPass(pieces, maxTokens: mapTokens)
+            let combined = partials.joined(separator: "\n\n")
+            if combined.count <= chunkChars {
+                // Final reduce over the combined partials.
+                return try await completeBlocking(
+                    system: system, user: combined,
+                    maxUserChars: chunkChars, maxTokens: maxTokensPerChunk,
+                    temperature: temperature)
+            }
+            pieces = Self.splitBySentences(combined, limit: chunkChars)
+        }
+        return pieces.first ?? ""
+    }
+
+    /// Greedy sentence-boundary splitter: packs sentences into chunks of at
+    /// most `limit` chars, hard-splitting only a single sentence that alone
+    /// exceeds the limit. Never loses characters (tested).
+    nonisolated static func splitBySentences(_ text: String, limit: Int) -> [String] {
+        guard text.count > limit else { return [text] }
+        var sentences: [String] = []
+        var current = ""
+        for ch in text {
+            current.append(ch)
+            if ch == "." || ch == "!" || ch == "?" || ch == "\n" {
+                sentences.append(current)
+                current = ""
+            }
+        }
+        if !current.isEmpty { sentences.append(current) }
+
+        var chunks: [String] = []
+        var buf = ""
+        for s in sentences {
+            if s.count > limit {
+                // Degenerate single sentence — flush + hard-split.
+                if !buf.isEmpty { chunks.append(buf); buf = "" }
+                var rest = Substring(s)
+                while rest.count > limit {
+                    chunks.append(String(rest.prefix(limit)))
+                    rest = rest.dropFirst(limit)
+                }
+                buf = String(rest)
+            } else if buf.count + s.count > limit {
+                chunks.append(buf)
+                buf = s
+            } else {
+                buf += s
+            }
+        }
+        if !buf.isEmpty { chunks.append(buf) }
+        return chunks
+    }
+
     /// Sample one token — sync variant used by the GCD loop.
     private nonisolated static func sampleTokenSync(logits: MLXArray, temperature: Float) -> Int {
         if temperature <= 0 {
             return logits.argMax().item(Int.self)
         }
+        // ITER-051 F1.1 ROOT-CAUSE FIX — `MLXRandom.categorical` expects RAW
+        // (unnormalized log-) LOGITS and exponentiates internally. The old
+        // code fed it softmax PROBABILITIES [0…1], so the effective
+        // distribution was ∝ exp(p): the best token outweighed any of the
+        // 200k garbage tokens by at most e ≈ 2.7× — i.e. near-uniform
+        // sampling over the whole vocabulary. Every temperature>0 generation
+        // produced multilingual noise and never reached EOS. Verified against
+        // reference mlx_lm on the same checkpoint (2026-07-07).
         let scaled = logits / temperature
-        let probs = MLX.softmax(scaled, axis: -1)
-        let sample = MLXRandom.categorical(probs)
+        let sample = MLXRandom.categorical(scaled)
         return sample.item(Int.self)
     }
 
@@ -467,8 +673,8 @@ final class LocalLLMService: ObservableObject {
             return logits.argMax().item(Int.self)
         }
         let scaled = logits / temperature
-        let probs = MLX.softmax(scaled, axis: -1)
-        let sample = MLXRandom.categorical(probs)
+        // Same categorical-expects-logits fix as sampleTokenSync above.
+        let sample = MLXRandom.categorical(scaled)
         return sample.item(Int.self)
     }
 }

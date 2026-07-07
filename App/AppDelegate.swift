@@ -263,6 +263,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             }
         }
 
+        // ITER-051 F1.8 — whenever a local model BECOMES ready (startup
+        // auto-load ~12 s in, the Settings toggle, or «Load now»), re-drain
+        // the extraction queues. The startup backfill runs before the load
+        // finishes, so for local-only users every queued conversation came
+        // back `.retryLater` and then sat until the NEXT conversation close.
+        // Both drains self-guard (store health, feature toggles, queue empty).
+        LocalLLMService.shared.$isReady
+            .removeDuplicates()
+            .filter { $0 }
+            .receive(on: RunLoop.main)
+            .sink { [weak self] _ in
+                guard let self else { return }
+                NSLog("[ITER-051] local model ready — re-draining extraction queues")
+                self.memoryExtractor.backfillPending()
+                self.taskExtractor.backfillPending()
+            }
+            .store(in: &cancellables)
+
         // Register URL scheme handler (metawhisp://auth?token=...)
         NSAppleEventManager.shared().setEventHandler(
             self,

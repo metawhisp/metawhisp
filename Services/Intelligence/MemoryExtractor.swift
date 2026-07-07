@@ -118,7 +118,9 @@ final class MemoryExtractor: ObservableObject {
         guard totalChars >= 20 else { return .completed }
 
         let existing = fetchExistingMemories()
-        let prompt = buildPrompt(fragments: fragments, existing: existing)
+        let useLocal = LocalLLMService.shared.isReady
+        let prompt = buildPrompt(fragments: fragments, existing: existing,
+                                 localBudget: useLocal ? 6000 : nil)
 
         let sourceApp = items.last.flatMap { $0.source } ?? "conversation"
         let windowTitle: String? = nil  // on-close extraction has no real-time window context
@@ -130,7 +132,8 @@ final class MemoryExtractor: ObservableObject {
                 NSLog("[MemoryExtractor] Extracting via local Phi (convo %@, %d fragments)",
                       conversationId.uuidString.prefix(8) as CVarArg, fragments.count)
                 response = try await LocalLLMService.shared.completeBlocking(
-                    system: Self.systemPrompt, user: prompt, maxTokens: 384
+                    system: Self.systemPrompt, user: prompt,
+                    maxUserChars: 6000, maxTokens: 384   // F1.2 — was default 2000: transcript got cut after dedup context
                 )
             } else if LicenseService.shared.isPro, let licenseKey = LicenseService.shared.licenseKey {
                 NSLog("[MemoryExtractor] Extracting via Pro proxy (convo %@, %d fragments, %d chars)",
@@ -151,7 +154,12 @@ final class MemoryExtractor: ObservableObject {
                 )
             }
 
-            let memories = parseResponse(response, sourceApp: sourceApp, windowTitle: windowTitle, conversationId: conversationId)
+            // F1.7 — nil = garbage/truncated JSON (routine for local models):
+            // keep the conversation queued instead of dequeuing it forever.
+            guard let memories = parseResponse(response, sourceApp: sourceApp, windowTitle: windowTitle, conversationId: conversationId) else {
+                lastError = "LLM returned unparseable JSON — will retry"
+                return .failedAttempt   // counted — capped at maxFailedAttempts
+            }
             guard !memories.isEmpty else {
                 NSLog("[MemoryExtractor] No new memories from conversation %@", conversationId.uuidString.prefix(8) as CVarArg)
                 return .completed
@@ -188,7 +196,7 @@ final class MemoryExtractor: ObservableObject {
         } catch {
             lastError = error.localizedDescription
             NSLog("[MemoryExtractor] ❌ Failed: %@", error.localizedDescription)
-            return .retryLater
+            return .failedAttempt   // counted — a conversation that always throws gets dropped after N tries
         }
     }
 
@@ -381,23 +389,50 @@ final class MemoryExtractor: ObservableObject {
     CRITICAL OUTPUT RULE: Respond with ONLY the JSON object. No translation of the transcript. No explanation. No preamble like "Since the transcript is in Russian...". No markdown fences. Just the raw JSON.
     """
 
-    private func buildPrompt(fragments: [String], existing: [UserMemory]) -> String {
+    /// `localBudget` (ITER-051 review fix): the dedup block comes FIRST in
+    /// the prompt, so with the local model's prefix-keep cap an uncapped
+    /// existing-memories list starved the transcript to zero — the model
+    /// extracted from dedup context alone. When set, existing gets ≤30% of
+    /// the budget and the transcript owns the rest (head+tail).
+    private func buildPrompt(fragments: [String], existing: [UserMemory], localBudget: Int? = nil) -> String {
         var parts: [String] = []
 
         // Existing memories passed ALL (not windowed) — up to 1000 for robust dedup.
         if !existing.isEmpty {
             parts.append("Existing memories you already know about User (DO NOT repeat or duplicate):")
-            for m in existing {
-                parts.append("- \(m.content)")
+            if let budget = localBudget {
+                var used = 0, shown = 0
+                for m in existing {
+                    let line = "- \(m.content)"
+                    if used + line.count > budget * 3 / 10 { break }
+                    parts.append(line); used += line.count; shown += 1
+                }
+                if shown < existing.count { parts.append("(+\(existing.count - shown) more omitted)") }
+            } else {
+                for m in existing {
+                    parts.append("- \(m.content)")
+                }
             }
             parts.append("")
         }
 
         parts.append("Conversation fragments to analyze (ordered by time, all from the same User):")
+        var fragLines: [String] = []
         for (i, frag) in fragments.enumerated() {
-            parts.append("--- fragment \(i + 1) ---")
-            parts.append(frag)
+            fragLines.append("--- fragment \(i + 1) ---")
+            fragLines.append(frag)
         }
+        var fragText = fragLines.joined(separator: "\n")
+        if let budget = localBudget {
+            let headerChars = parts.joined(separator: "\n").count + 64
+            let fragBudget = max(1000, budget - headerChars)
+            if fragText.count > fragBudget {
+                fragText = String(fragText.prefix(fragBudget * 7 / 10))
+                    + "\n[…middle omitted…]\n"
+                    + String(fragText.suffix(fragBudget * 3 / 10))
+            }
+        }
+        parts.append(fragText)
 
         let combined = parts.joined(separator: "\n")
         if combined.count > 20000 { return String(combined.prefix(20000)) }
@@ -438,12 +473,15 @@ final class MemoryExtractor: ObservableObject {
         let memories: [MemoryJSON]
     }
 
-    private func parseResponse(_ response: String, sourceApp: String, windowTitle: String?, conversationId: UUID?) -> [UserMemory] {
+    /// ITER-051 F1.7 — `nil` = unparseable LLM output (the caller keeps the
+    /// conversation queued); `[]` = valid JSON with nothing to extract.
+    /// Internal (not private) so `ExtractorParseOutcomeTests` pins the contract.
+    func parseResponse(_ response: String, sourceApp: String, windowTitle: String?, conversationId: UUID?) -> [UserMemory]? {
         let extracted = extractJSONObject(from: response)
-        guard let data = extracted.data(using: .utf8) else { return [] }
+        guard let data = extracted.data(using: .utf8) else { return nil }
         guard let parsed = try? JSONDecoder().decode(ExtractionResult.self, from: data) else {
             NSLog("[MemoryExtractor] ⚠️ JSON parse failed: %@", String(extracted.prefix(200)))
-            return []
+            return nil
         }
 
         return parsed.memories.compactMap { json -> UserMemory? in

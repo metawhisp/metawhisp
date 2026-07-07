@@ -13,10 +13,13 @@ struct ChatView: View {
     @State private var errorMsg: String?
     @FocusState private var inputFocused: Bool
 
-    /// ITER-047 Element B — Chat gate is stricter: a local LLM does NOT unlock
-    /// MetaChat (matches ChatService.hasLLMAccess), so the bar uses hasForChat.
+    @ObservedObject private var localLLM = LocalLLMService.shared
+
+    /// ITER-047 Element B / ITER-051 F1.5 — chat unlocks via key, Pro, OR a
+    /// ready local model (matches ChatService.hasLLMAccess).
     private var hasLLMAccess: Bool {
-        LLMAccess.hasForChat(apiKey: settings.activeAPIKey, isPro: license.isPro)
+        LLMAccess.hasForChat(apiKey: settings.activeAPIKey, isPro: license.isPro,
+                             localReady: localLLM.isReady)
     }
 
     var body: some View {

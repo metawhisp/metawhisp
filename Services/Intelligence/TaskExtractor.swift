@@ -128,11 +128,13 @@ final class TaskExtractor: ObservableObject {
         // transcript so the LLM can name people correctly in extracted tasks
         // ("Send draft to Maya" instead of "Send draft to him").
         let calendarContext = fetchCalendarContext(conversationId: conversationId, in: ctx)
+        let useLocal = LocalLLMService.shared.isReady
         let prompt = buildPrompt(
             fragments: fragments,
             existing: existing,
             startedAt: startedAt,
-            calendarContext: calendarContext
+            calendarContext: calendarContext,
+            localBudget: useLocal ? 6000 : nil
         )
 
         // Use the last fragment's source app if available (proxy for what app user was in most).
@@ -145,7 +147,8 @@ final class TaskExtractor: ObservableObject {
                 NSLog("[TaskExtractor] Extracting via local Phi (convo %@, %d fragments)",
                       conversationId.uuidString.prefix(8) as CVarArg, fragments.count)
                 response = try await LocalLLMService.shared.completeBlocking(
-                    system: Self.systemPrompt, user: prompt, maxTokens: 384
+                    system: Self.systemPrompt, user: prompt,
+                    maxUserChars: 6000, maxTokens: 384   // F1.2 — was default 2000: transcript got cut after dedup context
                 )
             } else if LicenseService.shared.isPro, let licenseKey = LicenseService.shared.licenseKey {
                 NSLog("[TaskExtractor] Extracting via Pro proxy (convo %@, %d fragments, %d chars)",
@@ -166,10 +169,15 @@ final class TaskExtractor: ObservableObject {
                 )
             }
 
-            let tasks = parseResponse(response,
-                                      sourceTranscriptId: items.last?.id,
-                                      sourceApp: sourceApp,
-                                      conversationId: conversationId)
+            // F1.7 — nil = garbage/truncated JSON (routine for local models):
+            // keep the conversation queued instead of dequeuing it forever.
+            guard let tasks = parseResponse(response,
+                                            sourceTranscriptId: items.last?.id,
+                                            sourceApp: sourceApp,
+                                            conversationId: conversationId) else {
+                lastError = "LLM returned unparseable JSON — will retry"
+                return .failedAttempt   // counted — capped at maxFailedAttempts
+            }
             guard !tasks.isEmpty else {
                 NSLog("[TaskExtractor] No new tasks from conversation %@", conversationId.uuidString.prefix(8) as CVarArg)
                 return .completed
@@ -205,7 +213,7 @@ final class TaskExtractor: ObservableObject {
         } catch {
             lastError = error.localizedDescription
             NSLog("[TaskExtractor] ❌ Failed: %@", error.localizedDescription)
-            return .retryLater
+            return .failedAttempt   // counted — a conversation that always throws gets dropped after N tries
         }
     }
 
@@ -407,7 +415,8 @@ final class TaskExtractor: ObservableObject {
         fragments: [String],
         existing: [TaskItem],
         startedAt: Date,
-        calendarContext: CalendarMeetingContext?
+        calendarContext: CalendarMeetingContext?,
+        localBudget: Int? = nil
     ) -> String {
         var parts: [String] = []
 
@@ -447,19 +456,46 @@ final class TaskExtractor: ObservableObject {
         if !existing.isEmpty {
             parts.append("EXISTING ACTION ITEMS FROM PAST \(dedupWindowDays) DAYS (do NOT duplicate):")
             let df = ISO8601DateFormatter()
-            for t in existing {
-                let dueStr = t.dueAt.map { df.string(from: $0) } ?? "no due"
-                let status = t.completed ? "completed" : "pending"
-                parts.append("- \(t.taskDescription) (due: \(dueStr)) [\(status)]")
+            // ITER-051 review fix — see MemoryExtractor.buildPrompt: with the
+            // local model, dedup context is capped so it can't starve the
+            // transcript out of the prefix-kept budget.
+            if let budget = localBudget {
+                var used = 0, shown = 0
+                for t in existing {
+                    let dueStr = t.dueAt.map { df.string(from: $0) } ?? "no due"
+                    let status = t.completed ? "completed" : "pending"
+                    let line = "- \(t.taskDescription) (due: \(dueStr)) [\(status)]"
+                    if used + line.count > budget * 3 / 10 { break }
+                    parts.append(line); used += line.count; shown += 1
+                }
+                if shown < existing.count { parts.append("(+\(existing.count - shown) more omitted)") }
+            } else {
+                for t in existing {
+                    let dueStr = t.dueAt.map { df.string(from: $0) } ?? "no due"
+                    let status = t.completed ? "completed" : "pending"
+                    parts.append("- \(t.taskDescription) (due: \(dueStr)) [\(status)]")
+                }
             }
             parts.append("")
         }
 
         parts.append("Conversation fragments to analyze (ordered by time, all from the same user):")
+        var fragLines: [String] = []
         for (i, frag) in fragments.enumerated() {
-            parts.append("--- fragment \(i + 1) ---")
-            parts.append(frag)
+            fragLines.append("--- fragment \(i + 1) ---")
+            fragLines.append(frag)
         }
+        var fragText = fragLines.joined(separator: "\n")
+        if let budget = localBudget {
+            let headerChars = parts.joined(separator: "\n").count + 64
+            let fragBudget = max(1000, budget - headerChars)
+            if fragText.count > fragBudget {
+                fragText = String(fragText.prefix(fragBudget * 7 / 10))
+                    + "\n[…middle omitted…]\n"
+                    + String(fragText.suffix(fragBudget * 3 / 10))
+            }
+        }
+        parts.append(fragText)
 
         let combined = parts.joined(separator: "\n")
         if combined.count > 20000 { return String(combined.prefix(20000)) }
@@ -520,12 +556,15 @@ final class TaskExtractor: ObservableObject {
         let tasks: [TaskJSON]
     }
 
-    private func parseResponse(_ response: String, sourceTranscriptId: UUID?, sourceApp: String, conversationId: UUID?) -> [TaskItem] {
+    /// ITER-051 F1.7 — `nil` = unparseable LLM output (the caller keeps the
+    /// conversation queued); `[]` = valid JSON with nothing to extract.
+    /// Internal (not private) so `ExtractorParseOutcomeTests` pins the contract.
+    func parseResponse(_ response: String, sourceTranscriptId: UUID?, sourceApp: String, conversationId: UUID?) -> [TaskItem]? {
         let extracted = extractJSONObject(from: response)
-        guard let data = extracted.data(using: .utf8) else { return [] }
+        guard let data = extracted.data(using: .utf8) else { return nil }
         guard let parsed = try? JSONDecoder().decode(ExtractionResult.self, from: data) else {
             NSLog("[TaskExtractor] ⚠️ JSON parse failed: %@", String(extracted.prefix(200)))
-            return []
+            return nil
         }
 
         let df = ISO8601DateFormatter()

@@ -73,8 +73,10 @@ final class ScreenExtractor: ObservableObject {
         isRunning = true
         defer {
             isRunning = false
-            lastRun = Date()
         }
+        // Review fix — lastRun advances ONLY after a successful pass (or a
+        // legitimately empty window); a parse failure used to permanently
+        // skip the whole visits batch because defer stamped it processed.
 
         let ctx = ModelContext(container)
         let since = lastRun ?? Date().addingTimeInterval(-3600)
@@ -87,20 +89,27 @@ final class ScreenExtractor: ObservableObject {
         descriptor.fetchLimit = 500
         let contexts = (try? ctx.fetch(descriptor)) ?? []
         guard !contexts.isEmpty else {
+            lastRun = Date()   // empty window — legitimately done
             NSLog("[ScreenExtractor] No new screen contexts since %@", since.description)
             return
         }
 
         // Group into visits.
         let visits = collapseIntoVisits(contexts)
-        guard !visits.isEmpty else { return }
+        guard !visits.isEmpty else { lastRun = Date(); return }
         let trimmed = Array(visits.suffix(maxVisitsPerBatch))
 
         let prompt = buildPrompt(visits: trimmed)
 
         do {
             let response: String
-            if LicenseService.shared.isPro, let licenseKey = LicenseService.shared.licenseKey {
+            // ITER-051 F1.3 — local model first (free + private), same priority
+            // order as MemoryExtractor. Falls to cloud paths when not loaded.
+            if LocalLLMService.shared.isReady {
+                response = try await LocalLLMService.shared.completeBlocking(
+                    system: Self.systemPrompt, user: prompt,
+                    maxUserChars: 6000, maxTokens: 384)
+            } else if LicenseService.shared.isPro, let licenseKey = LicenseService.shared.licenseKey {
                 NSLog("[ScreenExtractor] Analyzing %d visits via Pro proxy", trimmed.count)
                 response = try await callProProxy(system: Self.systemPrompt, user: prompt, licenseKey: licenseKey)
             } else {
@@ -249,6 +258,7 @@ final class ScreenExtractor: ObservableObject {
             }
 
             try? ctx.save()
+            lastRun = Date()   // review fix — stamp done only on a successful pass
             NSLog("[ScreenExtractor] ✅ %d observations, %d memories, %d tasks from %d visits",
                   obsCount, memCount, newTasks.count, trimmed.count)
 
@@ -525,7 +535,11 @@ final class ScreenExtractor: ObservableObject {
     }
 
     private var hasLLMAccess: Bool {
+        // ITER-051 F1.3 — the local model is a first-class access path, same
+        // as MemoryExtractor/TaskExtractor (the Memories screen already told
+        // local-only users these readers work).
         !settings.activeAPIKey.isEmpty || LicenseService.shared.isPro
+            || LocalLLMService.shared.isReady
     }
 
     // MARK: - Dedup helpers (cheap Swift-side check against last N entries)

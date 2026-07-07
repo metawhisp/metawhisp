@@ -5,9 +5,16 @@ enum ExtractionOutcome {
     /// The conversation was processed (extracted, or definitively nothing to
     /// extract) — remove it from the queue.
     case completed
-    /// Could not process now (no LLM access yet, or a transient failure) — keep
-    /// it queued and retry on the next enqueue or the next launch.
+    /// Could not process now for ENVIRONMENTAL reasons (no LLM access yet,
+    /// model not loaded) — keep it queued, uncounted; retry on the next
+    /// enqueue / model-ready / launch.
     case retryLater
+    /// The attempt RAN and failed on the content (unparseable LLM output,
+    /// thrown mid-generation). Counted — ITER-051 review fix: a
+    /// permanently-unparseable conversation is dropped after
+    /// `ExtractionQueueStore.maxFailedAttempts`, so it can't burn a full
+    /// local generation on every drain trigger forever.
+    case failedAttempt
 }
 
 /// SB-1 — a durable FIFO queue of conversation IDs awaiting Second-Brain
@@ -30,6 +37,9 @@ final class ExtractionQueueStore {
 
     private let fileURL: URL
     private var ids: [UUID]
+    /// Counted content-failures per queued id (see `ExtractionOutcome.failedAttempt`).
+    private var attempts: [UUID: Int]
+    static let maxFailedAttempts = 5
 
     /// - Parameters:
     ///   - filename: JSON file name, e.g. `"memory-extraction-queue.json"`.
@@ -38,7 +48,9 @@ final class ExtractionQueueStore {
         let dir = directory ?? Self.defaultDirectory
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         self.fileURL = dir.appendingPathComponent(filename)
-        self.ids = Self.load(from: fileURL)
+        let loaded = Self.load(from: fileURL)
+        self.ids = loaded.ids
+        self.attempts = loaded.attempts
     }
 
     /// Add a conversation to the queue. Idempotent — a conversation already
@@ -54,6 +66,7 @@ final class ExtractionQueueStore {
     func remove(_ id: UUID) {
         let before = ids.count
         ids.removeAll { $0 == id }
+        attempts.removeValue(forKey: id)
         if ids.count != before { persist() }
     }
 
@@ -73,17 +86,41 @@ final class ExtractionQueueStore {
         var attempted = Set<UUID>()
         while let id = ids.first(where: { !attempted.contains($0) }) {
             attempted.insert(id)
-            if case .completed = await process(id) {
+            switch await process(id) {
+            case .completed:
                 remove(id)
+            case .retryLater:
+                break   // environmental — uncounted, stays queued
+            case .failedAttempt:
+                let n = (attempts[id] ?? 0) + 1
+                attempts[id] = n
+                if n >= Self.maxFailedAttempts {
+                    NSLog("[ExtractionQueue] ⚠️ dropping %@ after %d failed attempts (unparseable content)",
+                          id.uuidString.prefix(8) as CVarArg, n)
+                    remove(id)
+                } else {
+                    persist()
+                }
             }
         }
     }
 
     // MARK: - Persistence
 
+    /// V2 on-disk format (ids + attempt counts). V1 was a bare `[UUID]`
+    /// array — `load` still accepts it so existing queues survive the update.
+    private struct Persisted: Codable {
+        let ids: [UUID]
+        let attempts: [String: Int]
+    }
+
     private func persist() {
         do {
-            let data = try JSONEncoder().encode(ids)
+            let payload = Persisted(
+                ids: ids,
+                attempts: Dictionary(uniqueKeysWithValues: attempts.map { ($0.key.uuidString, $0.value) })
+            )
+            let data = try JSONEncoder().encode(payload)
             try data.write(to: fileURL, options: .atomic)
         } catch {
             // Make a durability failure observable instead of silently letting
@@ -93,11 +130,18 @@ final class ExtractionQueueStore {
         }
     }
 
-    private static func load(from url: URL) -> [UUID] {
-        guard let data = try? Data(contentsOf: url),
-              let ids = try? JSONDecoder().decode([UUID].self, from: data)
-        else { return [] }
-        return ids
+    private static func load(from url: URL) -> (ids: [UUID], attempts: [UUID: Int]) {
+        guard let data = try? Data(contentsOf: url) else { return ([], [:]) }
+        if let v2 = try? JSONDecoder().decode(Persisted.self, from: data) {
+            var map: [UUID: Int] = [:]
+            for (k, v) in v2.attempts { if let u = UUID(uuidString: k) { map[u] = v } }
+            return (v2.ids, map)
+        }
+        // Legacy V1 — bare id array.
+        if let v1 = try? JSONDecoder().decode([UUID].self, from: data) {
+            return (v1, [:])
+        }
+        return ([], [:])
     }
 
     private static var defaultDirectory: URL {

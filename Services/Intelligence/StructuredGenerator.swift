@@ -773,9 +773,11 @@ final class StructuredGenerator: ObservableObject {
         }
         let (system, user) = ConversationTextAssembler.actionPlanPrompt(transcript: trimmed, title: title)
 
-        // Local LLM first (free + private) when active.
+        // Local LLM first (free + private) when active. ITER-051 F1.2 —
+        // chunked map-reduce so an hour-long transcript's plan covers the
+        // whole meeting, not the first ~2 minutes (old 2000-char cap).
         if LocalLLMService.shared.isReady {
-            return try await LocalLLMService.shared.completeBlocking(system: system, user: user, maxTokens: 1024)
+            return try await LocalLLMService.shared.completeChunked(system: system, user: user)
         }
         guard LicenseService.shared.isPro, let licenseKey = LicenseService.shared.licenseKey else {
             throw ProcessingError.apiError("Pro required to generate an action plan")
@@ -827,7 +829,9 @@ final class StructuredGenerator: ObservableObject {
         return result.text
     }
 
-    private var hasLLMAccess: Bool {
+    // Internal (was private) — ITER-050 B1.1: ProjectAggregator must check
+    // access BEFORE wiping conversation fields it can't regenerate.
+    var hasLLMAccess: Bool {
         // ITER-039 — `LocalLLMService.isReady` is the third clause. Free
         // users with a downloaded + activated MLX model now get
         // StructuredGenerator (structured-text cleanup, the most-used LLM
@@ -852,7 +856,19 @@ final class StructuredGenerator: ObservableObject {
     /// response (title + overview + actionItems + …). Anything bigger
     /// suggests the model is hallucinating off-track — fail fast.
     private func callLocalLLM(system: String, user: String) async throws -> String {
-        let cappedUser = user.count > 2000 ? String(user.prefix(2000)) + "\n[transcript truncated for local model]" : user
+        // ITER-051 F1.2 — head+tail sandwich instead of a head-only 2000-char
+        // cut: the response is one JSON (title/overview), so map-reduce
+        // chunking doesn't apply here, but the END of a meeting (decisions,
+        // action items) must inform the overview. 4000+2000 fits Phi-4's
+        // context comfortably alongside the system prompt.
+        let cappedUser: String
+        if user.count > 6000 {
+            cappedUser = String(user.prefix(4000))
+                + "\n[…transcript middle omitted for local model…]\n"
+                + String(user.suffix(2000))
+        } else {
+            cappedUser = user
+        }
         let combined = system + "\n\n" + cappedUser
         var collected = ""
         for await chunk in LocalLLMService.shared.generate(

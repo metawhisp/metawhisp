@@ -21,6 +21,13 @@ final class VoiceQuestionState: ObservableObject {
     @Published var isSpeaking: Bool = false
     @Published var transcript: String = ""
 
+    /// ITER-051 F1.9 review fix — the in-flight chat send for the CURRENT
+    /// popup session. `dismiss()` cancels it, which (via the AsyncStream's
+    /// onTermination) stops the local decode loop within ~1 token instead of
+    /// letting a dismissed question keep burning GPU and then resurrect the
+    /// pill with a stale answer.
+    var activeSendTask: Task<Void, Never>?
+
     /// When the current voice popup session opened. ChatService voice path uses
     /// this as a lower bound when fetching `<previous_messages>` — so:
     ///   - popup open → LLM sees Q&A from THIS session (multi-turn within popup)
@@ -51,10 +58,13 @@ final class VoiceQuestionState: ObservableObject {
     }
 
     func answered(_ text: String) {
+        // F1.9 — a late-arriving answer must not resurrect a dismissed popup.
+        guard phase != .idle else { return }
         phase = .answered(text: text)
     }
 
     func failed(_ text: String) {
+        guard phase != .idle else { return }
         phase = .error(text: text)
     }
 
@@ -62,6 +72,8 @@ final class VoiceQuestionState: ObservableObject {
     /// Clears `voiceSessionStartedAt` so the NEXT ⌘ long-press starts a fresh
     /// session — no chat history bleed across popup closures.
     func dismiss() {
+        activeSendTask?.cancel()   // F1.9 — stop the in-flight generation
+        activeSendTask = nil
         phase = .idle
         isSpeaking = false
         transcript = ""

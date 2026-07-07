@@ -134,3 +134,64 @@ final class ExtractionQueueStoreTests: XCTestCase {
         XCTAssertEqual(store.pending(), [a, b])   // both kept for next pass
     }
 }
+
+// MARK: - ITER-051 review fix: counted content-failures
+
+@MainActor
+final class ExtractionQueueAttemptsTests: XCTestCase {
+    private func makeStore() -> (ExtractionQueueStore, URL) {
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("queue-attempts-\(UUID().uuidString)", isDirectory: true)
+        return (ExtractionQueueStore(filename: "q.json", directory: dir), dir)
+    }
+
+    func testFailedAttemptDropsAfterCap() async {
+        let (store, dir) = makeStore()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let id = UUID()
+        store.enqueue(id)
+        for i in 1...ExtractionQueueStore.maxFailedAttempts {
+            await store.drain { _ in .failedAttempt }
+            if i < ExtractionQueueStore.maxFailedAttempts {
+                XCTAssertEqual(store.pending(), [id], "attempt \(i): must stay queued")
+            }
+        }
+        XCTAssertTrue(store.pending().isEmpty, "dropped after \(ExtractionQueueStore.maxFailedAttempts) content failures")
+    }
+
+    func testRetryLaterIsNotCounted() async {
+        let (store, dir) = makeStore()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let id = UUID()
+        store.enqueue(id)
+        for _ in 0..<(ExtractionQueueStore.maxFailedAttempts * 3) {
+            await store.drain { _ in .retryLater }
+        }
+        XCTAssertEqual(store.pending(), [id], "environmental retries never drop the id")
+    }
+
+    func testLegacyV1ArrayFileStillLoads() throws {
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("queue-v1-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let ids = [UUID(), UUID()]
+        let data = try JSONEncoder().encode(ids)
+        try data.write(to: dir.appendingPathComponent("q.json"))
+        let store = ExtractionQueueStore(filename: "q.json", directory: dir)
+        XCTAssertEqual(store.pending(), ids, "V1 bare-array format must load")
+    }
+
+    func testCompletedClearsAttempts() async {
+        let (store, dir) = makeStore()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let id = UUID()
+        store.enqueue(id)
+        await store.drain { _ in .failedAttempt }
+        await store.drain { _ in .completed }
+        XCTAssertTrue(store.pending().isEmpty)
+        // Re-enqueue starts fresh — no leftover attempt count.
+        store.enqueue(id)
+        XCTAssertEqual(store.pending(), [id])
+    }
+}

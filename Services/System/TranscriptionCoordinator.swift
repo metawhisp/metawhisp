@@ -448,7 +448,11 @@ final class TranscriptionCoordinator: ObservableObject {
                 NSLog("[Coordinator] 🎤 Voice question transcript → MetaChat (%d chars)", finalText.count)
                 VoiceQuestionState.shared.thinking(transcript: finalText)
                 if let chat = chatService {
-                    Task { await chat.send(finalText, source: .voice) }
+                    // F1.9 — keep the handle so Esc (dismiss) can cancel the
+                    // in-flight generation instead of letting it run blind.
+                    VoiceQuestionState.shared.activeSendTask = Task {
+                        await chat.send(finalText, source: .voice)
+                    }
                 } else {
                     NSLog("[Coordinator] ⚠️ chatService nil — voice question dropped")
                     VoiceQuestionState.shared.failed("Chat not available")
