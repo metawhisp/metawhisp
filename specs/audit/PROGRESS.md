@@ -156,3 +156,25 @@ Decide: (a) build/notarize 1.3.10 to make the 16 committed fixes live (secrets �
 Keychain, crash fix, data-loss fixes), and/or (b) take AUD-007 migration plan as
 a dedicated, store-copy-tested task. Continue remaining findings one per
 RED → GREEN → atomic commit.
+
+## Website SEO Audit Addendum
+
+Added 2026-06-02: report-only production SEO review is recorded in
+`specs/audit/SEO-SITE-AUDIT-2026-06-02.md`.
+
+- Proven website findings: `11`
+- Priorities: `4 P1`, `5 P2`, `2 P3`
+- Marketing-site source checkout: not present locally
+- Website source edits: none
+- Manual follow-up: Lighthouse/Core Web Vitals, Search Console and legal review
+
+## Second Brain Review Addendum
+
+Added 2026-06-07: report-only current-code review is recorded in
+`specs/audit/SECOND-BRAIN-REVIEW-2026-06-07.md`.
+
+- Proven Second Brain findings: `13`
+- Priorities: `2 P1`, `9 P2`, `2 P3`
+- Application source edits: none
+- Main risk cluster: silent skips/stale side effects across extraction,
+  MetaChat mutations, Obsidian, MCP, file RAG and Apple Notes state
