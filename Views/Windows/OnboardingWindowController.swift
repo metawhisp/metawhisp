@@ -33,14 +33,21 @@ final class OnboardingWindowController {
         window.contentView = NSHostingView(rootView: onboardingView)
         window.center()
         window.isReleasedWhenClosed = false
+        // macOS 26 Tahoe — same restoration-crash guard as MainWindowController.
+        window.isRestorable = false
         window.level = .floating
         // Same Space-fix as MainWindowController: bring the window TO the user, don't teleport
         // them to a different Space on first launch.
-        window.collectionBehavior = [.moveToActiveSpace, .fullScreenAuxiliary]
+        window.collectionBehavior = MWWindowBehavior.main
 
         self.window = window
 
-        NSApp.activate(ignoringOtherApps: true)
+        // Gentle activation only (ITER-050 B2.6): the aggressive
+        // ignoring-other-apps form yanks the user across Spaces (see
+        // WindowActivationGuardTests). The plain form still activates this
+        // LSUIElement app on first launch (user-initiated open), which the
+        // window needs to take keyboard focus.
+        NSApp.activate()
         window.makeKeyAndOrderFront(nil)
         window.orderFrontRegardless()
 

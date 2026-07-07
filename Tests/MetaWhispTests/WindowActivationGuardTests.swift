@@ -16,10 +16,10 @@ import XCTest
 /// the allowlist below.
 final class WindowActivationGuardTests: XCTestCase {
 
-    /// Files permitted to keep the aggressive form.
-    private static let allowlist: Set<String> = [
-        "OnboardingWindowController.swift", // first launch — app not yet frontmost
-    ]
+    /// Files permitted to keep the aggressive form. Empty since ITER-050 B2.6
+    /// removed the onboarding call (the app is active in both of its show
+    /// paths — launch and Settings).
+    private static let allowlist: Set<String> = []
 
     func testNoAggressiveActivateInUIOrServices() throws {
         let root = try Self.repoRoot()

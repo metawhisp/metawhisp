@@ -107,7 +107,7 @@ final class MWNotificationStackController {
         panel.backgroundColor = .clear
         panel.hasShadow = false
         panel.level = .statusBar
-        panel.collectionBehavior = [.canJoinAllSpaces, .stationary, .fullScreenAuxiliary]
+        panel.collectionBehavior = MWWindowBehavior.overlay
         panel.isMovableByWindowBackground = false
         panel.ignoresMouseEvents = false
         panel.contentView = container

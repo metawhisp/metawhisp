@@ -5,14 +5,34 @@ import SwiftUI
 /// Manages the borderless floating window that displays voice-question status.
 /// Shows/hides based on `VoiceQuestionState.shared.isVisible`.
 ///
+/// **Two-window design (ITER-050 B2.2 — copied from MeetingCoachWindowController).**
+/// Click-through is a *structural* property here, not a runtime toggle:
+///   - `cardWindow` — sized exactly to the visible pill. Interactive, so the
+///     STOP button actually works. `nonactivatingPanel` keeps focus in the
+///     user's app.
+///   - `shadowWindow` — a child window `shadowPadding` larger per side that
+///     renders ONLY the drop shadow and has `ignoresMouseEvents = true`, so
+///     clicks around the pill pass straight through to the app beneath.
+///
+/// Replaces the single-panel `ClickThroughHostingView`, whose
+/// ignoresMouseEvents+NSTrackingArea toggle left the panel permanently
+/// click-through — user-reported: «не могу нажать в кнопку Stop».
+///
 /// spec://BACKLOG#Phase6
 @MainActor
 final class FloatingVoiceWindowController {
-    private var window: NSPanel?
-    private var hostingView: ClickThroughHostingView<FloatingVoiceView>?
+    private var cardWindow: NSPanel?
+    private var shadowWindow: NSPanel?
+    private var shadowView: CardShadowView?
+    private var hostingView: SelfSizingHostingView<FloatingVoiceView>?
     private var visibilityCancellable: AnyCancellable?
     private var escMonitor: Any?
+    private var globalEscMonitor: Any?
     private var autoDismissTask: Task<Void, Never>?
+
+    /// Shadow breathing room per side: 2·radius 24 + |y| 12 = 60 — the no-clip
+    /// rule for a blurred shadow's soft tail (same as MeetingCoach).
+    private let shadowPadding: CGFloat = 60
 
     init() {
         // React to state changes.
@@ -57,109 +77,201 @@ final class FloatingVoiceWindowController {
     }
 
     private func showWindow() {
-        if window == nil { createWindow() }
-        guard let window else { return }
-        if !window.isVisible {
-            positionWindow(window)
-            window.orderFrontRegardless()
-            installEscMonitor()
+        if cardWindow == nil { createWindows() }
+        guard let cardWindow, let shadowWindow else { return }
+        if !cardWindow.isVisible {
+            positionTopCenter(cardWindow)
+            // Order ONLY the parent — children come along; explicitly ordering
+            // a child window detaches it from its parent (see MeetingCoach).
+            cardWindow.orderFrontRegardless()
+            if cardWindow.childWindows?.contains(shadowWindow) != true {
+                cardWindow.addChildWindow(shadowWindow, ordered: .below)
+            }
+            updateShadowFrame()
+            installEscMonitors()
         }
     }
 
     private func hideWindow() {
-        removeEscMonitor()
+        removeEscMonitors()
         autoDismissTask?.cancel()
         autoDismissTask = nil
-        window?.orderOut(nil)
+        cardWindow?.orderOut(nil)
+        // Defensive: if the child relationship broke, hide the shadow directly.
+        if let shadowWindow, shadowWindow.isVisible,
+           cardWindow?.childWindows?.contains(shadowWindow) != true {
+            shadowWindow.orderOut(nil)
+        }
     }
 
-    private func createWindow() {
-        let contentView = FloatingVoiceView(state: VoiceQuestionState.shared)
-        let hosting = ClickThroughHostingView(rootView: contentView)
-        // 380pt pill + 120pt shadow envelope (60 each side, see
-        // FloatingVoiceView pillContent `.padding(60)`). 2026-06-10 — a
-        // blurred shadow has a soft tail beyond radius+offset; the no-clip
-        // envelope is 2·radius + |offset| = 60 (same rule as the Meeting
-        // Copilot CardShadowView). 36 hard-clipped the tail («тень обрезана
-        // криво»).
-        hosting.frame = NSRect(x: 0, y: 0, width: 568, height: 348)
-        // Click-through over the 60-pt shadow padding so clicks land on
-        // whatever is underneath instead of the (mostly-empty) panel.
-        hosting.shadowInset = 60
+    private func createWindows() {
+        let hosting = SelfSizingHostingView(rootView: FloatingVoiceView(state: VoiceQuestionState.shared))
+        hosting.onContentSizeChange = { [weak self] size in
+            self?.updateCardSize(size)
+        }
+        self.hostingView = hosting
 
-        let panel = NSPanel(
-            contentRect: hosting.frame,
+        // Card window — exactly the visible pill. Interactive; non-activating
+        // so clicking STOP never steals focus from the app the user is in.
+        let card = NSPanel(
+            contentRect: NSRect(x: 0, y: 0, width: 380, height: 120),
             styleMask: [.borderless, .nonactivatingPanel],
             backing: .buffered,
             defer: false
         )
-        panel.level = .floating
-        panel.isFloatingPanel = true
-        panel.hidesOnDeactivate = false
-        panel.becomesKeyOnlyIfNeeded = true
-        panel.backgroundColor = .clear
-        panel.isOpaque = false
-        panel.hasShadow = false  // SwiftUI view casts its own drop shadow
-        panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
-        panel.contentView = hosting
+        card.level = .floating
+        card.isFloatingPanel = true
+        card.hidesOnDeactivate = false
+        card.becomesKeyOnlyIfNeeded = true
+        card.backgroundColor = .clear
+        card.isOpaque = false
+        card.hasShadow = false  // shadow lives in the child window
+        card.collectionBehavior = MWWindowBehavior.overlayFollowing
+        card.ignoresMouseEvents = false
+        card.contentView = hosting
 
-        self.window = panel
-        self.hostingView = hosting
+        // Shadow window — child, below the card, transparent to mouse events.
+        let shadowFrame = card.frame.insetBy(dx: -shadowPadding, dy: -shadowPadding)
+        let shadow = NSPanel(
+            contentRect: shadowFrame,
+            styleMask: [.borderless, .nonactivatingPanel],
+            backing: .buffered,
+            defer: false
+        )
+        let shadowContent = CardShadowView(
+            frame: NSRect(origin: .zero, size: shadowFrame.size),
+            inset: shadowPadding,
+            cornerRadius: 14,          // pill's clipShape radius
+            shadowRadius: 24,
+            shadowOpacity: 0.45,
+            shadowYOffset: 12
+        )
+        shadow.isOpaque = false
+        shadow.backgroundColor = .clear
+        shadow.hasShadow = false
+        shadow.level = card.level
+        shadow.collectionBehavior = card.collectionBehavior
+        shadow.ignoresMouseEvents = true
+        shadow.hidesOnDeactivate = false
+        shadow.contentView = shadowContent
+
+        card.addChildWindow(shadow, ordered: .below)
+
+        self.cardWindow = card
+        self.shadowWindow = shadow
+        self.shadowView = shadowContent
+
+        // Force the first measurement so the card matches the content before
+        // the window is shown, not on a later async layout pass.
+        hosting.layoutSubtreeIfNeeded()
+        hosting.reportCurrentSize()
     }
 
-    private func positionWindow(_ window: NSPanel) {
+    /// Resize the card window to the measured pill size, keeping the top edge
+    /// and horizontal center anchored (the pill grows downward as the answer
+    /// streams in), then resync the shadow window.
+    private func updateCardSize(_ size: CGSize) {
+        guard let cardWindow, size.width > 0, size.height > 0 else { return }
+        // Review fix — clamp like MeetingRecap: a degenerate or runaway
+        // measurement must not produce a giant (screen-overflowing,
+        // click-blocking) or invisible card. Content past the cap scrolls
+        // inside the pill (FloatingVoiceView's ScrollView).
+        let newSize = NSSize(
+            width: ceil(min(max(size.width, 380), 420)),
+            height: ceil(min(max(size.height, 56), 520))
+        )
+        var frame = cardWindow.frame
+        guard abs(frame.width - newSize.width) > 0.5 ||
+              abs(frame.height - newSize.height) > 0.5 else { return }
+        let top = frame.maxY
+        frame.origin.x = frame.midX - newSize.width / 2
+        frame.origin.y = top - newSize.height
+        frame.size = newSize
+        cardWindow.setFrame(frame, display: true)
+        updateShadowFrame()
+    }
+
+    private func updateShadowFrame() {
+        guard let cardWindow, let shadowWindow else { return }
+        let frame = cardWindow.frame.insetBy(dx: -shadowPadding, dy: -shadowPadding)
+        shadowWindow.setFrame(frame, display: true)
+        shadowView?.frame = NSRect(origin: .zero, size: frame.size)
+        shadowView?.needsLayout = true
+    }
+
+    private func positionTopCenter(_ window: NSPanel) {
         guard let screen = NSScreen.main else { return }
         let visible = screen.visibleFrame
-        // Size grows with content — ask host view to size itself first.
         if let host = hostingView {
             host.layoutSubtreeIfNeeded()
-            let fitting = host.fittingSize
-            // Clamps grew +48 with the 36→60 shadow envelope (2026-06-10) so
-            // the card's usable size is unchanged.
-            let width = max(468, min(fitting.width, 668))
-            let height = max(168, min(fitting.height, 408))
-            window.setContentSize(NSSize(width: width, height: height))
+            host.reportCurrentSize()
         }
         let size = window.frame.size
-        // Top-center. 0pt window margin: the 60pt transparent shadow envelope
-        // already provides the visual breathing room (was 24 + 36 = 60 visual;
-        // 0 + 60 keeps the card exactly where it was). 2026-06-10.
+        // Pill top sits `shadowPadding` below the visible top — same optics as
+        // the old in-window 60pt envelope, and it leaves room for the halo.
         let origin = NSPoint(
-            x: visible.origin.x + (visible.width - size.width) / 2,
-            y: visible.origin.y + visible.height - size.height - 0
+            x: visible.midX - size.width / 2,
+            y: visible.maxY - size.height - shadowPadding
         )
         window.setFrameOrigin(origin)
     }
 
-    // MARK: - Esc dismiss
+    // MARK: - Esc / Space keyboard handling
 
-    private func installEscMonitor() {
-        guard escMonitor == nil else { return }
-        escMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
-            // Esc — dismiss panel (and stop TTS via phase=.idle observer).
-            if event.keyCode == 53 {
+    private func installEscMonitors() {
+        // Global monitor — the PRIMARY case (ITER-050 B2.4): the voice flow
+        // starts while the user's focus is in ANOTHER app (the panel never
+        // activates), so a local monitor never sees the keystroke. Global
+        // monitors observe without consuming — Esc still reaches the frontmost
+        // app, the acceptable trade-off for a passive overlay.
+        if globalEscMonitor == nil {
+            globalEscMonitor = NSEvent.addGlobalMonitorForEvents(matching: .keyDown) { event in
+                guard event.keyCode == 53 else { return }
                 Task { @MainActor in
                     VoiceQuestionState.shared.dismiss()
-                    self?.removeEscMonitor()
                 }
-                return nil
             }
-            // Space — interrupt ongoing TTS only (keep panel visible so user can still read).
-            if event.keyCode == 49, VoiceQuestionState.shared.isSpeaking {
-                Task { @MainActor in
-                    AppDelegate.shared?.ttsService.stop()
-                    VoiceQuestionState.shared.isSpeaking = false
+        }
+        // Local monitor — when MetaWhisp itself is frontmost. Review fix:
+        // guard each key separately, not the whole monitor — a blanket
+        // `keyWindow == nil` guard killed Esc-dismiss whenever the main
+        // window was open at all.
+        if escMonitor == nil {
+            escMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+                if event.keyCode == 53 {
+                    // Esc dismisses the pill — unless the user is editing
+                    // text (Esc there means "end editing", don't hijack it).
+                    let editingText = NSApp.keyWindow?.firstResponder is NSTextView
+                    guard !editingText else { return event }
+                    Task { @MainActor in
+                        VoiceQuestionState.shared.dismiss()
+                    }
+                    return nil
                 }
-                return nil
+                // Space — interrupt ongoing TTS, but never while a MetaWhisp
+                // window is key (Space in the MetaChat input used to vanish
+                // while TTS was speaking).
+                if event.keyCode == 49, VoiceQuestionState.shared.isSpeaking,
+                   NSApp.keyWindow == nil {
+                    Task { @MainActor in
+                        AppDelegate.shared?.ttsService.stop()
+                        VoiceQuestionState.shared.isSpeaking = false
+                    }
+                    return nil
+                }
+                return event
             }
-            return event
         }
     }
 
-    private func removeEscMonitor() {
+    private func removeEscMonitors() {
         if let m = escMonitor {
             NSEvent.removeMonitor(m)
             escMonitor = nil
+        }
+        if let m = globalEscMonitor {
+            NSEvent.removeMonitor(m)
+            globalEscMonitor = nil
         }
     }
 }

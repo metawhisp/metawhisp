@@ -123,7 +123,24 @@ final class SystemAudioCaptureService: NSObject, ObservableObject, AudioSource {
     // MARK: - ScreenCaptureKit Setup
 
     private func setupStream() async throws {
-        let content = try await SCShareableContent.current
+        // ITER-050 B3.6 — `SCShareableContent` transiently reports ZERO
+        // displays (display waking / SCK daemon hiccup); the log shows the
+        // very next attempt minutes later succeeding. Retry briefly before
+        // declaring failure so a one-off hiccup doesn't kill the recording.
+        // A genuinely headless session still fails honestly after ~1.6s.
+        // AUD-008: re-check the generation after every suspension point so a
+        // stop() during the retry window cancels instead of resurrecting a
+        // stream nobody owns.
+        let gen = startGeneration
+        var content = try await SCShareableContent.current
+        var attempt = 1
+        while content.displays.isEmpty && attempt < 5 {
+            guard startGeneration == gen else { throw CancellationError() }
+            try await Task.sleep(for: .milliseconds(400))
+            content = try await SCShareableContent.current
+            attempt += 1
+        }
+        guard startGeneration == gen else { throw CancellationError() }
         guard let display = content.displays.first else {
             throw CaptureError.noDisplay
         }

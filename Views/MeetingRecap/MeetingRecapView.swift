@@ -18,21 +18,11 @@ struct MeetingRecapView: View {
     var onToggleTask: (UUID) -> Void
 
     var body: some View {
-        // Outer container fills NSHostingView (560×540) so the 32-radius shadow
-        // doesn't clip at the transparent window edge. The pill itself is
-        // centred within. Same fix pattern as MeetingCoachView / FloatingVoiceView.
-        // ITER-035-followup (2026-05-12).
+        // ITER-050 B2.2 — the card window is sized exactly to the pill
+        // (two-window pattern, see MeetingRecapWindowController); the drop
+        // shadow is drawn by CardShadowView in the shadow child window.
         if let p = state.payload {
-            VStack {
-                Spacer(minLength: 0)
-                HStack {
-                    Spacer(minLength: 0)
-                    recapPill(p)
-                    Spacer(minLength: 0)
-                }
-                Spacer(minLength: 0)
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            recapPill(p)
         }
     }
 
@@ -105,15 +95,8 @@ struct MeetingRecapView: View {
                 RoundedRectangle(cornerRadius: MW.rLarge, style: .continuous)
                     .strokeBorder(MW.border, lineWidth: 0.5)
             )
-            .shadow(color: .black.opacity(0.4), radius: 32, y: 16)
-            // Explicit shadow envelope so it doesn't get clipped when the pill
-            // content fills the window vertically (Spacer-based centering
-            // collapses to 0 in that case). 80pt = 2·radius 32 + |y| 16 — the
-            // soft tail extends beyond radius+offset, so the old 48
-            // hard-clipped it (same rule as MeetingCoach CardShadowView).
-            // Window size bumped accordingly (see MeetingRecapWindowController).
-            // 2026-06-10.
-            .padding(80)
+            // Drop shadow lives in the shadow child window (CardShadowView) —
+            // ITER-050 B2.2 two-window pattern, same as MeetingCoach.
     }
 
     // MARK: - Header

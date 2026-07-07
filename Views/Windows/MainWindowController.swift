@@ -53,25 +53,14 @@ final class MainWindowController: NSObject, NSWindowDelegate {
 
     /// Collection behavior applied to the main window on create / reactivate.
     ///
-    /// **`[.moveToActiveSpace, .fullScreenAuxiliary]` is the correct
-    /// menubar-app setting** and MUST stay this way. The two flags do:
-    ///   - `.moveToActiveSpace` — when shown, the window follows the user
-    ///     to whatever Space they're currently on (instead of being bound
-    ///     to the Space where it last lived).
-    ///   - `.fullScreenAuxiliary` — the window CAN appear over a
-    ///     fullscreen Space of another app (Claude, Safari fullscreen,
-    ///     etc.). Without this flag, macOS has to kick the user OUT of
-    ///     their fullscreen Space to a neighboring desktop Space to render
-    ///     our window — symptom is "click a MetaWhisp button → I get
-    ///     thrown to an empty left-side Space".
-    ///
-    /// **DO NOT revert this to `[]`** (a previous well-intentioned
-    /// reversion on 2026-05-10 caused the exact "thrown to empty Space"
-    /// bug user reported 2026-05-13). The misdiagnosis at the time was
-    /// "overlay forces window to overlay fullscreen-Space" — that's
-    /// actually correct menubar-app behavior, not a bug.
-    private static let windowBehavior: NSWindow.CollectionBehavior =
-        [.moveToActiveSpace, .fullScreenAuxiliary]
+    /// ITER-050 B2.1 — `.canJoinAllSpaces` (via `MWWindowBehavior.main`)
+    /// replaced the previous `.moveToActiveSpace` + activation-policy dance,
+    /// which macOS 26 re-broke: activating the window mid-typing yanked the
+    /// user to the Space it was bound to. A join-all-Spaces window IS on the
+    /// user's current Space by definition, so activation never needs a Space
+    /// switch — the same reason the overlay panels never exhibited the bug.
+    /// `WindowBehaviorGuardTests` enforces the single source of truth.
+    private static let windowBehavior: NSWindow.CollectionBehavior = MWWindowBehavior.main
 
     func open(
         coordinator: TranscriptionCoordinator,
@@ -91,19 +80,23 @@ final class MainWindowController: NSObject, NSWindowDelegate {
             if let tab = initialTab {
                 NotificationCenter.default.post(name: .switchMainTab, object: tab)
             }
+            // Space-throw fix, final form (ITER-050 B2.1): join-all-Spaces is
+            // applied TRANSIENTLY around the order-in, so activation can never
+            // switch Spaces, then the window parks on the Space it appeared on
+            // (a permanently sticky 1440×1000 window on every desktop would be
+            // its own regression — review finding).
             window.collectionBehavior = Self.windowBehavior
-            // Space-throw fix #2 (2026-06-10): `.moveToActiveSpace` only
-            // applies when a window is ordered IN from an ordered-out state.
-            // If the window is already VISIBLE on another Space,
-            // `makeKeyAndOrderFront` switches the USER to that Space instead
-            // («кидает на первый экран» on any button that routes here).
-            // Order it out first so re-ordering places it on the current Space.
+            // Space-throw fix #2 (2026-06-10): if the window is already
+            // VISIBLE on another Space, `makeKeyAndOrderFront` switches the
+            // USER to that Space instead («кидает на первый экран» on any
+            // button that routes here). Order it out first so re-ordering
+            // places it on the current Space.
             if window.isVisible && !window.isOnActiveSpace {
                 window.orderOut(nil)
             }
             // ORDER MATTERS for Space-throw prevention:
-            //   1. makeKeyAndOrderFront FIRST — `.moveToActiveSpace` puts
-            //      the window in user's current Space.
+            //   1. makeKeyAndOrderFront FIRST — with join-all-Spaces the
+            //      window is on the user's current Space by definition.
             //   2. setActivationPolicy(.regular) AFTER — the dock-app
             //      promotion happens with the window already placed, so
             //      macOS doesn't snap user to the window's last-known Space.
@@ -111,6 +104,9 @@ final class MainWindowController: NSObject, NSWindowDelegate {
             //      «приложение кидает в другой экран» reported 2026-05-13.
             window.makeKeyAndOrderFront(nil)
             NSApp.setActivationPolicy(.regular)
+            DispatchQueue.main.async { [weak window] in
+                window?.collectionBehavior = MWWindowBehavior.mainParked
+            }
             return
         }
 
@@ -151,8 +147,8 @@ final class MainWindowController: NSObject, NSWindowDelegate {
         self.window = window
 
         // Order matters here to prevent Space-throw:
-        //   1. makeKeyAndOrderFront FIRST — window appears in user's
-        //      current Space (.moveToActiveSpace is honored).
+        //   1. makeKeyAndOrderFront FIRST — with transient join-all-Spaces
+        //      the window appears in the user's current Space by definition.
         //   2. setActivationPolicy(.regular) AFTER — the policy flip from
         //      .accessory → .regular happens once the window is already
         //      where the user is, so macOS doesn't pick a "natural" Space
@@ -162,6 +158,10 @@ final class MainWindowController: NSObject, NSWindowDelegate {
         //      is sufficient for bringing window forward in current Space.
         window.makeKeyAndOrderFront(nil)
         NSApp.setActivationPolicy(.regular)
+        // Park after order-in (see the reuse branch above for the rationale).
+        DispatchQueue.main.async { [weak window] in
+            window?.collectionBehavior = MWWindowBehavior.mainParked
+        }
 
         NSLog("[MainWindow] Opened")
     }

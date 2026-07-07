@@ -93,11 +93,14 @@ final class MeetingRecorder: ObservableObject {
         self.mic = mic
         self.systemAudio = systemAudio
 
-        // Forward system audio error (most likely failure point — TCC, SCStream)
+        // Forward system audio error (most likely failure point — TCC, SCStream).
+        // Forward nil TOO (ITER-050 B3.6): the old `if let err` swallowed the
+        // reset, so a transient SCK failure pinned the red error banner in the
+        // popover forever even after capture recovered.
         systemAudio.$lastError
             .receive(on: RunLoop.main)
             .sink { [weak self] err in
-                if let err { self?.lastError = err }
+                self?.lastError = err
             }
             .store(in: &cancellables)
 
@@ -169,6 +172,11 @@ final class MeetingRecorder: ObservableObject {
             guard self.systemAudio.isRecording else {
                 self.lastError = self.systemAudio.lastError ?? "System audio failed to start"
                 self.isStarting = false
+                // Review fix — the recorder gave up, so cancel the in-flight
+                // system-audio setup too (its retry path can outlast our 5s
+                // budget; stop() bumps its generation → the stale setup tears
+                // itself down instead of recording into the void).
+                _ = self.systemAudio.stop()
                 return
             }
 

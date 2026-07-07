@@ -15,18 +15,30 @@ final class CardShadowView: NSView {
     /// card silhouette the shadow is cast from. Equals the window's shadow
     /// padding so the inset rect lines up with the card window on top.
     private let inset: CGFloat
+    /// Corner radius of the card silhouette — parametrized (ITER-050 B2.2) so
+    /// FloatingVoice (r14) and MeetingRecap (rLarge) reuse this view instead
+    /// of the broken ClickThroughHostingView.
+    private let cornerRadius: CGFloat
 
-    init(frame frameRect: NSRect, inset: CGFloat) {
+    init(
+        frame frameRect: NSRect,
+        inset: CGFloat,
+        cornerRadius: CGFloat = MW.rLarge,
+        shadowRadius: CGFloat = 28,
+        shadowOpacity: Float = 0.35,
+        shadowYOffset: CGFloat = 14
+    ) {
         self.inset = inset
+        self.cornerRadius = cornerRadius
         super.init(frame: frameRect)
         wantsLayer = true
         layer?.masksToBounds = false
         shadowLayer.masksToBounds = false
         shadowLayer.shadowColor = NSColor.black.cgColor
-        shadowLayer.shadowOpacity = 0.35
-        shadowLayer.shadowRadius = 28
-        // Non-flipped NSView: negative y = downward, matching SwiftUI's y: 14.
-        shadowLayer.shadowOffset = CGSize(width: 0, height: -14)
+        shadowLayer.shadowOpacity = shadowOpacity
+        shadowLayer.shadowRadius = shadowRadius
+        // Non-flipped NSView: negative y = downward, matching SwiftUI's y offset.
+        shadowLayer.shadowOffset = CGSize(width: 0, height: -shadowYOffset)
         layer?.addSublayer(shadowLayer)
     }
 
@@ -41,8 +53,8 @@ final class CardShadowView: NSView {
         // without an opaque fill obscuring the app behind.
         shadowLayer.shadowPath = CGPath(
             roundedRect: cardRect,
-            cornerWidth: MW.rLarge,
-            cornerHeight: MW.rLarge,
+            cornerWidth: cornerRadius,
+            cornerHeight: cornerRadius,
             transform: nil
         )
     }

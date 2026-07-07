@@ -126,6 +126,15 @@ final class LicenseService: ObservableObject {
         }
     }
 
+    /// ITER-050 B1.2 — sign-out policy for session verification. Pure and
+    /// static so `SessionVerifyPolicyTests` can pin it: 401/403 are the only
+    /// statuses that mean "this token is truly invalid"; everything else
+    /// (5xx, 429, gateway hiccups) keeps the cached license, exactly like the
+    /// offline catch branch below.
+    nonisolated static func shouldSignOutOnVerify(httpStatus: Int) -> Bool {
+        httpStatus == 401 || httpStatus == 403
+    }
+
     /// Verify existing session token is still valid.
     private func verify(token: String) async {
         do {
@@ -137,8 +146,17 @@ final class LicenseService: ObservableObject {
             let (data, response) = try await URLSession.shared.data(for: request)
 
             guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
-                NSLog("[License] Session expired, clearing")
-                signOut()
+                let status = (response as? HTTPURLResponse)?.statusCode ?? -1
+                // ITER-050 B1.2 — only an AUTHORITATIVE auth rejection may
+                // destroy local Pro state. A transient worker 5xx at launch
+                // used to sign the user out, drop LLM access mid-session and
+                // let the project backfill wipe 196 conversation titles.
+                if Self.shouldSignOutOnVerify(httpStatus: status) {
+                    NSLog("[License] Session rejected (HTTP %d), clearing", status)
+                    signOut()
+                } else {
+                    NSLog("[License] Verify transient HTTP %d — keeping cached state", status)
+                }
                 return
             }
 

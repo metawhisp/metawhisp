@@ -282,6 +282,11 @@ final class ProjectAggregator: ObservableObject {
     /// to reuse them.
     private func reclassifySuspiciousConversations(generator: StructuredGenerator) async -> Int {
         guard let ctx = ctx() else { return 0 }
+        // ITER-050 B1.1 — same wipe-before-check hazard as backfillProjects.
+        guard generator.hasLLMAccess else {
+            NSLog("[ProjectAggregator] reclassify: no LLM access — skipping")
+            return 0
+        }
         // Build set of "established" canonicals (≥ 2 conversations).
         let established = Set(listProjects(includeSingletons: false).map { $0.canonicalName.lowercased() })
         guard !established.isEmpty else {
@@ -301,6 +306,12 @@ final class ProjectAggregator: ObservableObject {
         NSLog("[ProjectAggregator] reclassify: %d suspect conversations", suspects.count)
         var done = 0
         for conv in suspects {
+            // Snapshot first (ITER-050 B1.1) — restore on failed generate.
+            let oldTitle = conv.title
+            let oldOverview = conv.overview
+            let oldCategory = conv.category
+            let oldEmoji = conv.emoji
+            let oldProject = conv.primaryProject
             // Reset structured fields so generator takes the full LLM path.
             conv.title = nil
             conv.overview = nil
@@ -308,11 +319,26 @@ final class ProjectAggregator: ObservableObject {
             conv.emoji = nil
             conv.primaryProject = nil
             try? ctx.save()
-            await generator.generate(conversationId: conv.id)
-            // After generate, resolveCanonical seeds the alias for whatever
-            // raw value the LLM produced.
-            if let raw = conv.primaryProject {
-                _ = resolveCanonical(raw)
+            let convId = conv.id
+            await generator.generate(conversationId: convId)
+            // Review fix — same stale-context hazard as backfillProjects:
+            // decide success and restore through a fresh context.
+            if let freshCtx = self.ctx(),
+               let fresh = try? freshCtx.fetch(FetchDescriptor<Conversation>(
+                   predicate: #Predicate { $0.id == convId })).first {
+                if fresh.title == nil {
+                    fresh.title = oldTitle
+                    fresh.overview = oldOverview
+                    fresh.category = oldCategory
+                    fresh.emoji = oldEmoji
+                    fresh.primaryProject = oldProject
+                    try? freshCtx.save()
+                    NSLog("[ProjectAggregator] reclassify: generate failed — restored fields for %@", "\(convId)")
+                } else if let raw = fresh.primaryProject {
+                    // resolveCanonical seeds the alias for whatever raw value
+                    // the LLM produced.
+                    _ = resolveCanonical(raw)
+                }
             }
             done += 1
             try? await Task.sleep(for: .milliseconds(300))
@@ -528,6 +554,13 @@ final class ProjectAggregator: ObservableObject {
     /// by `StructuredGenerator.backfillPlaceholders()` independently.
     func backfillProjects(structuredGenerator: StructuredGenerator) async {
         guard let ctx = ctx() else { return }
+        // ITER-050 B1.1 — never start a pass that wipes fields we may not be
+        // able to regenerate: a license hiccup mid-pass once stripped 196
+        // conversations of their titles/overviews.
+        guard structuredGenerator.hasLLMAccess else {
+            NSLog("[ProjectAggregator] backfill: no LLM access — skipping")
+            return
+        }
         var desc = FetchDescriptor<Conversation>(
             predicate: #Predicate {
                 !$0.discarded
@@ -548,6 +581,13 @@ final class ProjectAggregator: ObservableObject {
 
         var done = 0
         for conv in needs {
+            // Snapshot first (ITER-050 B1.1) — if generate() fails (access
+            // dropped mid-pass, proxy error), restore instead of leaving the
+            // conversation stripped.
+            let oldTitle = conv.title
+            let oldOverview = conv.overview
+            let oldCategory = conv.category
+            let oldEmoji = conv.emoji
             // Reset the structured fields so generate() takes the full LLM path
             // (it short-circuits when title+overview are present).
             conv.title = nil
@@ -555,12 +595,27 @@ final class ProjectAggregator: ObservableObject {
             conv.category = nil
             conv.emoji = nil
             try? ctx.save()
-            await structuredGenerator.generate(conversationId: conv.id)
-            done += 1
-            // After each generate, also run resolveCanonical to seed ProjectAlias.
-            if let raw = conv.primaryProject {
-                _ = resolveCanonical(raw)
+            let convId = conv.id
+            await structuredGenerator.generate(conversationId: convId)
+            // Review fix — generate() writes through its OWN ModelContext;
+            // this loop's `conv` can be stale. Decide success and restore
+            // through a fresh context so we see what actually landed.
+            if let freshCtx = self.ctx(),
+               let fresh = try? freshCtx.fetch(FetchDescriptor<Conversation>(
+                   predicate: #Predicate { $0.id == convId })).first {
+                if fresh.title == nil {
+                    fresh.title = oldTitle
+                    fresh.overview = oldOverview
+                    fresh.category = oldCategory
+                    fresh.emoji = oldEmoji
+                    try? freshCtx.save()
+                    NSLog("[ProjectAggregator] backfill: generate failed — restored fields for %@", "\(convId)")
+                } else if let raw = fresh.primaryProject {
+                    // After each generate, also run resolveCanonical to seed ProjectAlias.
+                    _ = resolveCanonical(raw)
+                }
             }
+            done += 1
             // Tiny pause so we don't hammer the proxy.
             try? await Task.sleep(for: .milliseconds(300))
         }

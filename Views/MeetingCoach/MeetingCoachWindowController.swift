@@ -16,8 +16,8 @@ import SwiftUI
 /// Replaces the previous single-panel `ClickThroughHostingView` approach, whose
 /// `NSTrackingArea` (+ `.inVisibleRect`) made the whole 540×440 canvas
 /// clickable — user-reported: clicking the empty space around the card dragged
-/// it. The shared `ClickThroughHostingView` (still used by FloatingVoice +
-/// MeetingRecap) is intentionally left untouched.
+/// it. ITER-050 B2.2: FloatingVoice + MeetingRecap migrated to this same
+/// two-window pattern and `ClickThroughHostingView` was deleted.
 @MainActor
 final class MeetingCoachWindowController {
     private var cardWindow: NSPanel?
@@ -105,7 +105,7 @@ final class MeetingCoachWindowController {
         card.backgroundColor = .clear
         card.hasShadow = false
         card.level = NSWindow.Level(rawValue: Int(CGShieldingWindowLevel()) - 1)
-        card.collectionBehavior = [.canJoinAllSpaces, .stationary, .fullScreenAuxiliary]
+        card.collectionBehavior = MWWindowBehavior.overlay
         card.ignoresMouseEvents = false
         card.hidesOnDeactivate = false
         card.isMovableByWindowBackground = true   // drag the CARD itself to reposition

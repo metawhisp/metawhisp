@@ -5,12 +5,25 @@ import SwiftUI
 /// Manages the per-meeting recap popup window (2026-04-29).
 /// Borderless non-activating panel anchored to top-center of the main screen.
 /// Auto-dismiss after 60 sec if user doesn't interact, or on explicit close.
+///
+/// **Two-window design (ITER-050 B2.2 — same pattern as MeetingCoach /
+/// FloatingVoice).** The card window is sized exactly to the visible recap
+/// card (interactive — Copy / Open in Library / task checkboxes work); the
+/// shadow child window renders only the drop shadow with
+/// `ignoresMouseEvents = true`, so everything around the card clicks through.
+/// Replaces `ClickThroughHostingView`, whose runtime click-through toggle
+/// left the whole panel permanently non-interactive.
 @MainActor
 final class MeetingRecapWindowController {
-    private var window: NSPanel?
-    private var hostingView: ClickThroughHostingView<MeetingRecapView>?
+    private var cardWindow: NSPanel?
+    private var shadowWindow: NSPanel?
+    private var shadowView: CardShadowView?
+    private var hostingView: SelfSizingHostingView<MeetingRecapView>?
     private var visibilityCancellable: AnyCancellable?
     private var autoDismissTask: Task<Void, Never>?
+
+    /// 2·radius 32 + |y| 16 = 80 — no-clip envelope for the recap shadow.
+    private let shadowPadding: CGFloat = 80
 
     init() {
         visibilityCancellable = MeetingRecapState.shared.$isVisible
@@ -22,11 +35,15 @@ final class MeetingRecapWindowController {
     }
 
     private func show() {
-        if window == nil { createWindow() }
-        guard let window else { return }
-        if !window.isVisible {
-            positionTopCenter(window)
-            window.orderFrontRegardless()
+        if cardWindow == nil { createWindows() }
+        guard let cardWindow, let shadowWindow else { return }
+        if !cardWindow.isVisible {
+            positionTopCenter(cardWindow)
+            cardWindow.orderFrontRegardless()
+            if cardWindow.childWindows?.contains(shadowWindow) != true {
+                cardWindow.addChildWindow(shadowWindow, ordered: .below)
+            }
+            updateShadowFrame()
             armAutoDismiss()
         }
     }
@@ -34,10 +51,14 @@ final class MeetingRecapWindowController {
     private func hide() {
         autoDismissTask?.cancel()
         autoDismissTask = nil
-        window?.orderOut(nil)
+        cardWindow?.orderOut(nil)
+        if let shadowWindow, shadowWindow.isVisible,
+           cardWindow?.childWindows?.contains(shadowWindow) != true {
+            shadowWindow.orderOut(nil)
+        }
     }
 
-    private func createWindow() {
+    private func createWindows() {
         let view = MeetingRecapView(
             state: MeetingRecapState.shared,
             onCopy: { [weak self] in self?.handleCopy() },
@@ -45,41 +66,102 @@ final class MeetingRecapWindowController {
             onDismiss: { MeetingRecapState.shared.dismiss() },
             onToggleTask: { [weak self] id in self?.handleToggleTask(id) }
         )
-        let hosting = ClickThroughHostingView(rootView: view)
-        // 480pt pill + 160pt shadow envelope (80 each side, see
-        // MeetingRecapView.recapPill `.padding(80)`). 2026-06-10 — envelope
-        // follows the 2·radius + |offset| no-clip rule (the old 48 = radius +
-        // offset hard-clipped the soft tail, «тень обрезана криво»). Width
-        // 480 + 160 = 640 (+24 slack); height 700 → 764 keeps the same
-        // ~520pt content room PLUS the bigger envelope.
-        hosting.frame = NSRect(x: 0, y: 0, width: 664, height: 764)
-        hosting.autoresizingMask = [.width, .height]
-        // 80-pt transparent shadow padding around the card → click-through.
-        hosting.shadowInset = 80
+        let hosting = SelfSizingHostingView(rootView: view)
+        hosting.onContentSizeChange = { [weak self] size in
+            self?.updateCardSize(size)
+        }
+        self.hostingView = hosting
 
-        let panel = NSPanel(
-            contentRect: hosting.frame,
+        // Card window — exactly the visible 480pt-wide card. Interactive;
+        // non-activating so buttons never steal focus.
+        let card = NSPanel(
+            contentRect: NSRect(x: 0, y: 0, width: 480, height: 300),
             styleMask: [.borderless, .nonactivatingPanel],
             backing: .buffered,
             defer: false
         )
-        panel.isOpaque = false
-        panel.backgroundColor = .clear
-        panel.hasShadow = false
-        panel.level = .floating
-        panel.collectionBehavior = [.canJoinAllSpaces, .stationary, .fullScreenAuxiliary]
-        panel.ignoresMouseEvents = false
-        panel.hidesOnDeactivate = false
-        panel.isMovableByWindowBackground = true
-        panel.contentView = hosting
+        card.isOpaque = false
+        card.backgroundColor = .clear
+        card.hasShadow = false  // shadow lives in the child window
+        card.level = .floating
+        card.collectionBehavior = MWWindowBehavior.overlay
+        card.ignoresMouseEvents = false
+        card.hidesOnDeactivate = false
+        card.isMovableByWindowBackground = true   // drag the card to reposition
+        card.contentView = hosting
 
-        self.window = panel
-        self.hostingView = hosting
+        // Shadow window — child, below the card, transparent to mouse events.
+        let shadowFrame = card.frame.insetBy(dx: -shadowPadding, dy: -shadowPadding)
+        let shadow = NSPanel(
+            contentRect: shadowFrame,
+            styleMask: [.borderless, .nonactivatingPanel],
+            backing: .buffered,
+            defer: false
+        )
+        let shadowContent = CardShadowView(
+            frame: NSRect(origin: .zero, size: shadowFrame.size),
+            inset: shadowPadding,
+            cornerRadius: MW.rLarge,   // recap card's corner radius
+            shadowRadius: 32,
+            shadowOpacity: 0.4,
+            shadowYOffset: 16
+        )
+        shadow.isOpaque = false
+        shadow.backgroundColor = .clear
+        shadow.hasShadow = false
+        shadow.level = card.level
+        shadow.collectionBehavior = card.collectionBehavior
+        shadow.ignoresMouseEvents = true
+        shadow.hidesOnDeactivate = false
+        shadow.isMovableByWindowBackground = false
+        shadow.contentView = shadowContent
+
+        card.addChildWindow(shadow, ordered: .below)
+
+        self.cardWindow = card
+        self.shadowWindow = shadow
+        self.shadowView = shadowContent
+
+        hosting.layoutSubtreeIfNeeded()
+        hosting.reportCurrentSize()
+    }
+
+    /// Resize the card window to the measured content, keeping the top edge
+    /// and horizontal center anchored (recap grows downward), then resync the
+    /// shadow. Height clamped defensively — a degenerate measurement must not
+    /// produce a giant or invisible card.
+    private func updateCardSize(_ size: CGSize) {
+        guard let cardWindow, size.width > 0, size.height > 0 else { return }
+        let newSize = NSSize(
+            width: ceil(min(max(size.width, 480), 520)),
+            height: ceil(min(max(size.height, 160), 640))
+        )
+        var frame = cardWindow.frame
+        guard abs(frame.width - newSize.width) > 0.5 ||
+              abs(frame.height - newSize.height) > 0.5 else { return }
+        let top = frame.maxY
+        frame.origin.x = frame.midX - newSize.width / 2
+        frame.origin.y = top - newSize.height
+        frame.size = newSize
+        cardWindow.setFrame(frame, display: true)
+        updateShadowFrame()
+    }
+
+    private func updateShadowFrame() {
+        guard let cardWindow, let shadowWindow else { return }
+        let frame = cardWindow.frame.insetBy(dx: -shadowPadding, dy: -shadowPadding)
+        shadowWindow.setFrame(frame, display: true)
+        shadowView?.frame = NSRect(origin: .zero, size: frame.size)
+        shadowView?.needsLayout = true
     }
 
     private func positionTopCenter(_ window: NSPanel) {
         guard let screen = NSScreen.main else { return }
         let visible = screen.visibleFrame
+        if let host = hostingView {
+            host.layoutSubtreeIfNeeded()
+            host.reportCurrentSize()
+        }
         let size = window.frame.size
         let x = visible.midX - size.width / 2
         let y = visible.maxY - size.height - 24  // slight gap from menu bar
