@@ -1,37 +1,37 @@
-# Подключить ChatGPT к MetaWhisp vault
+# Connect ChatGPT to your MetaWhisp vault
 
-**Caveat:** на момент 2026-05-12 ChatGPT Desktop **не поддерживает MCP** так как Claude Desktop / Cursor. У OpenAI свой Connectors API (web-based), которая работает по-другому.
+**Caveat:** as of 2026-05-12, ChatGPT Desktop **doesn't support MCP** the way Claude Desktop / Cursor do. OpenAI has its own (web-based) Connectors API, which works differently.
 
-Если на момент чтения этой инструкции что-то изменилось — проверь обновления на https://platform.openai.com/docs.
+If something has changed by the time you're reading this — check for updates at https://platform.openai.com/docs.
 
-## Вариант 1 — ChatGPT Custom GPT с File Search (доступно сейчас)
+## Option 1 — ChatGPT Custom GPT with File Search (available now)
 
-Этот вариант работает прямо сегодня. Но он **загружает файлы в OpenAI** — твои данные уйдут на их серверы (с одной стороны — ты так и используешь ChatGPT, с другой — voices/meetings содержат личное).
+This option works today. But it **uploads files to OpenAI** — your data goes to their servers (on one hand, that's how you already use ChatGPT; on the other, voices/meetings contain personal material).
 
-1. Сделай **bulk export** в MetaWhisp Settings.
-2. В Obsidian vault найди папку `MetaWhisp/`, зазипуй её:
+1. Do a **bulk export** in MetaWhisp Settings.
+2. In your Obsidian vault, find the `MetaWhisp/` folder and zip it:
    ```bash
    cd ~/Documents/Obsidian\ Vault
    zip -r metawhisp-export-$(date +%Y-%m-%d).zip MetaWhisp/
    ```
-3. Перейди на https://chatgpt.com/gpts/editor → Create new GPT.
-4. Configure → Knowledge → Upload files → загрузи zip (или развёрнутую папку).
-5. Дай GPT название типа «My MetaWhisp Memory».
-6. В Instructions укажи: *«Use the uploaded MetaWhisp vault to answer questions about my dictations, meetings, tasks, and memories. Reference filename when citing.»*
-7. Сохрани, потом обращайся к этому GPT когда хочешь поднять контекст из MetaWhisp.
+3. Go to https://chatgpt.com/gpts/editor → Create new GPT.
+4. Configure → Knowledge → Upload files → upload the zip (or the unpacked folder).
+5. Give the GPT a name like "My MetaWhisp Memory".
+6. In Instructions, put: *"Use the uploaded MetaWhisp vault to answer questions about my dictations, meetings, tasks, and memories. Reference the filename when citing."*
+7. Save it, then talk to this GPT whenever you want to pull in context from MetaWhisp.
 
-**Минусы:** нужно периодически re-uploadить когда vault обновится. Файлы статичные в OpenAI.
+**Downsides:** you have to re-upload periodically when the vault changes. The files are static inside OpenAI.
 
-## Вариант 2 — Подождать MCP support в ChatGPT Desktop
+## Option 2 — Wait for MCP support in ChatGPT Desktop
 
-Anthropic анонсировал MCP в late 2024, OpenAI пока не подхватили (либо подхватили — но я писал это в мае 2026, проверь актуально). Если ChatGPT Desktop добавит MCP — конфиг будет аналогичен Claude Desktop / Cursor (тот же `filesystem-MCP` пакет).
+Anthropic announced MCP in late 2024; OpenAI hasn't picked it up yet (or has — I wrote this in May 2026, check what's current). If ChatGPT Desktop adds MCP, the config will look like Claude Desktop / Cursor (the same `filesystem-MCP` package).
 
-Подключиться можно будет через `/Library/Application Support/ChatGPT/` или подобный путь.
+You'll likely connect it via `/Library/Application Support/ChatGPT/` or a similar path.
 
-## Вариант 3 — Использовать Claude / Cursor вместо ChatGPT для этих кейсов
+## Option 3 — Use Claude / Cursor instead of ChatGPT for these cases
 
-Если у тебя есть Claude или Cursor — они **уже** поддерживают MCP. Для запросов «найди что я говорил про X в моих воксах» — лучше через них. ChatGPT держи для других задач.
+If you have Claude or Cursor, they **already** support MCP. For queries like "find what I said about X in my voice notes" — those are better through them. Keep ChatGPT for other tasks.
 
-## Зачем существует этот файл если работающего варианта нет
+## Why this file exists if there's no working option
 
-Так что ты не тратил час на поиск «как же подключить ChatGPT к MetaWhisp» и не нашёл — теперь знаешь сразу: пока никак, вернись через 3-6 месяцев или используй Custom GPT с file upload как workaround.
+So you don't spend an hour searching for "how do I connect ChatGPT to MetaWhisp" and come up empty — now you know right away: for now you can't, come back in 3-6 months, or use a Custom GPT with file upload as a workaround.

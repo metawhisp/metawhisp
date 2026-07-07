@@ -1,66 +1,66 @@
-# Подключить Claude Desktop к MetaWhisp vault
+# Connect Claude Desktop to your MetaWhisp vault
 
-После того как MetaWhisp синхронизирует voices / meetings / tasks / memories в Obsidian vault (ITER-035), любой MCP-совместимый AI клиент может читать эту «вторую память» как папку с markdown файлами. Не нужен кастомный сервер, не нужен билд — только конфиг.
+Once MetaWhisp syncs voices / meetings / tasks / memories into your Obsidian vault (ITER-035), any MCP-compatible AI client can read this "second memory" as a folder of markdown files. No custom server, no build — just config.
 
-Эта инструкция — для **Claude Desktop**. Аналогичная для Cursor в `CURSOR-SETUP.md`.
+This guide is for **Claude Desktop**. The equivalent for Cursor is in `CURSOR-SETUP.md`.
 
-## Что получишь
+## What you get
 
-В Claude Desktop сможешь спрашивать:
-- *«Какие у меня были созвоны на этой неделе?»* — Claude прочитает `MetaWhisp/2026-05-DD/meetings/` файлы за неделю.
-- *«Что я записывал про MetaWhisp проект?»* — Claude найдёт все `Memories/MetaWhisp/*.md`.
-- *«Покажи мой список активных задач»* — `MetaWhisp/<сегодня>/tasks/`.
-- *«Прочитай мой созвон с Sam в среду и вытащи action items»* — file read + summarize.
+In Claude Desktop you can ask:
+- *"What calls did I have this week?"* — Claude reads the `MetaWhisp/2026-05-DD/meetings/` files for the week.
+- *"What did I note about the MetaWhisp project?"* — Claude finds every `Memories/MetaWhisp/*.md`.
+- *"Show me my active task list"* — `MetaWhisp/<today>/tasks/`.
+- *"Read my call with Sam on Wednesday and pull out the action items"* — file read + summarize.
 
-Claude видит только содержимое vault'а (read-only). Он не может записать обратно в MetaWhisp; для этого нужен ITER-037 Option B (отдельная итерация, native Swift MCP server).
+Claude only sees the contents of the vault (read-only). It can't write back into MetaWhisp; that needs ITER-037 Option B (a separate iteration — a native Swift MCP server).
 
-## Требования
+## Requirements
 
 - macOS 13+
-- Claude Desktop установлен → https://claude.ai/download
-- В MetaWhisp Settings → **Obsidian Sync** включён, путь к vault указан, и хотя бы раз нажат **«Export everything to vault»** (иначе vault пустой)
+- Claude Desktop installed → https://claude.ai/download
+- In MetaWhisp Settings → **Obsidian Sync**: sync enabled, vault path set, and **"Export everything to vault"** clicked at least once (otherwise the vault is empty)
 
-## Шаги
+## Steps
 
-### 1. Установи Node.js (если не стоит)
+### 1. Install Node.js (if you don't have it)
 
-`filesystem-MCP` от Anthropic запускается через `npx`. Проверь:
+Anthropic's `filesystem-MCP` runs via `npx`. Check:
 
 ```bash
 which node
 which npx
 ```
 
-Если пусто — установи Node 22+:
+If empty, install Node 22+:
 ```bash
 brew install node
 ```
 
-### 2. Найди абсолютный путь к твоему MetaWhisp vault
+### 2. Find the absolute path to your MetaWhisp vault
 
-Открой MetaWhisp Settings → Obsidian Sync. Скопируй путь который там показан. К нему добавь `/MetaWhisp` — это поддиректория где живут аппкины файлы (мы не даём Claude доступ ко **всему** vault'у, только к MetaWhisp данным).
+Open MetaWhisp Settings → Obsidian Sync. Copy the path shown there. Append `/MetaWhisp` — that's the subdirectory where the app's files live (we don't give Claude access to your **whole** vault, only the MetaWhisp data).
 
-Пример полного пути:
+Example full path:
 ```
-/Users/android/Documents/Obsidian Vault/MetaWhisp
+/Users/you/Documents/Obsidian Vault/MetaWhisp
 ```
 
-### 3. Открой конфиг Claude Desktop
+### 3. Open the Claude Desktop config
 
 ```bash
 open ~/Library/Application\ Support/Claude/
 ```
 
-Найди (или создай) файл `claude_desktop_config.json`. Если файла нет:
+Find (or create) `claude_desktop_config.json`. If the file doesn't exist:
 
 ```bash
 mkdir -p ~/Library/Application\ Support/Claude
 touch ~/Library/Application\ Support/Claude/claude_desktop_config.json
 ```
 
-### 4. Добавь MetaWhisp MCP server в конфиг
+### 4. Add the MetaWhisp MCP server to the config
 
-Открой `claude_desktop_config.json` в любом редакторе. Если файл пустой — вставь:
+Open `claude_desktop_config.json` in any editor. If the file is empty, paste:
 
 ```jsonc
 {
@@ -70,47 +70,47 @@ touch ~/Library/Application\ Support/Claude/claude_desktop_config.json
       "args": [
         "-y",
         "@modelcontextprotocol/server-filesystem",
-        "/АБСОЛЮТНЫЙ/ПУТЬ/К/ТВОЕМУ/Obsidian Vault/MetaWhisp"
+        "/ABSOLUTE/PATH/TO/YOUR/Obsidian Vault/MetaWhisp"
       ]
     }
   }
 }
 ```
 
-**Замени** путь в последнем `args` на свой реальный.
+**Replace** the path in the last `args` entry with your real one.
 
-Если у тебя уже есть другие MCP серверы в этом файле — просто добавь блок `"metawhisp-vault": {...}` внутрь существующего `"mcpServers"` объекта.
+If you already have other MCP servers in this file, just add the `"metawhisp-vault": {...}` block inside the existing `"mcpServers"` object.
 
-### 5. Перезапусти Claude Desktop
+### 5. Restart Claude Desktop
 
-Cmd-Q → запусти снова. При первом запуске Claude скачает `@modelcontextprotocol/server-filesystem` пакет (это 1-2 секунды).
+Cmd-Q → launch again. On first launch Claude downloads the `@modelcontextprotocol/server-filesystem` package (1-2 seconds).
 
-### 6. Проверь что работает
+### 6. Check that it works
 
-В Claude Desktop спроси:
+In Claude Desktop, ask:
 
 > *Read the file MetaWhisp/README.md from my vault.*
 
-Если Claude в ответе показывает структуру vault'а — всё подключено. Если говорит «I don't have access to files» — значит конфиг не подхватился, проверь:
+If Claude's reply shows the vault structure — you're connected. If it says "I don't have access to files", the config didn't load; check:
 
-- Файл `claude_desktop_config.json` валидный JSON (запусти `cat ~/Library/Application\ Support/Claude/claude_desktop_config.json | python3 -m json.tool` — должен распечататься без ошибок).
-- Путь существует (`ls "/АБСОЛЮТНЫЙ/ПУТЬ"` — должен показать `README.md`, `2026-05-DD/`, `Memories/`, etc).
-- Перезапустил Claude **полностью** (Cmd-Q, не только закрыть окно).
+- `claude_desktop_config.json` is valid JSON (run `cat ~/Library/Application\ Support/Claude/claude_desktop_config.json | python3 -m json.tool` — it should print without errors).
+- The path exists (`ls "/ABSOLUTE/PATH"` — should show `README.md`, `2026-05-DD/`, `Memories/`, etc).
+- You restarted Claude **fully** (Cmd-Q, not just closing the window).
 
-## Безопасность
+## Security
 
-- Filesystem-MCP **read-only по умолчанию** в этой версии. Claude не может **записать** в твой vault или удалить.
-- Доступ ограничен **только указанным путём** — `/MetaWhisp` папкой, не всему vault'у с другими твоими заметками.
-- Никакие данные не уходят за пределы локальной машины (если ты сам не попросишь Claude что-то опубликовать).
+- Filesystem-MCP is **read-only by default** in this version. Claude can't **write** to your vault or delete anything.
+- Access is limited to **only the given path** — the `/MetaWhisp` folder, not your whole vault with your other notes.
+- No data leaves your local machine (unless you explicitly ask Claude to publish something).
 
-## Что дальше
+## What's next
 
-- **Чтобы Claude увидел свежие данные** — просто диктуй / записывай созвоны в MetaWhisp как обычно. ITER-035 v2 hooks автоматически пишут новые файлы в vault, Claude увидит их на следующем запросе.
-- **Если хочешь semantic search** (Claude должен сам найти упоминания «Маши» через embedding, без точного name match) — это пока не покрывается filesystem-MCP. Будет в ITER-036 RAG lifetime chat (через ChatService внутри MetaWhisp) ИЛИ в native Swift MCP server (ITER-037 Option B, отдельная итерация).
+- **To let Claude see fresh data** — just dictate / record calls in MetaWhisp as usual. ITER-035 v2 hooks write new files into the vault automatically, and Claude picks them up on the next request.
+- **If you want semantic search** (Claude finding mentions of "Alex" via embeddings, without an exact name match) — that isn't covered by filesystem-MCP yet. It's coming in ITER-036 RAG lifetime chat (via ChatService inside MetaWhisp) OR in the native Swift MCP server (ITER-037 Option B, a separate iteration).
 
-## Если что-то не работает
+## If something doesn't work
 
-- **«Cannot find module» в Claude logs** — `npx` не в PATH. Запусти `which npx` в Terminal; если пусто — `brew install node`.
-- **«ENOENT: no such file or directory»** — путь к vault'у неверный или vault не существует. Проверь через `ls`.
-- **«Permission denied»** — Claude Desktop первый раз качает npm пакет; может потребоваться permission для `~/.npm`. Запусти `npm config get cache` и убедись что папка читаемая.
-- **Список MCP серверов в Claude Desktop не показывает metawhisp-vault** — конфиг не подхватился. JSON валиден? Файл в правильном месте?
+- **"Cannot find module" in the Claude logs** — `npx` isn't on PATH. Run `which npx` in Terminal; if empty, `brew install node`.
+- **"ENOENT: no such file or directory"** — the vault path is wrong or the vault doesn't exist. Check with `ls`.
+- **"Permission denied"** — Claude Desktop is downloading the npm package for the first time; it may need permission for `~/.npm`. Run `npm config get cache` and make sure the folder is readable.
+- **The MCP server list in Claude Desktop doesn't show metawhisp-vault** — the config didn't load. Is the JSON valid? Is the file in the right place?

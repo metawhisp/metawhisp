@@ -1,49 +1,49 @@
-# Подключение MetaWhisp к Claude Desktop через MCP
+# Connect MetaWhisp to Claude Desktop via MCP
 
-После настройки Claude Desktop получает доступ к твоей памяти MetaWhisp напрямую — может искать твои meeting notes, задачи, факты о людях и проектах, и использовать их в любом разговоре.
+Once set up, Claude Desktop gets direct access to your MetaWhisp memory — it can search your meeting notes, tasks, and facts about people and projects, and use them in any conversation.
 
-## Что Claude умеет с подключённым MetaWhisp
+## What Claude can do with MetaWhisp connected
 
-- **`search_memories(query)`** — поиск по сохранённым memories (факты, мнения, цели)
-  - «найди что я говорил про CTO ChatApp»
-  - «какие у меня есть memories про Project Alpha»
-- **`list_tasks(status)`** — текущие задачи (pending / completed / all)
-- **`recent_conversations(limit, since_days)`** — последние созвоны с title + overview
-- **`search_conversations(query)`** — поиск по митингам и voice notes
-  - «найди созвон где обсуждали бюджет»
-  - «о чём была встреча в понедельник»
+- **`search_memories(query)`** — search saved memories (facts, opinions, goals)
+  - "find what I said about the ChatApp CTO"
+  - "what memories do I have about Project Alpha"
+- **`list_tasks(status)`** — current tasks (pending / completed / all)
+- **`recent_conversations(limit, since_days)`** — recent calls with title + overview
+- **`search_conversations(query)`** — search across meetings and voice notes
+  - "find the call where we discussed the budget"
+  - "what was Monday's meeting about"
 
-## Установка
+## Setup
 
-### 1. Убедись, что MetaWhisp запущен
+### 1. Make sure MetaWhisp is running
 
-MetaWhisp пишет snapshot своих данных в `~/Library/Application Support/MetaWhisp/mcp-snapshot.json` каждые 5 минут. MCP-сервер читает его и отвечает Claude.
+MetaWhisp writes a snapshot of its data to `~/Library/Application Support/MetaWhisp/mcp-snapshot.json` every 5 minutes. The MCP server reads it and answers Claude.
 
-Если snapshot ещё не существует — запусти/перезапусти MetaWhisp и подожди до 5 минут (или открой Settings → AI, это триггерит ранний снэпшот).
+If the snapshot doesn't exist yet — start/restart MetaWhisp and wait up to 5 minutes (or open Settings → AI, which triggers an early snapshot).
 
-### 2. Найди путь к бинарнику
+### 2. Find the path to the binary
 
-После сборки MetaWhisp бинарник лежит здесь:
+After building MetaWhisp, the binary is here:
 ```
 /Applications/MetaWhisp.app/Contents/Resources/metawhisp-mcp
 ```
 
-Если ставил из исходников через `swift build`:
+If you installed from source via `swift build`:
 ```
-<ПУТЬ К РЕПО>/.build/debug/metawhisp-mcp
+<PATH TO REPO>/.build/debug/metawhisp-mcp
 ```
 
-### 3. Открой Claude Desktop config
+### 3. Open the Claude Desktop config
 
 ```bash
 open ~/Library/Application\ Support/Claude/
 ```
 
-Если файла `claude_desktop_config.json` нет — создай. Если есть — добавь блок `metawhisp` в `mcpServers`.
+If `claude_desktop_config.json` doesn't exist — create it. If it does — add a `metawhisp` block to `mcpServers`.
 
-### 4. Добавь сервер
+### 4. Add the server
 
-Минимальный конфиг:
+Minimal config:
 
 ```jsonc
 {
@@ -55,50 +55,50 @@ open ~/Library/Application\ Support/Claude/
 }
 ```
 
-Если у тебя уже есть другие MCP-сервера в конфиге, добавь только запись `"metawhisp": { ... }` внутрь существующего `mcpServers`.
+If you already have other MCP servers in the config, add only the `"metawhisp": { ... }` entry inside the existing `mcpServers`.
 
-### 5. Перезапусти Claude Desktop
+### 5. Restart Claude Desktop
 
-Полностью закрой Claude Desktop (Cmd+Q) и открой снова. После запуска в правом нижнем углу окна чата должен появиться значок инструментов — клик покажет список MCP-серверов. `metawhisp` должна быть в списке зелёная.
+Fully quit Claude Desktop (Cmd+Q) and open it again. After launch, a tools icon should appear in the bottom-right of the chat window — clicking it shows the list of MCP servers. `metawhisp` should be there, green.
 
-### 6. Проверь
+### 6. Check
 
-В новом чате с Claude спроси:
-> Какие у меня есть pending tasks в MetaWhisp?
+In a new chat with Claude, ask:
+> What pending tasks do I have in MetaWhisp?
 
-или
+or
 
-> Найди memories про <любая твоя тема>.
+> Find memories about <any topic of yours>.
 
-Claude автоматически вызовет `list_tasks` или `search_memories` и вернёт результат.
+Claude will automatically call `list_tasks` or `search_memories` and return the result.
 
-## Поиск проблем
+## Troubleshooting
 
-**MCP сервер не появился в Claude Desktop**
-- Проверь путь к бинарнику — он должен быть исполняемым: `ls -la /Applications/MetaWhisp.app/Contents/Resources/metawhisp-mcp`
-- Если бинарник без прав на запуск: `chmod +x <путь>`
-- Проверь логи Claude Desktop: `~/Library/Logs/Claude/mcp.log`
+**The MCP server didn't show up in Claude Desktop**
+- Check the path to the binary — it must be executable: `ls -la /Applications/MetaWhisp.app/Contents/Resources/metawhisp-mcp`
+- If the binary isn't executable: `chmod +x <path>`
+- Check the Claude Desktop logs: `~/Library/Logs/Claude/mcp.log`
 
-**«MetaWhisp snapshot not available»**
-- Открой MetaWhisp, дождись 5 минут (или перезапусти приложение)
-- Проверь что файл существует: `ls -la ~/Library/Application\ Support/MetaWhisp/mcp-snapshot.json`
-- Если файла нет — посмотри логи MetaWhisp: `tail ~/Library/Logs/MetaWhisp.log | grep MCPSnapshot`
+**"MetaWhisp snapshot not available"**
+- Open MetaWhisp, wait 5 minutes (or restart the app)
+- Check the file exists: `ls -la ~/Library/Application\ Support/MetaWhisp/mcp-snapshot.json`
+- If it's missing — check the MetaWhisp logs: `tail ~/Library/Logs/MetaWhisp.log | grep MCPSnapshot`
 
-**Tools не вызываются**
-- Claude иногда не понимает что инструменты доступны до явной просьбы — попробуй: «у тебя есть доступ к MetaWhisp через MCP, попробуй list_tasks»
-- Сами имена инструментов: `search_memories`, `list_tasks`, `recent_conversations`, `search_conversations`
+**Tools aren't being called**
+- Claude sometimes doesn't realize the tools are available until asked explicitly — try: "you have access to MetaWhisp via MCP, try list_tasks"
+- The tool names themselves: `search_memories`, `list_tasks`, `recent_conversations`, `search_conversations`
 
-## Что НЕ делает MCP сервер (пока)
+## What the MCP server does NOT do (yet)
 
-- **Не пишет** ничего в MetaWhisp — только чтение
-- **Не имеет** semantic search через embeddings (только substring match)
-- **Не реагирует** на live-события — снимок обновляется каждые 5 минут
+- **Doesn't write** anything to MetaWhisp — read-only
+- **Doesn't have** semantic search via embeddings (substring match only)
+- **Doesn't react** to live events — the snapshot refreshes every 5 minutes
 
-Эти возможности приедут в следующих итерациях.
+These are coming in later iterations.
 
-## Безопасность
+## Security
 
-- MCP сервер работает **локально**. Никаких сетевых соединений.
-- Claude Desktop запускает бинарник как child process через stdio.
-- Snapshot-файл лежит у тебя на диске. Никуда не отправляется.
-- Чтобы отключить — убери блок `metawhisp` из `claude_desktop_config.json` и перезапусти Claude.
+- The MCP server runs **locally**. No network connections.
+- Claude Desktop launches the binary as a child process over stdio.
+- The snapshot file sits on your disk. It's never sent anywhere.
+- To disable — remove the `metawhisp` block from `claude_desktop_config.json` and restart Claude.

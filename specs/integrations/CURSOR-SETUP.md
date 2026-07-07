@@ -1,48 +1,48 @@
-# Подключить Cursor к MetaWhisp vault
+# Connect Cursor to your MetaWhisp vault
 
-Cursor (IDE на базе VSCode + Claude integration) поддерживает MCP servers через UI или config файл. Делает то же что Claude Desktop — даёт Claude доступ к твоему MetaWhisp vault как к набору markdown файлов.
+Cursor (a VSCode-based IDE with Claude integration) supports MCP servers via its UI or a config file. It does the same thing as Claude Desktop — it gives Claude access to your MetaWhisp vault as a set of markdown files.
 
-## Что получишь
+## What you get
 
-При работе с кодом — Cursor's встроенный Claude сможет ссылаться на твои voices / meetings / tasks:
-- *«Я записывал что-то про этот баг раньше — найди»* → ищет в `Memories/` и `2026-*/voices/`.
-- *«Что обсуждали на standup в среду про cache layer?»* → читает meetings/ файлы.
-- *«Какие у меня TODO про Stripe?»* → ищет в `tasks/`.
+While you work on code, Cursor's built-in Claude can reference your voices / meetings / tasks:
+- *"I noted something about this bug before — find it"* → searches `Memories/` and `2026-*/voices/`.
+- *"What did we discuss at Wednesday's standup about the cache layer?"* → reads the meetings/ files.
+- *"What TODOs do I have about Stripe?"* → searches `tasks/`.
 
-Не делает: запись обратно в MetaWhisp (read-only filesystem-MCP).
+It does not: write back into MetaWhisp (read-only filesystem-MCP).
 
-## Требования
+## Requirements
 
-- Cursor установлен → https://cursor.sh
-- В MetaWhisp Settings → Obsidian Sync включён, vault path указан, bulk export сделан
+- Cursor installed → https://cursor.sh
+- In MetaWhisp Settings → Obsidian Sync enabled, vault path set, bulk export done
 
-## Шаги
+## Steps
 
-### 1. Запусти `npx` чтобы убедиться что Node 22+ установлен
+### 1. Run `npx` to confirm Node 22+ is installed
 
 ```bash
-node --version  # должно быть v18+ minimum, ideally v22+
+node --version  # v18+ minimum, ideally v22+
 npx --version
 ```
 
-Если нет — `brew install node`.
+If not — `brew install node`.
 
-### 2. Найди абсолютный путь к MetaWhisp vault
+### 2. Find the absolute path to your MetaWhisp vault
 
-В MetaWhisp Settings → Obsidian Sync. Возьми путь, добавь `/MetaWhisp`.
+In MetaWhisp Settings → Obsidian Sync. Take the path, append `/MetaWhisp`.
 
-Пример:
+Example:
 ```
-/Users/android/Documents/Obsidian Vault/MetaWhisp
+/Users/you/Documents/Obsidian Vault/MetaWhisp
 ```
 
-### 3. Открой Cursor settings → MCP
+### 3. Open Cursor settings → MCP
 
-Cmd-, (Settings) → найди раздел **MCP** в боковом меню. Если не видишь — нажми Cmd-Shift-P → введи «MCP» → выбери «MCP: Open Settings».
+Cmd-, (Settings) → find the **MCP** section in the sidebar. If you don't see it — press Cmd-Shift-P → type "MCP" → pick "MCP: Open Settings".
 
-### 4. Добавь новый MCP server
+### 4. Add a new MCP server
 
-Либо через UI кнопкой «+ Add new MCP server», либо открой файл `~/.cursor/mcp.json` напрямую и добавь:
+Either via the UI with the "+ Add new MCP server" button, or open `~/.cursor/mcp.json` directly and add:
 
 ```jsonc
 {
@@ -52,29 +52,29 @@ Cmd-, (Settings) → найди раздел **MCP** в боковом меню.
       "args": [
         "-y",
         "@modelcontextprotocol/server-filesystem",
-        "/АБСОЛЮТНЫЙ/ПУТЬ/К/Obsidian Vault/MetaWhisp"
+        "/ABSOLUTE/PATH/TO/Obsidian Vault/MetaWhisp"
       ]
     }
   }
 }
 ```
 
-### 5. Перезапусти Cursor
+### 5. Restart Cursor
 
-Cmd-Q → запусти снова.
+Cmd-Q → launch again.
 
-### 6. Проверь
+### 6. Check
 
-В Cursor chat:
+In Cursor chat:
 
 > *Read MetaWhisp/README.md from my vault*
 
-Должен ответить с содержимым.
+It should reply with the contents.
 
 ## Notes
 
-- Cursor может попросить разрешение «Cursor wants to access filesystem» в первый раз — это **наш** filesystem-MCP, разрешай.
-- Path completion работает: если печатаешь в Cursor чате `@MetaWhisp/2026-05-12/` — он покажет список файлов на этот день.
-- Cursor + filesystem-MCP ведёт себя так же как Claude Desktop, но имеет меньше context window — может быть медленнее на огромные файлы. Если у тебя в vault'е огромные транскрипты (>20K chars в одном файле) — Cursor может truncate'ить.
+- Cursor may ask for permission "Cursor wants to access filesystem" the first time — that's **our** filesystem-MCP, allow it.
+- Path completion works: if you type `@MetaWhisp/2026-05-12/` in Cursor chat, it shows the list of files for that day.
+- Cursor + filesystem-MCP behaves the same as Claude Desktop, but has a smaller context window — it may be slower on huge files. If your vault has huge transcripts (>20K chars in one file), Cursor may truncate them.
 
-## Если не работает — см. troubleshooting в `CLAUDE-DESKTOP-SETUP.md` (общий для обоих клиентов).
+## If it doesn't work — see the troubleshooting in `CLAUDE-DESKTOP-SETUP.md` (shared by both clients).
