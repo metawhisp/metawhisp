@@ -239,10 +239,10 @@ final class FloatingVoiceWindowController {
         if escMonitor == nil {
             escMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
                 if event.keyCode == 53 {
-                    // Esc dismisses the pill — unless the user is editing
-                    // text (Esc there means "end editing", don't hijack it).
-                    let editingText = NSApp.keyWindow?.firstResponder is NSTextView
-                    guard !editingText else { return event }
+                    // The monitor exists ONLY while the voice popup is visible
+                    // (installed in showWindow, removed in hideWindow), so Esc
+                    // here always means "close the popup" — swallow it and
+                    // dismiss, even if a text field is focused.
                     Task { @MainActor in
                         VoiceQuestionState.shared.dismiss()
                     }

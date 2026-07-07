@@ -143,7 +143,17 @@ struct FloatingVoiceView: View {
                 .help("Stop speaking (Space)")
             }
 
-            Keycap(text: "Esc")
+            // Real close control — clicking dismisses (the card window is
+            // interactive since the two-window migration). The Esc KEY also
+            // closes it while MetaWhisp is frontmost.
+            Button {
+                VoiceQuestionState.shared.dismiss()
+            } label: {
+                Keycap(text: "Esc")
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .help("Close (Esc)")
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 12)
