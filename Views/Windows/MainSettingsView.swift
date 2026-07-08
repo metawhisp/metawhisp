@@ -1504,13 +1504,14 @@ struct MainSettingsView: View {
     private var aiModelsSection: some View {
         VStack(alignment: .leading, spacing: MW.sp10) {
             Text("AI MODELS").blocksLabel()
-                // ITER-051 F1.6 migration — clear a stale Foundation-Models
-                // selection persisted by the old fake-activatable card, so the
-                // localLLMEnabled toggle doesn't try to load an unshipped
-                // adapter (loadModel throws notSupportedYet for FM specs).
+                // ITER-044 — Foundation Models is a real backend now, so we only
+                // clear a persisted FM selection when THIS Mac can't run it
+                // (< macOS 26 → verdict .incompatible). On Tahoe+ the selection
+                // is honoured and the auto-loader brings the on-device model up.
                 .onAppear {
                     if let spec = ModelRegistry.model(byID: settings.localLLMActiveModelID),
-                       spec.isFoundationModels {
+                       spec.isFoundationModels,
+                       !ModelCompatibility.verdict(for: spec).isDownloadable {
                         settings.localLLMActiveModelID = ""
                     }
                 }
@@ -1788,17 +1789,13 @@ struct MainSettingsView: View {
     @ViewBuilder
     private func actionButton(for spec: ModelSpec, verdict: CompatibilityVerdict, isActive: Bool) -> some View {
         if spec.isFoundationModels {
-            // ITER-051 F1.6 — the adapter isn't shipped (ITER-044):
-            // `loadModel` throws `notSupportedYet` for FM specs, so «Make
-            // active» used to produce an ACTIVE badge with zero inference
-            // behind it. Honest state until the adapter lands.
-            Text("Coming soon")
-                .font(MW.label).tracking(0.6)
-                .foregroundStyle(MW.textDim)
-                .padding(.horizontal, 8).padding(.vertical, 3)
-                .overlay(RoundedRectangle(cornerRadius: MW.rSmall, style: .continuous)
-                            .stroke(MW.border, lineWidth: 0.5))
-                .help("Apple Foundation Models support ships in a later update — the on-device adapter isn't wired yet.")
+            // ITER-044 — Foundation Models is a real on-device backend now. On
+            // macOS 26+ (verdict .recommended) it's activatable; below 26 the
+            // verdict is .incompatible and the compat badge already explains
+            // why, so we render no button.
+            if verdict.isDownloadable {
+                foundationModelsActiveButton(spec: spec, isActive: isActive)
+            }
         } else if verdict.isDownloadable {
             // MLX model. v1.3.5 ships the download path for Phi-4 Mini only
             // — other model architectures land in v1.4.0 with the full MLX
@@ -1812,6 +1809,57 @@ struct MainSettingsView: View {
                 .font(MW.label).tracking(0.6)
                 .foregroundStyle(MW.textDim)
                 .padding(.horizontal, 8).padding(.vertical, 3)
+        }
+    }
+
+    /// ITER-044 — Make-active control for the Apple Foundation Models card.
+    /// No download / no weights / no trash: the model is built into macOS 26+.
+    /// Three states mirror the MLX toggle:
+    ///   • not selected          → «Make active» (sets ID + loads on-device)
+    ///   • selected + loaded      → «Active» (click deactivates + unloads)
+    ///   • selected + not loaded  → «Load now» (retry, e.g. after enabling
+    ///     Apple Intelligence). A failed load (AI off / device ineligible /
+    ///     model downloading) surfaces its reason inline via `localLLM.lastError`.
+    @ViewBuilder
+    private func foundationModelsActiveButton(spec: ModelSpec, isActive: Bool) -> some View {
+        let isReady = LocalLLMService.shared.isReady && LocalLLMService.shared.currentModelID == spec.id
+        let isLoadingThis = localLLM.isLoading && settings.localLLMActiveModelID == spec.id
+        let label: String = {
+            if isLoadingThis { return "Loading…" }
+            if isActive && isReady { return "Active" }
+            if isActive && !isReady { return "Load now" }
+            return "Make active"
+        }()
+        VStack(alignment: .trailing, spacing: 2) {
+            Button(label) {
+                if isActive && isReady {
+                    settings.localLLMActiveModelID = ""
+                    Task { @MainActor in LocalLLMService.shared.unloadModel() }
+                } else {
+                    settings.localLLMActiveModelID = spec.id
+                    Task { @MainActor in
+                        try? await LocalLLMService.shared.loadModel(id: spec.id)
+                    }
+                }
+            }
+            .buttonStyle(.plain)
+            .font(MW.label).tracking(0.6)
+            .padding(.horizontal, 8).padding(.vertical, 3)
+            .foregroundStyle((isActive && isReady) ? .black : MW.textPrimary)
+            .background((isActive && isReady) ? MW.idle :
+                        (isActive ? MW.processing.opacity(0.18) : Color.clear))
+            .overlay(RoundedRectangle(cornerRadius: MW.rSmall, style: .continuous)
+                        .stroke(MW.border, lineWidth: 0.5))
+            .disabled(localLLM.isLoading)
+            // Inline reason when the on-device model refused to load (most
+            // commonly: Apple Intelligence is switched off).
+            if isActive, !isReady, !isLoadingThis, let err = localLLM.lastError {
+                Text(err.errorDescription ?? "Couldn't start Apple Foundation Models")
+                    .font(.system(size: 9, weight: .medium))
+                    .foregroundStyle(MW.recording)
+                    .lineLimit(3)
+                    .multilineTextAlignment(.trailing)
+            }
         }
     }
 

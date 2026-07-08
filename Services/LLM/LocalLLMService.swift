@@ -1,4 +1,5 @@
 import Foundation
+import FoundationModels   // ITER-044 — Apple on-device LLM. Symbols used ONLY under @available(macOS 26); weak-linked (deployment target macOS 14).
 import MLX
 import MLXNN
 import MLXRandom
@@ -56,6 +57,12 @@ final class LocalLLMService: ObservableObject {
     /// EOS token id sniffed from `tokenizer_config.json` (Phi-3 uses 32007;
     /// Phi-4 uses 200020 or similar — varies). Filled in during loadModel.
     private var stopTokens: Set<Int> = []
+
+    /// ITER-044 — which backend the currently-loaded model uses. `.mlx` for the
+    /// vendored Phi models, `.foundationModels` for Apple's on-device LLM. Set
+    /// on load; reset on unload. A plain enum with no availability annotation,
+    /// so it never drags an FM symbol below macOS 26 (I2).
+    private var backend: LocalLLMBackend = .mlx
 
     /// Serialization fence for `generate(...)`. MLX is a single-tenant
     /// process-wide context — running two prefills/decode loops in parallel
@@ -135,10 +142,20 @@ final class LocalLLMService: ObservableObject {
         guard let spec = ModelRegistry.model(byID: id) else {
             throw LocalLLMError.unknownModelID(id)
         }
-        if spec.isFoundationModels {
-            throw LocalLLMError.notSupportedYet(
-                "Apple Foundation Models adapter ships separately — requires macOS Tahoe."
-            )
+        // ITER-044 — Apple Foundation Models is a distinct backend: no download,
+        // no MLX build, served on-device by the OS. Route it here BEFORE the
+        // MLX weight-loading path.
+        switch FoundationModelsSupport.backend(for: spec) {
+        case .foundationModels:
+            guard #available(macOS 26, *) else {
+                throw LocalLLMError.notSupportedYet(
+                    "Apple Foundation Models requires macOS 26 (Tahoe). Update macOS or pick a downloadable model."
+                )
+            }
+            try loadFoundationModels(id: id)
+            return
+        case .mlx:
+            break   // fall through to the MLX weight-loading path below
         }
         guard let dir = MLXModelManager.shared.localPath(for: spec) else {
             throw LocalLLMError.modelNotDownloaded(
@@ -197,6 +214,7 @@ final class LocalLLMService: ObservableObject {
         self.model = buildResult.model
         self.tokenizer = tokenizer
         self.stopTokens = stops
+        self.backend = .mlx
         self.currentModelID = id
         self.isReady = true
         self.lastError = nil
@@ -295,7 +313,149 @@ final class LocalLLMService: ObservableObject {
         isReady = false
         lastError = nil
         stopTokens = []
+        backend = .mlx   // ITER-044 — back to the default backend
         NSLog("[ITER-039] model unloaded")
+    }
+
+    /// ITER-044 (Codex review) — drop the in-memory loaded-model state so the
+    /// app falls back to the cloud path (`isReady == false`) instead of leaving
+    /// a stale backend serving requests. Unlike `unloadModel()` it preserves
+    /// `lastError` (the caller sets a meaningful one) and doesn't log a
+    /// misleading "model unloaded".
+    private func resetLoadedModelState() {
+        model = nil
+        tokenizer = nil
+        stopTokens = []
+        backend = .mlx
+        currentModelID = nil
+        isReady = false
+    }
+
+    // MARK: - Apple Foundation Models backend (ITER-044, macOS 26+)
+
+    /// Bring the on-device Apple model online. Checks
+    /// `SystemLanguageModel.default.availability`: `.available` flips us into
+    /// the FM backend (`isReady = true`, no weights, no download); any
+    /// `.unavailable(reason)` throws a recoverable, human-readable error so the
+    /// auto-loader / Settings fall back to cloud (I3) while telling the user why.
+    @available(macOS 26, *)
+    private func loadFoundationModels(id: String) throws {
+        switch SystemLanguageModel.default.availability {
+        case .available:
+            // Drop any stale MLX model so the two backends never coexist.
+            self.model = nil
+            self.tokenizer = nil
+            self.stopTokens = []
+            self.backend = .foundationModels
+            self.currentModelID = id
+            self.isReady = true
+            self.lastError = nil
+            NSLog("[ITER-044] ✅ Apple Foundation Models ready (on-device)")
+        case .unavailable(let reason):
+            // Codex review — the user just made FM their active model. If FM
+            // can't serve, don't keep silently serving a previously-loaded MLX
+            // model under the new selection: drop to cloud (isReady = false)
+            // and report why (I3). loadModel's catch then records lastError.
+            resetLoadedModelState()
+            let mapped = FoundationModelsSupport.message(for: Self.fmReason(from: reason))
+            NSLog("[ITER-044] ❌ Foundation Models unavailable: %@", mapped)
+            throw LocalLLMError.foundationModelsUnavailable(mapped)
+        }
+    }
+
+    /// Translate Apple's availability reason into our OS-independent mirror so
+    /// the user-facing copy lives in the pure, testable `FoundationModelsSupport`.
+    @available(macOS 26, *)
+    private static func fmReason(
+        from reason: SystemLanguageModel.Availability.UnavailableReason
+    ) -> FMUnavailableReason {
+        switch reason {
+        case .deviceNotEligible:            return .deviceNotEligible
+        case .appleIntelligenceNotEnabled:  return .appleIntelligenceNotEnabled
+        case .modelNotReady:                return .modelNotReady
+        @unknown default:                   return .modelNotReady
+        }
+    }
+
+    /// One-shot FM completion. `system` becomes the session instructions (empty
+    /// → none, used by the `generate` bridge whose prompt already carries the
+    /// system block). Any `GenerationError` (guardrail, context overflow, rate
+    /// limit, …) is rethrown as a recoverable `LocalLLMError` — the consumer's
+    /// catch treats it exactly like an MLX failure (I1).
+    @available(macOS 26, *)
+    private func fmComplete(
+        system: String,
+        user: String,
+        maxTokens: Int,
+        temperature: Float
+    ) async throws -> String {
+        let instructions: String? = system.isEmpty ? nil : system
+        let session = LanguageModelSession(instructions: instructions)
+        let options = GenerationOptions(
+            temperature: Double(temperature),
+            maximumResponseTokens: maxTokens
+        )
+        do {
+            let response = try await session.respond(to: user, options: options)
+            let text = response.content.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !text.isEmpty else {
+                throw LocalLLMError.foundationModelsFailure("Apple model returned an empty response.")
+            }
+            return text
+        } catch let error as LocalLLMError {
+            throw error
+        } catch {
+            // Codex review (I3) — if FM as a whole just went unavailable (Apple
+            // Intelligence toggled off mid-session, on-device assets pulled),
+            // drop to cloud globally so subsequent requests stop hammering a
+            // dead backend. A prompt-specific failure (guardrail / context
+            // overflow) leaves FM ready and fails only this request —
+            // consistent with an MLX failure (the failedAttempt cap bounds it).
+            if case .unavailable = SystemLanguageModel.default.availability {
+                NSLog("[ITER-044] FM became unavailable mid-session — falling back to cloud")
+                resetLoadedModelState()
+            }
+            throw LocalLLMError.foundationModelsFailure(error.localizedDescription)
+        }
+    }
+
+    /// Bridge `fmComplete` into the `AsyncStream<String>` shape `generate`
+    /// promises. FM output isn't token-streamed here (all `generate` consumers
+    /// concatenate to a final string anyway — StructuredGenerator.callLocalLLM
+    /// and completeBlocking's MLX path): we run one `respond` and yield it as a
+    /// single chunk. Still honours the FIFO queue (avoid concurrent on-device
+    /// requests) and consumer cancellation (Esc on the pill).
+    @available(macOS 26, *)
+    private func fmGenerate(
+        prompt: String,
+        maxTokens: Int,
+        temperature: Float
+    ) -> AsyncStream<String> {
+        AsyncStream { continuation in
+            let cancelFlag = CancelFlag()
+            continuation.onTermination = { _ in cancelFlag.set() }
+
+            let predecessor = self.pendingGeneration
+            let myTask = Task { @MainActor in
+                await predecessor?.value
+                guard isReady, backend == .foundationModels, !cancelFlag.isSet() else {
+                    continuation.finish()
+                    return
+                }
+                isGenerating = true
+                do {
+                    let text = try await fmComplete(
+                        system: "", user: prompt,
+                        maxTokens: maxTokens, temperature: temperature)
+                    if !cancelFlag.isSet() { continuation.yield(text) }
+                } catch {
+                    NSLog("[ITER-044] FM generate error: %@", error.localizedDescription)
+                }
+                isGenerating = false
+                continuation.finish()
+            }
+            self.pendingGeneration = myTask
+        }
     }
 
     // MARK: - Generation
@@ -308,7 +468,15 @@ final class LocalLLMService: ObservableObject {
         maxTokens: Int = 512,
         temperature: Float = 0.7
     ) -> AsyncStream<String> {
-        AsyncStream { continuation in
+        // ITER-044 — Foundation Models path. The prompt already has system+user
+        // combined by the caller, so it goes to a session with no separate
+        // instructions. FM has no in-process/Metal state, so no GCD hop is
+        // needed — but we still queue behind any in-flight generation to avoid
+        // hammering the shared on-device model with concurrent requests.
+        if backend == .foundationModels, #available(macOS 26, *) {
+            return fmGenerate(prompt: prompt, maxTokens: maxTokens, temperature: temperature)
+        }
+        return AsyncStream { continuation in
             // Capture the current pending generation (if any) so the new
             // request queues BEHIND it — first-come-first-served. MLX is a
             // single-tenant context; running two prefills/decode loops
@@ -498,6 +666,23 @@ final class LocalLLMService: ObservableObject {
         let cappedUser = user.count > maxUserChars
             ? String(user.prefix(maxUserChars)) + "\n[local-LLM truncation]"
             : user
+
+        // ITER-044 — Apple Foundation Models backend: one out-of-process
+        // `respond` call, no MLX/GCD dance. `system` maps to the session's
+        // instructions (Apple treats it specially). On FM failure the thrown
+        // error propagates exactly like an MLX failure — the consumer's
+        // existing catch handles fallback (I1/I3).
+        if backend == .foundationModels {
+            if #available(macOS 26, *) {
+                return try await fmComplete(
+                    system: system, user: cappedUser,
+                    maxTokens: maxTokens, temperature: temperature)
+            }
+            // Unreachable: `backend` is only set to `.foundationModels` under
+            // an `#available(macOS 26)` guard in `loadFoundationModels`.
+            throw LocalLLMError.notSupportedYet("Apple Foundation Models requires macOS 26 (Tahoe).")
+        }
+
         let combined = system + "\n\n" + cappedUser
         var collected = ""
         for await chunk in generate(
@@ -686,6 +871,13 @@ enum LocalLLMError: LocalizedError, Equatable {
     case modelNotDownloaded(String)
     case notSupportedYet(String)
     case mlxFailure(String)
+    /// ITER-044 — Apple Foundation Models can't serve (device ineligible,
+    /// Apple Intelligence off, model still downloading). Message is already
+    /// user-facing (from `FoundationModelsSupport.message(for:)`).
+    case foundationModelsUnavailable(String)
+    /// ITER-044 — an FM request failed at runtime (guardrail, context overflow,
+    /// empty response, …). Recoverable — consumers fall back like any local fail.
+    case foundationModelsFailure(String)
 
     var errorDescription: String? {
         switch self {
@@ -693,6 +885,8 @@ enum LocalLLMError: LocalizedError, Equatable {
         case .modelNotDownloaded(let msg): return msg
         case .notSupportedYet(let msg):    return msg
         case .mlxFailure(let msg):         return "MLX failure: \(msg)"
+        case .foundationModelsUnavailable(let msg): return msg
+        case .foundationModelsFailure(let msg):     return msg
         }
     }
 }
