@@ -58,6 +58,15 @@ final class RealtimeScreenReactor: ObservableObject {
         self.modelContainer = modelContainer
     }
 
+    /// ITER-053.1 — purge fence, same pattern as ScreenExtractor. «Delete
+    /// screen history» bumps the epoch; an in-flight reaction that started
+    /// before the bump discards its result instead of inserting a staged task
+    /// that points at a just-deleted ScreenContext.
+    private var purgeEpoch = 0
+    func invalidatePendingWork() {
+        purgeEpoch += 1
+    }
+
     /// Entry point — called by `ScreenContextService.onContextPersisted` for each new row.
     /// Self-gated: runs all cheap checks first, only fires LLM when everything passes.
     func react(to context: ScreenContext) async {
@@ -66,6 +75,8 @@ final class RealtimeScreenReactor: ObservableObject {
 
         isProcessing = true
         defer { isProcessing = false }
+        // ITER-053.1 purge fence — snapshot before any await.
+        let epoch = purgeEpoch
 
         // Record call in sliding window BEFORE the LLM call so rapid concurrent triggers
         // still respect the cap. Trim old entries first.
@@ -184,6 +195,12 @@ final class RealtimeScreenReactor: ObservableObject {
                 }
             }
 
+            // ITER-053.1 purge fence — the user deleted screen history while
+            // we awaited the LLM; this context row no longer exists.
+            guard epoch == purgeEpoch else {
+                NSLog("[RealtimeReactor] Reaction discarded — screen history was purged mid-run")
+                return
+            }
             guard let container = modelContainer else { return }
             let ctx = ModelContext(container)
             let task = TaskItem(

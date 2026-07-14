@@ -1,3 +1,4 @@
+import SwiftData
 import SwiftUI
 
 struct MainSettingsView: View {
@@ -16,6 +17,9 @@ struct MainSettingsView: View {
     // Screen Context app picker sheet
     @State private var showAppPicker = false
     @State private var appCache: [String: AppInfo] = [:]  // bundleID → AppInfo for rendering
+    // ITER-053.1 — delete-screen-history confirm + inline result
+    @State private var confirmDeleteScreenHistory = false
+    @State private var screenHistoryDeleteResult: String?
 
     // Tab selection — single column scroll per tab beats the previous two-column wall
     // (1500-line settings was hard to scan).
@@ -1338,10 +1342,95 @@ struct MainSettingsView: View {
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
+
+            // ITER-053.1 — retention + one-click delete. Codex review: OUTSIDE
+            // the `if screenContextEnabled` — the privacy escape hatch must
+            // stay reachable after the user turns capture off (their existing
+            // history doesn't vanish with the toggle).
+            GlassDivider()
+            HStack {
+                Text("Keep history").font(MW.mono).foregroundStyle(MW.textSecondary)
+                Spacer()
+                Picker("", selection: $settings.screenRetentionDays) {
+                    Text("7 days").tag(7)
+                    Text("30 days").tag(30)
+                    Text("90 days").tag(90)
+                    Text("Forever").tag(0)
+                }
+                .labelsHidden()
+                .frame(width: 120)
+                .onChange(of: settings.screenRetentionDays) { _, _ in
+                    AppDelegate.shared?.pruneScreenHistory()
+                }
+            }
+            Text("Raw screen text older than this is deleted automatically. Activity timeline entries are kept longer (\(settings.observationRetentionDays) days).")
+                .font(MW.monoSm).foregroundStyle(MW.textMuted)
+                .fixedSize(horizontal: false, vertical: true)
+            Button("Delete screen history…") {
+                confirmDeleteScreenHistory = true
+            }
+            .buttonStyle(.plain)
+            .font(MW.label).tracking(0.6)
+            .foregroundStyle(MW.recording)
+            .padding(.horizontal, 8).padding(.vertical, 3)
+            .overlay(RoundedRectangle(cornerRadius: MW.rSmall, style: .continuous)
+                        .stroke(MW.recording.opacity(0.4), lineWidth: 0.5))
+            .confirmationDialog(
+                "Delete ALL screen history?",
+                isPresented: $confirmDeleteScreenHistory
+            ) {
+                Button("Delete everything", role: .destructive) {
+                    deleteAllScreenHistory()
+                }
+                Button("Cancel", role: .cancel) {}
+            } message: {
+                Text("Removes every captured screen text, timeline entry, and everything derived from your screen: unconfirmed task candidates and screen memories (including their Obsidian copies). Tasks you promoted stay. This cannot be undone.")
+            }
+            if let result = screenHistoryDeleteResult {
+                Text(result)
+                    .font(MW.monoSm).foregroundStyle(MW.idle)
+            }
         }
         .padding(MW.sp16)
         .frame(maxWidth: .infinity, alignment: .topLeading)
         .mwCard(radius: MW.rMedium, elevation: .raised)
+    }
+
+    /// ITER-053.1 — the one-click promise. Runs on the main actor against the
+    /// shared container; result surfaced inline (no silent destructive ops).
+    private func deleteAllScreenHistory() {
+        guard let container = AppDelegate.shared?.historyService.modelContainer else { return }
+        do {
+            // Fence FIRST: extractor batches / realtime reactions awaiting
+            // their LLM response were built from rows we're about to delete —
+            // make them discard themselves instead of re-inserting.
+            AppDelegate.shared?.screenExtractor.invalidatePendingWork()
+            AppDelegate.shared?.realtimeScreenReactor.invalidatePendingWork()
+            let ctx = ModelContext(container)
+            let deleted = try ScreenRetention.deleteAll(in: ctx)
+            // The destructive privacy action covers the in-session buffers
+            // too — otherwise Advice keeps quoting "deleted" OCR for a while.
+            AppDelegate.shared?.screenContext.clearInMemory()
+            // External copies (Codex review): a batch delete bypasses the
+            // MutationService hooks, so remove the Obsidian vault files for
+            // the deleted artifacts and refresh the MCP snapshot explicitly.
+            // Best-effort, like all post-commit hooks.
+            let taskIds = deleted.taskIds
+            let memoryIds = deleted.memoryIds
+            Task { @MainActor in
+                if let exporter = AppDelegate.shared?.obsidianExporter {
+                    for id in taskIds { await exporter.deleteTaskFile(id) }
+                    for id in memoryIds { await exporter.deleteMemoryFile(id) }
+                }
+                MCPSnapshotService.shared.snapshotNow()
+            }
+            screenHistoryDeleteResult = "Deleted \(deleted.contexts) captures, \(deleted.observations) timeline entries, \(deleted.tasks) unconfirmed tasks, \(deleted.memories) screen memories."
+            NSLog("[ScreenRetention] ✅ delete-all: %d contexts, %d observations, %d tasks, %d memories",
+                  deleted.contexts, deleted.observations, deleted.tasks, deleted.memories)
+        } catch {
+            screenHistoryDeleteResult = "Delete failed: \(error.localizedDescription)"
+            NSLog("[ScreenRetention] ⚠️ delete-all failed: %@", error.localizedDescription)
+        }
     }
 
     private var fileIndexingSection: some View {

@@ -15,6 +15,21 @@ final class ScreenContextService: ObservableObject {
     private(set) var recentContexts: [ScreenContextSnapshot] = []
     private let maxRecentContexts = 20
 
+    /// ITER-053.1 — purge fence for the capture path itself: a capture
+    /// suspended in ScreenCaptureKit/OCR when the user hits «Delete screen
+    /// history» must not resume and persist pre-delete OCR (Codex review).
+    private var captureEpoch = 0
+
+    /// ITER-053.1 — «Delete screen history» must also wipe the in-session
+    /// buffers, or AdviceService keeps feeding "deleted" OCR text into LLM
+    /// prompts until it ages out of the rolling window (Codex review).
+    /// Bumping the epoch also discards any capture currently in flight.
+    func clearInMemory() {
+        captureEpoch += 1
+        recentContexts.removeAll()
+        lastContext = nil
+    }
+
     private var monitorTask: Task<Void, Never>?
     private var lastAppName: String?
     private var lastWindowTitle: String?
@@ -236,7 +251,12 @@ final class ScreenContextService: ObservableObject {
         lastAppName = appName
         lastWindowTitle = windowTitle
 
+        // ITER-053.1 purge fence — snapshot before the capture/OCR awaits.
+        let epoch = captureEpoch
         if let snapshot = await captureActiveWindow(blacklist: blacklist, whitelist: whitelist) {
+            // The user hit «Delete screen history» while this capture was in
+            // flight — discard it rather than re-adding pre-delete OCR.
+            guard epoch == captureEpoch else { return }
             lastContext = snapshot
             recentContexts.append(snapshot)
             if recentContexts.count > maxRecentContexts {

@@ -133,6 +133,12 @@ final class AppSettings: ObservableObject {
     @AppStorage("screenContextInterval") var screenContextInterval: Double = 30
     @AppStorage("screenContextMode") var screenContextMode: String = "blacklist" // blacklist, whitelist
     @AppStorage("screenContextAppList") var screenContextAppList: String = "" // comma-separated
+    /// ITER-053.1 — retention for RAW OCR rows (ScreenContext), days. 0 = keep
+    /// forever. Raw OCR is the privacy-hot artifact → short default.
+    @AppStorage("screenRetentionDays") var screenRetentionDays: Int = 30
+    /// ITER-053.1 — retention for distilled ScreenObservation rows (the Rewind
+    /// timeline), days. 0 = keep forever. Distilled → longer default.
+    @AppStorage("observationRetentionDays") var observationRetentionDays: Int = 180
 
     // AI Advice
     @AppStorage("adviceEnabled") var adviceEnabled: Bool = false

@@ -106,6 +106,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     var selectionTranslator: SelectionTranslator!
     var updaterController: SPUStandardUpdaterController!
     private var cancellables = Set<AnyCancellable>()
+    /// ITER-053.1 — 12h repeating screen-history retention prune.
+    private var screenRetentionTimer: Timer?
 
     // Call auto-detection state (ITER-002). Tracks whether the currently-active
     // recording was started by auto-detect — only then do we auto-stop on call end.
@@ -783,6 +785,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             // junk. Not gated by a flag because deleting old wavs is always
             // safe — recovery only re-uses files written this session.
             self?.cleanupStaleRecoveryWavs()
+            // ITER-053.1 — screen-history retention. Raw OCR rows and Rewind
+            // observations past their windows are deleted at launch (and every
+            // 12h below). Gated on storeHealthy like the migrations: pruning
+            // against a degraded in-memory store would be a silent no-op that
+            // never touches the real data.
+            if storeHealthy { self?.pruneScreenHistory() }
+        }
+
+        // ITER-053.1 — repeat the retention prune every 12h for long-running
+        // sessions (the app lives in the menu bar for weeks; launch-only
+        // pruning would let the store creep between restarts).
+        screenRetentionTimer = Timer.scheduledTimer(withTimeInterval: 12 * 3600, repeats: true) { _ in
+            Task { @MainActor [weak self] in self?.pruneScreenHistory() }
         }
 
         // ITER-027 — Proactive context service is now powered by the
@@ -2398,6 +2413,31 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         if deleted > 0 {
             NSLog("[RecoveryCleanup] ✅ Pruned %d wav files (%.1f MB) older than 7d",
                   deleted, Double(totalBytes) / 1_048_576.0)
+        }
+    }
+
+    // MARK: - ITER-053.1 screen-history retention
+
+    /// Janitor pass over the screen-intelligence store: raw OCR rows
+    /// (ScreenContext) and Rewind observations past their retention windows
+    /// are deleted. Runs at launch + every 12h; also callable from Settings.
+    /// Failure mode is a logged warning — never blocks startup.
+    func pruneScreenHistory() {
+        let settings = AppSettings.shared
+        let ctx = ModelContext(historyService.modelContainer)
+        do {
+            let deleted = try ScreenRetention.prune(
+                in: ctx,
+                rawDays: settings.screenRetentionDays,
+                observationDays: settings.observationRetentionDays
+            )
+            if deleted.contexts + deleted.observations > 0 {
+                NSLog("[ScreenRetention] ✅ Pruned %d OCR rows (>%dd) + %d observations (>%dd)",
+                      deleted.contexts, settings.screenRetentionDays,
+                      deleted.observations, settings.observationRetentionDays)
+            }
+        } catch {
+            NSLog("[ScreenRetention] ⚠️ prune failed: %@", error.localizedDescription)
         }
     }
 

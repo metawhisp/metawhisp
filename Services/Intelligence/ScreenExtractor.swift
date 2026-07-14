@@ -59,6 +59,15 @@ final class ScreenExtractor: ObservableObject {
         await extractBatch()
     }
 
+    /// ITER-053.1 — purge fence. «Delete screen history» bumps the epoch; an
+    /// in-flight batch that started BEFORE the bump discards its results
+    /// instead of re-inserting rows distilled from just-deleted OCR (Codex
+    /// review: the LLM await window let deleted history reappear).
+    private var purgeEpoch = 0
+    func invalidatePendingWork() {
+        purgeEpoch += 1
+    }
+
     // MARK: - Batch logic
 
     private func extractBatch() async {
@@ -74,6 +83,8 @@ final class ScreenExtractor: ObservableObject {
         defer {
             isRunning = false
         }
+        // ITER-053.1 purge fence — snapshot the epoch before any await.
+        let epoch = purgeEpoch
         // Review fix — lastRun advances ONLY after a successful pass (or a
         // legitimately empty window); a parse failure used to permanently
         // skip the whole visits batch because defer stamped it processed.
@@ -126,6 +137,14 @@ final class ScreenExtractor: ObservableObject {
 
             guard let parsed = parseResponse(response) else {
                 NSLog("[ScreenExtractor] ⚠️ Parse failed")
+                return
+            }
+
+            // ITER-053.1 purge fence — the user deleted screen history while
+            // we were awaiting the LLM. Discard this batch: its visits were
+            // built from rows that no longer exist.
+            guard epoch == purgeEpoch else {
+                NSLog("[ScreenExtractor] Batch discarded — screen history was purged mid-run")
                 return
             }
 
