@@ -18,4 +18,33 @@ final class SessionVerifyPolicyTests: XCTestCase {
                            "HTTP \(status) is not an authoritative auth rejection — must keep cached Pro")
         }
     }
+
+    // MARK: - ITER-052 — session-token 401 must not de-subscribe a cached Pro
+
+    /// The every-relaunch logout bug: `verify()` sent the stored session token
+    /// on launch, the server returned 401 (the one-time deep-link token had
+    /// expired), and the app called `signOut()` — wiping a PAYING user's
+    /// license every single launch. A 401/403 proves only that the TOKEN can't
+    /// authenticate, NOT that the subscription lapsed (that's a 200 + inactive).
+    /// So a token rejection while a trusted cached license exists must KEEP Pro.
+    func test_rejectionAction_authRejectionWithCachedPro_keepsLicense() {
+        XCTAssertEqual(LicenseService.rejectionAction(httpStatus: 401, hasTrustedCachedLicense: true), .keepCachedPro)
+        XCTAssertEqual(LicenseService.rejectionAction(httpStatus: 403, hasTrustedCachedLicense: true), .keepCachedPro)
+    }
+
+    /// A token rejection with NOTHING cached to fall back on (fresh install, a
+    /// planted/garbage token) still signs out — we genuinely need re-auth.
+    func test_rejectionAction_authRejectionWithoutCache_signsOut() {
+        XCTAssertEqual(LicenseService.rejectionAction(httpStatus: 401, hasTrustedCachedLicense: false), .signOut)
+        XCTAssertEqual(LicenseService.rejectionAction(httpStatus: 403, hasTrustedCachedLicense: false), .signOut)
+    }
+
+    /// Transient / non-authoritative statuses never act on the license,
+    /// regardless of cache — same posture as the offline catch branch.
+    func test_rejectionAction_transientNeverActs() {
+        for status in [500, 502, 503, 504, 429, 404, 408, -1] {
+            XCTAssertEqual(LicenseService.rejectionAction(httpStatus: status, hasTrustedCachedLicense: true), .keepQuiet)
+            XCTAssertEqual(LicenseService.rejectionAction(httpStatus: status, hasTrustedCachedLicense: false), .keepQuiet)
+        }
+    }
 }
