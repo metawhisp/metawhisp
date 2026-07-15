@@ -439,6 +439,7 @@ final class ChatToolExecutor: ObservableObject {
         case "searchTasks":       return await searchTasks(call.args)
         case "searchMemories":    return await searchMemories(call.args)
         case "searchConversations": return await searchConversations(call.args)
+        case "searchScreenHistory": return await searchScreenHistory(call.args)
         default:
             return ExecResult(ok: false, summary: "Unknown read-only tool", auditId: nil)
         }
@@ -523,6 +524,100 @@ final class ChatToolExecutor: ObservableObject {
             return d
         }
         return ExecResult(ok: true, summary: jsonString(["items": payload, "count": payload.count]), auditId: nil)
+    }
+
+    /// ITER-053.4 (первый срез) — «спроси свой экран»: searches BOTH layers of
+    /// the screen store within a day window. Distilled ScreenObservation rows
+    /// answer «что я делал по X»; raw ScreenContext OCR answers «что мне писал
+    /// Alex» / «где я видел ту ссылку» (messengers, pages, code the user saw).
+    /// Keyword ranking v1 — plugs into semantic automatically once observations
+    /// get embeddings (053.4 full).
+    private func searchScreenHistory(_ args: [String: String]) async -> ExecResult {
+        guard let container = modelContainer else { return ExecResult(ok: false, summary: "no db", auditId: nil) }
+        let query = args["query"]?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        guard !query.isEmpty else { return ExecResult(ok: false, summary: "Empty query", auditId: nil) }
+        let limit = min(20, max(1, Int(args["limit"] ?? "8") ?? 8))
+        let days = min(90, max(1, Int(args["days"] ?? "7") ?? 7))
+        let cutoff = Date().addingTimeInterval(-Double(days) * 86_400)
+        let iso = ISO8601DateFormatter()
+
+        let ctx = ModelContext(container)
+        // Distilled timeline — «what was I doing».
+        let obsDesc = FetchDescriptor<ScreenObservation>(
+            predicate: #Predicate { $0.endedAt >= cutoff },
+            sortBy: [SortDescriptor(\.endedAt, order: .reverse)]
+        )
+        let observations = (try? ctx.fetch(obsDesc)) ?? []
+        let rankedObs = await rankByQuery(
+            items: observations, query: query, embedding: { _ in nil },
+            textForSubstring: { "\($0.appName) \($0.windowTitle ?? "") \($0.contextSummary) \($0.currentActivity)" },
+            limit: limit)
+
+        // Raw OCR — «what did I see / what did people write me». Newest-first,
+        // bounded fetch so months of rows can't blow memory; own-app windows
+        // are a feedback loop (our answers re-captured as "facts") — dropped.
+        var rawDesc = FetchDescriptor<ScreenContext>(
+            predicate: #Predicate { $0.timestamp >= cutoff },
+            sortBy: [SortDescriptor(\.timestamp, order: .reverse)]
+        )
+        rawDesc.fetchLimit = 2000
+        let ownApp = (Bundle.main.object(forInfoDictionaryKey: "CFBundleName") as? String) ?? "MetaWhisp"
+        let raws = ((try? ctx.fetch(rawDesc)) ?? []).filter {
+            !ScreenContextNoiseFilter.isOwnWindow(appName: $0.appName, ownAppName: ownApp)
+        }
+        let rankedRaw = await rankByQuery(
+            items: raws, query: query, embedding: { _ in nil },
+            textForSubstring: { "\($0.appName) \($0.windowTitle) \($0.ocrText)" },
+            limit: limit)
+
+        let activities: [[String: Any]] = rankedObs.map { o in
+            [
+                "when": iso.string(from: o.endedAt),
+                "app": o.appName,
+                "summary": o.contextSummary,
+                "activity": o.currentActivity,
+            ]
+        }
+        let screenTexts: [[String: Any]] = rankedRaw.map { r in
+            [
+                "when": iso.string(from: r.timestamp),
+                "app": r.appName,
+                "window": r.windowTitle,
+                "snippet": Self.matchSnippet(in: r.ocrText, query: query),
+            ]
+        }
+        return ExecResult(ok: true, summary: jsonString([
+            "activities": activities,
+            "screen_texts": screenTexts,
+            "count": activities.count + screenTexts.count,
+            "window_days": days,
+        ]), auditId: nil)
+    }
+
+    /// Slice ~2×radius chars of OCR around the first query-token hit so the
+    /// LLM gets the evidence, not a 4KB wall. Head of text when nothing hits.
+    static func matchSnippet(in text: String, query: String, radius: Int = 120) -> String {
+        let tokens = query.lowercased()
+            .components(separatedBy: CharacterSet.alphanumerics.inverted)
+            .filter { $0.count >= 2 }
+        // Earliest case-insensitive hit across tokens — ranges from `text`
+        // itself (indices from a lowercased COPY are not transferable).
+        var hit: Range<String.Index>?
+        for t in tokens {
+            if let r = text.range(of: t, options: [.caseInsensitive, .diacriticInsensitive]),
+               hit == nil || r.lowerBound < hit!.lowerBound {
+                hit = r
+            }
+        }
+        guard let found = hit else {
+            return String(text.prefix(2 * radius)).trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        let start = text.index(found.lowerBound, offsetBy: -radius, limitedBy: text.startIndex) ?? text.startIndex
+        let end = text.index(found.lowerBound, offsetBy: radius, limitedBy: text.endIndex) ?? text.endIndex
+        var s = String(text[start..<end]).trimmingCharacters(in: .whitespacesAndNewlines)
+        if start > text.startIndex { s = "…" + s }
+        if end < text.endIndex { s += "…" }
+        return s
     }
 
     /// Generic ranker: try semantic (cosine on embedding) when query embedding is
@@ -867,6 +962,23 @@ final class ChatToolExecutor: ObservableObject {
                 ],
             ],
         ],
+        // ── ITER-053.4 — screen-history search ────────────────────────────────
+        [
+            "type": "function",
+            "function": [
+                "name": "searchScreenHistory",
+                "description": "Search what was ON THE USER'S SCREEN: the activity timeline plus raw captured screen text (messages they read, pages, code). Use for \"что я делал по X\", \"что мне писал <человек>\", \"где я видел ту ссылку/цифру\". Returns activities (what the user was doing, with time+app) and screen_texts (verbatim snippets with time+app+window).",
+                "parameters": [
+                    "type": "object",
+                    "properties": [
+                        "query": ["type": "string", "description": "Free-text query — topic, person, project, phrase."],
+                        "days": ["type": "integer", "description": "How many days back to search. Default 7, max 90."],
+                        "limit": ["type": "integer", "description": "Max results per group. Default 8, max 20."],
+                    ],
+                    "required": ["query"],
+                ],
+            ],
+        ],
     ]
 
     /// Set of tool names that don't mutate state. Read-only tools auto-execute
@@ -874,7 +986,7 @@ final class ChatToolExecutor: ObservableObject {
     /// to undo — they only read). Keep this list narrow — when in doubt, treat
     /// as mutation.
     static let readOnlyTools: Set<String> = [
-        "searchTasks", "searchMemories", "searchConversations",
+        "searchTasks", "searchMemories", "searchConversations", "searchScreenHistory",
     ]
 
     static func isReadOnly(_ tool: String) -> Bool {
@@ -912,7 +1024,7 @@ final class ChatToolExecutor: ObservableObject {
     private static let allKnownTools: Set<String> = [
         "dismissTask", "completeTask", "dismissMemory", "updateGoalProgress",
         "addTask", "addMemory",
-        "searchTasks", "searchMemories", "searchConversations",
+        "searchTasks", "searchMemories", "searchConversations", "searchScreenHistory",
     ]
 
     /// Extract the FIRST `<tool_call>{...}</tool_call>` block from text.

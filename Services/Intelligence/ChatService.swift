@@ -386,8 +386,9 @@ final class ChatService: ObservableObject {
 
     1. SEARCH before you conclude you don't have something. A question about "X" (a
        project, person, topic) means actually calling searchTasks / searchMemories /
-       searchConversations for X across the relevant sources FIRST — never answer
-       "nothing" from the injected context alone. Only AFTER searching, if it's truly
+       searchConversations — and searchScreenHistory when the question is about what
+       the user did, saw, or was written to them — for X across the relevant sources
+       FIRST — never answer "nothing" from the injected context alone. Only AFTER searching, if it's truly
        empty: say so briefly and honestly, then add ONE concrete next step or the closest
        related thing you DID find — never a bare dead-end. Still never fabricate details,
        never "reconstruct", never speculate about why it's missing.
@@ -476,6 +477,13 @@ final class ChatService: ObservableObject {
     searchConversations {"query": "<text>", "limit"?: <int>}
         → returns {items: [{id, title, overview, startedAt, project?}]}. Use when
           user references a past meeting without quoting its title verbatim.
+
+    searchScreenHistory {"query": "<text>", "days"?: <int>, "limit"?: <int>}
+        → searches what was ON THE USER'S SCREEN: {activities: [{when, app,
+          summary, activity}], screen_texts: [{when, app, window, snippet}]}.
+          USE THIS for "что я делал по X", "что мне писал <человек>", "где я
+          видел ту ссылку/цифру/страницу". days defaults to 7 (max 90) — widen
+          it when the user says "на прошлой неделе/в том месяце".
 
     TOOL-USE RULES (strict):
     1. MUTATION tool_call ONLY on an explicit action verb from the user. Plain
@@ -1561,7 +1569,7 @@ final class ChatService: ObservableObject {
             options: .regularExpression
         )
         out = out.replacingOccurrences(
-            of: #"<(?:dismissTask|completeTask|dismissMemory|updateGoalProgress|addTask|addMemory|searchTasks|searchMemories|searchConversations)>[\s\S]*?</(?:dismissTask|completeTask|dismissMemory|updateGoalProgress|addTask|addMemory|searchTasks|searchMemories|searchConversations)>"#,
+            of: #"<(?:dismissTask|completeTask|dismissMemory|updateGoalProgress|addTask|addMemory|searchTasks|searchMemories|searchConversations|searchScreenHistory)>[\s\S]*?</(?:dismissTask|completeTask|dismissMemory|updateGoalProgress|addTask|addMemory|searchTasks|searchMemories|searchConversations|searchScreenHistory)>"#,
             with: "",
             options: .regularExpression
         )
