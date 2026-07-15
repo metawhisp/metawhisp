@@ -778,6 +778,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
 
         // 9d+. Embedding service (ITER-008 + ITER-011) — semantic RAG + dedup for Pro users.
         embeddingService.configure(modelContainer: historyService.modelContainer)
+        // (ITER-057.1 promotion loop starts further down, strictly AFTER the
+        // ITER-007 staged-tasks migration — see that Task block.)
 
         // ITER-026 — one-time cleanup of calendar-derived TaskItems. The old
         // CalendarReaderService.scanNow pipeline turned every upcoming event
@@ -876,13 +878,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             weeklyPatternDetector.startScheduler()
         }
 
-        // One-time migration for Staged Tasks (ITER-007):
-        // Before this rollout all screen-inferred tasks landed in the main Tasks list
-        // and produced noise. Move active screen-origin tasks into the "staged" bin so
-        // they surface in REVIEW CANDIDATES and the user decides per-item.
-        // Fetch filter kept simple (predicate can't mix Optional nil-checks w/o tripping
-        // the type checker); refine in memory.
+        // One-time migration for Staged Tasks (ITER-007). ITER-057.1 (Codex):
+        // it had NO flag and re-ran EVERY launch — demoting screen tasks the
+        // user (or the promotion loop) had promoted. Flag-gated now; the
+        // promotion loop starts strictly AFTER it so a launch can't promote →
+        // demote → re-promote the same rows.
         Task { @MainActor in
+            defer {
+                // ITER-057.1 — promotion loop: keeps ≈5 screen-sourced tasks
+                // active (silent startup pass; slot-vacated + 5-min safety
+                // passes may notify, opt-in). Starts after the migration above
+                // settles, only against a healthy store.
+                if storeHealthy {
+                    TaskPromotionService.shared.configure(modelContainer: historyService.modelContainer)
+                    TaskPromotionService.shared.start()
+                }
+            }
+            guard storeHealthy, !AppSettings.shared.didMigrateScreenTasksToStaged else { return }
             let ctx = ModelContext(historyService.modelContainer)
             let desc = FetchDescriptor<TaskItem>(
                 predicate: #Predicate<TaskItem> { !$0.isDismissed }
@@ -891,13 +903,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             let candidates = all.filter {
                 $0.screenContextId != nil && ($0.status == nil || $0.status == "committed")
             }
-            guard !candidates.isEmpty else { return }
             for task in candidates {
                 task.status = "staged"
                 task.updatedAt = Date()
             }
-            try? ctx.save()
-            NSLog("[AppDelegate] Migrated %d existing screen-origin tasks → staged", candidates.count)
+            if candidates.isEmpty {
+                AppSettings.shared.didMigrateScreenTasksToStaged = true
+            } else {
+                do {
+                    try ctx.save()
+                    NSLog("[AppDelegate] Migrated %d existing screen-origin tasks → staged", candidates.count)
+                    // Codex review — flag ONLY after a successful save; a
+                    // transient failure must retry on the next launch.
+                    AppSettings.shared.didMigrateScreenTasksToStaged = true
+                } catch {
+                    NSLog("[AppDelegate] ⚠️ staged-tasks migration save failed — will retry next launch: %@",
+                          error.localizedDescription)
+                }
+            }
         }
 
         // Periodic sweep: close dictation conversations idle past the gap (10 min) so

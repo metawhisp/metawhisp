@@ -167,6 +167,15 @@ final class AppSettings: ObservableObject {
 
     // Tasks
     @AppStorage("tasksEnabled") var tasksEnabled: Bool = true
+    /// ITER-057.1 — notify when the promotion loop moves a staged candidate to
+    /// active. Default OFF, exactly like the reference (extraction stays quiet;
+    /// the user opts in to being pinged).
+    @AppStorage("taskPromotionNotificationsEnabled") var taskPromotionNotificationsEnabled: Bool = false
+    /// ITER-057.1 (Codex) — the ITER-007 «one-time» screen-task→staged
+    /// migration had NO flag and re-ran EVERY launch, demoting even tasks the
+    /// user promoted themselves (and it would fight the promotion loop). Now
+    /// genuinely one-shot.
+    @AppStorage("didMigrateScreenTasksToStaged_iter007") var didMigrateScreenTasksToStaged: Bool = false
 
     // Screen extraction — hourly batch analysis of ScreenContext → ScreenObservation (spec://BACKLOG#Phase2.R1)
     @AppStorage("screenExtractionEnabled") var screenExtractionEnabled: Bool = true

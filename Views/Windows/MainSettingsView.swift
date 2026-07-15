@@ -1479,6 +1479,12 @@ struct MainSettingsView: View {
                         .font(MW.monoSm).foregroundStyle(MW.textMuted)
                         .fixedSize(horizontal: false, vertical: true)
                 }
+                // ITER-057.1 — promotion loop opt-in (default off, like the
+                // rest of proactive notifications).
+                toggleRow("Notify when a task is promoted", isOn: $settings.taskPromotionNotificationsEnabled)
+                Text("Screen-found task candidates auto-promote to My Tasks as slots free up (≈5 active). On = one notification per promoted task.")
+                    .font(MW.monoSm).foregroundStyle(MW.textMuted)
+                    .fixedSize(horizontal: false, vertical: true)
             }
 
             // ITER-053.1 — retention + one-click delete. Codex review: OUTSIDE

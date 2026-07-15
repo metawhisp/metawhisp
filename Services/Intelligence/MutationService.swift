@@ -94,9 +94,18 @@ final class MutationService {
     static func productionHooks(_ mutation: Mutation) {
         let exporter = AppDelegate.shared?.obsidianExporter
         switch mutation {
-        case .taskSaved(let id):     Task { await exporter?.exportTask(id) }
+        case .taskSaved(let id):
+            Task { await exporter?.exportTask(id) }
+            // ITER-057.1 (Codex) — chat dismissals and completions arrive as
+            // .taskSaved (status/completed flipped in-place), so this path must
+            // ALSO poke the promotion loop. Safe: promoteIfNeeded is guarded
+            // against re-entry, and a full slot set makes it a no-op count.
+            TaskPromotionService.shared.noteSlotMaybeVacated()
         case .taskDeleted(let id),
-             .taskDismissed(let id): Task { await exporter?.deleteTaskFile(id) }
+             .taskDismissed(let id):
+            Task { await exporter?.deleteTaskFile(id) }
+            // ITER-057.1 — a task left the active set: a slot may have opened.
+            TaskPromotionService.shared.noteSlotMaybeVacated()
         case .memorySaved(let id):   Task { await exporter?.exportMemory(id) }
         case .memoryDeleted(let id),
              .memoryDismissed(let id): Task { await exporter?.deleteMemoryFile(id) }

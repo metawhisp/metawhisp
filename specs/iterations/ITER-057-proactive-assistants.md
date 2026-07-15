@@ -72,20 +72,24 @@ scheduled-триггера, ни snooze, ни re-remind). Их «напомин�
 
 ## 3. Итерации {#plan}
 
-### 057.1 — Promotion loop (ядро «само всплывает») {#i1}
-- [ ] `TaskPromotionService` (@MainActor, свой файл): цель ≈5 активных
-      AI-задач (`sourceApp != nil && status == "committed" && !completed`).
-      Триггеры: (а) старт приложения — **тихо**, без уведомлений; (б) юзер
-      завершил/удалил AI-задачу → слот освободился → продвинуть с уведомлением;
-      (в) safety-таймер каждые 300с. Продвижение: топ staged по relevanceScore
-      → `status = "committed"` через MutationService (Obsidian/MCP-хуки бесплатно).
-- [ ] Уведомление: MWNotification kind .task, title "Task", body
-      "New task: {description}" — только при `taskPromotionNotificationsEnabled`
-      (@AppStorage, default **false**). Клик → Tasks-таб (пока без чата — 057.4).
-- [ ] Убрать конфликт с TaskHygiene (авто-скрытие staged через 7д): скрывать
-      только те, что НЕ прошли ре-ранк топ-N. Проверить текущую логику.
-- [ ] Тесты: слот-математика (5 активных → 0 промоушенов; 3 → 2), тихий старт,
-      единственность уведомления, порядок по score.
+### 057.1 — Promotion loop (ядро «само всплывает») — СДЕЛАНО 2026-07-16 {#i1}
+- [x] `TaskPromotionService`: цель ≈5 активных **screen-sourced** задач
+      (`screenContextId != nil && status == "committed"` — staged-кандидаты
+      приходят только с экрана, поэтому и счёт слотов по экрану; диктовочные
+      задачи живут отдельно и слоты не занимают). Триггеры: (а) старт — тихо,
+      строго ПОСЛЕ ITER-007-миграции (она была не-one-time и демотировала
+      промоутнутое каждый запуск — теперь под флагом, Codex); (б) любая
+      мутация задачи через MutationService-хуки (dismiss/delete/save — chat-
+      dismiss приходит как .taskSaved) → слот мог освободиться; (в) safety-
+      таймер 300с. Порядок v1 — свежесть (createdAt DESC) в пределах
+      hygiene-окна 7д; relevanceScore появится вместе с ре-ранкером (057.2).
+      Reentrancy-guard от само-поджига через хуки.
+- [x] Уведомление: kind .task, "Task" / "New task: {…}", только при
+      `taskPromotionNotificationsEnabled` (default **false**), тумблер в
+      Settings → Second Brain → Screen Intelligence. Клик → Workspace.
+- [x] TaskHygiene: кандидаты старше 7д не промоутятся (единая логика).
+- [x] Тесты: слот-математика, newest-first, идемпотентность, stale-скип,
+      dismissed-не-воскресают, master-toggle. 7/7 зелёные.
 
 ### 057.2 — Re-ranking (умный порядок) {#i2}
 - [ ] `TaskPrioritizationService`: цикл-проверка каждые 300с (startup delay 90с);
