@@ -176,6 +176,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         Self.shared = self
         FileLogger.setup()
 
+        // ITER-055 — black box for the recurring "throws me to another screen /
+        // Space" bug. Log every Space switch with the frontmost app + cursor
+        // screen so a repro shows whether OUR window ops caused the jump. Paired
+        // with MainWindowController's [SpaceTrace] placement logs.
+        NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.activeSpaceDidChangeNotification, object: nil, queue: .main
+        ) { _ in
+            let front = NSWorkspace.shared.frontmostApplication?.localizedName ?? "?"
+            let mouse = NSEvent.mouseLocation
+            let mouseScreen = NSScreen.screens.firstIndex { NSMouseInRect(mouse, $0.frame, false) }
+            NSLog("[SpaceTrace] activeSpaceDidChange — frontmost=%@ cursorScreen=%@",
+                  front, mouseScreen.map(String.init) ?? "?")
+        }
+
         // Apply saved theme
         MW.applyTheme(AppSettings.shared.appTheme)
 
@@ -1401,6 +1415,31 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         }
 
         Task {
+            // ITER-054 — BYOK Deepgram (optional): one diarized pass on the
+            // user's own key. Real speaker labels, 1× cost on THEIR Deepgram
+            // account, no engine needed, no Pro-quota booking (never touches
+            // our worker). Any failure falls through to the Whisper dual-stream
+            // below — this path can only add quality, never lose a meeting.
+            let deepgramKey = AppSettings.shared.deepgramKey
+            if !deepgramKey.isEmpty {
+                let dgStart = CFAbsoluteTimeGetCurrent()
+                do {
+                    let text = try await DeepgramMeetingTranscriber()
+                        .transcribe(mic: micSamples, system: sysSamples, apiKey: deepgramKey)
+                    let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+                    guard !trimmed.isEmpty else { throw DeepgramMeetingTranscriber.DGError.emptyTranscript }
+                    let duration = Double(max(micSamples.count, sysSamples.count)) / 16000.0
+                    self.persistMeetingTranscript(fullText: trimmed, duration: duration,
+                                                  elapsed: CFAbsoluteTimeGetCurrent() - dgStart)
+                    NSLog("[MetaWhisp] ✅ Meeting transcribed via Deepgram BYOK: %.0fs audio in %.1fs",
+                          duration, CFAbsoluteTimeGetCurrent() - dgStart)
+                    return
+                } catch {
+                    NSLog("[MetaWhisp] ⚠️ Deepgram BYOK failed (%@) — falling back to Whisper dual-stream",
+                          error.localizedDescription)
+                }
+            }
+
             // Engine selection is the same for both paths — reads `coordinator.activeEngine`
             // at runtime so the user's current setting (cloud vs on-device) wins.
             guard let engine = coordinator.activeEngine, engine.isModelLoaded else {

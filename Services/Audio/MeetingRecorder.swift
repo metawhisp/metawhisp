@@ -402,13 +402,16 @@ final class MeetingRecorder: ObservableObject {
     /// asymptote at ±1. The previous `max(-1, min(1, sum))` was a HARD clip
     /// mislabelled "soft": it flat-topped loud overlaps (both speakers loud at
     /// once), adding harsh distortion exactly where ASR needs the waveform most.
-    static func softClip(_ x: Float) -> Float {
+    // nonisolated — pure sample math with no actor state; callers off the main
+    // actor (Deepgram meeting transcriber, ITER-054) must not hop to Main just
+    // to mix a multi-hour buffer.
+    nonisolated static func softClip(_ x: Float) -> Float {
         let a = abs(x)
         guard a > 0.5 else { return x }
         return (x < 0 ? -1 : 1) * (0.5 + 0.5 * tanhf((a - 0.5) / 0.5))
     }
 
-    static func mix(mic: [Float], system: [Float]) -> [Float] {
+    nonisolated static func mix(mic: [Float], system: [Float]) -> [Float] {
         // If one side is empty, just return the other (no mixing needed)
         if mic.isEmpty { return system }
         if system.isEmpty { return mic }

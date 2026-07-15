@@ -345,10 +345,19 @@ final class AppSettings: ObservableObject {
         didSet { KeychainHelper.save(key: "com.metawhisp.groqKey", value: groqKey) }
     }
 
+    /// ITER-054 — BYOK Deepgram (optional, any tier). When set, MEETINGS are
+    /// transcribed via the user's own Deepgram account in one diarized pass
+    /// (real speaker labels, 1× cost, никакого нашего воркера). Dictations
+    /// are unaffected.
+    @Published var deepgramKey: String {
+        didSet { KeychainHelper.save(key: "com.metawhisp.deepgramKey", value: deepgramKey) }
+    }
+
     private init() {
         self.openaiKey = KeychainHelper.load(key: "com.metawhisp.openaiKey") ?? ""
         self.cerebrasKey = KeychainHelper.load(key: "com.metawhisp.cerebrasKey") ?? ""
         self.groqKey = KeychainHelper.load(key: "com.metawhisp.groqKey") ?? ""
+        self.deepgramKey = KeychainHelper.load(key: "com.metawhisp.deepgramKey") ?? ""
     }
 
     /// The active API key for the selected provider.

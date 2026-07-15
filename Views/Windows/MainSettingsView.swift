@@ -20,6 +20,8 @@ struct MainSettingsView: View {
     // ITER-053.1 — delete-screen-history confirm + inline result
     @State private var confirmDeleteScreenHistory = false
     @State private var screenHistoryDeleteResult: String?
+    // ITER-054 — Deepgram key draft (commit on ⏎/Save, not per keystroke)
+    @State private var deepgramKeyDraft = ""
 
     // Tab selection — single column scroll per tab beats the previous two-column wall
     // (1500-line settings was hard to scan).
@@ -260,6 +262,7 @@ struct MainSettingsView: View {
                     }
                 }
             }
+
         }
     }
 
@@ -318,6 +321,71 @@ struct MainSettingsView: View {
         }
         Text("Get a free key at console.groq.com")
             .font(MW.monoSm).foregroundStyle(MW.textMuted)
+    }
+
+    /// ITER-054 — optional BYOK Deepgram for MEETING diarization. Works on any
+    /// tier: with a key set, meetings transcribe in one diarized pass on the
+    /// user's own Deepgram account (real speaker labels); dictations unaffected.
+    @ViewBuilder
+    private var deepgramKeyField: some View {
+        let key = settings.deepgramKey
+        GlassDivider()
+        Text("Meeting diarization (optional)")
+            .font(MW.mono).foregroundStyle(MW.textSecondary)
+        HStack(spacing: MW.sp8) {
+            if key.isEmpty {
+                // Codex review — a live binding saved the FIRST keystroke,
+                // key.isEmpty flipped, and the field collapsed to the masked
+                // view with a 1-char «key». Type/paste into a DRAFT, commit on
+                // ⏎ or Save.
+                TextField("", text: $deepgramKeyDraft,
+                          prompt: Text("Deepgram API Key").foregroundStyle(MW.textMuted))
+                    .font(MW.mono)
+                    .textFieldStyle(.plain)
+                    .foregroundStyle(MW.textPrimary)
+                    .padding(.horizontal, MW.sp8)
+                    .padding(.vertical, MW.sp4)
+                    .overlay(RoundedRectangle(cornerRadius: MW.rSmall, style: .continuous).stroke(MW.border, lineWidth: 0.5))
+                    .onSubmit { commitDeepgramKeyDraft() }
+                if !deepgramKeyDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    Button("Save") { commitDeepgramKeyDraft() }
+                        .buttonStyle(.plain)
+                        .font(MW.label).tracking(0.6)
+                        .foregroundStyle(MW.idle)
+                        .padding(.horizontal, 8).padding(.vertical, 3)
+                        .overlay(RoundedRectangle(cornerRadius: MW.rSmall, style: .continuous)
+                                    .stroke(MW.idle.opacity(0.4), lineWidth: 0.5))
+                }
+            } else {
+                HStack(spacing: MW.sp8) {
+                    let masked = String(repeating: "\u{2022}", count: min(20, max(0, key.count - 4))) + String(key.suffix(4))
+                    Text(masked)
+                        .font(MW.mono)
+                        .foregroundStyle(MW.textSecondary)
+                    Spacer()
+                    Circle().fill(MW.idle).frame(width: 6, height: 6)
+                    Button { settings.deepgramKey = "" } label: {
+                        Image(systemName: "xmark.circle.fill")
+                            .foregroundStyle(MW.textMuted)
+                    }
+                    .buttonStyle(.plain)
+                }
+                .padding(.horizontal, MW.sp8)
+                .padding(.vertical, MW.sp4)
+                .overlay(Rectangle().stroke(MW.borderLight, lineWidth: MW.hairline))
+            }
+        }
+        Text("With a key set, meetings are transcribed on YOUR Deepgram account with real speaker labels (who said what) in one pass. Voice dictations are unaffected. console.deepgram.com")
+            .font(MW.monoSm).foregroundStyle(MW.textMuted)
+            .fixedSize(horizontal: false, vertical: true)
+    }
+
+    /// ITER-054 — commit the Deepgram key draft into the keychain-backed setting.
+    private func commitDeepgramKeyDraft() {
+        let trimmed = deepgramKeyDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        settings.deepgramKey = trimmed
+        deepgramKeyDraft = ""
     }
 
     private func modelRow(_ info: ModelInfo) -> some View {
@@ -1195,6 +1263,11 @@ struct MainSettingsView: View {
                 Text("Records system audio from Zoom, Meet, Teams. Transcribed locally via WhisperKit.")
                     .font(MW.monoSm).foregroundStyle(MW.textMuted)
                     .fixedSize(horizontal: false, vertical: true)
+                // ITER-054 — BYOK Deepgram diarization. Lives HERE (not in the
+                // cloud-dictation section, hidden for on-device users — Codex
+                // review): the key affects MEETINGS regardless of the dictation
+                // engine, on any tier.
+                deepgramKeyField
                 GlassDivider()
                 toggleRow("Auto-detect calls", isOn: $settings.autoDetectCalls)
                 if settings.autoDetectCalls {

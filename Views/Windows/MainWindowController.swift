@@ -51,6 +51,46 @@ extension Notification.Name {
 final class MainWindowController: NSObject, NSWindowDelegate {
     private var window: NSWindow?
 
+    /// ITER-055 — black-box trace for the recurring «throws me to another
+    /// screen / Space» bug. Logs where a window actually lands vs where the
+    /// user is (cursor screen), so the next repro pins the cause instead of a
+    /// theory. Cheap; safe to keep on. Grep `[SpaceTrace]`.
+    static func logPlacement(_ w: NSWindow?, _ phase: String) {
+        let screens = NSScreen.screens
+        let mouse = NSEvent.mouseLocation
+        let mouseScreen = screens.firstIndex { NSMouseInRect(mouse, $0.frame, false) }
+        let mainScreen = screens.firstIndex { $0 == NSScreen.main }
+        if let w {
+            let winScreen = screens.firstIndex { $0.frame.intersects(w.frame) }
+            NSLog("[SpaceTrace] %@ — winFrame=%@ winScreen=%@ mouseScreen=%@ mainScreen=%@ onActiveSpace=%@ visible=%@ screens=%d",
+                  phase, NSStringFromRect(w.frame),
+                  winScreen.map(String.init) ?? "OFF-ALL-SCREENS",
+                  mouseScreen.map(String.init) ?? "?", mainScreen.map(String.init) ?? "?",
+                  w.isOnActiveSpace ? "yes" : "no", w.isVisible ? "yes" : "no", screens.count)
+        } else {
+            NSLog("[SpaceTrace] %@ — no window; mouseScreen=%@ mainScreen=%@ screens=%d",
+                  phase, mouseScreen.map(String.init) ?? "?", mainScreen.map(String.init) ?? "?", screens.count)
+        }
+    }
+
+    /// ITER-055 — if the autosave-restored frame is not visible on ANY current
+    /// screen (stale frame from a now-disconnected / rearranged display), the
+    /// window opens «somewhere» off the user's view. Re-center it on the screen
+    /// the user is actually looking at (cursor screen, else main). Only fires
+    /// when the frame is genuinely off all screens — an intentional placement on
+    /// a real secondary display is left alone (the trace log will reveal if THAT
+    /// is the reported case, and we fix precisely then).
+    static func recenterIfOffscreen(_ w: NSWindow) {
+        let visibleOnSome = NSScreen.screens.contains { $0.visibleFrame.intersects(w.frame) }
+        guard !visibleOnSome else { return }
+        let target = NSScreen.screens.first { NSMouseInRect(NSEvent.mouseLocation, $0.frame, false) } ?? NSScreen.main
+        guard let scr = target else { return }
+        let vf = scr.visibleFrame
+        let s = w.frame.size
+        w.setFrameOrigin(NSPoint(x: vf.midX - s.width / 2, y: vf.midY - s.height / 2))
+        NSLog("[SpaceTrace] recentered off-screen window onto cursor screen %@", NSStringFromRect(w.frame))
+    }
+
     /// Collection behavior applied to the main window on create / reactivate.
     ///
     /// ITER-050 B2.1 — `.canJoinAllSpaces` (via `MWWindowBehavior.main`)
@@ -80,6 +120,7 @@ final class MainWindowController: NSObject, NSWindowDelegate {
             if let tab = initialTab {
                 NotificationCenter.default.post(name: .switchMainTab, object: tab)
             }
+            Self.logPlacement(window, "reuse:on-entry")
             // Space-throw fix, final form (ITER-050 B2.1): join-all-Spaces is
             // applied TRANSIENTLY around the order-in, so activation can never
             // switch Spaces, then the window parks on the Space it appeared on
@@ -94,6 +135,9 @@ final class MainWindowController: NSObject, NSWindowDelegate {
             if window.isVisible && !window.isOnActiveSpace {
                 window.orderOut(nil)
             }
+            // ITER-055 — same off-screen guard as the create path: a hidden
+            // window's frame may be stranded on a display that's since gone.
+            Self.recenterIfOffscreen(window)
             // ORDER MATTERS for Space-throw prevention:
             //   1. makeKeyAndOrderFront FIRST — with join-all-Spaces the
             //      window is on the user's current Space by definition.
@@ -106,6 +150,7 @@ final class MainWindowController: NSObject, NSWindowDelegate {
             NSApp.setActivationPolicy(.regular)
             DispatchQueue.main.async { [weak window] in
                 window?.collectionBehavior = MWWindowBehavior.mainParked
+                Self.logPlacement(window, "reuse:after-order-front")
             }
             return
         }
@@ -140,6 +185,11 @@ final class MainWindowController: NSObject, NSWindowDelegate {
         window.isRestorable = false
         // Persist user's last frame across launches via UserDefaults.
         window.setFrameAutosaveName("MetaWhispMainWindow")
+        // ITER-055 — the autosave restore above can place the window on a
+        // now-disconnected / rearranged display → "opens somewhere but not on
+        // my screen". Pull it back onto a visible screen before showing.
+        Self.logPlacement(window, "create:after-autosave-restore")
+        Self.recenterIfOffscreen(window)
         window.collectionBehavior = Self.windowBehavior
         // Install delegate so `windowShouldClose` intercepts the red button.
         window.delegate = self
@@ -161,6 +211,7 @@ final class MainWindowController: NSObject, NSWindowDelegate {
         // Park after order-in (see the reuse branch above for the rationale).
         DispatchQueue.main.async { [weak window] in
             window?.collectionBehavior = MWWindowBehavior.mainParked
+            Self.logPlacement(window, "create:after-order-front")
         }
 
         NSLog("[MainWindow] Opened")
