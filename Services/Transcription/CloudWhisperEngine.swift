@@ -52,14 +52,14 @@ final class CloudWhisperEngine: TranscriptionEngine, @unchecked Sendable {
         // No-op
     }
 
-    func transcribe(audioSamples: [Float], language: String?, promptWords: [String] = []) async throws -> TranscriptionResult {
+    func transcribe(audioSamples: [Float], language: String?, promptWords: [String], countUsage: Bool) async throws -> TranscriptionResult {
         let settings = await MainActor.run { AppSettings.shared }
         let isPro = await MainActor.run { LicenseService.shared.isPro }
         let licenseKey = await MainActor.run { LicenseService.shared.licenseKey }
 
         // Pro users → server proxy (no API key needed)
         if isPro, let key = licenseKey {
-            return try await transcribeViaProxy(audioSamples: audioSamples, language: language, promptWords: promptWords, licenseKey: key)
+            return try await transcribeViaProxy(audioSamples: audioSamples, language: language, promptWords: promptWords, licenseKey: key, countUsage: countUsage)
         }
 
         // Free users → direct API call with own key
@@ -80,19 +80,32 @@ final class CloudWhisperEngine: TranscriptionEngine, @unchecked Sendable {
         return try await transcribeDirect(audioSamples: audioSamples, language: language, promptWords: promptWords, provider: provider, apiKey: apiKey)
     }
 
+    /// Build the Pro-proxy transcribe URL. Pure + static so the query contract
+    /// (esp. `count_usage=false` for un-metered meeting channels) is unit-tested
+    /// without touching the network. Built via `URLComponents`/`URLQueryItem`
+    /// so a crafted prompt/language value can NOT inject `&count_usage=false`
+    /// and turn a metered request unmetered (Codex review). `count_usage` is
+    /// emitted ONLY when false — absence means "bill it", matching the worker.
+    static func proxyTranscribeURLString(language: String?, promptWords: [String], countUsage: Bool) -> String {
+        var comps = URLComponents(string: "https://api.metawhisp.com/api/pro/transcribe")!
+        var items: [URLQueryItem] = []
+        if let lang = language, lang != "auto" { items.append(URLQueryItem(name: "language", value: lang)) }
+        if !promptWords.isEmpty { items.append(URLQueryItem(name: "prompt", value: promptWords.joined(separator: ", "))) }
+        if !countUsage { items.append(URLQueryItem(name: "count_usage", value: "false")) }
+        comps.queryItems = items.isEmpty ? nil : items
+        return comps.string ?? "https://api.metawhisp.com/api/pro/transcribe"
+    }
+
     /// Pro: send audio to our server proxy
-    private func transcribeViaProxy(audioSamples: [Float], language: String?, promptWords: [String], licenseKey: String) async throws -> TranscriptionResult {
+    private func transcribeViaProxy(audioSamples: [Float], language: String?, promptWords: [String], licenseKey: String, countUsage: Bool) async throws -> TranscriptionResult {
         let startTime = CFAbsoluteTimeGetCurrent()
         let wavData = WAVEncoder.encode(samples: audioSamples)
         let audioDuration = Double(audioSamples.count) / 16000.0
 
-        NSLog("[CloudWhisper] PRO: Sending %.1fs audio to server proxy, WAV size: %d bytes", audioDuration, wavData.count)
+        NSLog("[CloudWhisper] PRO: Sending %.1fs audio to server proxy (meter=%@), WAV size: %d bytes",
+              audioDuration, countUsage ? "yes" : "no", wavData.count)
 
-        var urlStr = "https://api.metawhisp.com/api/pro/transcribe"
-        var queryItems: [String] = []
-        if let lang = language, lang != "auto" { queryItems.append("language=\(lang)") }
-        if !promptWords.isEmpty { queryItems.append("prompt=\(promptWords.joined(separator: ", ").addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? "")") }
-        if !queryItems.isEmpty { urlStr += "?" + queryItems.joined(separator: "&") }
+        let urlStr = Self.proxyTranscribeURLString(language: language, promptWords: promptWords, countUsage: countUsage)
 
         var request = URLRequest(url: URL(string: urlStr)!)
         request.httpMethod = "POST"

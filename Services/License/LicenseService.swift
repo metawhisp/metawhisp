@@ -330,6 +330,43 @@ final class LicenseService: ObservableObject {
         KeychainHelper.save(key: Self.lastVerifiedKey, value: "")
     }
 
+    /// ITER-054 — book a meeting's wall-clock minutes to the Pro quota ONCE.
+    /// Meetings transcribe BOTH channels un-metered (`count_usage=false`) so the
+    /// old dual-stream 2× double-count is gone; this posts the single real
+    /// charge = the meeting's length (independent of who talked or how much).
+    /// Best-effort: a failed log means at most one free meeting — never a crash
+    /// and never a blocked save.
+    func logMeetingUsage(minutes: Double) async {
+        guard minutes > 0, let key = licenseKey, !key.isEmpty else { return }
+        guard let url = URL(string: "\(api)/api/usage") else { return }
+        let body = try? JSONSerialization.data(withJSONObject: ["license_key": key, "minutes": minutes])
+        // Codex review — the booking is the ONLY charge for a meeting (all its
+        // transcription chunks went out count_usage=false), so a non-2xx must
+        // NOT be treated as success: URLSession doesn't throw on 4xx/5xx. Verify
+        // the status, retry transient failures, and log an HONEST miss so an
+        // uncharged meeting is visible instead of silently free.
+        for attempt in 1...3 {
+            var req = URLRequest(url: url)
+            req.httpMethod = "POST"
+            req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            req.httpBody = body
+            req.timeoutInterval = 15
+            do {
+                let (_, resp) = try await URLSession.shared.data(for: req)
+                let code = (resp as? HTTPURLResponse)?.statusCode ?? -1
+                if (200..<300).contains(code) {
+                    NSLog("[License] ✅ Booked meeting usage: %.1f min", minutes)
+                    return
+                }
+                NSLog("[License] ⚠️ usage booking HTTP %d (attempt %d/3) — %.1f min", code, attempt, minutes)
+            } catch {
+                NSLog("[License] ⚠️ usage booking error (attempt %d/3): %@", attempt, error.localizedDescription)
+            }
+            if attempt < 3 { try? await Task.sleep(for: .seconds(Double(attempt) * 2)) }
+        }
+        NSLog("[License] ❌ meeting usage NOT booked after 3 tries — %.1f min left uncharged", minutes)
+    }
+
     /// Sign out and clear all stored credentials.
     func signOut() {
         KeychainHelper.save(key: "com.metawhisp.sessionToken", value: "")

@@ -38,7 +38,10 @@ final class WhisperKitEngine: TranscriptionEngine, @unchecked Sendable {
         }
     }
 
-    func transcribe(audioSamples: [Float], language: String?, promptWords: [String] = []) async throws -> TranscriptionResult {
+    // `countUsage` ignored — on-device WhisperKit never bills the Pro quota.
+    // No default args (they'd collide with the protocol extension's 3-arg
+    // convenience on concrete calls) — the extension supplies the short forms.
+    func transcribe(audioSamples: [Float], language: String?, promptWords: [String], countUsage: Bool) async throws -> TranscriptionResult {
         guard let kit = lock.withLock({ whisperKit }) else {
             throw TranscriptionError.modelNotLoaded
         }

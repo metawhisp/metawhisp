@@ -223,7 +223,12 @@ final class LiveMeetingAdvisor: ObservableObject {
                 // applyCorrections below.
                 promptWords: TranscriptionLanguageResolver.filterPromptWords(
                     BrandGlossary.canonicalNames(), language: lang
-                )
+                ),
+                // ITER-054 — live-advice chunks are part of THIS meeting, which
+                // is billed once by wall-clock at finalize (applyMeetingStop).
+                // Metering them here (Codex review) double-booked opt-in
+                // live-advice meetings on top of the final log. Ride free.
+                countUsage: false
             )
             let rawText = result.text.trimmingCharacters(in: .whitespacesAndNewlines)
 

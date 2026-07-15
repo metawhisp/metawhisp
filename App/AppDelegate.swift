@@ -1439,6 +1439,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
                 return
             }
 
+            // ITER-054 — book the meeting's quota ONCE, by wall-clock length,
+            // and ONLY when it was cloud-transcribed via the Pro proxy (chunks
+            // went out count_usage=false). On-device (WhisperKit) and free-tier
+            // BYOK meetings never touch the worker, so they book nothing.
+            if engine is CloudWhisperEngine, LicenseService.shared.isPro {
+                await LicenseService.shared.logMeetingUsage(minutes: duration / 60.0)
+            }
+
             // AUD-002 — partial success: mark the saved transcript incomplete so a
             // dropped chunk is never hidden behind an apparently complete meeting.
             let fullText = DualStreamMerger.markIncomplete(dual.text, failedChunks: dual.failedChunks)
@@ -1472,8 +1480,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         system: [Float],
         engine: TranscriptionEngine
     ) async -> (text: String, failedChunks: Int) {
-        let micResult = await transcribeStreamChunked(samples: mic, engine: engine, speaker: .me)
-        let sysResult = await transcribeStreamChunked(samples: system, engine: engine, speaker: .them)
+        // ITER-054 — bill the meeting ONCE by its real LENGTH, not by summing
+        // both channels. Both passes transcribe un-metered (countUsage: false);
+        // the caller (applyMeetingStop) logs the meeting's wall-clock minutes a
+        // single time. This bills "1h meeting = 60 min", independent of who
+        // talked or how much (a listening-only call bills the full hour too).
+        let micResult = await transcribeStreamChunked(samples: mic, engine: engine, speaker: .me, countUsage: false)
+        let sysResult = await transcribeStreamChunked(samples: system, engine: engine, speaker: .them, countUsage: false)
         let merged = DualStreamMerger.mergeStreams(mic: micResult.segments, system: sysResult.segments)
         let failedChunks = micResult.failedChunks + sysResult.failedChunks
         NSLog("[MetaWhisp] Meeting dual-stream: mic=%d segments, system=%d segments → %d merged (%d failed chunks)",
@@ -1489,7 +1502,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     private func transcribeStreamChunked(
         samples: [Float],
         engine: TranscriptionEngine,
-        speaker: Speaker
+        speaker: Speaker,
+        countUsage: Bool
     ) async -> (segments: [StreamSegment], failedChunks: Int) {
         guard !samples.isEmpty else { return ([], 0) }
         let chunks = AppDelegate.splitOnSilenceBoundaries(samples: samples, targetChunkSec: 300, searchWindowSec: 15)
@@ -1534,7 +1548,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
                     while true {
                         attempt += 1
                         do {
-                            return try await engine.transcribe(audioSamples: chunk, language: lang, promptWords: TranscriptionLanguageResolver.filterPromptWords(BrandGlossary.canonicalNames(), language: lang))
+                            // ITER-054 — bill the meeting ONCE. The caller meters
+                            // exactly one channel (mic normally; system only when
+                            // mic produced nothing — muted/listening-only calls),
+                            // so a dual-stream meeting costs 1× its length, not 2×.
+                            // Both channels still transcribe — only quota accounting
+                            // is single-channel.
+                            return try await engine.transcribe(
+                                audioSamples: chunk, language: lang,
+                                promptWords: TranscriptionLanguageResolver.filterPromptWords(BrandGlossary.canonicalNames(), language: lang),
+                                countUsage: countUsage)
                         } catch {
                             NSLog("[MetaWhisp] ❌ Meeting %@ chunk %d transcribe attempt %d/2 failed: %@",
                                   label, i + 1, attempt, error.localizedDescription)
@@ -1754,7 +1777,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
 
         do {
             let lang = AppSettings.shared.transcriptionLanguage == "auto" ? nil : AppSettings.shared.transcriptionLanguage
-            let result = try await engine.transcribe(audioSamples: tailMixed, language: lang, promptWords: TranscriptionLanguageResolver.filterPromptWords(BrandGlossary.canonicalNames(), language: lang))
+            // ITER-054 — this tail is part of the meeting (billed once by
+            // wall-clock at finalize); never meter it on its own.
+            let result = try await engine.transcribe(audioSamples: tailMixed, language: lang, promptWords: TranscriptionLanguageResolver.filterPromptWords(BrandGlossary.canonicalNames(), language: lang), countUsage: false)
             let rawText = result.text.trimmingCharacters(in: .whitespacesAndNewlines)
             // Apply the same hallucination filter as the chunked path.
             // 2026-05-28: also strip mid-text artifacts so the tail can't
