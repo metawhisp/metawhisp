@@ -330,6 +330,47 @@ final class LicenseService: ObservableObject {
         KeychainHelper.save(key: Self.lastVerifiedKey, value: "")
     }
 
+    // MARK: - ITER-056 — meeting-minutes meter (Settings → Account)
+
+    /// Current-period usage as the worker reports it. Meetings-only: dictations
+    /// never consume minutes (worker gate exempts short metered audio).
+    struct UsageInfo: Equatable {
+        let used: Double
+        let limit: Double
+        let balance: Double
+        let periodStart: String?
+    }
+
+    @Published var usage: UsageInfo?
+
+    /// Pure + static so the response contract is unit-tested without network.
+    nonisolated static func parseUsage(_ data: Data) -> UsageInfo? {
+        guard let obj = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
+              let used = obj["used"] as? Double,
+              let limit = obj["limit"] as? Double,
+              let balance = obj["balance"] as? Double else { return nil }
+        return UsageInfo(used: used, limit: limit, balance: balance,
+                         periodStart: obj["period_start"] as? String)
+    }
+
+    /// Refresh the meter. AUD-025 (Codex review) — the key rides in the
+    /// Authorization HEADER, never the URL: request targets end up in
+    /// proxy/access logs. The worker accepts both; we only use the header.
+    func fetchUsage() async {
+        guard let key = licenseKey, !key.isEmpty,
+              let url = URL(string: "\(api)/api/usage") else { return }
+        var req = URLRequest(url: url)
+        req.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization")
+        req.timeoutInterval = 10
+        do {
+            let (data, resp) = try await URLSession.shared.data(for: req)
+            guard (resp as? HTTPURLResponse)?.statusCode == 200 else { return }
+            if let parsed = Self.parseUsage(data) { usage = parsed }
+        } catch {
+            // Meter is cosmetic — keep the last known value silently.
+        }
+    }
+
     /// ITER-054 — book a meeting's wall-clock minutes to the Pro quota ONCE.
     /// Meetings transcribe BOTH channels un-metered (`count_usage=false`) so the
     /// old dual-stream 2× double-count is gone; this posts the single real

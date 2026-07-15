@@ -30,6 +30,11 @@ final class AppSettings: ObservableObject {
     @AppStorage("enforceProEntitlementTTL") var enforceProEntitlementTTL: Bool = false
     @AppStorage("hasCompletedOnboarding") var hasCompletedOnboarding: Bool = false
 
+    /// ITER-056 — GitHub star promo lifecycle stage (see `GitHubStarPromo`):
+    /// 0 = never clicked (visible, no ✕) · 1 = starred (visible with ✕) ·
+    /// 2 = dismissed forever.
+    @AppStorage("githubStarStage") var githubStarStage: Int = 0
+
     /// One-time migration flag (ITER-026): on first launch after the unified
     /// notification work, dismiss every TaskItem still flagged
     /// `sourceApp == "Calendar"`. Those rows came from the old bulk pipeline

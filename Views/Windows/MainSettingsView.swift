@@ -27,10 +27,14 @@ struct MainSettingsView: View {
     // (1500-line settings was hard to scan).
     @State private var selectedTab: SettingsTab = .general
 
+    /// ITER-056 — 5 tabs, one product vertical each (founder-approved mockup
+    /// 2026-07-15): a key lives next to the feature it powers; Integrations
+    /// holds external services only.
     enum SettingsTab: String, CaseIterable, Identifiable {
         case general = "General"
         case dictation = "Dictation"
-        case ai = "AI"
+        case meetings = "Meetings"
+        case brain = "Second Brain"
         case integrations = "Integrations"
         var id: String { rawValue }
     }
@@ -107,34 +111,34 @@ struct MainSettingsView: View {
         switch tab {
         case .general:
             VStack(spacing: MW.sp12) {
-                accountSection
-                cloudSection
-                twoColumn(hotkeySection, VStack(spacing: MW.sp12) {
-                    overlaySection
-                    githubStarSection
-                })
+                accountSection            // + minutes meter + star promo (ITER-056)
+                aiModelsSection           // AI ENGINE — app-wide text intelligence
+                cloudSection              // CLOUD LLM (Pro included / BYOK)
+                twoColumn(hotkeySection, overlaySection)
                 optionsSection
             }
         case .dictation:
             VStack(spacing: MW.sp12) {
-                modelSection
+                modelSection              // engine + Whisper models + cloud provider key
                 microphoneSection
                 twoColumn(languageSection, processingSection)
                 twoColumn(translationSection, textStyleSection)
             }
-        case .ai:
+        case .meetings:
             VStack(spacing: MW.sp12) {
-                aiModelsSection                  // ITER-039 — local LLM catalog
+                meetingSection            // recording + Deepgram + limits + recap + live advice
+            }
+        case .brain:
+            VStack(spacing: MW.sp12) {
+                screenContextSection      // Screen Intelligence
                 twoColumn(memoriesSection, adviceSection)
+                proactiveSection
                 dailySummarySection
                 weeklyPatternsSection
                 voiceQuestionSection
             }
         case .integrations:
             VStack(spacing: MW.sp12) {
-                meetingSection
-                screenContextSection
-                proactiveSection
                 twoColumn(fileIndexingSection, appleNotesSection)
                 calendarSection
                 obsidianSyncSection
@@ -744,10 +748,82 @@ struct MainSettingsView: View {
                     .font(MW.monoSm).foregroundStyle(MW.textMuted)
             }
             .buttonStyle(.plain)
+
+            // ITER-056 — meeting-minutes meter. Meetings-only quota; dictations
+            // never blocked. Fetched from the worker on section appear.
+            if license.isPro, let u = license.usage {
+                GlassDivider()
+                HStack {
+                    Text("MEETING MINUTES").blocksLabel()
+                    Spacer()
+                    Text("\(Int(u.balance)) of \(Int(u.limit)) left\(resetDaySuffix(u.periodStart))")
+                        .font(MW.monoSm).foregroundStyle(MW.textSecondary)
+                }
+                GeometryReader { geo in
+                    ZStack(alignment: .leading) {
+                        RoundedRectangle(cornerRadius: 4).fill(MW.border)
+                        RoundedRectangle(cornerRadius: 4)
+                            .fill(u.balance / max(u.limit, 1) < 0.1 ? MW.processing : MW.idle)
+                            .frame(width: geo.size.width * min(1, max(0, u.balance / max(u.limit, 1))))
+                    }
+                }
+                .frame(height: 7)
+                Text("Only meetings consume minutes. Voice dictations are never blocked.")
+                    .font(MW.monoSm).foregroundStyle(MW.textMuted)
+            }
+
+            // ITER-056 — GitHub star promo (3-stage lifecycle, see GitHubStarPromo).
+            if GitHubStarPromo.isVisible(stage: settings.githubStarStage) {
+                HStack(spacing: MW.sp8) {
+                    Text("⭐").font(.system(size: 13))
+                    Text("Enjoying MetaWhisp? Star it on GitHub — it helps the project.")
+                        .font(MW.monoSm).foregroundStyle(MW.textSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Spacer(minLength: MW.sp8)
+                    Button("Star") {
+                        NSWorkspace.shared.open(URL(string: "https://github.com/metawhisp/metawhisp")!)
+                        settings.githubStarStage = GitHubStarPromo.afterStarClick(stage: settings.githubStarStage)
+                    }
+                    .buttonStyle(.plain)
+                    .font(MW.monoSm)
+                    .foregroundStyle(MW.textPrimary)
+                    .padding(.horizontal, MW.sp8).padding(.vertical, 3)
+                    .overlay(RoundedRectangle(cornerRadius: MW.rTiny, style: .continuous).stroke(MW.border, lineWidth: 0.5))
+                    if GitHubStarPromo.showsClose(stage: settings.githubStarStage) {
+                        Button {
+                            settings.githubStarStage = GitHubStarPromo.afterCloseClick(stage: settings.githubStarStage)
+                        } label: {
+                            Image(systemName: "xmark").font(.system(size: 9, weight: .semibold))
+                                .foregroundStyle(MW.textMuted)
+                        }
+                        .buttonStyle(.plain)
+                        .help("Hide")
+                    }
+                }
+                .padding(MW.sp8)
+                .overlay(RoundedRectangle(cornerRadius: MW.rTiny, style: .continuous).stroke(MW.border, lineWidth: 0.5))
+            }
         }
         .padding(MW.sp16)
         .frame(maxWidth: .infinity, alignment: .topLeading)
         .mwCard(radius: MW.rMedium, elevation: .raised)
+        // Codex review — id-bound so signing in WHILE Settings is open
+        // re-fetches (a bare .task runs once per view identity).
+        .task(id: license.licenseKey) { await license.fetchUsage() }
+    }
+
+    /// «· resets on the 25th» from the worker's period_start (day-of-month).
+    private func resetDaySuffix(_ periodStart: String?) -> String {
+        guard let p = periodStart, p.count >= 10,
+              let day = Int(p.suffix(2)) else { return "" }
+        let suffix: String
+        switch day % 10 {
+        case 1 where day != 11: suffix = "st"
+        case 2 where day != 12: suffix = "nd"
+        case 3 where day != 13: suffix = "rd"
+        default: suffix = "th"
+        }
+        return " · resets on the \(day)\(suffix)"
     }
 
     // MARK: - Hotkeys
@@ -1090,19 +1166,8 @@ struct MainSettingsView: View {
     /// star count (per design). Uses the shared `GlassChipButton(accent:)` so the
     /// button follows the user's selected accent preset (mono / orange / electric
     /// / mint / violet) instead of any hardcoded colour.
-    private var githubStarSection: some View {
-        VStack(spacing: MW.sp12) {
-            Text("Star us on GitHub")
-                .font(MW.mono)
-                .foregroundStyle(MW.textPrimary)
-
-            GlassChipButton(label: "Star on GitHub", icon: "star", accent: true, radius: MW.rSmall) {
-                NSWorkspace.shared.open(URL(string: "https://github.com/metawhisp/metawhisp")!)
-            }
-        }
-        .frame(maxWidth: .infinity)
-        .padding(MW.sp16)
-    }
+    // (githubStarSection removed — ITER-056: the star promo lives in
+    // accountSection with the 3-stage lifecycle, see GitHubStarPromo.)
 
     private func pillStyleRow(_ style: (label: String, value: String, desc: String)) -> some View {
         let isSelected = settings.pillStyle == style.value
@@ -1137,7 +1202,7 @@ struct MainSettingsView: View {
 
     private var cloudSection: some View {
         VStack(alignment: .leading, spacing: MW.sp8) {
-            Text("LLM PROVIDER").blocksLabel()
+            Text("CLOUD LLM").blocksLabel()
 
             if license.isPro {
                 HStack(spacing: MW.sp4) {
@@ -1665,7 +1730,9 @@ struct MainSettingsView: View {
     /// section minimal for users who haven't opted in.
     private var aiModelsSection: some View {
         VStack(alignment: .leading, spacing: MW.sp10) {
-            Text("AI MODELS").blocksLabel()
+            Text("AI ENGINE").blocksLabel()
+                // ITER-056 — cross-hint: this is TEXT intelligence (cleanup,
+                // recaps, memories, chat); speech-to-text lives in Dictation.
                 // ITER-044 — Foundation Models is a real backend now, so we only
                 // clear a persisted FM selection when THIS Mac can't run it
                 // (< macOS 26 → verdict .incompatible). On Tahoe+ the selection
