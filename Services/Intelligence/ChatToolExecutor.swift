@@ -539,15 +539,24 @@ final class ChatToolExecutor: ObservableObject {
         let limit = min(20, max(1, Int(args["limit"] ?? "8") ?? 8))
         let days = min(90, max(1, Int(args["days"] ?? "7") ?? 7))
         let cutoff = Date().addingTimeInterval(-Double(days) * 86_400)
+        // Review fix — LOCAL timezone, not UTC: «что я делал вчера» is a
+        // day-boundary question; UTC stamps shift the user's evening into the
+        // wrong day and the LLM answers about the wrong date.
         let iso = ISO8601DateFormatter()
+        iso.timeZone = .current
 
+        let ownApp = (Bundle.main.object(forInfoDictionaryKey: "CFBundleName") as? String) ?? "MetaWhisp"
         let ctx = ModelContext(container)
-        // Distilled timeline — «what was I doing».
+        // Distilled timeline — «what was I doing». Own-app rows dropped for the
+        // same feedback-loop reason as raw OCR below (review fix — the filter
+        // used to cover only one of the two layers).
         let obsDesc = FetchDescriptor<ScreenObservation>(
             predicate: #Predicate { $0.endedAt >= cutoff },
             sortBy: [SortDescriptor(\.endedAt, order: .reverse)]
         )
-        let observations = (try? ctx.fetch(obsDesc)) ?? []
+        let observations = ((try? ctx.fetch(obsDesc)) ?? []).filter {
+            !ScreenContextNoiseFilter.isOwnWindow(appName: $0.appName, ownAppName: ownApp)
+        }
         let rankedObs = await rankByQuery(
             items: observations, query: query, embedding: { _ in nil },
             textForSubstring: { "\($0.appName) \($0.windowTitle ?? "") \($0.contextSummary) \($0.currentActivity)" },
@@ -561,7 +570,6 @@ final class ChatToolExecutor: ObservableObject {
             sortBy: [SortDescriptor(\.timestamp, order: .reverse)]
         )
         rawDesc.fetchLimit = 2000
-        let ownApp = (Bundle.main.object(forInfoDictionaryKey: "CFBundleName") as? String) ?? "MetaWhisp"
         let raws = ((try? ctx.fetch(rawDesc)) ?? []).filter {
             !ScreenContextNoiseFilter.isOwnWindow(appName: $0.appName, ownAppName: ownApp)
         }
@@ -629,8 +637,12 @@ final class ChatToolExecutor: ObservableObject {
                                             textForSubstring: (T) -> String,
                                             limit: Int) async -> [T] {
         guard !items.isEmpty else { return [] }
-        // Try semantic ranking via embeddings (Pro only).
-        if let svc = embeddingService, LicenseService.shared.isPro {
+        // Try semantic ranking via embeddings (Pro only). Review fix: embed the
+        // QUERY only when at least one item actually carries an embedding —
+        // otherwise (e.g. screen history, keyword v1) the network call is a
+        // guaranteed-wasted ~300ms + Pro cost before the substring fallback.
+        if let svc = embeddingService, LicenseService.shared.isPro,
+           items.contains(where: { embedding($0) != nil }) {
             if let qVec = try? await svc.embedOne(query) {
                 var scored: [(T, Float)] = []
                 for item in items {

@@ -100,11 +100,15 @@ final class ScreenHistorySearchToolTests: XCTestCase {
     }
 
     /// Own-app windows are a feedback loop (our chat answers re-captured as
-    /// «facts on screen») — they never surface in results.
+    /// «facts on screen») — they never surface in results, in EITHER layer
+    /// (review fix: the filter used to cover raw OCR only, not activities).
     func test_search_dropsOwnAppWindows() async throws {
         let (executor, ctx) = try makeExecutor()
         let ownApp = (Bundle.main.object(forInfoDictionaryKey: "CFBundleName") as? String) ?? "MetaWhisp"
         insertRaw(ctx, app: ownApp, title: "Chat", ocr: "договор по ProjectAlpha обсуждение")
+        insertObservation(ctx, app: ownApp,
+                          summary: "User reading ProjectAlpha договор answer in chat",
+                          activity: "Chatting")
         try ctx.save()
 
         let result = await executor.executeReadOnly(.init(id: nil, tool: "searchScreenHistory",
