@@ -557,8 +557,10 @@ final class ChatToolExecutor: ObservableObject {
         let observations = ((try? ctx.fetch(obsDesc)) ?? []).filter {
             !ScreenContextNoiseFilter.isOwnWindow(appName: $0.appName, ownAppName: ownApp)
         }
+        // ITER-053.4 slice 2 — semantic when observations carry embeddings
+        // (rankByQuery falls back to keyword for nil rows / non-Pro).
         let rankedObs = await rankByQuery(
-            items: observations, query: query, embedding: { _ in nil },
+            items: observations, query: query, embedding: { $0.embedding },
             textForSubstring: { "\($0.appName) \($0.windowTitle ?? "") \($0.contextSummary) \($0.currentActivity)" },
             limit: limit)
 
@@ -637,39 +639,55 @@ final class ChatToolExecutor: ObservableObject {
                                             textForSubstring: (T) -> String,
                                             limit: Int) async -> [T] {
         guard !items.isEmpty else { return [] }
+
+        // Substring ranker: token overlap count. Used as the primary path when
+        // no embeddings exist, and as the FILLER for un-embedded rows when the
+        // semantic path runs (Codex review — during gradual backfill, rows
+        // without vectors must degrade to keyword matching, not vanish).
+        func keywordRanked(_ candidates: [T], cap: Int) -> [T] {
+            let qTokens = query.lowercased()
+                .components(separatedBy: CharacterSet.alphanumerics.inverted)
+                .filter { $0.count >= 2 }
+            guard !qTokens.isEmpty else { return Array(candidates.prefix(cap)) }
+            return candidates.map { item -> (T, Int) in
+                let text = textForSubstring(item).lowercased()
+                let hits = qTokens.reduce(0) { $0 + (text.contains($1) ? 1 : 0) }
+                return (item, hits)
+            }
+            .filter { $0.1 > 0 }
+            .sorted { $0.1 > $1.1 }
+            .prefix(cap)
+            .map { $0.0 }
+        }
+
         // Try semantic ranking via embeddings (Pro only). Review fix: embed the
         // QUERY only when at least one item actually carries an embedding —
-        // otherwise (e.g. screen history, keyword v1) the network call is a
-        // guaranteed-wasted ~300ms + Pro cost before the substring fallback.
+        // otherwise the network call is a guaranteed-wasted ~300ms + Pro cost.
         if let svc = embeddingService, LicenseService.shared.isPro,
            items.contains(where: { embedding($0) != nil }) {
             if let qVec = try? await svc.embedOne(query) {
                 var scored: [(T, Float)] = []
+                var unembedded: [T] = []
                 for item in items {
-                    guard let data = embedding(item) else { continue }
+                    guard let data = embedding(item) else { unembedded.append(item); continue }
                     let vec = EmbeddingService.decode(data)
-                    if vec.isEmpty { continue }
+                    if vec.isEmpty { unembedded.append(item); continue }
                     scored.append((item, EmbeddingService.cosineSimilarity(qVec, vec)))
                 }
                 if !scored.isEmpty {
-                    return scored.sorted { $0.1 > $1.1 }.prefix(limit).map { $0.0 }
+                    let semanticAll = scored.sorted { $0.1 > $1.1 }.map { $0.0 }
+                    // Codex review — unembedded rows with REAL keyword hits must
+                    // compete even when embedded rows alone could fill the limit
+                    // (mid-backfill, an exact match must not vanish). They get
+                    // up to half the slots; semantic keeps at least half.
+                    let kwFiller = keywordRanked(unembedded, cap: limit)
+                    guard !kwFiller.isEmpty else { return Array(semanticAll.prefix(limit)) }
+                    let semCount = max(limit - kwFiller.count, limit / 2)
+                    return Array((semanticAll.prefix(semCount) + kwFiller).prefix(limit))
                 }
             }
         }
-        // Substring fallback: token overlap count.
-        let qTokens = query.lowercased()
-            .components(separatedBy: CharacterSet.alphanumerics.inverted)
-            .filter { $0.count >= 2 }
-        guard !qTokens.isEmpty else { return Array(items.prefix(limit)) }
-        let scored = items.map { item -> (T, Int) in
-            let text = textForSubstring(item).lowercased()
-            let hits = qTokens.reduce(0) { $0 + (text.contains($1) ? 1 : 0) }
-            return (item, hits)
-        }
-        return scored.filter { $0.1 > 0 }
-            .sorted { $0.1 > $1.1 }
-            .prefix(limit)
-            .map { $0.0 }
+        return keywordRanked(items, cap: limit)
     }
 
     private func jsonString(_ obj: Any) -> String {

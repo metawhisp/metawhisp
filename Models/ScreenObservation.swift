@@ -35,6 +35,11 @@ final class ScreenObservation {
     /// End of the observation window.
     var endedAt: Date
     var createdAt: Date
+    /// ITER-053.4 slice 2 — OpenAI text-embedding-3-small 1536d Float32 vector
+    /// packed as raw Data (same scheme as UserMemory/TaskItem). Nil until the
+    /// background embedder runs; searchScreenHistory falls back to keyword
+    /// ranking for nil rows. Additive optional field → lightweight migration.
+    var embedding: Data?
 
     init(
         screenContextId: UUID?,

@@ -153,6 +153,7 @@ final class ScreenExtractor: ObservableObject {
             // startedAt + minVisitSeconds to prevent 0-duration rows (single-sample visits
             // previously had start == end, which broke dashboard "top apps by time").
             var obsCount = 0
+            var newObservations: [ScreenObservation] = []
             for (i, obsJson) in parsed.observations.enumerated() where i < trimmed.count {
                 let v = trimmed[i]
                 let durationFloor = AppSettings.shared.screenContextInterval
@@ -171,7 +172,13 @@ final class ScreenExtractor: ObservableObject {
                     endedAt: safeEnd
                 )
                 ctx.insert(obs)
+                newObservations.append(obs)
                 obsCount += 1
+            }
+            // ITER-053.4 slice 2 — fire-and-forget embeddings so
+            // searchScreenHistory ranks these semantically (graceful nil-fail).
+            if !newObservations.isEmpty {
+                AppDelegate.shared?.embeddingService.embedScreenObservationsInBackground(newObservations, in: ctx)
             }
 
             // 2. Persist memories — linked back to the visit's ScreenContext.

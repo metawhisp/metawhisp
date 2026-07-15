@@ -26,7 +26,6 @@ final class MemoryExtractor: ObservableObject {
 
     private let llm = OpenAIService()
     private let settings = AppSettings.shared
-    private weak var screenContext: ScreenContextService?
     private var modelContainer: ModelContainer?
 
     /// SB-1 — durable queue of conversations awaiting extraction. Replaces the
@@ -39,8 +38,9 @@ final class MemoryExtractor: ObservableObject {
     /// Max memories to insert per extraction.
     private let maxPerExtraction: Int = 2
 
-    func configure(screenContext: ScreenContextService, modelContainer: ModelContainer) {
-        self.screenContext = screenContext
+    // ITER-053.1 — the `screenContext` dependency was dead wiring (stored,
+    // never read: extraction runs on transcripts/DB, not the live screen).
+    func configure(modelContainer: ModelContainer) {
         self.modelContainer = modelContainer
     }
 

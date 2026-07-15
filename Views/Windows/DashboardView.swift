@@ -149,27 +149,14 @@ private struct ScreenActivityCard: View {
         )
     }
 
-    /// Top-5 apps by on-screen seconds in the last 24h. User feedback (2026-04-26):
-    /// equal heights are now Grid-managed so 5 fits without breaking layout.
+    /// Top-5 apps by on-screen seconds in the last 24h — ITER-053.1: the math
+    /// lives in `ScreenTimeAggregator` (shared with DailySummary so the two
+    /// surfaces can't diverge). Percent is now of TOTAL screen time, not of the
+    /// top-5 subset (the old inline math overstated shares).
     private var topApps: [(appName: String, seconds: Double, percent: Int)] {
-        guard contexts.count >= 2 else { return [] }
-        let maxGap: TimeInterval = 300
-        var byApp: [String: Double] = [:]
-        for i in 0..<(contexts.count - 1) {
-            let c = contexts[i]
-            let next = contexts[i + 1]
-            let gap = min(next.timestamp.timeIntervalSince(c.timestamp), maxGap)
-            guard gap > 0 else { continue }
-            byApp[c.appName, default: 0] += gap
-        }
-        let sorted = byApp.map { ($0.key, $0.value) }
-            .sorted { $0.1 > $1.1 }
-            .prefix(5)
-        let total = sorted.reduce(0.0) { $0 + $1.1 }
-        guard total > 0 else { return [] }
-        return sorted.map { item in
-            (appName: item.0, seconds: item.1, percent: Int((item.1 / total * 100).rounded()))
-        }
+        ScreenTimeAggregator.topApps(
+            samples: contexts.map { (appName: $0.appName, timestamp: $0.timestamp) }
+        ).map { (appName: $0.appName, seconds: $0.seconds, percent: $0.percent) }
     }
 
     var body: some View {

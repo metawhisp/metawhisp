@@ -710,8 +710,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         // 9a. Configure MemoryExtractor + TaskExtractor — both trigger-based on voice transcription.
         // : voice transcript input, not periodic screen OCR polling.
         // spec://iterations/ITER-001#architecture.extractor + spec://BACKLOG#B1
-        memoryExtractor.configure(screenContext: screenContext, modelContainer: historyService.modelContainer)
-        taskExtractor.configure(screenContext: screenContext, modelContainer: historyService.modelContainer)
+        memoryExtractor.configure(modelContainer: historyService.modelContainer)
+        taskExtractor.configure(modelContainer: historyService.modelContainer)
         // SB-1 — drain any conversations left queued by a previous session
         // (app quit/crash before extraction completed), now that the container
         // is configured.
@@ -804,7 +804,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             // 12h below). Gated on storeHealthy like the migrations: pruning
             // against a degraded in-memory store would be a silent no-op that
             // never touches the real data.
-            if storeHealthy { self?.pruneScreenHistory() }
+            if storeHealthy {
+                self?.pruneScreenHistory()
+                // ITER-053.4 slice 2 — semantic backfill runs AFTER the prune
+                // (never embed rows that retention is about to delete) and only
+                // while the user has screen capture enabled (Codex review —
+                // a disabled toggle must also stop cloud embedding of old rows).
+                if AppSettings.shared.screenContextEnabled, let self {
+                    self.embeddingService.backfillObservationEmbeddings(in: self.historyService.modelContainer)
+                }
+            }
         }
 
         // ITER-053.1 — repeat the retention prune every 12h for long-running

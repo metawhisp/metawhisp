@@ -23,11 +23,10 @@ final class HistoryService: ObservableObject {
 
     init() {
         do {
-            // ITER-049 B — versioned schema + migration plan (AUD-007). V1 is the
-            // current 14 models unchanged, so an existing store opens WITHOUT
-            // migrating; future breaking changes add a tested stage to the plan
-            // instead of relying on implicit lightweight migration.
-            let schema = Schema(versionedSchema: MetaWhispSchemaV1.self)
+            // ITER-049 B — versioned schema + migration plan (AUD-007).
+            // ITER-053.4 — live shape is V2 (adds ScreenObservation.embedding);
+            // existing V1 stores migrate through the plan's lightweight stage.
+            let schema = Schema(versionedSchema: MetaWhispSchemaV2.self)
             let config = ModelConfiguration("MetaWhisp", schema: schema)
             modelContainer = try ModelContainer(
                 for: schema, migrationPlan: MetaWhispMigrationPlan.self, configurations: [config])

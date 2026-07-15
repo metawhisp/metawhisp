@@ -26,7 +26,6 @@ final class TaskExtractor: ObservableObject {
 
     private let llm = OpenAIService()
     private let settings = AppSettings.shared
-    private weak var screenContext: ScreenContextService?
     private var modelContainer: ModelContainer?
 
     /// SB-1 — durable queue of conversations awaiting extraction. Replaces the
@@ -36,8 +35,9 @@ final class TaskExtractor: ObservableObject {
     /// 2-day dedup window for action items.
     private let dedupWindowDays: Int = 2
 
-    func configure(screenContext: ScreenContextService, modelContainer: ModelContainer) {
-        self.screenContext = screenContext
+    // ITER-053.1 — the `screenContext` dependency was dead wiring (stored,
+    // never read: extraction runs on transcripts/DB, not the live screen).
+    func configure(modelContainer: ModelContainer) {
         self.modelContainer = modelContainer
     }
 

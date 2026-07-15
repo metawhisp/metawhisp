@@ -155,6 +155,49 @@ final class EmbeddingService: ObservableObject {
         }
     }
 
+    /// ITER-053.4 slice 2 — embed freshly-inserted screen observations so
+    /// searchScreenHistory ranks semantically («что я делал по X» finds meaning,
+    /// not just keywords). Same graceful-fail contract as memories/tasks.
+    nonisolated func embedScreenObservationsInBackground(_ observations: [ScreenObservation], in ctx: ModelContext) {
+        guard !observations.isEmpty else { return }
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            // Codex review — embed() rejects >100 texts per call; a 200-row
+            // backfill batch used to fail WHOLESALE and retry forever. Chunk.
+            var embedded = 0
+            for chunk in stride(from: 0, to: observations.count, by: 100).map({ Array(observations[$0..<min($0 + 100, observations.count)]) }) {
+                let texts = chunk.map { "\($0.appName): \($0.contextSummary) — \($0.currentActivity)" }
+                do {
+                    let vectors = try await self.embed(texts)
+                    for (obs, vec) in zip(chunk, vectors) {
+                        obs.embedding = Self.encode(vec)
+                    }
+                    try? ctx.save()
+                    embedded += chunk.count
+                } catch {
+                    NSLog("[EmbeddingService] Observation embed failed (graceful): %@", error.localizedDescription)
+                    break   // provider down — the rest retries next launch/batch
+                }
+            }
+            if embedded > 0 { NSLog("[EmbeddingService] Embedded %d screen observations", embedded) }
+        }
+    }
+
+    /// ITER-053.4 slice 2 — one-shot bounded backfill for observations created
+    /// before the embedding field existed. Called at launch; ≤`limit` rows per
+    /// run so months of history index over a few launches without a burst.
+    func backfillObservationEmbeddings(in container: ModelContainer, limit: Int = 200) {
+        let ctx = ModelContext(container)
+        var desc = FetchDescriptor<ScreenObservation>(
+            predicate: #Predicate { $0.embedding == nil },
+            sortBy: [SortDescriptor(\.endedAt, order: .reverse)]
+        )
+        desc.fetchLimit = limit
+        guard let rows = try? ctx.fetch(desc), !rows.isEmpty else { return }
+        NSLog("[EmbeddingService] Backfilling %d observation embeddings", rows.count)
+        embedScreenObservationsInBackground(rows, in: ctx)
+    }
+
     /// Embed a freshly-finalized Conversation in background. Source text is built
     /// from `title + overview + transcript prefix` so the LLM sees both the structured
     /// summary and concrete content (names, projects, decisions). Fire-and-forget;

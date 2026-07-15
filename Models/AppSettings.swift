@@ -401,12 +401,22 @@ final class AppSettings: ObservableObject {
 enum KeychainHelper {
     private static let service = "com.metawhisp.secrets"
 
+    /// ITER-053.1 (2026-07-16) — unit tests must NEVER touch the real
+    /// keychain. A keychain item whose ACL doesn't trust the xctest binary
+    /// makes `SecItemCopyMatching` block on a hidden permission prompt and the
+    /// whole suite hangs forever (hit when a CLI-created item joined the
+    /// service). Tests see an empty keychain (deterministic) and can't pollute
+    /// the user's real one either.
+    private static let isUnitTest = NSClassFromString("XCTestCase") != nil
+
     static func save(key: String, value: String) {
+        guard !isUnitTest else { return }
         if value.isEmpty { keychainDelete(key); return }
         keychainWrite(key: key, value: value)
     }
 
     static func load(key: String) -> String? {
+        guard !isUnitTest else { return nil }
         // SEC-1: migrate-on-first-read (idempotent, no-op once the legacy file
         // is gone) guarantees the Keychain is populated before ANY read — even
         // ones that fire before applicationDidFinishLaunching (AppSettings.init
