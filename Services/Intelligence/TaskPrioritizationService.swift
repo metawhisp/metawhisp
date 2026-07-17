@@ -106,7 +106,11 @@ final class TaskPrioritizationService: ObservableObject {
             }
 
             guard let positions = Self.parseRerank(response) else {
-                NSLog("[TaskPrioritization] ⚠️ Parse failed — keeping current order")
+                // Response head in the log — the 2026-07-17 gpt-oss incident
+                // (model returned chain-of-thought prose instead of JSON) was
+                // undebuggable without it.
+                NSLog("[TaskPrioritization] ⚠️ Parse failed — keeping current order. Response head: %@",
+                      String(response.prefix(200)))
                 return
             }
             // Re-fetch: the LLM await took up to 30s — tasks dismissed/completed/
@@ -146,9 +150,22 @@ final class TaskPrioritizationService: ObservableObject {
     struct RankedPosition: Decodable, Equatable {
         let id: String
         let new_position: Int
+
+        init(id: String, new_position: Int) {
+            self.id = id
+            self.new_position = new_position
+        }
+    }
+    /// Lossy element wrapper — one malformed entry (string position, missing
+    /// key) must not fail the whole rerank (same pattern as ReactionJSON).
+    private struct LossyPosition: Decodable {
+        let value: RankedPosition?
+        init(from decoder: Decoder) throws {
+            value = try? RankedPosition(from: decoder)
+        }
     }
     private struct RerankJSON: Decodable {
-        let reranked: [RankedPosition]
+        let reranked: [LossyPosition]
     }
 
     /// Parse `{"reranked":[{"id":"<uuid>","new_position":1},…]}` from raw LLM text.
@@ -161,7 +178,9 @@ final class TaskPrioritizationService: ObservableObject {
               start <= end,
               let data = String(stripped[start...end]).data(using: .utf8)
         else { return nil }
-        return (try? JSONDecoder().decode(RerankJSON.self, from: data))?.reranked
+        guard let parsed = try? JSONDecoder().decode(RerankJSON.self, from: data) else { return nil }
+        let positions = parsed.reranked.compactMap(\.value)
+        return positions.isEmpty ? nil : positions
     }
 
     /// Write positions into matching tasks. Unknown/duplicate ids are ignored;

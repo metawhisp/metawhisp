@@ -52,6 +52,23 @@ final class TaskPrioritizationServiceTests: XCTestCase {
         XCTAssertNil(TaskPrioritizationService.parseRerank(#"{"wrong":"shape"}"#))
     }
 
+    /// The 2026-07-17 incident: a reasoning model returned pure chain-of-thought
+    /// prose with no JSON at all — must yield nil (→ hourly backoff), not crash.
+    func test_parse_reasoningProseOnly_nil() {
+        XCTAssertNil(TaskPrioritizationService.parseRerank(
+            "We need to re-rank based on criteria. We have a list of staged candidates with ids and brief descriptions."))
+    }
+
+    func test_parse_malformedEntry_lossyNotFatal() {
+        let good = UUID().uuidString
+        let response = #"{"reranked":[{"id":"\#(good)","new_position":1},{"id":2},{"new_position":"x"}]}"#
+        XCTAssertEqual(TaskPrioritizationService.parseRerank(response), [.init(id: good, new_position: 1)])
+    }
+
+    func test_parse_allEntriesMalformed_nil() {
+        XCTAssertNil(TaskPrioritizationService.parseRerank(#"{"reranked":[{"id":2},{"id":3}]}"#))
+    }
+
     // MARK: - apply
 
     private func makeTask(_ desc: String) -> TaskItem {
