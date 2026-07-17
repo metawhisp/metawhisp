@@ -11,63 +11,71 @@ import Foundation
 /// Used by both `ScreenExtractor` (hourly batch) and `RealtimeScreenReactor` (per-snapshot).
 enum TaskExtractionFilters {
 
-    /// Apps whose OCR content is NEVER extracted as tasks. Observations + memories may
-    /// still be extracted (screen dashboard context is useful); tasks specifically are
-    /// suppressed because the content is either:
-    /// - AI-generated (Claude/ChatGPT plans ≠ user's commitments)
-    /// - Recursive (MetaWhisp reading its own UI)
-    /// - Editor tooling that shows fragments of code, not actionable items
-    /// - Chat / messaging UIs — scrolling through conversations produces massive false
-    ///   positives ("Reply to X", "Check Y"). Reference pattern shows chat-extraction
-    ///   needs dedicated classifier (addressee / unread / explicit @mention); generic
-    ///   task LLM on chat OCR is 95% noise. Disable until a messenger-specific flow lands.
+    /// ITER-057.5 — WHITELIST (flipped from the old blacklist). Tasks live in
+    /// conversations: the reference model allows ONLY messengers, mail, notes and
+    /// work-signal browser tabs — everything else (IDEs, system dialogs, dashboards,
+    /// AI assistants) produced junk ("Allow keychain access for xctest") that
+    /// drowned real commitments. Observations + memories are still extracted from
+    /// all apps; this gate governs TASKS only.
     ///
     /// Match is done against both the user-facing app name and the bundle identifier
     /// so different OS versions / localizations all hit.
-    static let taskBlacklist: Set<String> = [
-        // Self — MetaWhisp can't read its own UI productively.
-        "MetaWhisp",
-        "com.metawhisp.app",
+    static let taskAllowedApps: Set<String> = [
+        // Messengers — the primary source of commitments («напишу тебе завтра»).
+        "Telegram", "org.telegram.desktop", "ru.keepcoder.Telegram",
+        "WhatsApp", "\u{200E}WhatsApp",   // WhatsApp reports its name with a leading LTR mark
+        "net.whatsapp.WhatsApp", "desktop.WhatsApp",
+        "Messages", "com.apple.MobileSMS", "com.apple.iChat",
+        "Slack", "com.tinyspeck.slackmacgap",
+        "Discord", "com.hnc.Discord",
+        "Signal", "org.whispersystems.signal-desktop",
+        "Messenger", "com.facebook.archon.developerID",
+        "Mattermost", "Mattermost.Desktop",
+        "zoom.us",
+        // Mail — requests addressed to the user.
+        "Mail", "com.apple.mail",
+        "Microsoft Outlook", "com.microsoft.Outlook",
+        "Superhuman",
+        // Notes — the user's own explicit reminders.
+        "Notes", "com.apple.Notes",
+    ]
 
-        // AI coding assistants — their output is PROPOSED actions, not user commitments.
-        "Claude",
-        "Claude Code",
-        "com.anthropic.claudefordesktop",
-        "ChatGPT",
-        "com.openai.chat",
-        "Cursor",
-        "com.todesktop.230313mzl4w4u92",
-        "Aider",
-        "Windsurf",
+    /// Browsers pass the task gate ONLY when the window title carries a work
+    /// signal (webmail, project tools, messenger web apps — see
+    /// `browserTitleKeywords`). A browser with an empty/unmatched title is
+    /// blocked: articles, videos and dashboards are reading, not commitments.
+    static let taskBrowserApps: Set<String> = [
+        "Google Chrome", "Arc", "Safari", "Firefox",
+        "Microsoft Edge", "Brave Browser", "Opera",
+    ]
 
-        // IDEs — editor content is code, not action items.
-        "Code",           // VS Code
-        "com.microsoft.VSCode",
-        "Xcode",          // Apple
-        "com.apple.dt.Xcode",
+    /// Case-insensitive substrings matched against a browser window title.
+    static let browserTitleKeywords: [String] = [
+        // Email
+        "gmail", "outlook", "yahoo mail", "protonmail", "superhuman", "fastmail",
+        // Messaging web apps
+        "slack", "discord", "whatsapp", "telegram", "messenger", "signal", "mattermost",
+        // Project management
+        "jira", "linear", "trello", "asana", "notion", "monday", "clickup", "basecamp",
+        // Calendar
+        "google calendar", "outlook calendar", "cal.com", "calendly",
+        // Code & collaboration
+        "github", "google docs", "google sheets", "google slides",
+        // Finance
+        "stripe", "paypal", "invoice", "billing", "quickbooks",
+        // Forms & signing
+        "google forms", "typeform", "docusign",
+        // Action words
+        "todo", "task", "assign", "review", "approve", "request", "ticket",
+        // Inbox patterns
+        "inbox", "unread", "notification", "pending",
+    ]
 
-        // Messengers — need specialized @mention / unread-focused flow; generic LLM on
-        // chat OCR produces constant noise. Off until that lands.
-        "Telegram",
-        "org.telegram.desktop",
-        "ru.keepcoder.Telegram",
-        "Slack",
-        "com.tinyspeck.slackmacgap",
-        "Discord",
-        "com.hnc.Discord",
-        "WhatsApp",
-        "net.whatsapp.WhatsApp",
-        "desktop.WhatsApp",
-        "Messages",          // iMessage
-        "com.apple.MobileSMS",
-        "com.apple.iChat",
-        "Messenger",         // FB Messenger
-        "com.facebook.archon.developerID",
-        "Signal",
-        "org.whispersystems.signal-desktop",
-        "Linear",            // keeps chat-heavy threads; revisit if we want Linear tasks specifically
-        // Live-streaming / casual-browsing UIs
-        "Live",
+    /// System permission/notification dialogs that generated junk tasks before the
+    /// whitelist landed. Used by the one-time ITER-057.5 cleanup migration to
+    /// dismiss the rows they already produced.
+    static let systemDialogSourceApps: Set<String> = [
+        "UserNotificationCenter", "SecurityAgent", "loginwindow",
     ]
 
     /// Post-LLM reject list: task descriptions matching these generic patterns are
@@ -163,13 +171,25 @@ enum TaskExtractionFilters {
     /// than hallucinate tasks from nothing. Empty / short evidence → reject.
     static let minEvidenceChars: Int = 20
 
-    /// Lowercased bundle IDs / app names that should never produce task items.
-    static func isTaskBlacklisted(appName: String, bundleId: String? = nil) -> Bool {
-        if taskBlacklist.contains(appName) { return true }
-        if let bid = bundleId, taskBlacklist.contains(bid) { return true }
-        // Case-insensitive fallback for whatever OS reports.
+    /// ITER-057.5 — the task gate. True when this app/window may produce tasks:
+    /// whitelisted conversation app, OR a browser whose window title matches a
+    /// work-signal keyword. Everything else → no tasks (observations/memories
+    /// are unaffected).
+    static func isTaskAllowed(appName: String, windowTitle: String?, bundleId: String? = nil) -> Bool {
         let lowerApp = appName.lowercased()
-        return taskBlacklist.contains { $0.lowercased() == lowerApp }
+        // Browsers: title keyword required (Telegram Web / Gmail / Jira pass;
+        // YouTube / articles / empty titles don't).
+        if taskBrowserApps.contains(appName)
+            || taskBrowserApps.contains(where: { $0.lowercased() == lowerApp }) {
+            guard let title = windowTitle?.lowercased(),
+                  !title.trimmingCharacters(in: .whitespaces).isEmpty
+            else { return false }
+            return browserTitleKeywords.contains { title.contains($0) }
+        }
+        if taskAllowedApps.contains(appName) { return true }
+        if let bid = bundleId, taskAllowedApps.contains(bid) { return true }
+        // Case-insensitive fallback for whatever the OS reports.
+        return taskAllowedApps.contains { $0.lowercased() == lowerApp }
     }
 
     /// Check if `candidate` is a near-duplicate of any string in `against`.
@@ -204,7 +224,9 @@ enum TaskExtractionFilters {
         "для", "про", "при", "над", "под", "без", "через", "это", "то", "же",
     ]
 
-    private static func normalizedWords(_ s: String) -> Set<String> {
+    /// Internal (not private) — TaskFulfillment reuses the same tokenizer for its
+    /// OCR↔task overlap pre-filter so "related" means the same thing everywhere.
+    static func normalizedWords(_ s: String) -> Set<String> {
         let allowed = CharacterSet.alphanumerics.union(.whitespaces)
         let cleaned = s.unicodeScalars
             .map { allowed.contains($0) ? Character($0) : Character(" ") }

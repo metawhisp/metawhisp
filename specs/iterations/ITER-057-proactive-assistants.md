@@ -91,15 +91,21 @@ scheduled-триггера, ни snooze, ни re-remind). Их «напомин�
 - [x] Тесты: слот-математика, newest-first, идемпотентность, stale-скип,
       dismissed-не-воскресают, master-toggle. 7/7 зелёные.
 
-### 057.2 — Re-ranking (умный порядок) {#i2}
-- [ ] `TaskPrioritizationService`: цикл-проверка каждые 300с (startup delay 90с);
-      полный ре-ранк когда прошло ≥3600с И staged ≥2. Промпт по референсу:
-      «выяви MISRANKED; критерии: цели юзера, срочность (dueAt), actionability,
-      реальная важность; большинство AI-задач — шум, топи vague вниз»;
-      JSON {reranked:[{id,new_position}]} → перезапись relevanceScore.
-- [ ] Контекст промпта: цели (Goal-модель уже есть), топ-30 staged, 10 последних
-      завершённых (позитив) + 10 dismissed (негатив).
-- [ ] Тесты: JSON-парс ре-ранка, применение позиций, guard-ы (0/1 staged → skip).
+### 057.2 — Re-ranking (умный порядок) — СДЕЛАНО 2026-07-17 {#i2}
+- [x] `TaskPrioritizationService`: цикл-проверка каждые 300с (startup delay 90с);
+      полный ре-ранк когда прошло ≥3600с И staged ≥2. Ревью-фиксы: lastRerankAt
+      штампуется на ПОПЫТКЕ (сбойная модель — 1 вызов/час, не 12); после await —
+      рефетч живых staged (dismissed/deleted за время вызова не перезаписываются);
+      apply не трогает updatedAt (не пересортировывает negative-списки).
+- [x] Контекст промпта: цели (Goal), топ-30 staged, 10 завершённых (позитив)
+      + 10 dismissed (негатив).
+- [x] Схема V3: `TaskItem.relevanceScore: Int?` (1 = важнейшая; nil = не ранжирована),
+      lightweight-стейдж V2→V3, заморозка TaskItem-формы под V2-неймспейсом.
+      Миграция доказана на копии реальной базы (1051 задача, 8095 наблюдений).
+      Промоушен сортирует по relevanceScore (nil — последними), тай-брейк
+      createdAt DESC; из кандидатов исключены completed.
+- [x] Тесты: JSON-парс ре-ранка, применение позиций, guard-ы, компаратор
+      порядка промоушена, миграция V1→V3 / V2→V3.
 
 ### 057.3 — Reminder loop по времени (наша ITER-043, код с нуля) {#i3}
 - [ ] Due-date capture fix: TaskExtractor/ScreenExtractor/RealtimeScreenReactor
@@ -120,17 +126,34 @@ scheduled-триггера, ни snooze, ни re-remind). Их «напомин�
       Окно переиспользования 60с (после — обычный клик в Tasks).
 - [ ] Тесты: сборка provenance-блока (pure), маршрутизация клика.
 
-### 057.5 — Extraction hardening по референс-промпту {#i5}
-- [ ] RealtimeScreenReactor: с blacklist на **whitelist** (мессенджеры: Telegram,
-      WhatsApp, Messages, Slack, Discord, zoom + браузеры только с keyword-титулами:
+### 057.5 — Extraction hardening + fulfillment — СДЕЛАНО 2026-07-17 {#i5}
+> Боль: «напишу тебе завтра» в Telegram никогда не становится задачей (Telegram в
+> блэклисте!), а «я уже написал Сергею Петровичу» продолжало бы напоминать.
+> Диагноз на живой БД: 447 staged (185 из Mattermost — настоящие), в активе — мусор
+> из SecurityAgent/тест-фикстур; реактор-детектор обещаний выключен по умолчанию.
+> Промпт-правила из старого чек-листа УЖЕ есть в реакторе (проверено deep-read) —
+> ломала не модель, а гейтинг.
+- [x] TaskExtractionFilters: с blacklist на **whitelist** (мессенджеры: Telegram,
+      WhatsApp, Messages, Slack, Discord, Signal, Messenger, Mattermost, zoom +
+      Mail/Outlook/Superhuman/Notes + браузеры только с keyword-титулами:
       Gmail, Jira, GitHub, todo, inbox…). Референс-инсайт: задачи живут в переписке.
-- [ ] Промпт-правила: «коммитмент или неотвеченный запрос К юзеру»; forgettability-check
-      («забудет ли юзер после переключения окна? нет → скип»); скип терминалов/IDE/
-      таск-трекеров («уже трекается»); ~90% ожидаемо «нет задачи»; confidence ≥0.75;
-      заголовок 6–15 слов с именем/проектом (hard-валидация уже частично есть).
-- [ ] Дедуп: обязательный поиск похожих ПЕРЕД вставкой (embedding-близость >0.8 к
-      активной/staged → reject; наш EmbeddingService уже умеет).
-- [ ] Тесты: whitelist-гейты, title-валидация, дедуп-порог.
+      Оба call-site (реактор pre-LLM, batch post-LLM); скип логируется (1×/app/запуск).
+- [x] Реактор ВКЛ по умолчанию (`realtimeScreenReactionEnabled = true`) — ядро
+      фичи, как extraction ON у референса. Cost-контроль прежний: whitelist,
+      60с/апп кулдаун, 30 вызовов/час, mini-гейт.
+- [x] **Fulfillment (наше расширение, у референса НЕТ — проверено грепом):** в тот
+      же LLM-вызов реактора передаются открытые задачи, лексически связанные с OCR
+      (≥2 общих токена, кап 10); ответ получает `fulfilled:[{id, evidence}]`;
+      подтверждённые (id из отправленного списка + evidence ≥20 chars) →
+      `completed=true` через MutationService. Mini-гейт пропускается, когда есть
+      fulfillment-кандидаты (иначе гейт «нет действия» глушит проверку).
+- [x] Негативные примеры: 10 последних dismissed в промпт («не извлекай похожие»);
+      dedup-выборки включают dismissed (отклонённое не воскресает).
+- [x] Разовая миграция-чистка: staged/active screen-задачи из системных диалогов
+      (UserNotificationCenter, SecurityAgent, loginwindow) → dismissed.
+- [x] Санитария парсинга batch: `observations` опциональна, local maxTokens 384→1024.
+- [x] Тесты: whitelist-гейты (browser-титулы, WhatsApp LTR-mark), fulfillment
+      (префильтр, гейты id/evidence), миграция-чистка.
 
 ### 057.6 — Focus coach (отдельный трек, после 1–5) {#i6}
 «Ты отвлёкся — вернись»: классификация focused/distracted по активному окну,

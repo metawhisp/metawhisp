@@ -129,38 +129,55 @@ final class TaskExtractionFiltersTests: XCTestCase {
         }
     }
 
-    // MARK: - isTaskBlacklisted
+    // MARK: - isTaskAllowed (ITER-057.5 whitelist)
 
-    func test_blacklist_ownApp() {
-        XCTAssertTrue(TaskExtractionFilters.isTaskBlacklisted(appName: "MetaWhisp"))
-        XCTAssertTrue(TaskExtractionFilters.isTaskBlacklisted(appName: "x", bundleId: "com.metawhisp.app"))
+    func test_allowed_messengers() {
+        XCTAssertTrue(TaskExtractionFilters.isTaskAllowed(appName: "Telegram", windowTitle: nil))
+        XCTAssertTrue(TaskExtractionFilters.isTaskAllowed(appName: "Slack", windowTitle: nil))
+        XCTAssertTrue(TaskExtractionFilters.isTaskAllowed(appName: "Mattermost", windowTitle: nil))
+        XCTAssertTrue(TaskExtractionFilters.isTaskAllowed(appName: "Messages", windowTitle: nil))
     }
 
-    func test_blacklist_aiAssistants() {
-        XCTAssertTrue(TaskExtractionFilters.isTaskBlacklisted(appName: "Claude"))
-        XCTAssertTrue(TaskExtractionFilters.isTaskBlacklisted(appName: "ChatGPT"))
-        XCTAssertTrue(TaskExtractionFilters.isTaskBlacklisted(appName: "Cursor"))
+    func test_allowed_whatsApp_withLeadingLTRMark() {
+        // WhatsApp reports "\u{200E}WhatsApp" — the invisible mark must not break the match.
+        XCTAssertTrue(TaskExtractionFilters.isTaskAllowed(appName: "\u{200E}WhatsApp", windowTitle: nil))
+        XCTAssertTrue(TaskExtractionFilters.isTaskAllowed(appName: "WhatsApp", windowTitle: nil))
     }
 
-    func test_blacklist_messengers() {
-        XCTAssertTrue(TaskExtractionFilters.isTaskBlacklisted(appName: "Telegram"))
-        XCTAssertTrue(TaskExtractionFilters.isTaskBlacklisted(appName: "Slack"))
-        XCTAssertTrue(TaskExtractionFilters.isTaskBlacklisted(appName: "WhatsApp"))
+    func test_allowed_bundleIdMatch() {
+        XCTAssertTrue(TaskExtractionFilters.isTaskAllowed(appName: "X", windowTitle: nil, bundleId: "com.tinyspeck.slackmacgap"))
     }
 
-    func test_blacklist_caseInsensitiveFallback() {
-        XCTAssertTrue(TaskExtractionFilters.isTaskBlacklisted(appName: "telegram"))
-        XCTAssertTrue(TaskExtractionFilters.isTaskBlacklisted(appName: "CLAUDE"))
+    func test_allowed_caseInsensitiveFallback() {
+        XCTAssertTrue(TaskExtractionFilters.isTaskAllowed(appName: "telegram", windowTitle: nil))
     }
 
-    func test_blacklist_legitApps_notBlocked() {
-        XCTAssertFalse(TaskExtractionFilters.isTaskBlacklisted(appName: "Google Chrome"))
-        XCTAssertFalse(TaskExtractionFilters.isTaskBlacklisted(appName: "Safari"))
-        XCTAssertFalse(TaskExtractionFilters.isTaskBlacklisted(appName: "Mattermost"))
+    func test_notAllowed_selfAIAssistantsIDEs() {
+        XCTAssertFalse(TaskExtractionFilters.isTaskAllowed(appName: "MetaWhisp", windowTitle: nil))
+        XCTAssertFalse(TaskExtractionFilters.isTaskAllowed(appName: "Claude", windowTitle: nil))
+        XCTAssertFalse(TaskExtractionFilters.isTaskAllowed(appName: "ChatGPT", windowTitle: nil))
+        XCTAssertFalse(TaskExtractionFilters.isTaskAllowed(appName: "Xcode", windowTitle: nil))
+        XCTAssertFalse(TaskExtractionFilters.isTaskAllowed(appName: "Cursor", windowTitle: nil))
     }
 
-    func test_blacklist_bundleIdMatch() {
-        XCTAssertTrue(TaskExtractionFilters.isTaskBlacklisted(appName: "X", bundleId: "com.tinyspeck.slackmacgap"))
+    func test_notAllowed_systemDialogs() {
+        // The exact junk sources found in the founder's DB ("Allow keychain access for xctest").
+        XCTAssertFalse(TaskExtractionFilters.isTaskAllowed(appName: "SecurityAgent", windowTitle: "xctest"))
+        XCTAssertFalse(TaskExtractionFilters.isTaskAllowed(appName: "UserNotificationCenter", windowTitle: nil))
+        XCTAssertFalse(TaskExtractionFilters.isTaskAllowed(appName: "Finder", windowTitle: "Downloads"))
+    }
+
+    func test_browser_requiresWorkSignalTitle() {
+        XCTAssertTrue(TaskExtractionFilters.isTaskAllowed(appName: "Google Chrome", windowTitle: "Inbox (3) - Gmail"))
+        XCTAssertTrue(TaskExtractionFilters.isTaskAllowed(appName: "Safari", windowTitle: "MW-42 fix promo — Jira"))
+        XCTAssertTrue(TaskExtractionFilters.isTaskAllowed(appName: "Arc", windowTitle: "Telegram Web"))
+        XCTAssertFalse(TaskExtractionFilters.isTaskAllowed(appName: "Google Chrome", windowTitle: "YouTube"))
+        XCTAssertFalse(TaskExtractionFilters.isTaskAllowed(appName: "Google Chrome", windowTitle: nil))
+        XCTAssertFalse(TaskExtractionFilters.isTaskAllowed(appName: "Safari", windowTitle: "   "))
+    }
+
+    func test_browser_titleKeywordCaseInsensitive() {
+        XCTAssertTrue(TaskExtractionFilters.isTaskAllowed(appName: "Google Chrome", windowTitle: "my GITHUB pull requests"))
     }
 
     // MARK: - isNearDuplicate

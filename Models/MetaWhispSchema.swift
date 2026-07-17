@@ -25,7 +25,8 @@ enum MetaWhispSchemaV1: VersionedSchema {
     static var models: [any PersistentModel.Type] {
         [
             HistoryItem.self, ScreenContext.self, AdviceItem.self, UserMemory.self,
-            TaskItem.self, ChatMessage.self, Conversation.self,
+            MetaWhispSchemaV2.TaskItem.self,            // frozen pre-relevanceScore shape (same in V1+V2)
+            ChatMessage.self, Conversation.self,
             MetaWhispSchemaV1.ScreenObservation.self,   // frozen pre-embedding shape
             IndexedFile.self, DailySummary.self, Goal.self, ProjectAlias.self,
             AuditLog.self, PatternDigest.self,
@@ -84,6 +85,70 @@ enum MetaWhispSchemaV2: VersionedSchema {
     static var models: [any PersistentModel.Type] {
         [
             HistoryItem.self, ScreenContext.self, AdviceItem.self, UserMemory.self,
+            MetaWhispSchemaV2.TaskItem.self,   // frozen pre-relevanceScore shape
+            ChatMessage.self, Conversation.self, ScreenObservation.self,
+            IndexedFile.self, DailySummary.self, Goal.self, ProjectAlias.self,
+            AuditLog.self, PatternDigest.self,
+        ]
+    }
+
+    /// FROZEN V1/V2 shape of TaskItem — the on-disk layout BEFORE ITER-057.2
+    /// added `relevanceScore`. Nested with the SAME type name so the entity name
+    /// matches the store; referenced by BOTH V1 and V2 (the model didn't change
+    /// between them). Never edit this copy (freezing rule in this file's header).
+    @Model
+    final class TaskItem {
+        var id: UUID
+        var taskDescription: String
+        var completed: Bool
+        var dueAt: Date?
+        var sourceTranscriptId: UUID?
+        var conversationId: UUID?
+        var screenContextId: UUID?
+        var sourceApp: String?
+        var createdAt: Date
+        var updatedAt: Date
+        var completedAt: Date?
+        var isDismissed: Bool
+        var status: String?
+        var embedding: Data?
+        var assignee: String?
+
+        init(
+            taskDescription: String,
+            dueAt: Date? = nil,
+            sourceTranscriptId: UUID? = nil,
+            sourceApp: String? = nil,
+            conversationId: UUID? = nil,
+            screenContextId: UUID? = nil,
+            status: String = "committed",
+            assignee: String? = nil
+        ) {
+            self.id = UUID()
+            self.taskDescription = taskDescription
+            self.completed = false
+            self.dueAt = dueAt
+            self.sourceTranscriptId = sourceTranscriptId
+            self.sourceApp = sourceApp
+            self.conversationId = conversationId
+            self.screenContextId = screenContextId
+            self.createdAt = Date()
+            self.updatedAt = Date()
+            self.isDismissed = false
+            self.status = status
+            self.assignee = assignee
+        }
+    }
+}
+
+/// ITER-057.2 — V3 adds `TaskItem.relevanceScore: Int?` (LLM re-rank position
+/// for staged candidates). Additive optional column → lightweight stage.
+enum MetaWhispSchemaV3: VersionedSchema {
+    static var versionIdentifier = Schema.Version(3, 0, 0)
+
+    static var models: [any PersistentModel.Type] {
+        [
+            HistoryItem.self, ScreenContext.self, AdviceItem.self, UserMemory.self,
             TaskItem.self, ChatMessage.self, Conversation.self, ScreenObservation.self,
             IndexedFile.self, DailySummary.self, Goal.self, ProjectAlias.self,
             AuditLog.self, PatternDigest.self,
@@ -91,15 +156,22 @@ enum MetaWhispSchemaV2: VersionedSchema {
     }
 }
 
-/// Migration plan for the live store. V1 → V2 is the first real stage:
-/// lightweight (additive optional column), verified by `SchemaMigrationTests`.
+/// Migration plan for the live store: V1 → V2 (ScreenObservation.embedding) →
+/// V3 (TaskItem.relevanceScore). All lightweight (additive optional columns),
+/// verified by `SchemaMigrationTests`.
 enum MetaWhispMigrationPlan: SchemaMigrationPlan {
-    static var schemas: [any VersionedSchema.Type] { [MetaWhispSchemaV1.self, MetaWhispSchemaV2.self] }
+    static var schemas: [any VersionedSchema.Type] {
+        [MetaWhispSchemaV1.self, MetaWhispSchemaV2.self, MetaWhispSchemaV3.self]
+    }
     static var stages: [MigrationStage] {
         [
             MigrationStage.lightweight(
                 fromVersion: MetaWhispSchemaV1.self,
                 toVersion: MetaWhispSchemaV2.self
+            ),
+            MigrationStage.lightweight(
+                fromVersion: MetaWhispSchemaV2.self,
+                toVersion: MetaWhispSchemaV3.self
             ),
         ]
     }

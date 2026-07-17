@@ -117,9 +117,11 @@ final class ScreenExtractor: ObservableObject {
             // ITER-051 F1.3 — local model first (free + private), same priority
             // order as MemoryExtractor. Falls to cloud paths when not loaded.
             if LocalLLMService.shared.isReady {
+                // ITER-057.5 — 384 tokens truncated the JSON (up to 20 observations
+                // + memories + tasks), producing the hourly "Parse error" loop.
                 response = try await LocalLLMService.shared.completeBlocking(
                     system: Self.systemPrompt, user: prompt,
-                    maxUserChars: 6000, maxTokens: 384)
+                    maxUserChars: 6000, maxTokens: 1024)
             } else if LicenseService.shared.isPro, let licenseKey = LicenseService.shared.licenseKey {
                 NSLog("[ScreenExtractor] Analyzing %d visits via Pro proxy", trimmed.count)
                 response = try await callProProxy(system: Self.systemPrompt, user: prompt, licenseKey: licenseKey)
@@ -154,7 +156,7 @@ final class ScreenExtractor: ObservableObject {
             // previously had start == end, which broke dashboard "top apps by time").
             var obsCount = 0
             var newObservations: [ScreenObservation] = []
-            for (i, obsJson) in parsed.observations.enumerated() where i < trimmed.count {
+            for (i, obsJson) in (parsed.observations ?? []).enumerated() where i < trimmed.count {
                 let v = trimmed[i]
                 let durationFloor = AppSettings.shared.screenContextInterval
                 let safeEnd = max(v.endedAt, v.startedAt.addingTimeInterval(durationFloor))
@@ -220,9 +222,10 @@ final class ScreenExtractor: ObservableObject {
             dueParser.formatOptions = [.withInternetDateTime]
             for taskJson in (parsed.tasks ?? []) where taskJson.visitIndex < trimmed.count {
                 let v = trimmed[taskJson.visitIndex]
-                // Per-visit app blacklist — AI assistants + self + IDEs + messengers never produce tasks.
-                if TaskExtractionFilters.isTaskBlacklisted(appName: v.appName) {
-                    NSLog("[ScreenExtractor] Skipping task from blacklisted app %@: %@",
+                // ITER-057.5 — whitelist: only conversation surfaces (messengers /
+                // mail / work browser tabs) produce tasks. Same gate as the reactor.
+                if !TaskExtractionFilters.isTaskAllowed(appName: v.appName, windowTitle: v.windowTitle) {
+                    NSLog("[ScreenExtractor] Skipping task from non-whitelisted app %@: %@",
                           v.appName, String(taskJson.description.prefix(60)))
                     continue
                 }
@@ -486,7 +489,9 @@ final class ScreenExtractor: ObservableObject {
         let dueAt: String?
     }
     private struct BatchResult: Decodable {
-        let observations: [ObservationJSON]
+        // ITER-057.5 — optional: a truncated/partial response with only memories
+        // or tasks shouldn't fail the whole batch ("Parse error … Response head: {").
+        let observations: [ObservationJSON]?
         let memories: [MemoryJSON]?
         let tasks: [TaskJSON]?
     }
@@ -579,9 +584,10 @@ final class ScreenExtractor: ObservableObject {
         return ((try? ctx.fetch(desc)) ?? []).map { $0.content }
     }
 
+    /// ITER-057.5 — INCLUDES dismissed rows: a task the user rejected must not
+    /// resurrect from the next batch (dismissed = permanent negative example).
     private func fetchRecentTaskDescriptions(in ctx: ModelContext, limit: Int) -> [String] {
         var desc = FetchDescriptor<TaskItem>(
-            predicate: #Predicate { !$0.isDismissed },
             sortBy: [SortDescriptor(\.createdAt, order: .reverse)]
         )
         desc.fetchLimit = limit

@@ -887,11 +887,53 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             defer {
                 // ITER-057.1 — promotion loop: keeps ≈5 screen-sourced tasks
                 // active (silent startup pass; slot-vacated + 5-min safety
-                // passes may notify, opt-in). Starts after the migration above
-                // settles, only against a healthy store.
+                // passes may notify, opt-in). Starts after the migrations above
+                // settle, only against a healthy store.
                 if storeHealthy {
                     TaskPromotionService.shared.configure(modelContainer: historyService.modelContainer)
                     TaskPromotionService.shared.start()
+                    // ITER-057.2 — hourly LLM re-ranking of staged candidates;
+                    // promotion picks by relevanceScore instead of recency.
+                    TaskPrioritizationService.shared.configure(modelContainer: historyService.modelContainer)
+                    TaskPrioritizationService.shared.start()
+                }
+            }
+            // ITER-057.5 — one-time cleanup: system permission dialogs
+            // (SecurityAgent / UserNotificationCenter / loginwindow) produced junk
+            // tasks before the task whitelist existed («Allow keychain access for
+            // xctest»). Dismiss them — the whitelist stops new ones at the source.
+            if storeHealthy, !AppSettings.shared.didDismissSystemDialogTasks {
+                let ctx = ModelContext(historyService.modelContainer)
+                let apps = TaskExtractionFilters.systemDialogSourceApps
+                let desc = FetchDescriptor<TaskItem>(
+                    predicate: #Predicate<TaskItem> { !$0.isDismissed && !$0.completed })
+                let junk = ((try? ctx.fetch(desc)) ?? []).filter {
+                    $0.screenContextId != nil && $0.sourceApp.map(apps.contains) == true
+                }
+                var cleanupFailed = false
+                for task in junk {
+                    do {
+                        // MutationService so the vault file of a promoted junk task
+                        // is removed too (dismiss hook), not just the DB row.
+                        // updatedAt deliberately untouched: the negative-example
+                        // prompt lists sort by updatedAt, and a batch of junk
+                        // dismissals must not evict the user's real dismissals.
+                        try MutationService.shared.commit(.taskDismissed(task.id), in: ctx) {
+                            task.isDismissed = true
+                            task.status = "dismissed"
+                        }
+                    } catch {
+                        cleanupFailed = true
+                        NSLog("[AppDelegate] ⚠️ system-dialog task cleanup failed — will retry next launch: %@",
+                              error.localizedDescription)
+                        break
+                    }
+                }
+                if !cleanupFailed {
+                    if !junk.isEmpty {
+                        NSLog("[AppDelegate] Dismissed %d junk tasks from system dialogs (ITER-057.5)", junk.count)
+                    }
+                    AppSettings.shared.didDismissSystemDialogTasks = true
                 }
             }
             guard storeHealthy, !AppSettings.shared.didMigrateScreenTasksToStaged else { return }

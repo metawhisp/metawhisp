@@ -106,6 +106,55 @@ final class TaskPromotionServiceTests: XCTestCase {
         XCTAssertEqual(svc.promoteIfNeeded(notify: false), 0)
     }
 
+    // MARK: - ITER-057.2 ordering
+
+    func test_ranksHigher_comparator() {
+        let older = Date(timeIntervalSince1970: 0)
+        let newer = Date(timeIntervalSince1970: 1000)
+        // Ranked beats unranked regardless of age.
+        XCTAssertTrue(TaskPromotionService.ranksHigher(scoreA: 7, createdA: older, scoreB: nil, createdB: newer))
+        XCTAssertFalse(TaskPromotionService.ranksHigher(scoreA: nil, createdA: newer, scoreB: 7, createdB: older))
+        // Lower score = more important.
+        XCTAssertTrue(TaskPromotionService.ranksHigher(scoreA: 1, createdA: older, scoreB: 2, createdB: newer))
+        // Equal scores / both nil → recency tiebreak.
+        XCTAssertTrue(TaskPromotionService.ranksHigher(scoreA: nil, createdA: newer, scoreB: nil, createdB: older))
+        XCTAssertTrue(TaskPromotionService.ranksHigher(scoreA: 3, createdA: newer, scoreB: 3, createdB: older))
+    }
+
+    /// A ranked real commitment beats fresher unranked junk (the founder's exact
+    /// complaint: dev-screen noise won slots from Mattermost commitments).
+    func test_promote_rankedCandidateBeatsNewerUnranked() throws {
+        let (svc, ctx) = try makeService()
+        let ranked = staged("Send Alex the onboarding deck", ageDays: 3)
+        ranked.relevanceScore = 1
+        let junk = staged("Allow keychain access for xctest", ageDays: 0.01)
+        // Fill 4 of 5 slots so exactly one promotion happens.
+        for i in 0..<4 { ctx.insert(activeAI("active \(i)")) }
+        ctx.insert(ranked); ctx.insert(junk)
+        try ctx.save()
+
+        XCTAssertEqual(svc.promoteIfNeeded(notify: false), 1)
+        // Refetch — promotion mutates through its own ModelContext.
+        let committed = try ctx.fetch(FetchDescriptor<TaskItem>(
+            predicate: #Predicate { $0.status == "committed" })).map(\.taskDescription)
+        XCTAssertTrue(committed.contains("Send Alex the onboarding deck"), "ranked candidate wins the slot")
+        let stillStaged = try ctx.fetch(FetchDescriptor<TaskItem>(
+            predicate: #Predicate { $0.status == "staged" })).map(\.taskDescription)
+        XCTAssertEqual(stillStaged, ["Allow keychain access for xctest"])
+    }
+
+    /// ITER-057.5 — a fulfilled (auto-completed) staged candidate never surfaces.
+    func test_promote_skipsCompletedCandidates() throws {
+        let (svc, ctx) = try makeService()
+        let done = staged("Reply to Sam about the contract")
+        done.completed = true
+        ctx.insert(done)
+        try ctx.save()
+
+        XCTAssertEqual(svc.promoteIfNeeded(notify: false), 0)
+        XCTAssertEqual(done.status, "staged", "completed candidate stays put")
+    }
+
     /// tasksEnabled OFF → the loop is inert.
     func test_promote_respectsMasterToggle() throws {
         let (svc, ctx) = try makeService()

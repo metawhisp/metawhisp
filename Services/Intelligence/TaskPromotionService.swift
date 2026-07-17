@@ -58,9 +58,23 @@ final class TaskPromotionService: ObservableObject {
         max(0, target - activeAICount)
     }
 
+    /// ITER-057.2 — candidate ordering: ranked first (relevanceScore ascending,
+    /// 1 = most important), unranked (nil) after ALL ranked, recency as tiebreak.
+    /// This is what stops fresh dev-screen junk from beating a ranked real
+    /// commitment. Pure, pinned by tests.
+    nonisolated static func ranksHigher(scoreA: Int?, createdA: Date, scoreB: Int?, createdB: Date) -> Bool {
+        switch (scoreA, scoreB) {
+        case let (a?, b?) where a != b: return a < b
+        case (.some, nil): return true
+        case (nil, .some): return false
+        default: return createdA > createdB
+        }
+    }
+
     /// One promotion pass. Screen-sourced active tasks count toward the target;
-    /// candidates = staged, not dismissed, inside the TaskHygiene review window,
-    /// newest first (relevance re-ranking arrives with ITER-057.2).
+    /// candidates = staged, not dismissed, not completed (a fulfilled candidate
+    /// must never surface), inside the TaskHygiene review window, ordered by
+    /// `ranksHigher` (ITER-057.2 relevance, then recency).
     @discardableResult
     func promoteIfNeeded(notify: Bool, now: Date = Date()) -> Int {
         guard !isPromoting else { return 0 }
@@ -80,12 +94,16 @@ final class TaskPromotionService: ObservableObject {
         guard need > 0 else { return 0 }
 
         var stagedDesc = FetchDescriptor<TaskItem>(
-            predicate: #Predicate { $0.status == "staged" && !$0.isDismissed },
+            predicate: #Predicate { $0.status == "staged" && !$0.isDismissed && !$0.completed },
             sortBy: [SortDescriptor(\.createdAt, order: .reverse)]
         )
-        stagedDesc.fetchLimit = need * 4   // headroom for the hygiene filter below
+        // Recency-capped pool: the re-ranker scores within this same window, and
+        // the hygiene filter drops week-old candidates anyway.
+        stagedDesc.fetchLimit = 200
         let staged = ((try? ctx.fetch(stagedDesc)) ?? [])
             .filter { !TaskHygiene.isStaleUnreviewedCandidate(status: $0.status ?? "staged", createdAt: $0.createdAt, now: now) }
+            .sorted { Self.ranksHigher(scoreA: $0.relevanceScore, createdA: $0.createdAt,
+                                       scoreB: $1.relevanceScore, createdB: $1.createdAt) }
             .prefix(need)
 
         var promoted = 0

@@ -1475,7 +1475,7 @@ struct MainSettingsView: View {
                 GlassDivider()
                 toggleRow("Realtime task detection", isOn: $settings.realtimeScreenReactionEnabled)
                 if settings.realtimeScreenReactionEnabled {
-                    Text("LLM checks each new window for actionable tasks. Max 30 checks/hour. Per-app 60s cooldown. Pro only.")
+                    Text("Catches commitments in your chats (\"I'll send it tomorrow\") and auto-completes tasks it sees you finish. Messengers, mail and work browser tabs only. Max 30 checks/hour. Needs Pro, a local model, or your API key.")
                         .font(MW.monoSm).foregroundStyle(MW.textMuted)
                         .fixedSize(horizontal: false, vertical: true)
                 }

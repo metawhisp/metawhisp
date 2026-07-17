@@ -46,6 +46,11 @@ final class TaskItem {
     /// spec://iterations/ITER-008-embeddings
     var embedding: Data?
 
+    /// ITER-057.2 — LLM re-rank position among staged candidates. 1 = most
+    /// important; `nil` = not ranked yet (sorts after all ranked). Written only
+    /// by `TaskPrioritizationService`; read by the promotion loop's ordering.
+    var relevanceScore: Int?
+
     /// Owner of the action — `nil` means the user themselves (My task).
     /// Non-nil means someone else owes the user this delivery (Waiting-on bin).
     /// Captured from extraction context: explicit delegation ("я попросил Сэма X")

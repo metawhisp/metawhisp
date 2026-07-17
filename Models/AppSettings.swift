@@ -176,14 +176,21 @@ final class AppSettings: ObservableObject {
     /// user promoted themselves (and it would fight the promotion loop). Now
     /// genuinely one-shot.
     @AppStorage("didMigrateScreenTasksToStaged_iter007") var didMigrateScreenTasksToStaged: Bool = false
+    /// ITER-057.5 — one-time cleanup: dismiss the junk tasks system permission
+    /// dialogs (SecurityAgent / UserNotificationCenter / loginwindow) produced
+    /// before the task whitelist existed.
+    @AppStorage("didDismissSystemDialogTasks_iter057_5") var didDismissSystemDialogTasks: Bool = false
 
     // Screen extraction — hourly batch analysis of ScreenContext → ScreenObservation (spec://BACKLOG#Phase2.R1)
     @AppStorage("screenExtractionEnabled") var screenExtractionEnabled: Bool = true
     @AppStorage("screenExtractionInterval") var screenExtractionInterval: Double = 3600  // seconds (1 hour)
 
     // Realtime screen reaction — per-window LLM check for actionable tasks (spec://iterations/ITER-006).
-    // Off by default: Pro-only, adds LLM cost. User opts in for real-time task surfacing.
-    @AppStorage("realtimeScreenReactionEnabled") var realtimeScreenReactionEnabled: Bool = false
+    // ITER-057.5 — ON by default (reference parity: extraction is on; this is the
+    // commitment detector, the flagship's core). Cost is bounded by the task
+    // whitelist + 60s per-app cooldown + 30 calls/hour cap + mini gate; users who
+    // explicitly turned it off keep their stored false.
+    @AppStorage("realtimeScreenReactionEnabled") var realtimeScreenReactionEnabled: Bool = true
 
     // File Indexing — scan user-picked folders + extract memories from text files (spec://BACKLOG#Phase3.E1)
     @AppStorage("fileIndexingEnabled") var fileIndexingEnabled: Bool = false
