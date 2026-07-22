@@ -91,32 +91,49 @@ final class AudioRecordingService: ObservableObject, AudioSource {
     /// Without this guard, each `warmUp()` adds another observer,
     /// and each observer triggers warmUp again → cascading infinite loop
     /// when the OS fires configuration-change notifications back-to-back.
+    ///
+    /// DEADLOCK RULES (2026-07-22 — founder's app froze for good; proven by
+    /// sampling the wedged process, both sides of the cycle on file):
+    /// - `queue:` MUST stay nil. With `queue: .main`, AVFAudio's internal
+    ///   "engine" queue posts this notification and BLOCKS in
+    ///   `-[NSOperation waitUntilFinished]` until the main thread runs the
+    ///   block — one half of the deadlock. With nil the block runs inline on
+    ///   the posting thread and only spawns a Task, never blocking it.
+    /// - The old engine MUST be released OFF the main thread.
+    ///   `-[AVAudioEngine dealloc]` does `dispatch_sync` onto that same
+    ///   "engine" queue; if a second config-change is in flight there, the
+    ///   main thread waits forever (`__DISPATCH_WAIT_FOR_QUEUE__`) — the
+    ///   other half. A background thread may wait; the main thread may not.
     private func observeDeviceChanges() {
         guard configObserver == nil else { return }
 
         configObserver = NotificationCenter.default.addObserver(
             forName: .AVAudioEngineConfigurationChange,
-            object: nil, queue: .main
-        ) { [weak self] notification in
-            guard let self else { return }
+            object: nil, queue: nil
+        ) { [weak self] _ in
             NSLog("[AudioRecording] 🔄 Audio device changed — resetting engine")
             Task { @MainActor in
+                guard let self else { return }
                 let wasRecording = self.isRecording
                 if wasRecording {
-                    // Stop current recording — engine is invalid
-                    self.engine?.inputNode.removeTap(onBus: 0)
-                    self.engine?.stop()
                     self.isRecording = false
                     NSLog("[AudioRecording] Recording interrupted by device change")
                 }
-                // Force new engine on next start — but DON'T call warmUp()
-                // here. Lazy-init happens in `start()`. Re-warming from inside
-                // the observer callback can itself trigger another config-change
-                // notification (inputNode lazy init probes the device again),
-                // which re-enters the observer → loop.
+                // Detach the engine; next `start()` lazy-inits a fresh one.
+                // DON'T call warmUp() here — inputNode lazy init probes the
+                // device again → another config-change → observer loop.
+                let oldEngine = self.engine
                 self.engine = nil
                 self.converter = nil
                 self.engineWarmed = false
+                // Tear down + release off-main (see DEADLOCK RULES above).
+                Task.detached(priority: .utility) {
+                    if wasRecording {
+                        oldEngine?.inputNode.removeTap(onBus: 0)
+                        oldEngine?.stop()
+                    }
+                    // oldEngine released here, on a background thread.
+                }
             }
         }
     }
