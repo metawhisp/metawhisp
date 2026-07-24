@@ -633,8 +633,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             guard upgradePlanStillActive() else {
                 NSLog("[ModelBootstrap] Swap finished but the plan died mid-load — restoring user's pick")
                 let chosen = settings.selectedModel
-                if settings.transcriptionEngine != "cloud",
-                   modelManager.isDownloaded(chosen),
+                // Cloud/Pro won the race: the engine-switch observer already
+                // unloaded ITS reference, but this task holds the old engine —
+                // which now has Large resident. Free it and stop claiming a
+                // loaded model (Codex: reopened the "cloud frees RAM / don't
+                // lie about the loaded model" hole).
+                if settings.transcriptionEngine == "cloud" || LicenseService.shared.isPro {
+                    await engine.unloadModel()
+                    if self.whisperEngine === engine { self.whisperEngine = nil }
+                    coordinator.loadedWhisperModelId = nil
+                    NSLog("[ModelBootstrap] Cloud/Pro won mid-swap — unloaded the local engine")
+                    return
+                }
+                if modelManager.isDownloaded(chosen),
                    let chosenVariant = modelManager.variantName(chosen) {
                     do {
                         try await engine.loadModel(chosenVariant, progressHandler: nil)

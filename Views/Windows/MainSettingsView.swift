@@ -413,13 +413,32 @@ struct MainSettingsView: View {
         ))
     }
 
+    /// True when THIS model is on disk, selected, and the manager is reporting a
+    /// failure with no download running — i.e. the load failed (ITER-058.3).
+    private func isLoadFailure(_ modelId: String) -> Bool {
+        guard case .failed = modelManager.phase,
+              modelManager.currentDownloadModel == nil,
+              settings.selectedModel == modelId,
+              modelManager.isDownloaded(modelId) else { return false }
+        return true
+    }
+
     @ViewBuilder
     private func modelAction(_ info: ModelInfo) -> some View {
         if modelManager.isDownloaded(info.id) {
             if settings.selectedModel == info.id {
-                Text("ACTIVE")
-                    .font(MW.monoSm)
-                    .foregroundStyle(MW.idle)
+                // ITER-058.3 (Codex) — a downloaded-but-broken ACTIVE model had
+                // no retry in Settings (only onboarding did). Re-running the
+                // download fast-paths cached files and re-triggers the load.
+                if isLoadFailure(info.id) {
+                    BlocksButton(label: "RETRY") {
+                        modelManager.startDownload(info.id)
+                    }
+                } else {
+                    Text("ACTIVE")
+                        .font(MW.monoSm)
+                        .foregroundStyle(MW.idle)
+                }
             } else {
                 BlocksButton(label: "USE") {
                     // ITER-058.3 — an explicit pick anywhere cancels the
