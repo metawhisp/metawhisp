@@ -125,6 +125,29 @@ final class ModelBootstrapTests: XCTestCase {
             currentDownloadModel: nil, quickStartOwned: true))
     }
 
+    // MARK: - Load-failure marker is independent of the download phase (Codex)
+
+    @MainActor
+    func test_loadFailure_survivesUnrelatedDownloadFinishing() {
+        let mgr = ModelManagerService()
+        mgr.downloadedModels = ["openai_whisper-base"]
+        mgr.failedToLoadModelId = "base"
+        // An unrelated download runs and completes — the phase pipeline moves on,
+        // but the base load failure must still be visible (it used to be erased).
+        mgr.phase = .downloading
+        mgr.phase = .done
+        XCTAssertEqual(mgr.failedToLoadModelId, "base")
+    }
+
+    @MainActor
+    func test_loadFailure_clearedByRetryingThatModel() {
+        let mgr = ModelManagerService()
+        mgr.failedToLoadModelId = "base"
+        mgr.startDownload("base")          // RETRY re-runs the download
+        XCTAssertNil(mgr.failedToLoadModelId)
+        mgr.cancelDownload()
+    }
+
     // MARK: - isDownloaded exact match (review: substring bug)
 
     @MainActor

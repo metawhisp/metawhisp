@@ -452,15 +452,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
                             do {
                                 try await engine.loadModel(variant, progressHandler: nil)
                                 self.coordinator.loadedWhisperModelId = newModel
+                                self.modelManager.failedToLoadModelId = nil
                                 NSLog("[MetaWhisp] ✅ Reloaded on model select: \(variant)")
                             } catch {
                                 NSLog("[MetaWhisp] ❌ Reload-on-select failed: \(error)")
                                 // Codex — a swallowed failure left Settings
                                 // rendering a calm "ACTIVE" next to a model that
-                                // never loaded, with no way to retry. `.failed`
-                                // is what turns that row into RETRY.
+                                // never loaded, with no way to retry.
                                 self.coordinator.lastError = "Failed to load model: \(error.localizedDescription)"
-                                self.modelManager.phase = .failed("Model failed to load — tap RETRY")
+                                self.modelManager.failedToLoadModelId = newModel
                             }
                         }
                     }
@@ -498,14 +498,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
                             do {
                                 try await engine.loadModel(variant, progressHandler: nil)
                                 self.coordinator.loadedWhisperModelId = modelId
+                                self.modelManager.failedToLoadModelId = nil
                                 NSLog("[MetaWhisp] ✅ Model loaded successfully")
                             } catch {
                                 NSLog("[MetaWhisp] ❌ Failed to load model: \(error)")
                                 self.coordinator.lastError = "Failed to load model: \(error.localizedDescription)"
-                                // Same reason as reload-on-select: without
-                                // `.failed` the Settings row stays "ACTIVE" and
-                                // the promised RETRY is unreachable (Codex).
-                                self.modelManager.phase = .failed("Model failed to load — tap RETRY")
+                                // Same reason as reload-on-select: the Settings
+                                // row must turn into RETRY, not stay "ACTIVE".
+                                self.modelManager.failedToLoadModelId = modelId
                             }
                         }
                     }
@@ -540,6 +540,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
                     do {
                         try await engine.loadModel(variant, progressHandler: nil)
                         self.coordinator.loadedWhisperModelId = modelId
+                        self.modelManager.failedToLoadModelId = nil
                         NSLog("[MetaWhisp] ✅ Auto-loaded downloaded model: \(variant)")
                         // ITER-058.3 — background best-model upgrade driver:
                         // after Base loads, start the Large download; after
@@ -557,6 +558,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
                         // seconds) → .done → this load retries.
                         self.modelManager.phase = .failed(
                             "Model downloaded but failed to load — tap RETRY")
+                        self.modelManager.failedToLoadModelId = modelId
                         self.coordinator.lastError = "Model failed to load: \(error.localizedDescription)"
                     }
                 }
@@ -692,6 +694,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             // Loaded-first ordering: the FREE-7 selectedModel observer sees
             // loadedWhisperModelId already equal and no-ops (no double load).
             coordinator.loadedWhisperModelId = ModelBootstrap.bestModelId
+            modelManager.failedToLoadModelId = nil
             settings.selectedModel = ModelBootstrap.bestModelId
             settings.pendingBestModelUpgrade = false
             settings.bestModelUpgradeAttempts = 0
@@ -839,6 +842,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
                 do {
                     try await engine.loadModel(variant, progressHandler: nil)
                     coordinator.loadedWhisperModelId = modelId
+                    modelManager.failedToLoadModelId = nil
                     NSLog("[MetaWhisp] ✅ Model loaded successfully")
                     if coordinator.lastError?.contains("model") == true {
                         coordinator.lastError = nil
@@ -849,6 +853,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
                     // ITER-058.3 (Codex) — surface it so the wizard/Settings
                     // offer a reachable RETRY instead of a ✓-looking dead model.
                     modelManager.phase = .failed("Model failed to load — tap RETRY")
+                    modelManager.failedToLoadModelId = modelId
                 }
             } else {
                 NSLog("[MetaWhisp] ⚠️ No downloaded model found for '\(modelId)'")

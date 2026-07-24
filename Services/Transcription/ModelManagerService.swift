@@ -33,6 +33,12 @@ final class ModelManagerService: ObservableObject {
     @Published var isDownloading = false
     @Published var currentDownloadModel: String?
     @Published var phase: DownloadPhase = .idle
+    /// The model whose LOAD into the engine failed (nil = none). Deliberately
+    /// separate from `phase`, which describes the DOWNLOAD pipeline: overloading
+    /// `.failed` for load errors made the failure invisible while an unrelated
+    /// download ran, and that download finishing then erased it — leaving a
+    /// broken model showing "ACTIVE" with no reachable RETRY (Codex).
+    @Published var failedToLoadModelId: String?
 
     private var downloadTask: Task<Void, Never>?
 
@@ -83,6 +89,9 @@ final class ModelManagerService: ObservableObject {
         downloadProgress = 0
         downloadSpeed = ""
         phase = .downloading
+        // Re-downloading IS the retry for a load failure — clear the marker so
+        // the row stops offering RETRY while the retry is running.
+        if failedToLoadModelId == modelId { failedToLoadModelId = nil }
 
         let variant = info.variant
         Self.log.info("Starting download: \(variant)")

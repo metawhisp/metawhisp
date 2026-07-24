@@ -413,14 +413,12 @@ struct MainSettingsView: View {
         ))
     }
 
-    /// True when THIS model is on disk, selected, and the manager is reporting a
-    /// failure with no download running — i.e. the load failed (ITER-058.3).
+    /// True when THIS model is on disk but its load into the engine failed
+    /// (ITER-058.3). Keyed on the dedicated marker, not the download `phase`:
+    /// an unrelated download running (or finishing) must neither hide nor erase
+    /// a load failure (Codex).
     private func isLoadFailure(_ modelId: String) -> Bool {
-        guard case .failed = modelManager.phase,
-              modelManager.currentDownloadModel == nil,
-              settings.selectedModel == modelId,
-              modelManager.isDownloaded(modelId) else { return false }
-        return true
+        modelManager.failedToLoadModelId == modelId && modelManager.isDownloaded(modelId)
     }
 
     @ViewBuilder

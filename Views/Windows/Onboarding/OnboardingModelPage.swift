@@ -166,15 +166,10 @@ struct OnboardingModelPage: View {
         // retryable; the old `.disabled(isDone)` made "tap to retry" unreachable.
         // Retry re-runs startDownload: cached files fast-path in seconds → .done
         // → the auto-loader re-attempts the load.
-        let loadFailed: Bool = {
-            // currentDownloadModel == nil distinguishes a LOAD failure (download
-            // completed) from a background DOWNLOAD failure of another model —
-            // the latter must not paint RETRY on a working Base card (review).
-            if case .failed = modelManager.phase,
-               isDone, modelId == AppSettings.shared.selectedModel,
-               modelManager.currentDownloadModel == nil { return true }
-            return false
-        }()
+        // Keyed on the per-model marker, so a background DOWNLOAD failure of
+        // another model never paints RETRY on a working Base card, and a
+        // concurrent download never hides a real load failure (Codex).
+        let loadFailed = isDone && modelManager.failedToLoadModelId == modelId
         return HStack {
             VStack(alignment: .leading, spacing: 3) {
                 HStack(spacing: 8) {
