@@ -54,13 +54,14 @@ enum ModelBootstrap {
     /// Review-hardened invariants:
     /// - Pro / cloud engine active → `.cancelPlan` (never download ~1 GB for a
     ///   user who doesn't transcribe locally, never a false success note).
-    /// - Base not on disk yet → `.none`: Base ALWAYS resumes first (the wizard
-    ///   restarts it) — the launch resume must not grab the download slot for
-    ///   the 950 MB model while the user is waiting on quick-start.
+    /// - Quick model not WORKING yet → `.none`: Base always comes first. Not
+    ///   merely "on disk" (Codex review): a corrupt Base that fails to load
+    ///   used to let the 950 MB download start, putting the user right back
+    ///   behind the wall the quick start exists to remove.
     static func upgradeAction(
         pending: Bool,
         selectedModel: String,
-        quickDownloaded: Bool,
+        quickModelLoaded: Bool,
         bestDownloaded: Bool,
         isDownloading: Bool,
         isPro: Bool,
@@ -70,7 +71,7 @@ enum ModelBootstrap {
         guard pending, selectedModel == quickModelId else { return .none }
         if isPro || engineIsCloud { return .cancelPlan }
         if bestDownloaded { return .swapNow }
-        guard quickDownloaded else { return .none }
+        guard quickModelLoaded else { return .none }
         if isDownloading { return .none }   // a download is already in flight
         if freeBytes < minFreeBytesForBest { return .skipLowDisk }
         return .startDownload

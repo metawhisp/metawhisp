@@ -282,8 +282,14 @@ struct OnboardingModelPage: View {
                 }
                 AppSettings.shared.transcriptionEngine = "cloud"
                 // ITER-058.3 — the user went cloud: cancel the quick-start's
-                // background 950 MB plan (review fix — no unrequested ~1 GB).
+                // background plan AND any in-flight download right here (Codex:
+                // clearing the flag alone let a running 950 MB finish; the
+                // engine-switch observer also cancels, this is belt+braces for
+                // the case where the engine was already "cloud").
                 AppSettings.shared.pendingBestModelUpgrade = false
+                if modelManager.currentDownloadModel == ModelBootstrap.bestModelId {
+                    modelManager.cancelDownload()
+                }
                 coordinator.cloudKeyValidated = true
             } else {
                 validationError = "Key didn't validate — check it and try again."

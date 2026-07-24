@@ -38,7 +38,7 @@ final class ModelBootstrapTests: XCTestCase {
     private func action(
         pending: Bool = true,
         selectedModel: String = ModelBootstrap.quickModelId,
-        quickDownloaded: Bool = true,
+        quickModelLoaded: Bool = true,
         bestDownloaded: Bool = false,
         isDownloading: Bool = false,
         isPro: Bool = false,
@@ -47,7 +47,7 @@ final class ModelBootstrapTests: XCTestCase {
     ) -> ModelBootstrap.UpgradeAction {
         ModelBootstrap.upgradeAction(
             pending: pending, selectedModel: selectedModel,
-            quickDownloaded: quickDownloaded, bestDownloaded: bestDownloaded,
+            quickModelLoaded: quickModelLoaded, bestDownloaded: bestDownloaded,
             isDownloading: isDownloading, isPro: isPro,
             engineIsCloud: engineIsCloud, freeBytes: freeBytes)
     }
@@ -77,10 +77,11 @@ final class ModelBootstrapTests: XCTestCase {
         XCTAssertEqual(action(bestDownloaded: true, isDownloading: true), .swapNow)
     }
 
-    /// Review P3: quit mid-Base-download → the launch resume must NOT grab the
-    /// download slot for the 950 MB model; Base resumes first (via the wizard).
-    func test_upgrade_quickModelNotOnDiskYet_waits() {
-        XCTAssertEqual(action(quickDownloaded: false), .none)
+    /// Review P3 + Codex: the upgrade waits until the quick model is actually
+    /// LOADED — not merely downloaded. A corrupt Base that fails to load must
+    /// not hand the download slot to the 950 MB model.
+    func test_upgrade_quickModelNotWorkingYet_waits() {
+        XCTAssertEqual(action(quickModelLoaded: false), .none)
     }
 
     func test_upgrade_needsDownload_starts() {

@@ -464,6 +464,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
                 Task { @MainActor in
                     if newEngine == "cloud" {
                         NSLog("[MetaWhisp] ☁️ Switched to Cloud — deallocating WhisperKit to free RAM")
+                        // ITER-058.3 (Codex) — a runtime switch to cloud must
+                        // also kill an in-flight background best-model download
+                        // and the upgrade plan; previously only the onboarding
+                        // path cleared the flag and the 950 MB kept downloading.
+                        AppSettings.shared.pendingBestModelUpgrade = false
+                        if self.modelManager.currentDownloadModel == ModelBootstrap.bestModelId {
+                            self.modelManager.cancelDownload()
+                            NSLog("[ModelBootstrap] Cancelled in-flight best-model download — cloud path active")
+                        }
                         await self.whisperEngine?.unloadModel()
                         self.whisperEngine = nil
                         self.coordinator.whisperEngine = nil
@@ -549,7 +558,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         let action = ModelBootstrap.upgradeAction(
             pending: settings.pendingBestModelUpgrade,
             selectedModel: settings.selectedModel,
-            quickDownloaded: modelManager.isDownloaded(ModelBootstrap.quickModelId),
+            // LOADED, not just on disk (Codex): a corrupt quick model must not
+            // hand the download slot to the 950 MB upgrade.
+            quickModelLoaded: coordinator.loadedWhisperModelId == ModelBootstrap.quickModelId,
             bestDownloaded: modelManager.isDownloaded(ModelBootstrap.bestModelId),
             isDownloading: modelManager.isDownloading,
             isPro: LicenseService.shared.isPro,
@@ -611,17 +622,32 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         defer { isSwappingBestModel = false }
         do {
             try await engine.loadModel(variant, progressHandler: nil)
-            // Re-check after the minutes-long first CoreML load (review): the
-            // user may have explicitly picked another model or gone cloud/Pro
-            // meanwhile — their choice wins; restore their engine and walk away.
+            // The kit is ALREADY swapped inside loadModel — record reality
+            // immediately (Codex: the old code checked the plan first, so for
+            // the length of the check/restore the engine ran Large while
+            // `loadedWhisperModelId` still claimed Base).
+            coordinator.loadedWhisperModelId = ModelBootstrap.bestModelId
+            // Re-check after the minutes-long first CoreML load: the user may
+            // have explicitly picked another model or gone cloud/Pro meanwhile
+            // — their choice wins; restore their engine and walk away.
             guard upgradePlanStillActive() else {
                 NSLog("[ModelBootstrap] Swap finished but the plan died mid-load — restoring user's pick")
                 let chosen = settings.selectedModel
                 if settings.transcriptionEngine != "cloud",
                    modelManager.isDownloaded(chosen),
                    let chosenVariant = modelManager.variantName(chosen) {
-                    try? await engine.loadModel(chosenVariant, progressHandler: nil)
-                    coordinator.loadedWhisperModelId = chosen
+                    do {
+                        try await engine.loadModel(chosenVariant, progressHandler: nil)
+                        coordinator.loadedWhisperModelId = chosen
+                    } catch {
+                        // Never lie about which model is running (Codex: `try?`
+                        // swallowed this and left a silent settings/engine
+                        // mismatch). State stays truthful; the error is visible.
+                        NSLog("[ModelBootstrap] ⚠️ Could not restore %@ after aborted swap: %@",
+                              chosen, error.localizedDescription)
+                        coordinator.lastError =
+                            "Couldn't switch back to \(chosen) — still using Large V3 Turbo. Pick it again in Settings."
+                    }
                 }
                 return
             }
@@ -782,6 +808,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
                 } catch {
                     NSLog("[MetaWhisp] ❌ Failed to load model: \(error)")
                     coordinator.lastError = "Failed to load model: \(error.localizedDescription)"
+                    // ITER-058.3 (Codex) — surface it so the wizard/Settings
+                    // offer a reachable RETRY instead of a ✓-looking dead model.
+                    modelManager.phase = .failed("Model failed to load — tap RETRY")
                 }
             } else {
                 NSLog("[MetaWhisp] ⚠️ No downloaded model found for '\(modelId)'")
