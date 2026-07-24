@@ -211,3 +211,22 @@ in-wizard with "copied to clipboard" note instead of typing.
 ## Changelog
 - [2026-07-24] Plan created from the onboarding audit (screens mapped from
   code with file:line refs; open ITER-051/053.6 items folded in).
+
+## 058.3 review log — shipped as 1.3.20 (2026-07-25)
+
+Six adversarial review rounds (2 internal, 4 Codex `gpt-5.5` high) on top of the
+1.3.19 quick-start bootstrap. 11 defects found and fixed; `swift test` 686/686.
+
+| # | Defect | Fix |
+|---|---|---|
+| 1 | `cancelPlan` didn't cancel a real cloud/Pro switch | plan + in-flight download cancelled at both call sites |
+| 2 | Post-await plan re-check ran after the engine already served Large | load first, record reality, then re-check |
+| 3 | Corrupt Base still handed the download slot to the 950 MB model | `upgradeAction` gates on `quickModelLoaded` |
+| 4 | Mid-swap cloud/Pro race left ~1 GB resident and a lying state | unload the captured engine, clear the loaded id |
+| 5 | No RETRY in Settings for a broken ACTIVE model | `isLoadFailure` row → RETRY |
+| 6 | Stale swap task spoke for a replaced engine | engine identity verified after every load |
+| 7 | Cloud/Pro cancelled only the best model, not a quick-start Base | `ModelBootstrap.shouldCancelDownload` (ownership) |
+| 8 | Load failure rode on the download `phase` — hidden by, and erased by, unrelated downloads | dedicated per-model `failedToLoadModelId` |
+| 9 | Swap catches set no marker; a failed retry never restored it | marker set in both catches, round-trips through a retry |
+| 10 | Marker cleared even when the cleanup delete failed | cleared only once the files are gone |
+| 11 | Failed download froze its Settings row; on-disk model unpickable in setup | row falls back to DOWNLOAD; unselected on-disk model offers USE |
