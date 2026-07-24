@@ -723,8 +723,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
                 let dir = ModelManagerService.defaultHubPath.appendingPathComponent(variant)
                 try? FileManager.default.removeItem(at: dir)
                 modelManager.refreshDownloaded()
-                // Files are gone — nothing left to retry, so drop the marker.
-                modelManager.failedToLoadModelId = nil
+                // Drop the marker only if the files ACTUALLY went away. A failed
+                // delete (dir busy, permissions) leaves the broken model on disk
+                // — clearing it there would paint a healthy ✓ on it (Codex).
+                if !modelManager.isDownloaded(ModelBootstrap.bestModelId) {
+                    modelManager.failedToLoadModelId = nil
+                }
                 NSLog("[ModelBootstrap] ❌ Best-model load failed %d times (%@) — upgrade abandoned",
                       attempts, error.localizedDescription)
                 MWNotificationStack.shared.push(MWNotification(
