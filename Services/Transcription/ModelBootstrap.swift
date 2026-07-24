@@ -77,6 +77,19 @@ enum ModelBootstrap {
         return .startDownload
     }
 
+    /// Cloud/Pro just won — which in-flight download must die?
+    ///
+    /// The best model always: nobody transcribing in the cloud needs ~1 GB more.
+    /// The quick model only when the quick-start bootstrap owns it (Codex: the
+    /// old check named the best model alone, so an auto-started Base kept
+    /// downloading after the user had explicitly opted out of local). A local
+    /// model the user picked by hand in Settings is theirs to keep.
+    static func shouldCancelDownload(currentDownloadModel: String?, quickStartOwned: Bool) -> Bool {
+        guard let model = currentDownloadModel else { return false }
+        if model == bestModelId { return true }
+        return quickStartOwned && model == quickModelId
+    }
+
     /// Free bytes on the user's home volume (the models land under ~/Documents).
     static func freeDiskBytes() -> Int64 {
         let home = FileManager.default.homeDirectoryForCurrentUser

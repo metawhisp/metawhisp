@@ -455,6 +455,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
                                 NSLog("[MetaWhisp] ✅ Reloaded on model select: \(variant)")
                             } catch {
                                 NSLog("[MetaWhisp] ❌ Reload-on-select failed: \(error)")
+                                // Codex — a swallowed failure left Settings
+                                // rendering a calm "ACTIVE" next to a model that
+                                // never loaded, with no way to retry. `.failed`
+                                // is what turns that row into RETRY.
+                                self.coordinator.lastError = "Failed to load model: \(error.localizedDescription)"
+                                self.modelManager.phase = .failed("Model failed to load — tap RETRY")
                             }
                         }
                     }
@@ -468,10 +474,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
                         // also kill an in-flight background best-model download
                         // and the upgrade plan; previously only the onboarding
                         // path cleared the flag and the 950 MB kept downloading.
+                        let quickStartOwned = AppSettings.shared.pendingBestModelUpgrade
                         AppSettings.shared.pendingBestModelUpgrade = false
-                        if self.modelManager.currentDownloadModel == ModelBootstrap.bestModelId {
+                        if ModelBootstrap.shouldCancelDownload(
+                            currentDownloadModel: self.modelManager.currentDownloadModel,
+                            quickStartOwned: quickStartOwned) {
                             self.modelManager.cancelDownload()
-                            NSLog("[ModelBootstrap] Cancelled in-flight best-model download — cloud path active")
+                            NSLog("[ModelBootstrap] Cancelled in-flight local download — cloud path active")
                         }
                         await self.whisperEngine?.unloadModel()
                         self.whisperEngine = nil
@@ -493,6 +502,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
                             } catch {
                                 NSLog("[MetaWhisp] ❌ Failed to load model: \(error)")
                                 self.coordinator.lastError = "Failed to load model: \(error.localizedDescription)"
+                                // Same reason as reload-on-select: without
+                                // `.failed` the Settings row stays "ACTIVE" and
+                                // the promised RETRY is unreachable (Codex).
+                                self.modelManager.phase = .failed("Model failed to load — tap RETRY")
                             }
                         }
                     }
@@ -622,6 +635,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         defer { isSwappingBestModel = false }
         do {
             try await engine.loadModel(variant, progressHandler: nil)
+            // A swap load runs for minutes — long enough for a cloud round-trip
+            // (cloud → on-device) to REPLACE `whisperEngine` underneath it. A
+            // stale task must never speak for the live engine (Codex: it could
+            // set `loadedWhisperModelId` while the real engine was still
+            // loading, so onboarding read "ready" on an engine that wasn't).
+            guard whisperEngine === engine, coordinator.whisperEngine === engine else {
+                await engine.unloadModel()
+                NSLog("[ModelBootstrap] Swap landed on a stale engine — unloaded it, global state untouched")
+                return
+            }
             // The kit is ALREADY swapped inside loadModel — record reality
             // immediately (Codex: the old code checked the plan first, so for
             // the length of the check/restore the engine ran Large while
@@ -649,6 +672,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
                    let chosenVariant = modelManager.variantName(chosen) {
                     do {
                         try await engine.loadModel(chosenVariant, progressHandler: nil)
+                        guard whisperEngine === engine, coordinator.whisperEngine === engine else {
+                            await engine.unloadModel()
+                            return
+                        }
                         coordinator.loadedWhisperModelId = chosen
                     } catch {
                         // Never lie about which model is running (Codex: `try?`

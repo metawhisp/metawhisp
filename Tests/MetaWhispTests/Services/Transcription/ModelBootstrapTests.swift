@@ -96,6 +96,35 @@ final class ModelBootstrapTests: XCTestCase {
         XCTAssertEqual(action(freeBytes: 1_000_000_000), .skipLowDisk)
     }
 
+    // MARK: - Cancellation ownership when cloud/Pro wins (Codex)
+
+    func test_cancel_bestModelAlwaysDies() {
+        XCTAssertTrue(ModelBootstrap.shouldCancelDownload(
+            currentDownloadModel: ModelBootstrap.bestModelId, quickStartOwned: false))
+    }
+
+    func test_cancel_quickStartOwnedBaseDies() {
+        XCTAssertTrue(ModelBootstrap.shouldCancelDownload(
+            currentDownloadModel: ModelBootstrap.quickModelId, quickStartOwned: true))
+    }
+
+    /// A model the user picked by hand keeps downloading — going cloud is not
+    /// permission to throw away their explicit choice.
+    func test_cancel_manualBaseSurvives() {
+        XCTAssertFalse(ModelBootstrap.shouldCancelDownload(
+            currentDownloadModel: ModelBootstrap.quickModelId, quickStartOwned: false))
+    }
+
+    func test_cancel_otherModelSurvives() {
+        XCTAssertFalse(ModelBootstrap.shouldCancelDownload(
+            currentDownloadModel: "small", quickStartOwned: true))
+    }
+
+    func test_cancel_nothingDownloading_noop() {
+        XCTAssertFalse(ModelBootstrap.shouldCancelDownload(
+            currentDownloadModel: nil, quickStartOwned: true))
+    }
+
     // MARK: - isDownloaded exact match (review: substring bug)
 
     @MainActor

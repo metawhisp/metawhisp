@@ -286,8 +286,11 @@ struct OnboardingModelPage: View {
                 // clearing the flag alone let a running 950 MB finish; the
                 // engine-switch observer also cancels, this is belt+braces for
                 // the case where the engine was already "cloud").
+                let quickStartOwned = AppSettings.shared.pendingBestModelUpgrade
                 AppSettings.shared.pendingBestModelUpgrade = false
-                if modelManager.currentDownloadModel == ModelBootstrap.bestModelId {
+                if ModelBootstrap.shouldCancelDownload(
+                    currentDownloadModel: modelManager.currentDownloadModel,
+                    quickStartOwned: quickStartOwned) {
                     modelManager.cancelDownload()
                 }
                 coordinator.cloudKeyValidated = true
