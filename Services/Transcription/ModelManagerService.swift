@@ -41,6 +41,23 @@ final class ModelManagerService: ObservableObject {
     @Published var failedToLoadModelId: String?
 
     private var downloadTask: Task<Void, Never>?
+    /// The model whose load-failure marker a running retry-download cleared —
+    /// restored if that download fails or is cancelled.
+    private var loadFailureClearedForRetry: String?
+
+    /// The retry download didn't deliver: the model is exactly as broken as it
+    /// was, so put its marker back and keep RETRY reachable.
+    func restoreLoadFailureAfterFailedRetry() {
+        guard let id = loadFailureClearedForRetry else { return }
+        failedToLoadModelId = id
+        loadFailureClearedForRetry = nil
+    }
+
+    /// The files landed — the auto-loader owns the verdict from here, so the
+    /// pending restore is dropped.
+    func noteRetryDownloadSucceeded() {
+        loadFailureClearedForRetry = nil
+    }
 
     static let models: [ModelInfo] = [
         ModelInfo(id: "large-v3-turbo", variant: "openai_whisper-large-v3_turbo", displayName: "Large V3 Turbo", size: "~950 MB", description: "Best speed/accuracy (recommended)"),
@@ -90,8 +107,13 @@ final class ModelManagerService: ObservableObject {
         downloadSpeed = ""
         phase = .downloading
         // Re-downloading IS the retry for a load failure — clear the marker so
-        // the row stops offering RETRY while the retry is running.
-        if failedToLoadModelId == modelId { failedToLoadModelId = nil }
+        // the row stops offering RETRY while the retry is running. Remember it:
+        // if the retry itself fails, the model is still broken and the marker
+        // has to come back, or RETRY disappears forever (Codex).
+        if failedToLoadModelId == modelId {
+            failedToLoadModelId = nil
+            loadFailureClearedForRetry = modelId
+        }
 
         let variant = info.variant
         Self.log.info("Starting download: \(variant)")
@@ -127,9 +149,13 @@ final class ModelManagerService: ObservableObject {
                     // interrupted/partial download must surface as failed + retry,
                     // not a false "ready".
                     if manager.isDownloaded(modelId) {
+                        // The files landed; the auto-loader now owns the verdict
+                        // and will set or clear the load-failure marker itself.
+                        manager.noteRetryDownloadSucceeded()
                         manager.phase = .done
                     } else {
                         manager.phase = .failed("Download finished but model files are missing — tap to retry")
+                        manager.restoreLoadFailureAfterFailedRetry()
                         Self.log.error("Reported success but model not on disk: \(variant)")
                     }
                 }
@@ -139,10 +165,12 @@ final class ModelManagerService: ObservableObject {
                     // the state; don't overwrite .idle with .failed.
                     if error is CancellationError || (error as? URLError)?.code == .cancelled {
                         Self.log.info("Download task ended: cancelled")
+                        manager.restoreLoadFailureAfterFailedRetry()
                         return
                     }
                     Self.log.error("Download failed: \(error)")
                     manager.phase = .failed("\(error)")
+                    manager.restoreLoadFailureAfterFailedRetry()
                     manager.isDownloading = false
                     manager.downloadSpeed = ""
                     // Keep currentDownloadModel so the error row stays visible

@@ -148,6 +148,30 @@ final class ModelBootstrapTests: XCTestCase {
         mgr.cancelDownload()
     }
 
+    @MainActor
+    func test_loadFailure_restoredWhenRetryDownloadFails() {
+        let mgr = ModelManagerService()
+        mgr.failedToLoadModelId = "base"
+        mgr.startDownload("base")                    // RETRY clears the marker
+        XCTAssertNil(mgr.failedToLoadModelId)
+        mgr.restoreLoadFailureAfterFailedRetry()     // …and the retry failed
+        XCTAssertEqual(mgr.failedToLoadModelId, "base",
+                       "a failed retry must leave RETRY reachable on the broken model")
+        mgr.cancelDownload()
+    }
+
+    @MainActor
+    func test_loadFailure_notRestoredAfterASuccessfulRetry() {
+        let mgr = ModelManagerService()
+        mgr.failedToLoadModelId = "base"
+        mgr.startDownload("base")
+        mgr.downloadedModels = ["openai_whisper-base"]
+        mgr.noteRetryDownloadSucceeded()             // the files landed
+        mgr.restoreLoadFailureAfterFailedRetry()     // must now be a no-op
+        XCTAssertNil(mgr.failedToLoadModelId)
+        mgr.cancelDownload()
+    }
+
     // MARK: - isDownloaded exact match (review: substring bug)
 
     @MainActor

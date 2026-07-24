@@ -687,6 +687,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
                               chosen, error.localizedDescription)
                         coordinator.lastError =
                             "Couldn't switch back to \(chosen) — still using Large V3 Turbo. Pick it again in Settings."
+                        // …and mark it, or Settings paints a calm ACTIVE on the
+                        // model that just refused to load (Codex).
+                        modelManager.failedToLoadModelId = chosen
                     }
                 }
                 return
@@ -710,6 +713,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             // download → fail → delete → re-download forever. Transient failures
             // keep the files — WhisperKit's loader self-repairs missing pieces
             // on the next attempt (next .done event or next launch).
+            // The best model is on disk but doesn't load — say so, so its card
+            // offers RETRY instead of a ✓ (Codex).
+            modelManager.failedToLoadModelId = ModelBootstrap.bestModelId
             let attempts = settings.bestModelUpgradeAttempts + 1
             settings.bestModelUpgradeAttempts = attempts
             if attempts >= 3 {
@@ -717,6 +723,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
                 let dir = ModelManagerService.defaultHubPath.appendingPathComponent(variant)
                 try? FileManager.default.removeItem(at: dir)
                 modelManager.refreshDownloaded()
+                // Files are gone — nothing left to retry, so drop the marker.
+                modelManager.failedToLoadModelId = nil
                 NSLog("[ModelBootstrap] ❌ Best-model load failed %d times (%@) — upgrade abandoned",
                       attempts, error.localizedDescription)
                 MWNotificationStack.shared.push(MWNotification(
