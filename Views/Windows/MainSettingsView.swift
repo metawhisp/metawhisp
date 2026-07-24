@@ -445,7 +445,10 @@ struct MainSettingsView: View {
                     settings.selectedModel = info.id
                 }
             }
-        } else if modelManager.currentDownloadModel == info.id {
+        } else if modelManager.isDownloading, modelManager.currentDownloadModel == info.id {
+            // `isDownloading` too, not just the id: a FAILED download keeps
+            // currentDownloadModel set so the error text stays visible, and the
+            // row used to freeze on stale progress with no way to retry (Codex).
             downloadProgress
         } else {
             BlocksButton(label: "DOWNLOAD") {

@@ -170,6 +170,11 @@ struct OnboardingModelPage: View {
         // another model never paints RETRY on a working Base card, and a
         // concurrent download never hides a real load failure (Codex).
         let loadFailed = isDone && modelManager.failedToLoadModelId == modelId
+        // A model already on disk but NOT selected must stay pickable (Codex):
+        // after a reinstall the files survive while UserDefaults reset to Large,
+        // and a disabled ✓ on the one working model left NEXT dead unless the
+        // user downloaded 950 MB.
+        let isSelected = modelId == AppSettings.shared.selectedModel
         return HStack {
             VStack(alignment: .leading, spacing: 3) {
                 HStack(spacing: 8) {
@@ -186,15 +191,16 @@ struct OnboardingModelPage: View {
             Button {
                 startLocalModel(modelId)
             } label: {
-                Text(loadFailed ? "RETRY" : (isDone ? "✓" : (isThis ? "…" : "DOWNLOAD")))
+                Text(loadFailed ? "RETRY" : (isDone ? (isSelected ? "✓" : "USE") : (isThis ? "…" : "DOWNLOAD")))
                     .font(.system(size: 9, weight: .bold, design: .monospaced)).tracking(0.5)
-                    .foregroundStyle(isDone && !loadFailed ? MW.idle : .black)
+                    .foregroundStyle(isDone && isSelected && !loadFailed ? MW.idle : .black)
                     .padding(.horizontal, 12).padding(.vertical, 6)
-                    .background(isDone && !loadFailed ? .clear : Color.white)
-                    .overlay(isDone && !loadFailed ? Rectangle().stroke(MW.idle, lineWidth: MW.hairline) : nil)
+                    .background(isDone && isSelected && !loadFailed ? .clear : Color.white)
+                    .overlay(isDone && isSelected && !loadFailed
+                             ? Rectangle().stroke(MW.idle, lineWidth: MW.hairline) : nil)
             }
             .buttonStyle(.plain)
-            .disabled((isDone && !loadFailed) || modelManager.isDownloading)
+            .disabled((isDone && isSelected && !loadFailed) || modelManager.isDownloading)
         }
         .padding(12)
         .mwCard(radius: MW.rSmall, elevation: .flat)
