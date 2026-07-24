@@ -126,6 +126,12 @@ final class ModelManagerService: ObservableObject {
                 }
             } catch {
                 await MainActor.run {
+                    // ITER-058.3 — an explicit cancelDownload() already reset
+                    // the state; don't overwrite .idle with .failed.
+                    if error is CancellationError || (error as? URLError)?.code == .cancelled {
+                        Self.log.info("Download task ended: cancelled")
+                        return
+                    }
                     Self.log.error("Download failed: \(error)")
                     manager.phase = .failed("\(error)")
                     manager.isDownloading = false
@@ -138,7 +144,25 @@ final class ModelManagerService: ObservableObject {
 
     func isDownloaded(_ modelId: String) -> Bool {
         guard let info = Self.models.first(where: { $0.id == modelId }) else { return false }
-        return downloadedModels.contains { $0.contains(info.variant) || $0 == info.variant }
+        // Exact match (ITER-058.3 review): the old contains-match made
+        // "large-v3" report downloaded whenever large-v3_TURBO was on disk
+        // ("openai_whisper-large-v3" is a substring of the turbo dir name).
+        return downloadedModels.contains { $0 == info.variant }
+    }
+
+    /// ITER-058.3 — cancel the in-flight download (user switched to cloud/Pro
+    /// mid-download; nobody needs the remaining megabytes). State resets to
+    /// idle; the task's catch recognizes cancellation and stays silent.
+    func cancelDownload() {
+        guard isDownloading else { return }
+        downloadTask?.cancel()
+        downloadTask = nil
+        isDownloading = false
+        currentDownloadModel = nil
+        downloadProgress = 0
+        downloadSpeed = ""
+        phase = .idle
+        Self.log.info("Download cancelled")
     }
 
     func variantName(_ modelId: String) -> String? {

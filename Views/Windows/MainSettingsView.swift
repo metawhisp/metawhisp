@@ -422,6 +422,9 @@ struct MainSettingsView: View {
                     .foregroundStyle(MW.idle)
             } else {
                 BlocksButton(label: "USE") {
+                    // ITER-058.3 — an explicit pick anywhere cancels the
+                    // quick-start background upgrade: the user chose, we obey.
+                    settings.pendingBestModelUpgrade = false
                     settings.selectedModel = info.id
                 }
             }
@@ -429,6 +432,9 @@ struct MainSettingsView: View {
             downloadProgress
         } else {
             BlocksButton(label: "DOWNLOAD") {
+                // ITER-058.3 — same explicit-pick rule as USE (a Settings
+                // download must not later trigger a surprise 950 MB upgrade).
+                settings.pendingBestModelUpgrade = false
                 modelManager.startDownload(info.id)
             }
             .opacity(modelManager.isDownloading ? 0.4 : 1.0)

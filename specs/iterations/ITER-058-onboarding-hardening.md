@@ -111,7 +111,7 @@ The wizard's skeleton is right (7 pages, real engine-readiness gate before
 - [ ] Tests: 3-state row machine (pure), NEXT gate, TryIt state resolution on
       empty/error results.
 
-### 058.3 — Instant light model, big model in background {#i3}
+### 058.3 — Instant light model, big model in background — DONE 2026-07-24 {#i3}
 > Founder decision 2026-07-24: the fix is NOT "let the wizard scroll past the
 > download" — it's "the user must never wait for 950 MB at all".
 >
@@ -130,16 +130,16 @@ The wizard's skeleton is right (7 pages, real engine-readiness gate before
 >    "Quick model now (80 MB) · best model auto-installs in background".
 >    Advanced users can still pick a specific model / cloud key / Pro — an
 >    explicit pick disables the background upgrade.
-- [ ] Auto-start Base download on Model page entry; readiness gate satisfied
+- [x] Auto-start Base download on Model page entry; readiness gate satisfied
       by Base (OnboardingReadiness unchanged semantics — a REAL engine).
-- [ ] Background Large V3 Turbo download + idle hot-swap + upgrade note;
+- [x] Background Large V3 Turbo download + idle hot-swap + upgrade note;
       persisted across relaunch (resume, not restart).
-- [ ] Surface swallowed load failures (AppDelegate.swift:499-519): error card
+- [x] Surface swallowed load failures (AppDelegate.swift:499-519): error card
       + RETRY; a failed background upgrade keeps Base silently working and
       retries next launch — the user is never blocked by the big model.
-- [ ] Disk preflight: <2.5 GB free → stay on Base, show "free up space to get
+- [x] Disk preflight: <2.5 GB free → stay on Base, show "free up space to get
       the best model" note instead of failing.
-- [ ] Tests: auto-download trigger, upgrade-swap gating (idle only, explicit
+- [x] Tests: auto-download trigger, upgrade-swap gating (idle only, explicit
       pick disables), failure→Base-keeps-working, resume state machine.
 
 ### 058.4 — Flagship discovery page (ITER-053.6 lands here) {#i4}

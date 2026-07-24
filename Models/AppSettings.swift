@@ -6,6 +6,14 @@ final class AppSettings: ObservableObject {
     static let shared = AppSettings()
 
     @AppStorage("selectedModel") var selectedModel: String = "large-v3-turbo"
+    /// ITER-058.3 — onboarding quick-started on Base; Large V3 Turbo should
+    /// install in the background and hot-swap in. Cleared by the swap, an
+    /// explicit user model pick, or a low-disk skip.
+    @AppStorage("pendingBestModelUpgrade") var pendingBestModelUpgrade: Bool = false
+    /// ITER-058.3 — failed swap attempts; at 3 the upgrade gives up for good
+    /// (review: without a cap, a deterministic load failure looped
+    /// download-950MB → fail → delete → re-download forever).
+    @AppStorage("bestModelUpgradeAttempts") var bestModelUpgradeAttempts: Int = 0
     @AppStorage("transcriptionLanguage") var transcriptionLanguage: String = "ru"
 
     /// Audio input device override. Empty string = follow macOS default

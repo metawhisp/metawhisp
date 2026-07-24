@@ -9,8 +9,9 @@ struct OnboardingModelPage: View {
     @State private var cloudKey = ""
     @State private var validating = false
     @State private var validationError: String?
-    /// TR-7 — set when the user picks Tiny with a non-English language.
-    @State private var tinyWarning: String?
+    /// ITER-058.3 — set when quick-start can't run (low disk); silent no-op
+    /// next to "downloads now" copy was a review finding.
+    @State private var quickStartNote: String?
 
     enum Tab: String { case local, cloud, pro }
 
@@ -85,22 +86,23 @@ struct OnboardingModelPage: View {
 
     private var localContent: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("100% private — audio never leaves your Mac")
+            // ITER-058.3 — quick start: Base auto-downloads the moment this page
+            // appears; the best model installs silently in the background later.
+            Text("Quick model downloads now — the best model auto-installs in the background. 100% private, audio never leaves your Mac.")
                 .font(MW.monoSm).foregroundStyle(MW.textSecondary)
+                .fixedSize(horizontal: false, vertical: true)
 
-            modelCard(modelId: "large-v3-turbo", name: "Large V3 Turbo", size: "~950 MB",
-                      badge: "RECOMMENDED", badgeColor: MW.idle)
-            modelCard(modelId: "tiny", name: "Tiny", size: "~40 MB",
-                      badge: "FAST", badgeColor: MW.textMuted)
-
-            // TR-7 — Tiny picked with a non-English language: loud quality
-            // warning (informative, not blocking).
-            if let tinyWarning {
-                Text("⚠️ " + tinyWarning)
+            if let quickStartNote {
+                Text("⚠️ " + quickStartNote)
                     .font(.system(size: 10, design: .monospaced))
                     .foregroundStyle(MW.recording)
                     .fixedSize(horizontal: false, vertical: true)
             }
+
+            modelCard(modelId: ModelBootstrap.quickModelId, name: "Base", size: "~80 MB",
+                      badge: "QUICK START", badgeColor: MW.idle)
+            modelCard(modelId: ModelBootstrap.bestModelId, name: "Large V3 Turbo", size: "~950 MB",
+                      badge: "BEST · AUTO-INSTALLS", badgeColor: MW.textMuted)
 
             // Live state from the real downloader.
             if modelManager.isDownloading || modelManager.phase == .verifying {
@@ -117,6 +119,37 @@ struct OnboardingModelPage: View {
                     .help(msg)
             }
         }
+        .onAppear { maybeQuickStart() }
+        .onChange(of: appeared) { _, isShown in
+            if isShown { maybeQuickStart() }
+        }
+    }
+
+    /// ITER-058.3 — auto-start the Base download so the user never stares at a
+    /// dead NEXT button. Idempotent: no-ops once anything is downloaded or in
+    /// flight, for Pro users, and on a nearly-full disk (with a visible note —
+    /// a silent no-op next to "downloads now" copy was a review finding).
+    private func maybeQuickStart() {
+        guard selected == .local else { return }
+        let anyDownloaded = ModelManagerService.models.contains { modelManager.isDownloaded($0.id) }
+        let freeBytes = ModelBootstrap.freeDiskBytes()
+        if !anyDownloaded, !modelManager.isDownloading,
+           freeBytes < ModelBootstrap.minFreeBytesForQuick {
+            quickStartNote = "Not enough free disk space (~500 MB needed). Free up space, or use Cloud / Pro."
+            return
+        }
+        guard ModelBootstrap.shouldQuickStart(
+            anyModelDownloaded: anyDownloaded,
+            isDownloading: modelManager.isDownloading,
+            isPro: LicenseService.shared.isPro,
+            freeBytes: freeBytes
+        ) else { return }
+        quickStartNote = nil
+        AppSettings.shared.selectedModel = ModelBootstrap.quickModelId
+        AppSettings.shared.transcriptionEngine = "ondevice"
+        AppSettings.shared.pendingBestModelUpgrade = true
+        modelManager.startDownload(ModelBootstrap.quickModelId)
+        NSLog("[ModelBootstrap] ⚡️ Quick start: Base downloading, best model queued for background install")
     }
 
     private var progressLabel: String {
@@ -129,6 +162,19 @@ struct OnboardingModelPage: View {
     private func modelCard(modelId: String, name: String, size: String, badge: String, badgeColor: Color) -> some View {
         let isDone = modelManager.isDownloaded(modelId)
         let isThis = modelManager.isDownloading && modelManager.currentDownloadModel == modelId
+        // ITER-058.3 review fix — a downloaded model that FAILED TO LOAD must be
+        // retryable; the old `.disabled(isDone)` made "tap to retry" unreachable.
+        // Retry re-runs startDownload: cached files fast-path in seconds → .done
+        // → the auto-loader re-attempts the load.
+        let loadFailed: Bool = {
+            // currentDownloadModel == nil distinguishes a LOAD failure (download
+            // completed) from a background DOWNLOAD failure of another model —
+            // the latter must not paint RETRY on a working Base card (review).
+            if case .failed = modelManager.phase,
+               isDone, modelId == AppSettings.shared.selectedModel,
+               modelManager.currentDownloadModel == nil { return true }
+            return false
+        }()
         return HStack {
             VStack(alignment: .leading, spacing: 3) {
                 HStack(spacing: 8) {
@@ -145,15 +191,15 @@ struct OnboardingModelPage: View {
             Button {
                 startLocalModel(modelId)
             } label: {
-                Text(isDone ? "✓" : (isThis ? "…" : "DOWNLOAD"))
+                Text(loadFailed ? "RETRY" : (isDone ? "✓" : (isThis ? "…" : "DOWNLOAD")))
                     .font(.system(size: 9, weight: .bold, design: .monospaced)).tracking(0.5)
-                    .foregroundStyle(isDone ? MW.idle : .black)
+                    .foregroundStyle(isDone && !loadFailed ? MW.idle : .black)
                     .padding(.horizontal, 12).padding(.vertical, 6)
-                    .background(isDone ? .clear : Color.white)
-                    .overlay(isDone ? Rectangle().stroke(MW.idle, lineWidth: MW.hairline) : nil)
+                    .background(isDone && !loadFailed ? .clear : Color.white)
+                    .overlay(isDone && !loadFailed ? Rectangle().stroke(MW.idle, lineWidth: MW.hairline) : nil)
             }
             .buttonStyle(.plain)
-            .disabled(isDone || modelManager.isDownloading)
+            .disabled((isDone && !loadFailed) || modelManager.isDownloading)
         }
         .padding(12)
         .mwCard(radius: MW.rSmall, elevation: .flat)
@@ -162,13 +208,13 @@ struct OnboardingModelPage: View {
     /// FREE-1: real on-device model download (replaces a fake `Timer`). Pins the
     /// model + on-device engine so the onboarding readiness gate only goes ready
     /// once the model is actually on disk.
+    /// ITER-058.3 — an EXPLICIT pick of a DIFFERENT model disables the silent
+    /// background upgrade (the user chose, we obey). Retrying the quick model
+    /// itself is NOT a pick — the promised upgrade stays on (review fix).
     private func startLocalModel(_ modelId: String) {
-        // TR-7 — recomputed on every pick: appears for Tiny + non-EN, clears
-        // when the user switches to a proper model.
-        tinyWarning = OnboardingReadiness.tinyModelWarning(
-            modelId: modelId,
-            transcriptionLanguage: AppSettings.shared.transcriptionLanguage
-        )
+        if modelId != ModelBootstrap.quickModelId {
+            AppSettings.shared.pendingBestModelUpgrade = false
+        }
         AppSettings.shared.selectedModel = modelId
         AppSettings.shared.transcriptionEngine = "ondevice"
         modelManager.startDownload(modelId)
@@ -235,6 +281,9 @@ struct OnboardingModelPage: View {
                     AppSettings.shared.groqKey = cloudKey
                 }
                 AppSettings.shared.transcriptionEngine = "cloud"
+                // ITER-058.3 — the user went cloud: cancel the quick-start's
+                // background 950 MB plan (review fix — no unrequested ~1 GB).
+                AppSettings.shared.pendingBestModelUpgrade = false
                 coordinator.cloudKeyValidated = true
             } else {
                 validationError = "Key didn't validate — check it and try again."
@@ -252,7 +301,7 @@ struct OnboardingModelPage: View {
 
             VStack(spacing: 6) {
                 HStack(spacing: 6) { dot; Text("2× faster than on-device").font(MW.monoSm).foregroundStyle(MW.textMuted) }
-                HStack(spacing: 6) { dot; Text("60 cloud minutes/day (accumulate up to 600)").font(MW.monoSm).foregroundStyle(MW.textMuted) }
+                HStack(spacing: 6) { dot; Text("5400 cloud minutes/month (~90 hours)").font(MW.monoSm).foregroundStyle(MW.textMuted) }
                 HStack(spacing: 6) { dot; Text("Smart text processing (rewrite, structure)").font(MW.monoSm).foregroundStyle(MW.textMuted) }
             }
 

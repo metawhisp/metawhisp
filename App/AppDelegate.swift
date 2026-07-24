@@ -500,23 +500,166 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             .receive(on: RunLoop.main)
             .sink { [weak self] phase in
                 guard let self, phase == .done else { return }
-                guard AppSettings.shared.transcriptionEngine != "cloud" else { return }
+                guard AppSettings.shared.transcriptionEngine != "cloud" else {
+                    // Cloud engine active but a download just finished — still
+                    // drive the background upgrade bookkeeping (ITER-058.3).
+                    self.driveModelUpgrade()
+                    return
+                }
                 let modelId = AppSettings.shared.selectedModel
                 guard self.modelManager.isDownloaded(modelId),
                       let variant = self.modelManager.variantName(modelId),
                       let engine = self.whisperEngine,
-                      self.coordinator.loadedWhisperModelId != modelId else { return }
+                      self.coordinator.loadedWhisperModelId != modelId else {
+                    self.driveModelUpgrade()
+                    return
+                }
                 Task { @MainActor in
                     do {
                         try await engine.loadModel(variant, progressHandler: nil)
                         self.coordinator.loadedWhisperModelId = modelId
                         NSLog("[MetaWhisp] ✅ Auto-loaded downloaded model: \(variant)")
+                        // ITER-058.3 — background best-model upgrade driver:
+                        // after Base loads, start the Large download; after
+                        // Large lands, hot-swap. Success path ONLY — driving
+                        // after a failure would clobber the .failed surface
+                        // with .downloading (review finding).
+                        self.driveModelUpgrade()
                     } catch {
                         NSLog("[MetaWhisp] ❌ Auto-load failed: \(error)")
+                        // ITER-058.3 (closes ITER-051 §1 P1) — a swallowed load
+                        // failure used to block onboarding NEXT forever next to
+                        // a ✓-marked model. Surface it where the wizard (and
+                        // Settings) already render download failures. The RETRY
+                        // affordance re-runs startDownload (cached files =
+                        // seconds) → .done → this load retries.
+                        self.modelManager.phase = .failed(
+                            "Model downloaded but failed to load — tap RETRY")
+                        self.coordinator.lastError = "Model failed to load: \(error.localizedDescription)"
                     }
                 }
             }
             .store(in: &cancellables)
+    }
+
+    /// ITER-058.3 — one step of the quick-start → best-model upgrade plan.
+    /// Pure decision in `ModelBootstrap.upgradeAction`; this just executes it.
+    @MainActor func driveModelUpgrade() {
+        let settings = AppSettings.shared
+        let action = ModelBootstrap.upgradeAction(
+            pending: settings.pendingBestModelUpgrade,
+            selectedModel: settings.selectedModel,
+            quickDownloaded: modelManager.isDownloaded(ModelBootstrap.quickModelId),
+            bestDownloaded: modelManager.isDownloaded(ModelBootstrap.bestModelId),
+            isDownloading: modelManager.isDownloading,
+            isPro: LicenseService.shared.isPro,
+            engineIsCloud: settings.transcriptionEngine == "cloud",
+            freeBytes: ModelBootstrap.freeDiskBytes()
+        )
+        switch action {
+        case .none:
+            break
+        case .cancelPlan:
+            // The user went cloud/Pro — no local upgrade, no notification.
+            settings.pendingBestModelUpgrade = false
+            // Also stop an in-flight best-model download (review: clearing the
+            // flag alone still delivered the remaining ~950 MB).
+            if modelManager.currentDownloadModel == ModelBootstrap.bestModelId {
+                modelManager.cancelDownload()
+            }
+            NSLog("[ModelBootstrap] Upgrade plan cancelled — cloud/Pro path active")
+        case .startDownload:
+            NSLog("[ModelBootstrap] ⬇️ Best model downloading in background")
+            modelManager.startDownload(ModelBootstrap.bestModelId)
+        case .swapNow:
+            Task { @MainActor in await self.performBestModelSwap() }
+        case .skipLowDisk:
+            settings.pendingBestModelUpgrade = false
+            NSLog("[ModelBootstrap] ⚠️ Best-model upgrade skipped — low disk")
+            MWNotificationStack.shared.push(MWNotification(
+                kind: .advice, title: "Model upgrade skipped",
+                body: "Not enough free space for the best model (~2.5 GB needed). Get it anytime in Settings → Models."))
+        }
+    }
+
+    /// ITER-058.3 (review-hardened) — the swap LOADS FIRST, announces after.
+    /// selectedModel/pending/notification flip only on a successful load, so:
+    /// - a corrupt partial download (quit mid-950 MB) never becomes "active";
+    /// - onboarding readiness (loadedWhisperModelId == selectedModel) never
+    ///   dips during the minutes-long first CoreML load — Base keeps serving.
+    /// On load failure the partial model dir is deleted and the plan re-drives
+    /// (bounded: gives up if the files can't be removed).
+    private var isSwappingBestModel = false
+
+    /// The plan can die while a swap load runs for minutes (explicit Settings
+    /// pick, cloud key validated, Pro activated) — commit nothing in that case.
+    @MainActor private func upgradePlanStillActive() -> Bool {
+        let s = AppSettings.shared
+        return s.pendingBestModelUpgrade
+            && s.selectedModel == ModelBootstrap.quickModelId
+            && s.transcriptionEngine != "cloud"
+            && !LicenseService.shared.isPro
+    }
+
+    @MainActor private func performBestModelSwap() async {
+        guard !isSwappingBestModel else { return }
+        guard upgradePlanStillActive() else { return }
+        let settings = AppSettings.shared
+        guard let engine = whisperEngine,
+              let variant = modelManager.variantName(ModelBootstrap.bestModelId) else { return }
+        isSwappingBestModel = true
+        defer { isSwappingBestModel = false }
+        do {
+            try await engine.loadModel(variant, progressHandler: nil)
+            // Re-check after the minutes-long first CoreML load (review): the
+            // user may have explicitly picked another model or gone cloud/Pro
+            // meanwhile — their choice wins; restore their engine and walk away.
+            guard upgradePlanStillActive() else {
+                NSLog("[ModelBootstrap] Swap finished but the plan died mid-load — restoring user's pick")
+                let chosen = settings.selectedModel
+                if settings.transcriptionEngine != "cloud",
+                   modelManager.isDownloaded(chosen),
+                   let chosenVariant = modelManager.variantName(chosen) {
+                    try? await engine.loadModel(chosenVariant, progressHandler: nil)
+                    coordinator.loadedWhisperModelId = chosen
+                }
+                return
+            }
+            // Loaded-first ordering: the FREE-7 selectedModel observer sees
+            // loadedWhisperModelId already equal and no-ops (no double load).
+            coordinator.loadedWhisperModelId = ModelBootstrap.bestModelId
+            settings.selectedModel = ModelBootstrap.bestModelId
+            settings.pendingBestModelUpgrade = false
+            settings.bestModelUpgradeAttempts = 0
+            // A stale .failed from an earlier Base hiccup must not keep showing
+            // "retry" next to a working upgraded engine.
+            if case .failed = modelManager.phase { modelManager.phase = .done }
+            NSLog("[ModelBootstrap] ✅ Upgraded to Large V3 Turbo")
+            MWNotificationStack.shared.push(MWNotification(
+                kind: .advice, title: "Model upgraded",
+                body: "Large V3 Turbo is now active — best transcription quality."))
+        } catch {
+            // Retry cap (review): without it a deterministic load failure loops
+            // download → fail → delete → re-download forever. Transient failures
+            // keep the files — WhisperKit's loader self-repairs missing pieces
+            // on the next attempt (next .done event or next launch).
+            let attempts = settings.bestModelUpgradeAttempts + 1
+            settings.bestModelUpgradeAttempts = attempts
+            if attempts >= 3 {
+                settings.pendingBestModelUpgrade = false
+                let dir = ModelManagerService.defaultHubPath.appendingPathComponent(variant)
+                try? FileManager.default.removeItem(at: dir)
+                modelManager.refreshDownloaded()
+                NSLog("[ModelBootstrap] ❌ Best-model load failed %d times (%@) — upgrade abandoned",
+                      attempts, error.localizedDescription)
+                MWNotificationStack.shared.push(MWNotification(
+                    kind: .advice, title: "Model upgrade paused",
+                    body: "The best model couldn't load on this Mac — keeping the quick model. You can try Large V3 Turbo in Settings anytime."))
+            } else {
+                NSLog("[ModelBootstrap] ⚠️ Best-model load failed (attempt %d/3, %@) — will retry later",
+                      attempts, error.localizedDescription)
+            }
+        }
     }
 
     @objc private func togglePopover() {
@@ -645,6 +788,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
                 coordinator.lastError = "No model loaded. Go to Settings to download one."
             }
         }
+
+        // 6a. ITER-058.3 — resume an interrupted quick-start upgrade. Runs
+        // strictly AFTER the Pro auto-switch (step 5: a fresh Pro cancels the
+        // plan instead of downloading ~1 GB) and AFTER engine creation (step 6:
+        // a resumed swap needs a live engine to load into). Base-first rule
+        // lives in upgradeAction — a quit mid-Base-download resumes Base via
+        // the wizard, not by grabbing the slot for the 950 MB model.
+        driveModelUpgrade()
 
         // 7. Configure screen context with persistence
         screenContext.configure(modelContainer: historyService.modelContainer)

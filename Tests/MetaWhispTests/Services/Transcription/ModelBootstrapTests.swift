@@ -1,0 +1,111 @@
+import XCTest
+@testable import MetaWhisp
+
+/// ITER-058.3 — quick-start / background-upgrade decision logic.
+final class ModelBootstrapTests: XCTestCase {
+
+    private let plentyOfDisk: Int64 = 50_000_000_000
+
+    // MARK: - shouldQuickStart
+
+    func test_quickStart_freshInstall_starts() {
+        XCTAssertTrue(ModelBootstrap.shouldQuickStart(
+            anyModelDownloaded: false, isDownloading: false, isPro: false, freeBytes: plentyOfDisk))
+    }
+
+    func test_quickStart_modelAlreadyPresent_noop() {
+        XCTAssertFalse(ModelBootstrap.shouldQuickStart(
+            anyModelDownloaded: true, isDownloading: false, isPro: false, freeBytes: plentyOfDisk))
+    }
+
+    func test_quickStart_downloadInFlight_noop() {
+        XCTAssertFalse(ModelBootstrap.shouldQuickStart(
+            anyModelDownloaded: false, isDownloading: true, isPro: false, freeBytes: plentyOfDisk))
+    }
+
+    func test_quickStart_proUser_noop() {
+        XCTAssertFalse(ModelBootstrap.shouldQuickStart(
+            anyModelDownloaded: false, isDownloading: false, isPro: true, freeBytes: plentyOfDisk))
+    }
+
+    func test_quickStart_fullDisk_noop() {
+        XCTAssertFalse(ModelBootstrap.shouldQuickStart(
+            anyModelDownloaded: false, isDownloading: false, isPro: false, freeBytes: 100_000_000))
+    }
+
+    // MARK: - upgradeAction
+
+    private func action(
+        pending: Bool = true,
+        selectedModel: String = ModelBootstrap.quickModelId,
+        quickDownloaded: Bool = true,
+        bestDownloaded: Bool = false,
+        isDownloading: Bool = false,
+        isPro: Bool = false,
+        engineIsCloud: Bool = false,
+        freeBytes: Int64 = 50_000_000_000
+    ) -> ModelBootstrap.UpgradeAction {
+        ModelBootstrap.upgradeAction(
+            pending: pending, selectedModel: selectedModel,
+            quickDownloaded: quickDownloaded, bestDownloaded: bestDownloaded,
+            isDownloading: isDownloading, isPro: isPro,
+            engineIsCloud: engineIsCloud, freeBytes: freeBytes)
+    }
+
+    func test_upgrade_notPending_none() {
+        XCTAssertEqual(action(pending: false, bestDownloaded: true), .none)
+    }
+
+    func test_upgrade_userMovedOffQuickModel_none() {
+        XCTAssertEqual(action(selectedModel: "small"), .none)
+    }
+
+    /// Review P1: a user who went Pro or validated a cloud key must never get
+    /// an unrequested ~1 GB download or a false "upgraded" notification.
+    func test_upgrade_proOrCloud_cancelsPlan() {
+        XCTAssertEqual(action(isPro: true), .cancelPlan)
+        XCTAssertEqual(action(engineIsCloud: true), .cancelPlan)
+        XCTAssertEqual(action(bestDownloaded: true, isPro: true), .cancelPlan,
+                       "cancel wins even with the best model on disk")
+    }
+
+    func test_upgrade_bestReady_swapsNow() {
+        XCTAssertEqual(action(bestDownloaded: true), .swapNow)
+    }
+
+    func test_upgrade_bestReady_swapsEvenWhileAnotherDownloadRuns() {
+        XCTAssertEqual(action(bestDownloaded: true, isDownloading: true), .swapNow)
+    }
+
+    /// Review P3: quit mid-Base-download → the launch resume must NOT grab the
+    /// download slot for the 950 MB model; Base resumes first (via the wizard).
+    func test_upgrade_quickModelNotOnDiskYet_waits() {
+        XCTAssertEqual(action(quickDownloaded: false), .none)
+    }
+
+    func test_upgrade_needsDownload_starts() {
+        XCTAssertEqual(action(), .startDownload)
+    }
+
+    func test_upgrade_downloadInFlight_waits() {
+        XCTAssertEqual(action(isDownloading: true), .none)
+    }
+
+    func test_upgrade_lowDisk_skips() {
+        XCTAssertEqual(action(freeBytes: 1_000_000_000), .skipLowDisk)
+    }
+
+    // MARK: - isDownloaded exact match (review: substring bug)
+
+    @MainActor
+    func test_isDownloaded_exactVariantMatch_noSubstringFalsePositive() {
+        let mgr = ModelManagerService()
+        // Only the TURBO variant is on disk; its dir name CONTAINS the plain
+        // large-v3 variant name — the old contains-match reported both.
+        mgr.downloadedModels = ["openai_whisper-large-v3_turbo"]
+        XCTAssertTrue(mgr.isDownloaded("large-v3-turbo"))
+        XCTAssertFalse(mgr.isDownloaded("large-v3"),
+                       "substring of another variant's dir must not count as downloaded")
+        XCTAssertFalse(mgr.isDownloaded("base"))
+    }
+}
