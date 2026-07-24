@@ -63,17 +63,30 @@ The site sells the 2024 product: dictation only. Verified today:
 ## 3. Sub-iterations {#plan}
 
 ### 059.1 — Truth fixes (small diffs, high trust impact) {#i1}
-- [ ] /pricing/: quota wording → monthly per billing period; kill the
-      "60 min/day" FAQ entry; add what Pro actually covers today (meetings
-      transcription minutes, cloud voices/TTS, cloud LLM processing, semantic
-      search) — exact list confirmed against the product before writing.
-- [ ] Landing FAQ + compare table: reconcile with Pro (BYOK stays as the Free
-      path, Pro as "no keys needed"); compare-table price row → "Free + Pro".
-- [ ] /download/: remove Gatekeeper-bypass block → "Notarized by Apple; opens
-      like any Mac app"; version string removed or made dynamic; size stated
-      approximately ("~17 MB").
+> **The real quota (verified in the live worker 2026-07-24, line 478):**
+> **5400 minutes per month** (~90 hours), counted from the license purchase
+> date, resets on the billing day. Dictations ≤10 min are never blocked even
+> at the limit. The site's "60 min/day (accumulate up to 600)" is a different,
+> old product — off by ~3× per day equivalent.
+- [ ] /pricing/: Pro card + compare table + FAQ → "**5400 min/month of cloud
+      transcription (~90 hours)** — dictation and meetings from one pool,
+      resets on your billing day; short dictations always work, even at the
+      limit". Kill the "60 min/day" FAQ entry.
+- [ ] /pricing/: add what Pro actually includes today: meeting recording +
+      recap, natural cloud voices (TTS), built-in AI text processing (no
+      keys), semantic search over your history. Each item spot-checked
+      against the shipped app before publishing (Rule 13: no claim we can't
+      demo).
+- [ ] Landing FAQ + compare table: reconcile the two stories — Free = local
+      Whisper (unlimited, on-device) or your own API key; Pro = everything
+      built-in. Compare-table price row → "Free · Pro $7.77/mo".
+- [ ] /download/: remove the "Bypass Gatekeeper" block → "Notarized by Apple —
+      opens like any Mac app"; drop the hardcoded "Version 1.0" (link
+      GitHub releases instead); size "~17 MB".
+- [ ] Also fix the stale `minutes_limit: 60` in the worker's legacy /validate
+      response (line 356) so no client surface ever shows 60 again.
 - [ ] Post-deploy verification (Rule 6): curl every changed page + both
-      redirects; screenshot pass in the browser.
+      redirects; screenshot pass in the browser; blog post count unchanged.
 
 ### 059.2 — Flagship on the site {#i2}
 - [ ] Landing: new sections after the dictation story —

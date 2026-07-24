@@ -73,63 +73,120 @@ The wizard's skeleton is right (7 pages, real engine-readiness gate before
 ## 3. Sub-iterations {#plan}
 
 ### 058.1 — Language step + kill the "ru" default {#i1}
-- [ ] `transcriptionLanguage` default → `"auto"` (Whisper auto-detect); expose
-      "Auto" in Settings picker (it's absent today).
-- [ ] Wizard: compact language selector on the Model page ("Auto (recommended)"
-      + common languages), persisted immediately.
-- [ ] Migration: existing users KEEP their current stored value; only the
-      default for fresh installs changes. Founder's machine unaffected.
-- [ ] Tests: default resolution (fresh install → auto), migration no-op for
-      stored values, prompt-language plumbing (whatever call sites read the
-      setting must accept "auto").
+> **Mechanism:** `"auto"` becomes a first-class value of
+> `transcriptionLanguage`. Local path: WhisperKit DecodingOptions.language =
+> nil → Whisper's built-in language detection. Cloud path: omit the `language`
+> query param on /api/pro/transcribe → Groq Whisper auto-detects. Every call
+> site that reads the setting goes through one resolver
+> (`resolvedTranscriptionLanguage: String?` — nil means auto) so "auto" can't
+> leak as a literal string into an API call.
+- [ ] `transcriptionLanguage` default → `"auto"` for FRESH installs only;
+      existing users keep their stored value untouched (founder unaffected).
+- [ ] Settings picker gains "Auto (detect)" as the first option.
+- [ ] Wizard Model page: compact "Language: Auto (recommended) ▾" selector,
+      persisted immediately on change.
+- [ ] Tests: resolver (auto→nil, "ru"→"ru"), fresh-default vs stored-value
+      migration, cloud URL builder omits the param on auto.
 
 ### 058.2 — Permission flow done right {#i2}
-- [ ] Remove launch-time mic/AX requests when `!hasCompletedOnboarding`
-      (AppDelegate.swift:556-575) — the ITER-051 §1 root-cause fix.
-- [ ] Permissions page: gate NEXT on microphone granted (Accessibility strongly
-      encouraged, not blocking — clipboard fallback exists); revive dead
-      `allGranted` wiring.
-- [ ] ALLOW after denial → deep-link to the right Privacy pane + inline
-      step-by-step hint ("find MetaWhisp in the list → toggle on → come back");
-      live 1s polling already exists, keep it.
-- [ ] Try It failure path: error/empty result → visible "Nothing came through —
-      check the mic and try again" + retry; never a stuck recording aura
-      (OnboardingTryItPage.swift:188-207).
-- [ ] Tests: gate logic (pure), denial→guidance state machine.
+> **Mechanism:** in `setupServices()` (AppDelegate.swift:556-575) wrap the two
+> launch-time requests in `if AppSettings.shared.hasCompletedOnboarding` — new
+> users get ZERO system dialogs until the wizard's Permissions page, where the
+> same two calls fire from the ALLOW buttons (context first, dialog second).
+> Each permission row is a 3-state machine driven by the existing 1 s TCC poll:
+> `notAsked` (button ALLOW → fires the system prompt) → `denied` (button
+> becomes OPEN SETTINGS → deep-links the exact Privacy pane, inline hint
+> "find MetaWhisp in the list → toggle on → come back, this page updates
+> itself") → `granted` (✓, row locks).
+- [ ] Launch-time requests gated on `hasCompletedOnboarding` (existing users:
+      zero behavior change).
+- [ ] Permissions page: revive dead `allGranted` (OnboardingPermissionsPage
+      .swift:12) — NEXT disabled until **microphone** granted; Accessibility
+      encouraged but non-blocking (clipboard fallback exists — say so on the
+      page: "without it, text lands in your clipboard instead of typing").
+- [ ] Try It gets explicit failure states: `.noSpeech` ("Nothing came through —
+      check the mic and try again" + RETRY) and `.error` (message + RETRY);
+      the recording aura always resolves (fixes the stuck state at
+      OnboardingTryItPage.swift:188-207).
+- [ ] Tests: 3-state row machine (pure), NEXT gate, TryIt state resolution on
+      empty/error results.
 
-### 058.3 — Un-wall the model download {#i3}
-- [ ] Let the wizard advance during download: engine gate moves from page-2
-      NEXT to Try It entry ("Your model is still downloading — N% · ETA" if the
-      user gets there first).
-- [ ] Surface swallowed load failures (AppDelegate.swift:499-519): error state
-      on the model card + retry; NEXT never blocked by an invisible error.
-- [ ] Disk-space preflight before download (need ~2× model size free).
-- [ ] Tests: gate relocation (readiness at TryIt entry), failure surfacing.
+### 058.3 — Instant light model, big model in background {#i3}
+> Founder decision 2026-07-24: the fix is NOT "let the wizard scroll past the
+> download" — it's "the user must never wait for 950 MB at all".
+>
+> **Mechanism:**
+> 1. The moment the Model page appears (Local tab is default), the app
+>    AUTO-STARTS downloading **Base (~80 MB)** — no click needed. On typical
+>    Wi-Fi that's 10–30 s; by the time the user reaches Try It it's loaded.
+>    (Base, not Tiny: Tiny is English-only quality — our own wizard warns so.)
+> 2. Try It runs on Base → first working dictation in under a minute.
+> 3. **Large V3 Turbo (950 MB) downloads in the background** — during the rest
+>    of the wizard and after it closes. When downloaded AND CoreML-loaded, the
+>    engine hot-swaps silently; the menubar popover shows a one-line note
+>    "Model upgraded to Large V3 Turbo ✓". Recording in progress → swap waits
+>    for idle.
+> 4. The Model page shows this as the default plan in plain words:
+>    "Quick model now (80 MB) · best model auto-installs in background".
+>    Advanced users can still pick a specific model / cloud key / Pro — an
+>    explicit pick disables the background upgrade.
+- [ ] Auto-start Base download on Model page entry; readiness gate satisfied
+      by Base (OnboardingReadiness unchanged semantics — a REAL engine).
+- [ ] Background Large V3 Turbo download + idle hot-swap + upgrade note;
+      persisted across relaunch (resume, not restart).
+- [ ] Surface swallowed load failures (AppDelegate.swift:499-519): error card
+      + RETRY; a failed background upgrade keeps Base silently working and
+      retries next launch — the user is never blocked by the big model.
+- [ ] Disk preflight: <2.5 GB free → stay on Base, show "free up space to get
+      the best model" note instead of failing.
+- [ ] Tests: auto-download trigger, upgrade-swap gating (idle only, explicit
+      pick disables), failure→Base-keeps-working, resume state machine.
 
 ### 058.4 — Flagship discovery page (ITER-053.6 lands here) {#i4}
-- [ ] New wizard page after Try It: "MetaWhisp remembers" — meetings recap,
-      screen memory, tasks that surface themselves, chat over your history.
-      Honest privacy block: "reads TEXT on your screen (no screenshots stored),
-      stays on your Mac, N-day retention, delete everything anytime."
-- [ ] One-click "Enable screen intelligence" → in-context Screen Recording
-      permission request; skippable with "Later in Settings".
-- [ ] Done page: add the voice-question long-press + meetings hotkeys to the
-      shortcuts recap; drop the untaught-feature dead ends.
-- [ ] Tests: enable-path wiring (toggle flips + permission request fired once).
+> **Mechanism:** one new wizard page between Try It and MenuBar, three cards:
+> 1. **Screen memory + tasks** — "MetaWhisp reads the TEXT on your screen
+>    (never stores screenshots), finds commitments you typed («I'll send it
+>    tomorrow»), and reminds you — all on your Mac, 30-day retention,
+>    delete-all anytime." Toggle **ON by card button** →
+>    `PermissionsService.requestScreenRecording()` fires HERE with context;
+>    on grant: `screenContextEnabled = true` + `memoriesEnabled = true`
+>    (extraction/promotion pipelines are already default-on downstream).
+>    On deny: card shows OPEN SETTINGS, wizard continues.
+> 2. **Meetings** — "Record and transcribe calls, get a recap." Button flips
+>    `meetingRecordingEnabled + autoDetectCalls = true` (system-audio
+>    permission is requested later, on first actual recording — its own
+>    context).
+> 3. **Chat** — no toggle, just "Ask your Mac what you worked on — ⌘-click
+>    the menubar icon" (teaches the surface).
+> Everything skippable via "Later in Settings" — nothing force-enabled.
+- [ ] Build the page + wiring exactly as above; each card's enable fires its
+      permission AT the card, never before.
+- [ ] Done page shortcuts recap: add voice-question long-press and meeting
+      start/stop; remove taught-but-broken promises (see 058.5 Free honesty).
+- [ ] Tests: card enable → toggle+permission wiring (fired once, correct
+      order), deny path leaves toggles off.
 
 ### 058.5 — Small strands and dead ends {#i5}
-- [ ] Closing the onboarding window → menubar item shows "Finish setup…" which
-      reopens the wizard at the last page (I2).
-- [ ] MenuBar page: render the REAL status-item icon (waveform glyph from
-      createMWMenuBarIcon), not the fake "MW" badge.
-- [ ] After final START: open the main window once on Dashboard so the app
-      doesn't vanish (respect the Space-throw rules: `.fullScreenAuxiliary`,
-      no `activate(ignoringOtherApps:)`).
-- [ ] Pro tab: "Check activation" affordance + success checkmark when the
-      metawhisp://auth deep link lands (FREE-5 from ITER-045).
-- [ ] Free honesty: Translate/Rewrite labeled "PRO / API key" in the Features
-      demo and Done pages; Free-with-no-key shortcut use surfaces an
-      actionable error instead of silent raw paste (ITER-051 §1 P2).
+- [ ] **Closing the wizard no longer strands.** windowShouldClose → the window
+      hides and a "Finish setup…" row appears at the top of the menubar
+      popover (visible while `!hasCompletedOnboarding`); clicking it reopens
+      the wizard at the saved page (persist `onboardingPage` in AppSettings).
+- [ ] **MenuBar page shows the real icon:** render `createMWMenuBarIcon()`
+      output (waveform glyph) in the simulated menubar instead of the "MW"
+      text badge (AppDelegate.swift:1994-2034 is the source of truth).
+- [ ] **No dead air after START:** `complete()` additionally calls
+      `openMainWindow(tab: .dashboard)` — respecting the Space rules
+      (`.fullScreenAuxiliary` intact, plain `NSApp.activate()`).
+- [ ] **Pro activation feedback:** the `metawhisp://auth` deep-link handler
+      posts `.proActivated`; the wizard's Pro tab observes it and flips to
+      "✓ Pro active — you're all set". Plus a manual "Check activation"
+      button that re-runs license verify (FREE-5 from ITER-045).
+- [ ] **Free honesty:** Features demo + Done pages label Translate/Rewrite
+      "PRO · or your API key"; when a Free user with no key triggers them, the
+      pill/popover shows "Translation needs Pro or an API key → Settings"
+      instead of silently pasting raw text (ITER-051 §1 P2 close-out).
+- [ ] Tests: reopen-at-saved-page, proActivated observer, Free-trigger error
+      surface (pure message routing).
 
 ## 4. Corner cases {#corners}
 
