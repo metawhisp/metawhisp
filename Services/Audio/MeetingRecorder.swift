@@ -14,6 +14,9 @@ final class MeetingRecorder: ObservableObject {
     @Published var isRecording = false
     @Published var isStarting = false
     @Published var audioLevel: Float = 0
+    /// RAW (un-boosted) RMS, max of both channels — silence guards read this
+    /// (ITER-060 units fix), never the boosted `audioLevel`.
+    @Published private(set) var rawRMSLevel: Float = 0
     @Published var audioBars: [Float] = Array(repeating: 0, count: 24)
     @Published var lastError: String?
     /// True if mic capture failed but system audio is still active (user will lose their own voice).
@@ -66,12 +69,24 @@ final class MeetingRecorder: ObservableObject {
     /// there. nil while audio is loud or recording is off. We arm the silence stop
     /// once `silentSince + windowMinutes` is in the past.
     private var silentSince: Date?
-    /// RMS threshold below which audio is considered "silence". 0.025 sits
-    /// above ambient noise (kbd typing, fan hum, breathing into AirPods,
-    /// idle Spotify DC bias) and below normal speech (~0.05+). Earlier 0.005
-    /// was so low that ANY ambient sound kept the silence timer reset — the
-    /// 1:09 zombie recording user reported on 2026-04-28.
-    private let silenceRMSThreshold: Float = 0.025
+    /// RAW-RMS threshold below which audio is considered "silence".
+    ///
+    /// ITER-060 units fix: this used to be compared against `audioLevel`, which
+    /// is the sqrt-BOOSTED UI value (`sqrtf(rms*12)`) — boosted 0.025 equals
+    /// raw 5.2e-5, i.e. digital zero, so the silence auto-stop and the
+    /// calendar-end quiet probe never fired and recordings ran hours past the
+    /// call. The guard now reads `rawRMSLevel` (physical RMS from both
+    /// sources). Calibration in RAW terms: ambient noise floor (kbd, fan,
+    /// AirPods breathing) ~0.001-0.005; quiet speech ~0.015+; normal speech
+    /// 0.01-0.05 (see AudioRecordingService.calculateLevels). 0.012 sits
+    /// between ambient and quiet speech.
+    static let silenceRMSThreshold: Float = 0.012
+
+    /// Pure guard predicate — pinned by tests so threshold semantics (RAW rms,
+    /// not boosted UI level) can't regress silently.
+    nonisolated static func isRawSilence(_ rawRMS: Float) -> Bool {
+        rawRMS < silenceRMSThreshold
+    }
     /// How often we re-check the silence timer (seconds). Cheap — just a Combine
     /// publisher, no I/O.
     private let silenceCheckInterval: TimeInterval = 1.0
@@ -109,6 +124,15 @@ final class MeetingRecorder: ObservableObject {
             .receive(on: RunLoop.main)
             .sink { [weak self] micLevel, sysLevel in
                 self?.audioLevel = max(micLevel, sysLevel)
+            }
+            .store(in: &cancellables)
+
+        // Merge RAW rms the same way — this is what the silence guards read
+        // (ITER-060 units fix; `audioLevel` is the boosted UI value).
+        Publishers.CombineLatest(mic.$rawRMSLevel, systemAudio.$rawRMSLevel)
+            .receive(on: RunLoop.main)
+            .sink { [weak self] micRaw, sysRaw in
+                self?.rawRMSLevel = max(micRaw, sysRaw)
             }
             .store(in: &cancellables)
 
@@ -284,6 +308,7 @@ final class MeetingRecorder: ObservableObject {
         isRecording = false
         isStarting = false
         audioLevel = 0
+        rawRMSLevel = 0
         audioBars = Array(repeating: 0, count: 24)
         recordingStartedAt = nil
         let mutedWindowCount = pauseWindows.count
@@ -312,7 +337,7 @@ final class MeetingRecorder: ObservableObject {
         }
     }
 
-    /// Watches `audioLevel` via Combine. Once it falls below `silenceRMSThreshold`
+    /// Watches `rawRMSLevel`. Once it falls below `silenceRMSThreshold`
     /// for `meetingSilenceStopMinutes` consecutively, fires `onAutoStop(.silenceTimeout)`.
     /// Resets the silence window any time audio crosses back above threshold.
     private func armSilenceGuard() {
@@ -327,14 +352,14 @@ final class MeetingRecorder: ObservableObject {
             .autoconnect()
             .sink { [weak self] _ in
                 guard let self, self.isRecording else { return }
-                let level = self.audioLevel
-                if level < self.silenceRMSThreshold {
+                let level = self.rawRMSLevel
+                if Self.isRawSilence(level) {
                     if self.silentSince == nil {
                         self.silentSince = Date()
                     } else if let start = self.silentSince,
                               Date().timeIntervalSince(start) >= windowSeconds {
                         NSLog("[MeetingRecorder] 🤫 Silence (%.1fm < %.4f RMS) — auto-stop",
-                              windowMinutes, self.silenceRMSThreshold)
+                              windowMinutes, Self.silenceRMSThreshold)
                         self.onAutoStop?(.silenceTimeout)
                     }
                 } else {
@@ -358,8 +383,8 @@ final class MeetingRecorder: ObservableObject {
 
     // MARK: - Sliding-window quiet probe (ITER-034.1)
 
-    /// Returns `true` iff `audioLevel` has stayed below `silenceRMSThreshold`
-    /// (0.025) continuously for at least `seconds`. Returns `false` if audio
+    /// Returns `true` iff `rawRMSLevel` has stayed below `silenceRMSThreshold`
+    /// continuously for at least `seconds`. Returns `false` if audio
     /// rose above the threshold at any point during that window.
     ///
     /// Used by `AppDelegate.armCalendarEndStopTask` to decide whether a

@@ -349,7 +349,8 @@ final class TranscriptionCoordinator: ObservableObject {
             // SAME clipboard recovery, never the silent-discard path, so a false
             // positive costs the user a ⌘V, not their dictation.
             if let reason = TranscriptionConfidenceGate.rejectionReason(
-                TranscriptionConfidenceGate.aggregateMetrics(result.segments)
+                TranscriptionConfidenceGate.aggregateMetrics(result.segments),
+                text: trimmed
             ) {
                 NSLog("[Coordinator] 🎚️ Low-confidence metrics (%@) — saved to clipboard, not pasted", reason)
                 Self.saveSuspectToClipboard(trimmed)
@@ -708,7 +709,7 @@ final class TranscriptionCoordinator: ObservableObject {
     /// 3. Any single word repeats 5+ times CONSECUTIVELY
     /// Real speech rarely triggers any of these — they're characteristic of
     /// Whisper getting stuck in a generation loop on uncertain audio.
-    static func containsExcessivePhraseRepetition(_ text: String) -> Bool {
+    nonisolated static func containsExcessivePhraseRepetition(_ text: String) -> Bool {
         let words = text.lowercased()
             .components(separatedBy: .whitespacesAndNewlines)
             .map { $0.trimmingCharacters(in: .punctuationCharacters) }

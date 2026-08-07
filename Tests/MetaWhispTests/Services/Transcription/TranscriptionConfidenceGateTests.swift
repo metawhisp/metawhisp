@@ -18,49 +18,49 @@ final class TranscriptionConfidenceGateTests: XCTestCase {
     // MARK: - keep real speech
 
     func testHealthyMetrics_kept() {
-        XCTAssertNil(Gate.rejectionReason(Gate.Metrics(avgLogprob: -0.25, compressionRatio: 1.8, noSpeechProb: 0.05)))
+        XCTAssertNil(Gate.rejectionReason(Gate.Metrics(avgLogprob: -0.25, compressionRatio: 1.8, noSpeechProb: 0.05), text: "обычная связная фраза"))
     }
 
     func testNilMetrics_kept() {
-        XCTAssertNil(Gate.rejectionReason(nil))
+        XCTAssertNil(Gate.rejectionReason(nil, text: "любой текст"))
     }
 
     func testModeratelyLowConfidence_keptDueToHeadroom() {
         // −1.2 is below Whisper's −1.0 fallback trigger but ABOVE our −1.5 floor:
         // hard-but-real audio must survive (it would only be dropped if it were
         // also silence or repetition).
-        XCTAssertNil(Gate.rejectionReason(Gate.Metrics(avgLogprob: -1.2, compressionRatio: 1.9, noSpeechProb: 0.1)))
+        XCTAssertNil(Gate.rejectionReason(Gate.Metrics(avgLogprob: -1.2, compressionRatio: 1.9, noSpeechProb: 0.1), text: "трудная но настоящая речь"))
     }
 
     func testCleanRepetitiveSpeech_kept() {
         // "раз, два, три, четыре" / "да да да" — high compression but GOOD
         // confidence. The old bare-compression filter wrongly deleted this; the
         // paired condition keeps it.
-        XCTAssertNil(Gate.rejectionReason(Gate.Metrics(avgLogprob: -0.3, compressionRatio: 3.5, noSpeechProb: 0.1)))
+        XCTAssertNil(Gate.rejectionReason(Gate.Metrics(avgLogprob: -0.3, compressionRatio: 3.5, noSpeechProb: 0.1), text: "да да да да да да"))
     }
 
     func testHighNoSpeechButConfident_kept() {
-        XCTAssertNil(Gate.rejectionReason(Gate.Metrics(avgLogprob: -0.4, compressionRatio: 1.6, noSpeechProb: 0.95)))
+        XCTAssertNil(Gate.rejectionReason(Gate.Metrics(avgLogprob: -0.4, compressionRatio: 1.6, noSpeechProb: 0.95), text: "уверенная фраза"))
     }
 
     // MARK: - drop hallucinations
 
     func testClearlyLowConfidence_dropped() {
-        XCTAssertEqual(Gate.rejectionReason(Gate.Metrics(avgLogprob: -1.8, compressionRatio: 1.9, noSpeechProb: 0.1))?.hasPrefix("low confidence"), true)
+        XCTAssertEqual(Gate.rejectionReason(Gate.Metrics(avgLogprob: -1.8, compressionRatio: 1.9, noSpeechProb: 0.1), text: "мутный неуверенный декод")?.hasPrefix("low confidence"), true)
     }
 
     func testRepetitionWithLowConfidence_dropped() {
         // Looped hallucination: high compression AND low confidence.
-        XCTAssertEqual(Gate.rejectionReason(Gate.Metrics(avgLogprob: -0.9, compressionRatio: 3.5, noSpeechProb: 0.1))?.hasPrefix("repetition"), true)
+        XCTAssertEqual(Gate.rejectionReason(Gate.Metrics(avgLogprob: -0.9, compressionRatio: 3.5, noSpeechProb: 0.1), text: "и я хочу и я хочу и я хочу и я хочу")?.hasPrefix("repetition"), true)
     }
 
     func testSilenceWithLowConfidence_dropped() {
-        XCTAssertEqual(Gate.rejectionReason(Gate.Metrics(avgLogprob: -1.2, compressionRatio: 1.5, noSpeechProb: 0.9))?.hasPrefix("silence"), true)
+        XCTAssertEqual(Gate.rejectionReason(Gate.Metrics(avgLogprob: -1.2, compressionRatio: 1.5, noSpeechProb: 0.9), text: "выдуманная тишина")?.hasPrefix("silence"), true)
     }
 
     // B4 spec case: no_speech_prob=0.9 / logprob=-2 must drop; healthy must pass.
     func testSpecB4_silenceCaseDropped() {
-        XCTAssertNotNil(Gate.rejectionReason(Gate.Metrics(avgLogprob: -2.0, compressionRatio: 1.5, noSpeechProb: 0.9)))
+        XCTAssertNotNil(Gate.rejectionReason(Gate.Metrics(avgLogprob: -2.0, compressionRatio: 1.5, noSpeechProb: 0.9), text: "тихий бубнёж"))
     }
 
     // MARK: - metrics(for:) — per-segment, no metrics → nil
@@ -72,7 +72,7 @@ final class TranscriptionConfidenceGateTests: XCTestCase {
     func testMetricsForSegment_builtFromFields() {
         let m = Gate.metrics(for: seg(-1.8))
         XCTAssertEqual(m?.avgLogprob, -1.8)
-        XCTAssertEqual(Gate.rejectionReason(m)?.hasPrefix("low confidence"), true)
+        XCTAssertEqual(Gate.rejectionReason(m, text: "мутный декод")?.hasPrefix("low confidence"), true)
     }
 
     // MARK: - aggregateMetrics — whole-clip dictation decision
@@ -85,12 +85,12 @@ final class TranscriptionConfidenceGateTests: XCTestCase {
     func testAggregate_mostlyGoodClipKept() {
         // Three good segments + one terrible: mean stays above the floor → kept.
         let segs = [seg(-0.2), seg(-0.3), seg(-0.25), seg(-3.0)]  // mean ≈ -0.94 > -1.5
-        XCTAssertNil(Gate.rejectionReason(Gate.aggregateMetrics(segs)))
+        XCTAssertNil(Gate.rejectionReason(Gate.aggregateMetrics(segs), text: "обычная речь без петель"))
     }
 
     func testAggregate_allBadClipDropped() {
         let segs = [seg(-1.8), seg(-2.1), seg(-1.9)]
-        XCTAssertNotNil(Gate.rejectionReason(Gate.aggregateMetrics(segs)))
+        XCTAssertNotNil(Gate.rejectionReason(Gate.aggregateMetrics(segs), text: "обычная речь без петель"))
     }
 
     func testAggregate_alignedPerSegment() {
@@ -101,6 +101,25 @@ final class TranscriptionConfidenceGateTests: XCTestCase {
         let agg = Gate.aggregateMetrics(segs)
         // mean logProb = -1.1 (> -1.5 floor), mean noSpeech = 0.5 (not > 0.5) → kept,
         // NOT wrongly dropped as "silence".
-        XCTAssertNil(Gate.rejectionReason(agg))
+        XCTAssertNil(Gate.rejectionReason(agg, text: "обычная речь"))
+    }
+
+    // MARK: - ITER-060: repetition branch requires text-level corroboration
+
+    func testRepetitionMetricsButCoherentText_kept() {
+        // Window-level metric duplication: a looping neighbor segment gives THIS
+        // coherent utterance «repetition» metrics. Log audit 2026-08-07: all 20
+        // repetition drops in 7 months were exactly this — real speech deleted.
+        XCTAssertNil(Gate.rejectionReason(
+            Gate.Metrics(avgLogprob: -0.9, compressionRatio: 3.5, noSpeechProb: 0.1),
+            text: "ну и я хочу проверить что мы успеваем к пятнице"
+        ))
+    }
+
+    func testRepetitionMetricsAndLoopingText_dropped() {
+        XCTAssertEqual(Gate.rejectionReason(
+            Gate.Metrics(avgLogprob: -0.9, compressionRatio: 3.5, noSpeechProb: 0.1),
+            text: "и я хочу и я хочу и я хочу и я хочу"
+        )?.hasPrefix("repetition"), true)
     }
 }

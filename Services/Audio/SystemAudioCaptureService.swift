@@ -10,6 +10,9 @@ import ScreenCaptureKit
 final class SystemAudioCaptureService: NSObject, ObservableObject, AudioSource {
     @Published var isRecording = false
     @Published var audioLevel: Float = 0
+    /// Physical (un-boosted) RMS of the last buffer — see the mic-side twin in
+    /// AudioRecordingService; silence guards must compare against THIS.
+    @Published var rawRMSLevel: Float = 0
     @Published var audioBars: [Float] = Array(repeating: 0, count: 24)
     /// Last error — surfaced to UI so user knows why recording failed to start.
     @Published var lastError: String?
@@ -112,6 +115,7 @@ final class SystemAudioCaptureService: NSObject, ObservableObject, AudioSource {
         streamOutput = nil   // TR-9/TR-10: drops the per-capture resampler with it
         isRecording = false
         audioLevel = 0
+        rawRMSLevel = 0
         audioBars = Array(repeating: 0, count: 24)
 
         let result = samples
@@ -254,6 +258,7 @@ final class SystemAudioCaptureService: NSObject, ObservableObject, AudioSource {
         Task { @MainActor in
             self.samples.append(contentsOf: resampled)
             self.audioLevel = level
+            self.rawRMSLevel = rms
             self.updateBars(level: level)
         }
     }

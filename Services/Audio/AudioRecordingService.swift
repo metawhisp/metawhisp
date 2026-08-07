@@ -8,6 +8,10 @@ import Foundation
 final class AudioRecordingService: ObservableObject, AudioSource {
     @Published var isRecording = false
     @Published var audioLevel: Float = 0
+    /// Physical (un-boosted) RMS of the last buffer. `audioLevel` is the
+    /// sqrt-boosted UI value — comparing IT against raw-RMS thresholds is the
+    /// units-mismatch bug ITER-060 fixed; silence guards must use this one.
+    @Published var rawRMSLevel: Float = 0
     @Published var audioBars: [Float] = Array(repeating: 0, count: 24)
 
     private var engine: AVAudioEngine?
@@ -185,8 +189,8 @@ final class AudioRecordingService: ObservableObject, AudioSource {
         inputNode.installTap(onBus: 0, bufferSize: 1024, format: inputFormat) { [weak self] buffer, _ in
             guard let self else { return }
 
-            // Calculate audio level for UI
-            let level = self.calculateLevel(buffer: buffer)
+            // Calculate audio level for UI + raw RMS for silence guards
+            let (rawRMS, level) = self.calculateLevels(buffer: buffer)
 
             // Convert to 16kHz mono
             let frameCount = AVAudioFrameCount(
@@ -210,6 +214,7 @@ final class AudioRecordingService: ObservableObject, AudioSource {
                 Task { @MainActor in
                     self.samples.append(contentsOf: newSamples)
                     self.audioLevel = level
+                    self.rawRMSLevel = rawRMS
                     self.updateBars(level: level)
                 }
             }
@@ -245,6 +250,7 @@ final class AudioRecordingService: ObservableObject, AudioSource {
         converter = nil
         isRecording = false
         audioLevel = 0
+        rawRMSLevel = 0
         audioBars = Array(repeating: 0, count: 24)
 
         let result = samples
@@ -273,10 +279,10 @@ final class AudioRecordingService: ObservableObject, AudioSource {
 
     /// Calculate audio level using RMS + non-linear curve for better sensitivity.
     /// Normal speech (~0.01-0.05 raw) maps to ~0.3-0.7 output range.
-    private func calculateLevel(buffer: AVAudioPCMBuffer) -> Float {
-        guard let channelData = buffer.floatChannelData else { return 0 }
+    private func calculateLevels(buffer: AVAudioPCMBuffer) -> (raw: Float, boosted: Float) {
+        guard let channelData = buffer.floatChannelData else { return (0, 0) }
         let count = Int(buffer.frameLength)
-        guard count > 0 else { return 0 }
+        guard count > 0 else { return (0, 0) }
 
         // RMS (root mean square) — better than mean absolute for audio
         var sumSq: Float = 0
@@ -289,7 +295,7 @@ final class AudioRecordingService: ObservableObject, AudioSource {
         // Non-linear boost: sqrt curve makes quiet sounds more visible
         // rms ~0.005 (whisper) → 0.22, rms ~0.02 (normal) → 0.45, rms ~0.08 (loud) → 0.89
         let boosted = sqrtf(min(rms * 12.0, 1.0))
-        return boosted
+        return (rms, boosted)
     }
 
     enum RecordingError: LocalizedError {

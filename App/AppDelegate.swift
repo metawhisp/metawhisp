@@ -1836,10 +1836,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         let micResult = await transcribeStreamChunked(samples: mic, engine: engine, speaker: .me, countUsage: false)
         let sysResult = await transcribeStreamChunked(samples: system, engine: engine, speaker: .them, countUsage: false)
         let merged = DualStreamMerger.mergeStreams(mic: micResult.segments, system: sysResult.segments)
+        // ITER-060: cross-segment cleanup — echo duplicates (speakers → mic
+        // bleed re-transcribed as «Me:»), consecutive-identical decoder loops,
+        // foreign-language fragments. Every drop is logged for recovery.
+        let sanitized = MeetingTranscriptSanitizer.sanitize(merged)
+        for drop in sanitized.dropped {
+            NSLog("[MetaWhisp] 🧹 sanitize: dropped (%@): '%@'", drop.reason, String(drop.segment.text.prefix(60)))
+            SuspectTranscriptLog.append(drop.segment.text, reason: drop.reason,
+                                        context: drop.segment.speaker == .me ? "Me merged" : "Them merged")
+        }
         let failedChunks = micResult.failedChunks + sysResult.failedChunks
-        NSLog("[MetaWhisp] Meeting dual-stream: mic=%d segments, system=%d segments → %d merged (%d failed chunks)",
-              micResult.segments.count, sysResult.segments.count, merged.count, failedChunks)
-        return (DualStreamMerger.renderTranscript(merged), failedChunks)
+        NSLog("[MetaWhisp] Meeting dual-stream: mic=%d segments, system=%d segments → %d merged, %d after sanitize (%d failed chunks)",
+              micResult.segments.count, sysResult.segments.count, merged.count, sanitized.kept.count, failedChunks)
+        return (DualStreamMerger.renderTranscript(sanitized.kept), failedChunks)
     }
 
     /// Transcribe ONE channel (mic or system) into per-chunk StreamSegments.
@@ -1953,7 +1962,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
                 if whisperSegments.isEmpty {
                     // Fallback for engines that don't populate segments —
                     // emit one segment covering the chunk (old behaviour).
-                    let stripped = TranscriptionCoordinator.stripHallucinationTokens(text)
+                    // ITER-060: same stutter-loop collapse as the per-utterance path.
+                    let collapsed = MeetingTranscriptSanitizer.collapseRepetitionLoops(text)
+                    if collapsed != text {
+                        NSLog("[MetaWhisp] 🔁 %@ chunk %d: collapsed repetition loop (%d → %d chars)", label, i + 1, text.count, collapsed.count)
+                        SuspectTranscriptLog.append(text, reason: "repetition-collapsed", context: "\(label) chunk \(i + 1)")
+                    }
+                    let stripped = TranscriptionCoordinator.stripHallucinationTokens(collapsed)
                     if stripped.isEmpty {
                         NSLog("[MetaWhisp] 🧹 %@ chunk %d: emptied by strip (was '%@')", label, i + 1, String(text.prefix(80)))
                         SuspectTranscriptLog.append(text, reason: "strip-emptied", context: "\(label) chunk \(i + 1)")  // TR-12
@@ -1974,13 +1989,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
                     segments.append(StreamSegment(text: cleanedText, startSec: fbStart, endSec: fbEnd, speaker: speaker))
                 } else {
                     for w in whisperSegments {
-                        let rawUtterance = w.text.trimmingCharacters(in: .whitespacesAndNewlines)
+                        var rawUtterance = w.text.trimmingCharacters(in: .whitespacesAndNewlines)
                         guard !rawUtterance.isEmpty else { continue }
+                        // ITER-060: collapse decoder stutter-loops («как как как
+                        // как будет») BEFORE the gate, so real speech around a
+                        // loop survives and the gate's repetition branch only
+                        // fires on text that still loops after cleanup.
+                        let collapsed = MeetingTranscriptSanitizer.collapseRepetitionLoops(rawUtterance)
+                        if collapsed != rawUtterance {
+                            NSLog("[MetaWhisp] 🔁 %@ chunk %d utt: collapsed repetition loop (%d → %d chars)", label, i + 1, rawUtterance.count, collapsed.count)
+                            SuspectTranscriptLog.append(rawUtterance, reason: "repetition-collapsed", context: "\(label) chunk \(i + 1) utt")
+                            rawUtterance = collapsed
+                        }
                         // TR-5: drop only THIS utterance if Whisper decoded it with
                         // hallucination metrics (precision-first thresholds; the rest
                         // of the chunk's real utterances are kept). Logged with text
                         // so a meeting drop is at least recoverable from the log.
-                        if let reason = TranscriptionConfidenceGate.rejectionReason(TranscriptionConfidenceGate.metrics(for: w)) {
+                        if let reason = TranscriptionConfidenceGate.rejectionReason(TranscriptionConfidenceGate.metrics(for: w), text: rawUtterance) {
                             NSLog("[MetaWhisp] 🎚️ %@ chunk %d utt: dropped (%@): '%@'", label, i + 1, reason, String(rawUtterance.prefix(80)))
                             SuspectTranscriptLog.append(rawUtterance, reason: reason, context: "\(label) chunk \(i + 1) utt")  // TR-12
                             continue
@@ -2542,9 +2567,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         // one talking) we stop without saving so the user doesn't get a
         // "Quick note (empty)" Conversation row clogging Library.
         try? await Task.sleep(for: .seconds(3))
-        if meetingRecorder.isRecording, meetingRecorder.audioLevel < 0.01 {
-            NSLog("[CallDetect] ⚠️ %@ post-start sniff — silence (audioLevel=%.4f), stopping discardly",
-                  name, meetingRecorder.audioLevel)
+        // ITER-060 units fix: compare RAW rms (boosted 0.01 = raw 8e-6, so the
+        // old check could never fire). Raw 0.004 ≈ empty-room ambient ceiling.
+        if meetingRecorder.isRecording, meetingRecorder.rawRMSLevel < 0.004 {
+            NSLog("[CallDetect] ⚠️ %@ post-start sniff — silence (rawRMS=%.4f), stopping discardly",
+                  name, meetingRecorder.rawRMSLevel)
             // Stop recorder — its onAutoStop won't fire (this isn't an auto-stop reason),
             // we just stop and don't persist anything.
             _ = meetingRecorder.stop()
@@ -2609,7 +2636,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             //     («если ещё созвон на экране — продолжай записывать»).
             // Either sliding-window signal vetoes stopNow; the decider falls
             // back to notifyAndExtend which surfaces the overrun card.
-            let rms = self.meetingRecorder.audioLevel
+            // ITER-060 units fix: the decider's quietRMSThreshold (0.005) is a
+            // RAW-rms calibration — feed it raw, not the boosted UI level.
+            let rms = self.meetingRecorder.rawRMSLevel
             let recentAudioActive = !self.meetingRecorder.hasBeenContinuouslyQuiet(forAtLeast: 30)
             let meetingAppVisible = self.isMeetingAppVisibleInRecentScreenContext()
             let decision = CalendarEndStopDecision.evaluate(

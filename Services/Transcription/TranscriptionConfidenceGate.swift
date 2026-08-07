@@ -44,16 +44,26 @@ enum TranscriptionConfidenceGate {
 
     /// A short human-readable reason to drop, or `nil` to keep. `nil` metrics
     /// (provider didn't supply stats) → keep.
-    static func rejectionReason(_ metrics: Metrics?) -> String? {
+    ///
+    /// `text` is the utterance/clip the metrics describe. ITER-060: the
+    /// repetition branch additionally requires the loop to be VISIBLE in that
+    /// text. Rationale (log audit 2026-08-07): WhisperKit assigns the same
+    /// window-level compression/logprob to every segment in a 30s window, so
+    /// one looping segment condemned all its neighbors — every one of the 20
+    /// «repetition» drops in 7 months of suspect-transcripts.log was coherent
+    /// real speech deleted in 30-second blocks. Metrics alone can't localize a
+    /// loop; metrics + text-level corroboration can.
+    static func rejectionReason(_ metrics: Metrics?, text: String) -> String? {
         guard let m = metrics else { return nil }
 
         // Invented speech over silence: mostly no-speech AND low confidence.
         if m.noSpeechProb > noSpeechThreshold && m.avgLogprob < silenceLogProbCeil {
             return String(format: "silence (noSpeech=%.2f, logProb=%.2f)", m.noSpeechProb, m.avgLogprob)
         }
-        // Pathological repetition: high compression PAIRED with low confidence, so
-        // clean repetitive dictation (good logProb) is NOT dropped.
-        if m.compressionRatio > compressionRatioThreshold && m.avgLogprob < repetitionLogProbCeil {
+        // Pathological repetition: high compression PAIRED with low confidence
+        // AND an actual loop in this very text (see doc comment above).
+        if m.compressionRatio > compressionRatioThreshold && m.avgLogprob < repetitionLogProbCeil,
+           TranscriptionCoordinator.containsExcessivePhraseRepetition(text) {
             return String(format: "repetition (compression=%.2f, logProb=%.2f)", m.compressionRatio, m.avgLogprob)
         }
         // Clearly low-confidence decode (with headroom below Whisper's −1.0).
