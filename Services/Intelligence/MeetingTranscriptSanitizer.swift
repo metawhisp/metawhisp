@@ -21,12 +21,15 @@ enum MeetingTranscriptSanitizer {
 
     // MARK: - Repetition-loop collapse (per utterance)
 
-    /// Collapse a decoder stutter-loop — the same 1-4-word n-gram repeated 3+
-    /// times CONSECUTIVELY — down to its first instance. «как как как как
-    /// будет» → «как будет»; «я думаю что я думаю что я думаю что» → «я думаю
-    /// что». Natural doubles («да да», «очень-очень») are untouched (threshold
-    /// is 3). Comparison is case/punctuation-insensitive; the FIRST instance's
-    /// original formatting is what survives.
+    /// Collapse a decoder stutter-loop — the same n-gram repeated CONSECUTIVELY
+    /// — down to its first instance. «как как как как будет» → «как будет»;
+    /// «я думаю что я думаю что я думаю что» → «я думаю что».
+    ///
+    /// Thresholds (Codex review 2026-08-07): single words need 4+ repeats —
+    /// «нет нет нет» / «да да да» are live emphatic speech, while decoder word
+    /// loops run 4+ (log: «как» ×7, «Окей.» ×5). Phrase grams (2-4 words) need
+    /// 3+ — humans don't repeat a whole phrase thrice back-to-back. Comparison
+    /// is case/punctuation-insensitive; the FIRST instance's formatting survives.
     static func collapseRepetitionLoops(_ text: String) -> String {
         let tokens = text.split(whereSeparator: { $0.isWhitespace }).map(String.init)
         guard tokens.count >= 3 else { return text }
@@ -41,7 +44,8 @@ enum MeetingTranscriptSanitizer {
             var advanced = false
             // Longest gram first so a phrase loop wins over its inner word loop.
             for gram in stride(from: 4, through: 1, by: -1) {
-                guard i + gram * 3 <= tokens.count else { continue }
+                let minRuns = gram == 1 ? 4 : 3
+                guard i + gram * minRuns <= tokens.count else { continue }
                 let pattern = Array(normed[i ..< i + gram])
                 // A pattern that is pure punctuation after normalization can't loop.
                 guard pattern.contains(where: { !$0.isEmpty }) else { continue }
@@ -51,7 +55,7 @@ enum MeetingTranscriptSanitizer {
                     runs += 1
                     j += gram
                 }
-                if runs >= 3 {
+                if runs >= minRuns {
                     out.append(contentsOf: tokens[i ..< i + gram]) // keep first instance
                     i += gram * runs
                     collapsed = true
@@ -118,14 +122,19 @@ enum MeetingTranscriptSanitizer {
     /// - Me-копия НЕ заметно длиннее Them (×1.5) — иначе это может быть
     ///   обратное эхо (мой голос вернулся через канал собеседника), удалять
     ///   Me значило бы терять мою реальную речь;
-    /// - окно startSec: Me в [themStart − 2, themStart + 6] — эхо приходит
-    ///   почти мгновенно (плюс до ~5с известного рассинхрона эпох каналов);
-    ///   осознанный повтор фразы приходит позже и выживает.
+    /// - окно startSec: Me в [themStart − 2, themStart + 4] — эхо приходит
+    ///   почти мгновенно (плюс рассинхрон эпох каналов); осознанный повтор
+    ///   фразы приходит позже и выживает;
+    /// - ≥2 НОВЫХ слов у Me-копии (нет в Them-фразе) → это не эхо, а речь
+    ///   с добавленным содержанием («…, правильно я понимаю?») — оставляем.
+    ///   Одно новое слово допускаем: bleed регулярно коверкает один токен
+    ///   («задеплоим» → «задиплоят»). (Codex review 2026-08-07.)
     private static let echoWindowBeforeSec: Double = 2
-    private static let echoWindowAfterSec: Double = 6
+    private static let echoWindowAfterSec: Double = 4
     private static let echoMinWords = 4
     private static let echoSimilarityThreshold: Double = 0.8
     private static let echoMaxLengthRatio: Double = 1.5
+    private static let echoMaxNewWords = 1
 
     static func dedupeCrossChannelEcho(_ segments: [StreamSegment], dropped: inout [Drop]) -> [StreamSegment] {
         let themSegments = segments.filter { $0.speaker == .them }
@@ -147,7 +156,8 @@ enum MeetingTranscriptSanitizer {
                 guard delta >= -echoWindowBeforeSec, delta <= echoWindowAfterSec else { return false }
                 let themTokens = normalizedTokens(them.text)
                 guard !themTokens.isEmpty,
-                      Double(meTokens.count) <= Double(themTokens.count) * echoMaxLengthRatio
+                      Double(meTokens.count) <= Double(themTokens.count) * echoMaxLengthRatio,
+                      newWordCount(in: meTokens, versus: themTokens) <= echoMaxNewWords
                 else { return false }
                 return tokenSimilarity(meTokens, themTokens) >= echoSimilarityThreshold
             }
@@ -162,19 +172,24 @@ enum MeetingTranscriptSanitizer {
 
     // MARK: - Foreign-fragment filter (language-agnostic)
 
-    /// Drop short low-plausibility fragments whose language contradicts the
-    /// meeting's own dominant languages. НИКАКИХ зашитых языков: доминантные
-    /// языки вычисляются из самого митинга (любая пара/тройка у любого юзера).
+    /// Drop short fragments whose language appears exactly ONCE in the whole
+    /// meeting. НИКАКИХ зашитых языков: «свои» языки — любые, реально
+    /// используемые в этом митинге (любая пара/тройка у любого юзера).
     ///
-    /// Guards: фильтр off при <10 надёжно определённых фраз (нет статистики);
-    /// язык с долей ≥20% — «свой» (билингвальный митинг не трогаем); фразы от
-    /// 6 слов не удаляются никогда (собеседник реально заговорил на третьем
-    /// языке); дроп только при уверенности распознавателя ≥0.7 (кириллические
-    /// языки различаются моделью NL, не алфавитом).
-    private static let foreignMinMeetingUtterances = 10
-    private static let foreignDominantShare = 0.2
-    private static let foreignMaxWords = 6
-    private static let foreignMinConfidence = 0.7
+    /// Ультра-консервативные пороги (Codex review 2026-08-07: правило «доля
+    /// <20% → чужой» удаляло редкие живые реплики меньшинственного языка типа
+    /// «can you hear me», conf 0.85): дроп только когда ВСЁ сразу —
+    /// - язык-одиночка: ровно 1 фраза на весь митинг (реально используемый
+    ///   язык почти всегда встречается чаще; вранье декодера — одиночные
+    ///   случайные испанские/польские вспышки);
+    /// - уверенность распознавателя ≥0.9 (проверенные живые EN-реплики дают
+    ///   0.77-0.85 и проходят);
+    /// - 3-5 слов: от 6 — собеседник реально заговорил, 1-2 — статистики нет;
+    /// - в митинге ≥20 надёжно определённых фраз (иначе фильтр off).
+    private static let foreignMinMeetingUtterances = 20
+    private static let foreignMinWords = 3
+    private static let foreignMaxWords = 5
+    private static let foreignMinConfidence = 0.9
 
     static func filterForeignFragments(_ segments: [StreamSegment], dropped: inout [Drop]) -> [StreamSegment] {
         let detections: [(index: Int, lang: String, confidence: Double)] = segments.enumerated().compactMap { i, seg in
@@ -184,18 +199,16 @@ enum MeetingTranscriptSanitizer {
         let confident = detections.filter { $0.confidence >= 0.5 }
         guard confident.count >= foreignMinMeetingUtterances else { return segments }
 
-        var shares: [String: Int] = [:]
-        for d in confident { shares[d.lang, default: 0] += 1 }
-        let dominant = Set(shares.filter { Double($0.value) / Double(confident.count) >= foreignDominantShare }.keys)
-        guard !dominant.isEmpty else { return segments }
+        var counts: [String: Int] = [:]
+        for d in confident { counts[d.lang, default: 0] += 1 }
 
         let byIndex = Dictionary(uniqueKeysWithValues: detections.map { ($0.index, $0) })
         var kept: [StreamSegment] = []
         for (i, seg) in segments.enumerated() {
             if let d = byIndex[i],
                d.confidence >= foreignMinConfidence,
-               !dominant.contains(d.lang),
-               normalizedTokens(seg.text).count < foreignMaxWords {
+               counts[d.lang] == 1,
+               (foreignMinWords ... foreignMaxWords).contains(normalizedTokens(seg.text).count) {
                 dropped.append(Drop(segment: seg, reason: "foreign-language-fragment (\(d.lang))"))
             } else {
                 kept.append(seg)
@@ -220,6 +233,21 @@ enum MeetingTranscriptSanitizer {
             .split(whereSeparator: { $0.isWhitespace })
             .map { $0.trimmingCharacters(in: .punctuationCharacters) }
             .filter { !$0.isEmpty }
+    }
+
+    /// How many tokens of `a` are absent from `b` (multiset semantics).
+    static func newWordCount(in a: [String], versus b: [String]) -> Int {
+        var counts: [String: Int] = [:]
+        for t in b { counts[t, default: 0] += 1 }
+        var new = 0
+        for t in a {
+            if (counts[t] ?? 0) > 0 {
+                counts[t]! -= 1
+            } else {
+                new += 1
+            }
+        }
+        return new
     }
 
     /// Dice coefficient over token multisets: 2·|common| / (|a| + |b|).

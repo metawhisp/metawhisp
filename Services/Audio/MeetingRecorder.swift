@@ -77,10 +77,13 @@ final class MeetingRecorder: ObservableObject {
     /// calendar-end quiet probe never fired and recordings ran hours past the
     /// call. The guard now reads `rawRMSLevel` (physical RMS from both
     /// sources). Calibration in RAW terms: ambient noise floor (kbd, fan,
-    /// AirPods breathing) ~0.001-0.005; quiet speech ~0.015+; normal speech
-    /// 0.01-0.05 (see AudioRecordingService.calculateLevels). 0.012 sits
-    /// between ambient and quiet speech.
-    static let silenceRMSThreshold: Float = 0.012
+    /// AirPods breathing) ~0.001-0.005; quiet/distant speech can dip to
+    /// ~0.006-0.011; normal speech 0.01-0.05 (AudioRecordingService
+    /// .calculateLevels). Codex review 2026-08-07: biased LOW (0.008, not
+    /// 0.012) — cutting a live quiet-speaker meeting is worse than letting a
+    /// zombie recording run to the calendar/max-duration stops. The gray band
+    /// 0.005-0.008 counts as silence by design.
+    static let silenceRMSThreshold: Float = 0.008
 
     /// Pure guard predicate — pinned by tests so threshold semantics (RAW rms,
     /// not boosted UI level) can't regress silently.

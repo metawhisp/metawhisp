@@ -2566,11 +2566,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         // 3-sec post-start audio sniff. If meeting room is empty (AFK / no
         // one talking) we stop without saving so the user doesn't get a
         // "Quick note (empty)" Conversation row clogging Library.
-        try? await Task.sleep(for: .seconds(3))
         // ITER-060 units fix: compare RAW rms (boosted 0.01 = raw 8e-6, so the
-        // old check could never fire). Raw 0.004 ≈ empty-room ambient ceiling.
-        if meetingRecorder.isRecording, meetingRecorder.rawRMSLevel < 0.004 {
-            NSLog("[CallDetect] ⚠️ %@ post-start sniff — silence (rawRMS=%.4f), stopping discardly",
+        // old 3-second check could never fire). Codex review 2026-08-07: a
+        // single 3s sample would discard a REAL meeting whose first seconds are
+        // join-silence (everyone muted, reading a slide). Observe the first 60s
+        // instead: any audible moment (raw ≥ 0.004 ≈ empty-room ambient
+        // ceiling) keeps the recording; discard only if the whole minute was
+        // dead quiet.
+        var sniffHeardAudio = false
+        for _ in 0 ..< 12 {
+            try? await Task.sleep(for: .seconds(5))
+            guard meetingRecorder.isRecording else { return }
+            if meetingRecorder.rawRMSLevel >= 0.004 {
+                sniffHeardAudio = true
+                break
+            }
+        }
+        if meetingRecorder.isRecording, !sniffHeardAudio {
+            NSLog("[CallDetect] ⚠️ %@ post-start sniff — 60s of silence (rawRMS=%.4f), stopping discardly",
                   name, meetingRecorder.rawRMSLevel)
             // Stop recorder — its onAutoStop won't fire (this isn't an auto-stop reason),
             // we just stop and don't persist anything.

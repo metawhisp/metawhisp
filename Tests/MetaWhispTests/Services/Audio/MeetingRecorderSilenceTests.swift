@@ -17,6 +17,9 @@ final class MeetingRecorderSilenceTests: XCTestCase {
     func test_quietSpeechIsNotSilence() {
         // Quiet/distant speech raw ~0.015+ must reset the silence window —
         // otherwise the auto-stop would cut a real conversation.
+        // Codex 2026-08-07: quiet/distant speech dips to ~0.006-0.011 — the
+        // threshold is biased LOW (0.008) so 0.01 must count as speech.
+        XCTAssertFalse(MeetingRecorder.isRawSilence(0.01))
         XCTAssertFalse(MeetingRecorder.isRawSilence(0.015))
         XCTAssertFalse(MeetingRecorder.isRawSilence(0.05))
     }

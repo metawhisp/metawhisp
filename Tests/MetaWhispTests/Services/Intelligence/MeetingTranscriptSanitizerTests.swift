@@ -29,10 +29,14 @@ final class MeetingTranscriptSanitizerTests: XCTestCase {
         // Live speech: doubles are natural, threshold is 3+.
         XCTAssertEqual(S.collapseRepetitionLoops("да да согласен"), "да да согласен")
         XCTAssertEqual(S.collapseRepetitionLoops("очень очень хорошо"), "очень очень хорошо")
+        // Codex 2026-08-07: triples are emphatic live speech too — single-word
+        // collapse starts at 4 (decoder loops run 4+: «как»×7, «Окей.»×5).
+        XCTAssertEqual(S.collapseRepetitionLoops("нет нет нет"), "нет нет нет")
+        XCTAssertEqual(S.collapseRepetitionLoops("да да да согласен"), "да да да согласен")
     }
 
     func test_collapse_punctuationInsensitiveKeepsFirstFormatting() {
-        XCTAssertEqual(S.collapseRepetitionLoops("Как, как, как, так вышло"), "Как, так вышло")
+        XCTAssertEqual(S.collapseRepetitionLoops("Как, как, как, как, так вышло"), "Как, так вышло")
     }
 
     func test_collapse_speechAroundLoopSurvives() {
@@ -150,6 +154,18 @@ final class MeetingTranscriptSanitizerTests: XCTestCase {
         XCTAssertTrue(dropped.isEmpty)
     }
 
+    func test_echo_confirmationRepeatWithNewContentKept() {
+        // Codex 2026-08-07: Me мгновенно повторяет фразу + добавляет СВОЁ
+        // («правильно я понимаю») — ≥2 новых слов = не эхо, оставляем.
+        let segs = [
+            seg("нам нужно закрыть контракт до пятницы", 100, 103, .them),
+            seg("нам нужно закрыть контракт до пятницы правильно я понимаю", 101.5, 105, .me),
+        ]
+        var dropped: [S.Drop] = []
+        XCTAssertEqual(S.dedupeCrossChannelEcho(segs, dropped: &dropped).count, 2)
+        XCTAssertTrue(dropped.isEmpty)
+    }
+
     func test_echo_partialOverlapBelowThresholdKept() {
         // Эхо-хвост приклеился к моей реальной фразе — совпадение <80%, целиком не удаляем.
         let segs = [
@@ -177,6 +193,16 @@ final class MeetingTranscriptSanitizerTests: XCTestCase {
             "апдейт выкатим сначала на десять процентов",
             "метрики удержания выросли за последний месяц",
             "договорились возвращаемся к этому в пятницу",
+            "начнем с самого важного вопроса повестки",
+            "клиент попросил перенести демонстрацию на четверг",
+            "дизайнеры подготовили новые макеты экрана оплаты",
+            "надо проверить аналитику по последнему релизу",
+            "поддержка получила меньше обращений на этой неделе",
+            "серверные расходы выросли из-за нового трафика",
+            "предлагаю сократить план на следующий спринт",
+            "юристы согласовали договор с подрядчиком вчера",
+            "маркетинг запускает кампанию в начале месяца",
+            "исследование пользователей закончим к среде",
         ]
         return phrases.enumerated().map { i, t in seg(t, Double(i * 10), Double(i * 10 + 5), i % 2 == 0 ? .me : .them) }
     }
@@ -189,6 +215,18 @@ final class MeetingTranscriptSanitizerTests: XCTestCase {
         XCTAssertEqual(kept.count, segs.count - 1)
         XCTAssertEqual(dropped.count, 1)
         XCTAssertTrue(dropped[0].reason.hasPrefix("foreign-language-fragment"))
+    }
+
+    func test_foreign_rareMinorityLanguageTurnsKept() {
+        // Codex 2026-08-07: «can you hear me» (conf 0.85) / «please share
+        // screen» (0.77) — редкие живые EN-реплики в русском митинге ниже
+        // порога уверенности 0.9 И не одиночки (EN встречается дважды).
+        var segs = russianMeeting()
+        segs.append(seg("can you hear me", 300, 302, .me))
+        segs.append(seg("please share screen", 305, 307, .them))
+        var dropped: [S.Drop] = []
+        XCTAssertEqual(S.filterForeignFragments(segs, dropped: &dropped).count, segs.count)
+        XCTAssertTrue(dropped.isEmpty)
     }
 
     func test_foreign_longUtteranceNeverDropped() {
@@ -210,6 +248,10 @@ final class MeetingTranscriptSanitizerTests: XCTestCase {
             "команда работает над новой фичей",
             "отчет будет готов к вечеру пятницы",
             "созвонимся завтра в то же время",
+            "продажи выросли на двадцать процентов",
+            "наймем еще одного инженера в сентябре",
+            "интеграция с платежами почти готова",
+            "обсудим детали на следующей встрече",
         ]
         let en = [
             "let me share my screen with the roadmap",
@@ -218,6 +260,10 @@ final class MeetingTranscriptSanitizerTests: XCTestCase {
             "please review the pull request today",
             "our customers love the latest update",
             "the deadline moved to next monday morning",
+            "engineering velocity improved a lot recently",
+            "the churn numbers went down this month",
+            "we should announce the feature next week",
+            "marketing prepared the launch materials already",
         ]
         for (i, t) in (ru + en).enumerated() {
             segs.append(seg(t, Double(i * 10), Double(i * 10 + 5), i % 2 == 0 ? .me : .them))
