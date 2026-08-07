@@ -10,9 +10,14 @@ final class CorrectionDictionary: ObservableObject {
     @Published var brands: [String: String] = [:]
     @Published var snippets: [String: String] = [:]
 
+    /// 1st-sighting candidates from `learn` — not applied yet. Promoted into
+    /// `corrections` when the same edit is observed a second time.
+    private var pendingCorrections: [String: String] = [:]
+
     private let fileURL: URL
     private let brandsURL: URL
     private let snippetsURL: URL
+    private let pendingURL: URL
 
     /// Built-in snippet PRESETS — common "say-this-want-that" triggers shipped
     /// with empty expansions. User-facing copy: «moy LinkedIn» / «my LinkedIn»
@@ -78,16 +83,22 @@ final class CorrectionDictionary: ObservableObject {
         "stripe": "Stripe", "shopify": "Shopify", "wordpress": "WordPress",
     ]
 
-    init() {
+    convenience init() {
         let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
-        let dir = appSupport.appendingPathComponent("MetaWhisp", isDirectory: true)
+        self.init(directory: appSupport.appendingPathComponent("MetaWhisp", isDirectory: true))
+    }
+
+    /// Designated init with an explicit storage directory — the test seam.
+    init(directory dir: URL) {
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         fileURL = dir.appendingPathComponent("corrections.json")
         brandsURL = dir.appendingPathComponent("brands.json")
         snippetsURL = dir.appendingPathComponent("snippets.json")
+        pendingURL = dir.appendingPathComponent("corrections-pending.json")
         load()
         loadBrands()
         loadSnippets()
+        loadPending()
     }
 
     /// All active replacements: corrections + brands + snippets merged.
@@ -268,9 +279,24 @@ final class CorrectionDictionary: ObservableObject {
             return
         }
 
-        corrections[origLower] = corrPhrase
-        save()
-        NSLog("[CorrectionDict] ✅ Learned correction (%d→%d chars)", origPhrase.count, corrPhrase.count)
+        // 2026-08-06 — one edit is not a rule. A single context-specific fix
+        // («ссылка НА сайт»→«ссылка В сайт») used to become a GLOBAL
+        // replacement that rewrote every «на» in every later transcript. First
+        // sighting stores a candidate; the rule activates only when the exact
+        // same correction is observed a second time. A different value for the
+        // same key restarts the count (latest candidate wins).
+        if corrections[origLower] == corrPhrase { return }
+        if pendingCorrections[origLower] == corrPhrase {
+            pendingCorrections.removeValue(forKey: origLower)
+            corrections[origLower] = corrPhrase
+            save()
+            savePending()
+            NSLog("[CorrectionDict] ✅ Learned correction on 2nd sighting (%d→%d chars)", origPhrase.count, corrPhrase.count)
+        } else {
+            pendingCorrections[origLower] = corrPhrase
+            savePending()
+            NSLog("[CorrectionDict] ⏳ Correction candidate, needs a 2nd sighting (%d→%d chars)", origPhrase.count, corrPhrase.count)
+        }
     }
 
     /// Manually add a correction entry.
@@ -384,6 +410,17 @@ final class CorrectionDictionary: ObservableObject {
     private func saveBrands() {
         guard let data = try? JSONEncoder().encode(brands) else { return }
         try? data.write(to: brandsURL, options: .atomic)
+    }
+
+    private func loadPending() {
+        guard let data = try? Data(contentsOf: pendingURL),
+              let dict = try? JSONDecoder().decode([String: String].self, from: data) else { return }
+        pendingCorrections = dict
+    }
+
+    private func savePending() {
+        guard let data = try? JSONEncoder().encode(pendingCorrections) else { return }
+        try? data.write(to: pendingURL, options: .atomic)
     }
 
     private func loadSnippets() {

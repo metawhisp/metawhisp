@@ -221,9 +221,7 @@ final class LiveMeetingAdvisor: ObservableObject {
                 // so the copilot/recap saw EN-bled garbage. Gate like the other
                 // three sites; brand names are still fixed post-hoc by
                 // applyCorrections below.
-                promptWords: TranscriptionLanguageResolver.filterPromptWords(
-                    BrandGlossary.canonicalNames(), language: lang
-                ),
+                promptWords: TranscriptionLanguageResolver.enginePromptWords(language: lang),
                 // ITER-054 — live-advice chunks are part of THIS meeting, which
                 // is billed once by wall-clock at finalize (applyMeetingStop).
                 // Metering them here (Codex review) double-booked opt-in

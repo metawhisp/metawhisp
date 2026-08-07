@@ -78,4 +78,15 @@ enum TranscriptionLanguageResolver {
         if shouldIncludeBrandGlossary(language: language) { return words }
         return words.filter(promptWordSafeForNonEnglish)
     }
+
+    /// The ONLY prompt words an engine may receive: the curated brand glossary,
+    /// language-gated. The user's correction dictionary must NEVER be fed here —
+    /// its values are output-side replacements applied by
+    /// `CorrectionDictionary.apply` AFTER transcription. Handing them to the
+    /// decoder as `initial_prompt` made Whisper echo the dictionary back
+    /// verbatim as «recognized speech» on silent/noisy audio (prompt-echo bug,
+    /// 2026-08-06: transcript = «линкбилдинг, Не наебывай, что и как, …»).
+    static func enginePromptWords(language: String?) -> [String] {
+        filterPromptWords(BrandGlossary.canonicalNames(), language: language)
+    }
 }

@@ -275,28 +275,12 @@ final class TranscriptionCoordinator: ObservableObject {
 
         do {
             let lang = TranscriptionLanguageResolver.resolveLanguage(settings.transcriptionLanguage)
-            // TR-3c: the correction-dictionary values are user-defined replacement
-            // targets that are usually English brand names too. Feeding ASCII/Latin
-            // words as an `initial_prompt` on non-English audio biases the decoder
-            // toward `<|en|>` exactly like the glossary does — so gate them the same
-            // way (EN → all; otherwise keep only non-ASCII words like Cyrillic).
-            var promptWords = TranscriptionLanguageResolver.filterPromptWords(
-                correctionDictionary.map { Array(Set($0.corrections.values)) } ?? [],
-                language: lang
-            )
-            // 2026-05-28: bias the decoder toward our known brand glossary
-            // (Brevo/MailChimp/Claude/ChatGPT/Ahrefs/…) so production
-            // mangles seen in meeting transcripts ('Бриво', etc.) get less
-            // weight. Whisper-family uses this as `initial_prompt`; CF
-            // Worker forwards to Deepgram `keyterm`.
-            // RU→EN fix: this glossary is English-only, so injecting it on
-            // non-English / auto-detect audio biases decoding toward English.
-            // Gate it by language — see shouldIncludeBrandGlossary for the
-            // deliberate trade-off (non-EN brand names lose prompt bias and only
-            // unambiguous Cyrillic mangles are repaired post-hoc below).
-            if TranscriptionLanguageResolver.shouldIncludeBrandGlossary(language: lang) {
-                promptWords.append(contentsOf: BrandGlossary.canonicalNames())
-            }
+            // Prompt = curated brand glossary only, EN-gated (see
+            // enginePromptWords). The correction dictionary is deliberately NOT
+            // in the prompt: its values are applied post-hoc by
+            // CorrectionDictionary.apply below; feeding them to the decoder made
+            // Whisper echo them back verbatim on silence (2026-08-06).
+            let promptWords = TranscriptionLanguageResolver.enginePromptWords(language: lang)
             let result = try await currentEngine.transcribe(audioSamples: samples, language: lang, promptWords: promptWords)
 
             var trimmed = result.text.trimmingCharacters(in: .whitespacesAndNewlines)

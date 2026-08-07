@@ -129,4 +129,23 @@ final class TranscriptionLanguageResolverTests: XCTestCase {
         let glossary = BrandGlossary.canonicalNames()
         XCTAssertEqual(TranscriptionLanguageResolver.filterPromptWords(glossary, language: "en"), glossary)
     }
+
+    // MARK: - enginePromptWords (2026-08-06 prompt-echo root fix)
+
+    // The API takes NO word list — the curated glossary is the only possible
+    // prompt source, so the correction dictionary structurally CANNOT leak into
+    // the decoder prompt again (its values echoed back as fake «speech» on
+    // silence: «линкбилдинг, Не наебывай, …»).
+
+    func testEnginePromptWords_glossaryOnlyForEnglish() {
+        XCTAssertEqual(
+            TranscriptionLanguageResolver.enginePromptWords(language: "en"),
+            BrandGlossary.canonicalNames()
+        )
+    }
+
+    func testEnginePromptWords_emptyForNonEnglishAndAuto() {
+        XCTAssertTrue(TranscriptionLanguageResolver.enginePromptWords(language: "ru").isEmpty)
+        XCTAssertTrue(TranscriptionLanguageResolver.enginePromptWords(language: nil).isEmpty)
+    }
 }

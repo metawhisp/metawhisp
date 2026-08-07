@@ -1904,7 +1904,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
                             // is single-channel.
                             return try await engine.transcribe(
                                 audioSamples: chunk, language: lang,
-                                promptWords: TranscriptionLanguageResolver.filterPromptWords(BrandGlossary.canonicalNames(), language: lang),
+                                promptWords: TranscriptionLanguageResolver.enginePromptWords(language: lang),
                                 countUsage: countUsage)
                         } catch {
                             NSLog("[MetaWhisp] ❌ Meeting %@ chunk %d transcribe attempt %d/2 failed: %@",
@@ -2127,7 +2127,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             let lang = AppSettings.shared.transcriptionLanguage == "auto" ? nil : AppSettings.shared.transcriptionLanguage
             // ITER-054 — this tail is part of the meeting (billed once by
             // wall-clock at finalize); never meter it on its own.
-            let result = try await engine.transcribe(audioSamples: tailMixed, language: lang, promptWords: TranscriptionLanguageResolver.filterPromptWords(BrandGlossary.canonicalNames(), language: lang), countUsage: false)
+            let result = try await engine.transcribe(audioSamples: tailMixed, language: lang, promptWords: TranscriptionLanguageResolver.enginePromptWords(language: lang), countUsage: false)
             let rawText = result.text.trimmingCharacters(in: .whitespacesAndNewlines)
             // Apply the same hallucination filter as the chunked path.
             // 2026-05-28: also strip mid-text artifacts so the tail can't
