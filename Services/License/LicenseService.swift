@@ -189,6 +189,36 @@ final class LicenseService: ObservableObject {
         return hasTrustedCachedLicense ? .keepCachedPro : .signOut
     }
 
+    /// ITER-061 (2026-08-07, «почему опять разлогинило») — root cause of the
+    /// recurring 72h logout: the stored session token is a ONE-TIME deep-link
+    /// credential the server eventually expires, so verify() can never succeed
+    /// again; the stamp ages out and the grace path force-signs-out a PAYING
+    /// user. The durable credential is the LICENSE KEY — the worker validates
+    /// it against D1 on every /api/pro/* call. On a token rejection we now ask
+    /// the license-key-gated `/api/usage` endpoint, which is authoritative for
+    /// «is this subscription active»:
+    ///   2xx     → active: refresh the stamp, keep Pro (no logout, ever)
+    ///   401/403 → license revoked/inactive: sign out (the only real logout)
+    ///   else    → inconclusive (5xx/offline): fall back to the stamp TTL
+    nonisolated static func licenseKeyFallbackAction(usageStatus: Int) -> VerifyRejection {
+        if (200 ..< 300).contains(usageStatus) { return .keepCachedPro }
+        if usageStatus == 401 || usageStatus == 403 { return .signOut }
+        return .keepQuiet
+    }
+
+    /// HTTP status of a license-key probe against `/api/usage` (-1 on network
+    /// failure). AUD-025 — key rides in the Authorization header, not the URL.
+    private func probeLicenseKey(_ key: String) async -> Int {
+        guard let url = URL(string: "\(api)/api/usage") else { return -1 }
+        var req = URLRequest(url: url)
+        req.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization")
+        req.timeoutInterval = 10
+        do {
+            let (_, resp) = try await URLSession.shared.data(for: req)
+            return (resp as? HTTPURLResponse)?.statusCode ?? -1
+        } catch { return -1 }
+    }
+
     /// Verify existing session token is still valid.
     private func verify(token: String) async {
         do {
@@ -224,6 +254,26 @@ final class LicenseService: ObservableObject {
                 //     an unconfirmed/planted key for a fresh window.
                 // Offline users never reach here (they hit the network-error
                 // catch below), so legit offline Pro is unaffected.
+                // ITER-061 — before the stamp/TTL dance, let the DURABLE
+                // credential answer. A dead session token with a LIVE license
+                // key must never end in a logout (see licenseKeyFallbackAction).
+                if Self.shouldSignOutOnVerify(httpStatus: status),
+                   let key = licenseKey, !key.isEmpty {
+                    let usageStatus = await probeLicenseKey(key)
+                    switch Self.licenseKeyFallbackAction(usageStatus: usageStatus) {
+                    case .keepCachedPro:
+                        isPro = true
+                        recordVerified()
+                        NSLog("[License] Token rejected (HTTP %d) but license key is ACTIVE (usage %d) — Pro kept, stamp refreshed", status, usageStatus)
+                        return
+                    case .signOut:
+                        NSLog("[License] Token rejected (HTTP %d) and license key is DEAD (usage %d) — signing out", status, usageStatus)
+                        signOut()
+                        return
+                    case .keepQuiet:
+                        NSLog("[License] Token rejected (HTTP %d), license probe inconclusive (usage %d) — falling back to stamp TTL", status, usageStatus)
+                    }
+                }
                 let hasStamp = (lastVerifiedAt != nil)
                 let hasCachedPro = LicenseEntitlement.cachedProIsTrusted(
                     hasActiveKey: (licenseKey?.isEmpty == false),

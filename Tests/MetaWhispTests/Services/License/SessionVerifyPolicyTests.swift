@@ -47,4 +47,28 @@ final class SessionVerifyPolicyTests: XCTestCase {
             XCTAssertEqual(LicenseService.rejectionAction(httpStatus: status, hasTrustedCachedLicense: false), .keepQuiet)
         }
     }
+
+    // MARK: - ITER-061: license-key fallback («почему опять разлогинило»)
+
+    /// The session token is a one-time deep-link credential that the server
+    /// expires; the LICENSE KEY is durable. An active key must always keep Pro.
+    func test_licenseFallback_activeKeyKeepsPro() {
+        XCTAssertEqual(LicenseService.licenseKeyFallbackAction(usageStatus: 200), .keepCachedPro)
+        XCTAssertEqual(LicenseService.licenseKeyFallbackAction(usageStatus: 204), .keepCachedPro)
+    }
+
+    /// Only an authoritative auth rejection of the KEY itself means the
+    /// subscription is really gone — that's the single legitimate logout.
+    func test_licenseFallback_deadKeySignsOut() {
+        XCTAssertEqual(LicenseService.licenseKeyFallbackAction(usageStatus: 401), .signOut)
+        XCTAssertEqual(LicenseService.licenseKeyFallbackAction(usageStatus: 403), .signOut)
+    }
+
+    /// 5xx / rate limits / offline are inconclusive — defer to the stamp TTL,
+    /// never log the user out on an ambiguous signal.
+    func test_licenseFallback_inconclusiveKeepsQuiet() {
+        for status in [500, 502, 503, 429, 404, -1] {
+            XCTAssertEqual(LicenseService.licenseKeyFallbackAction(usageStatus: status), .keepQuiet)
+        }
+    }
 }
