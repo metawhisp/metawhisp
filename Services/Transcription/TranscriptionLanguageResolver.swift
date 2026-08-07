@@ -89,4 +89,21 @@ enum TranscriptionLanguageResolver {
     static func enginePromptWords(language: String?) -> [String] {
         filterPromptWords(BrandGlossary.canonicalNames(), language: language)
     }
+
+    /// ITER-060.2 — per-channel language pinning for meetings on «auto». The
+    /// decoder detects a language for EVERY 5-min chunk of EVERY channel
+    /// independently, so one noisy chunk mid-meeting flips to Spanish/Polish
+    /// and produces wrong-language junk (2-5 fragments per transcript in the
+    /// 2026-08-07 audit). Instead: the channel's language is pinned from its
+    /// first SUBSTANTIAL transcribed chunk and reused for the rest of the
+    /// meeting. Per-channel (not per-meeting) so an international call — user
+    /// speaks Russian, the other side English — transcribes both correctly.
+    /// A user-pinned Settings language always wins upstream of this.
+    ///
+    /// Substantial = ≥5 words: a chunk holding a lone «Угу» must not lock the
+    /// channel. Hallucination-filtered chunks never reach this decision.
+    static func shouldPinDetectedLanguage(detected: String?, wordCount: Int) -> Bool {
+        guard let d = detected, !d.isEmpty else { return false }
+        return wordCount >= 5
+    }
 }

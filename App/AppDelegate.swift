@@ -45,7 +45,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     ///     literally went silent mid-meeting after the user did a voice question.
     /// Each AudioRecordingService owns its own AVAudioEngine — multiple
     /// engines tapping the default input device coexist fine.
-    private let meetingMic = AudioRecordingService()
+    private let meetingMic: AudioRecordingService = {
+        let mic = AudioRecordingService()
+        // ITER-060.2 — meetings get Apple AEC so speaker playback of the other
+        // side doesn't re-enter the mic (dictation `recorder` stays without).
+        mic.useVoiceProcessing = true
+        return mic
+    }()
     /// Captures mic + system audio in parallel for meeting recording.
     lazy var meetingRecorder = MeetingRecorder(mic: meetingMic, systemAudio: systemAudioCapture)
     var whisperEngine: WhisperKitEngine?
@@ -1874,6 +1880,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         let chunks = AppDelegate.splitOnSilenceBoundaries(samples: samples, targetChunkSec: 300, searchWindowSec: 15)
         let label = speaker == .me ? "Me" : "Them"
 
+        // ITER-060.2 — per-channel language pinning (see
+        // shouldPinDetectedLanguage). A user-chosen Settings language wins;
+        // on «auto» the first substantial chunk's detected language locks the
+        // channel so later chunks can't flip to Spanish/Polish junk.
+        let userLang = TranscriptionLanguageResolver.resolveLanguage(AppSettings.shared.transcriptionLanguage)
+        var pinnedLang: String?
+
         var segments: [StreamSegment] = []
         // AUD-002 — count chunks that fail every retry so the caller can mark the
         // saved transcript incomplete instead of presenting a partial as full.
@@ -1899,7 +1912,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             }
 
             do {
-                let lang = AppSettings.shared.transcriptionLanguage == "auto" ? nil : AppSettings.shared.transcriptionLanguage
+                let lang = userLang ?? pinnedLang
                 // Brand glossary as prompt bias (BrandGlossary.canonicalNames).
                 // Forwarded to Whisper as initial_prompt and to Deepgram as
                 // keyterm (worker-side) — improves brand recognition (Brevo,
@@ -1943,6 +1956,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
                     NSLog("[MetaWhisp] ⚠️  %@ chunk %d: filtered hallucination (RMS=%.4f): '%@'", label, i + 1, rms, String(text.prefix(60)))
                     SuspectTranscriptLog.append(text, reason: "low-rms-hallucination", context: "\(label) chunk \(i + 1)")  // TR-12
                     continue
+                }
+
+                // ITER-060.2 — pin AFTER the hallucination filters so a junk
+                // chunk can never lock the channel to a junk language.
+                if userLang == nil, pinnedLang == nil,
+                   TranscriptionLanguageResolver.shouldPinDetectedLanguage(
+                       detected: result.language,
+                       wordCount: text.split(whereSeparator: { $0.isWhitespace }).count) {
+                    pinnedLang = result.language
+                    NSLog("[MetaWhisp] 🌐 %@ channel language pinned: %@", label, result.language ?? "?")
                 }
 
                 // ITER-026 — emit ONE StreamSegment per Whisper utterance, not

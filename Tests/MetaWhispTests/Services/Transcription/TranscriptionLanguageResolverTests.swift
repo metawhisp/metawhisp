@@ -148,4 +148,22 @@ final class TranscriptionLanguageResolverTests: XCTestCase {
         XCTAssertTrue(TranscriptionLanguageResolver.enginePromptWords(language: "ru").isEmpty)
         XCTAssertTrue(TranscriptionLanguageResolver.enginePromptWords(language: nil).isEmpty)
     }
+
+    // MARK: - shouldPinDetectedLanguage (ITER-060.2: per-channel pinning)
+
+    func testPinLanguage_substantialChunkPins() {
+        XCTAssertTrue(TranscriptionLanguageResolver.shouldPinDetectedLanguage(detected: "ru", wordCount: 5))
+        XCTAssertTrue(TranscriptionLanguageResolver.shouldPinDetectedLanguage(detected: "en", wordCount: 50))
+    }
+
+    func testPinLanguage_shortChunkDoesNotPin() {
+        // A chunk holding a lone «Угу» must not lock the channel's language.
+        XCTAssertFalse(TranscriptionLanguageResolver.shouldPinDetectedLanguage(detected: "ru", wordCount: 4))
+        XCTAssertFalse(TranscriptionLanguageResolver.shouldPinDetectedLanguage(detected: "ru", wordCount: 1))
+    }
+
+    func testPinLanguage_noDetectionDoesNotPin() {
+        XCTAssertFalse(TranscriptionLanguageResolver.shouldPinDetectedLanguage(detected: nil, wordCount: 20))
+        XCTAssertFalse(TranscriptionLanguageResolver.shouldPinDetectedLanguage(detected: "", wordCount: 20))
+    }
 }
