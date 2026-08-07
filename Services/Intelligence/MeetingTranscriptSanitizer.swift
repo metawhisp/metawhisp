@@ -12,6 +12,13 @@ enum MeetingTranscriptSanitizer {
     struct SanitizeResult: Equatable {
         var kept: [StreamSegment]
         var dropped: [Drop]
+        /// Foreign-language SUSPECTS — flagged for the log but NOT removed.
+        /// Codex review 2026-08-07 proved text statistics alone can't tell a
+        /// lone real «could you repeat that» (en 0.999) from a lone junk
+        /// Spanish fragment — so Phase 1 observes only. Dropping becomes safe
+        /// in Phase 2, when the meeting language is pinned at DECODE time and
+        /// wrong-language junk stops being produced at all.
+        var flaggedForeign: [Drop]
     }
 
     struct Drop: Equatable {
@@ -74,13 +81,13 @@ enum MeetingTranscriptSanitizer {
     // MARK: - Full sanitize pipeline (merged segments)
 
     /// Run all cross-segment cleanups in order: consecutive-identical dedup →
-    /// cross-channel echo dedup → foreign-fragment filter.
+    /// cross-channel echo dedup → foreign-fragment detection (observe-only).
     static func sanitize(_ merged: [StreamSegment]) -> SanitizeResult {
         var dropped: [Drop] = []
         var kept = dedupeConsecutiveIdentical(merged, dropped: &dropped)
         kept = dedupeCrossChannelEcho(kept, dropped: &dropped)
-        kept = filterForeignFragments(kept, dropped: &dropped)
-        return SanitizeResult(kept: kept, dropped: dropped)
+        let flagged = detectForeignSuspects(kept)
+        return SanitizeResult(kept: kept, dropped: dropped, flaggedForeign: flagged)
     }
 
     // MARK: - Consecutive identical utterances («Окей.» ×5 as separate segments)
@@ -172,49 +179,46 @@ enum MeetingTranscriptSanitizer {
 
     // MARK: - Foreign-fragment filter (language-agnostic)
 
-    /// Drop short fragments whose language appears exactly ONCE in the whole
-    /// meeting. НИКАКИХ зашитых языков: «свои» языки — любые, реально
+    /// Detect short fragments whose language appears exactly ONCE in the whole
+    /// meeting — OBSERVE-ONLY: they're flagged for the suspect log, never
+    /// removed. НИКАКИХ зашитых языков: «свои» языки — любые, реально
     /// используемые в этом митинге (любая пара/тройка у любого юзера).
     ///
-    /// Ультра-консервативные пороги (Codex review 2026-08-07: правило «доля
-    /// <20% → чужой» удаляло редкие живые реплики меньшинственного языка типа
-    /// «can you hear me», conf 0.85): дроп только когда ВСЁ сразу —
-    /// - язык-одиночка: ровно 1 фраза на весь митинг (реально используемый
-    ///   язык почти всегда встречается чаще; вранье декодера — одиночные
-    ///   случайные испанские/польские вспышки);
-    /// - уверенность распознавателя ≥0.9 (проверенные живые EN-реплики дают
-    ///   0.77-0.85 и проходят);
-    /// - 3-5 слов: от 6 — собеседник реально заговорил, 1-2 — статистики нет;
-    /// - в митинге ≥20 надёжно определённых фраз (иначе фильтр off).
+    /// Почему не удаляем (Codex review 2026-08-07, два раунда): чисто
+    /// текстовой статистикой невозможно отличить одиночную ЖИВУЮ реплику
+    /// («could you repeat that», en 0.999) от одиночного мусорного
+    /// испанского/польского фрагмента — оба «язык-одиночка, высокая
+    /// уверенность, 3-5 слов». Любой порог рубит чью-то реальную речь.
+    /// Удаление станет безопасным в Фазе 2: язык митинга закрепляется на
+    /// этапе ДЕКОДИРОВАНИЯ, и иноязычный мусор перестаёт возникать вообще.
+    /// Пока — телеметрия для калибровки.
     private static let foreignMinMeetingUtterances = 20
     private static let foreignMinWords = 3
     private static let foreignMaxWords = 5
     private static let foreignMinConfidence = 0.9
 
-    static func filterForeignFragments(_ segments: [StreamSegment], dropped: inout [Drop]) -> [StreamSegment] {
+    static func detectForeignSuspects(_ segments: [StreamSegment]) -> [Drop] {
         let detections: [(index: Int, lang: String, confidence: Double)] = segments.enumerated().compactMap { i, seg in
             guard let d = detectLanguage(seg.text) else { return nil }
             return (i, d.lang, d.confidence)
         }
         let confident = detections.filter { $0.confidence >= 0.5 }
-        guard confident.count >= foreignMinMeetingUtterances else { return segments }
+        guard confident.count >= foreignMinMeetingUtterances else { return [] }
 
         var counts: [String: Int] = [:]
         for d in confident { counts[d.lang, default: 0] += 1 }
 
         let byIndex = Dictionary(uniqueKeysWithValues: detections.map { ($0.index, $0) })
-        var kept: [StreamSegment] = []
+        var flagged: [Drop] = []
         for (i, seg) in segments.enumerated() {
             if let d = byIndex[i],
                d.confidence >= foreignMinConfidence,
                counts[d.lang] == 1,
                (foreignMinWords ... foreignMaxWords).contains(normalizedTokens(seg.text).count) {
-                dropped.append(Drop(segment: seg, reason: "foreign-language-fragment (\(d.lang))"))
-            } else {
-                kept.append(seg)
+                flagged.append(Drop(segment: seg, reason: "foreign-language-suspect (\(d.lang))"))
             }
         }
-        return kept
+        return flagged
     }
 
     /// Dominant language of a text via the OS recognizer, or nil when it has

@@ -1845,6 +1845,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             SuspectTranscriptLog.append(drop.segment.text, reason: drop.reason,
                                         context: drop.segment.speaker == .me ? "Me merged" : "Them merged")
         }
+        // Foreign-language suspects: observe-only telemetry (kept in the
+        // transcript) until Phase 2 pins the decode language — see
+        // detectForeignSuspects for why dropping is unsafe today.
+        for flag in sanitized.flaggedForeign {
+            NSLog("[MetaWhisp] 🌐 sanitize: flagged, KEPT (%@): '%@'", flag.reason, String(flag.segment.text.prefix(60)))
+            SuspectTranscriptLog.append(flag.segment.text, reason: flag.reason,
+                                        context: flag.segment.speaker == .me ? "Me merged" : "Them merged")
+        }
         let failedChunks = micResult.failedChunks + sysResult.failedChunks
         NSLog("[MetaWhisp] Meeting dual-stream: mic=%d segments, system=%d segments → %d merged, %d after sanitize (%d failed chunks)",
               micResult.segments.count, sysResult.segments.count, merged.count, sanitized.kept.count, failedChunks)

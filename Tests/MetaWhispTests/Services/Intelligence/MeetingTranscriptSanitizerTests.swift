@@ -207,35 +207,43 @@ final class MeetingTranscriptSanitizerTests: XCTestCase {
         return phrases.enumerated().map { i, t in seg(t, Double(i * 10), Double(i * 10 + 5), i % 2 == 0 ? .me : .them) }
     }
 
-    func test_foreign_shortFragmentDropped() {
+    func test_foreign_junkFragmentFlaggedButKept() {
+        // Observe-only (Codex, 2 раунда): помечаем в лог, из транскрипта НЕ
+        // удаляем — статистикой не отличить одиночный мусор от одиночной
+        // живой реплики. Удаление — в Фазе 2 через закрепление языка декода.
         var segs = russianMeeting()
-        segs.append(seg("Gracias por ver el video", 130, 132, .them))
-        var dropped: [S.Drop] = []
-        let kept = S.filterForeignFragments(segs, dropped: &dropped)
-        XCTAssertEqual(kept.count, segs.count - 1)
-        XCTAssertEqual(dropped.count, 1)
-        XCTAssertTrue(dropped[0].reason.hasPrefix("foreign-language-fragment"))
+        segs.append(seg("Gracias por ver el video", 330, 332, .them))
+        let flagged = S.detectForeignSuspects(segs)
+        XCTAssertEqual(flagged.count, 1)
+        XCTAssertTrue(flagged[0].reason.hasPrefix("foreign-language-suspect"))
+        // И главный инвариант: sanitize сохраняет фразу в транскрипте.
+        let result = S.sanitize(segs)
+        XCTAssertTrue(result.kept.contains { $0.text == "Gracias por ver el video" })
     }
 
-    func test_foreign_rareMinorityLanguageTurnsKept() {
-        // Codex 2026-08-07: «can you hear me» (conf 0.85) / «please share
-        // screen» (0.77) — редкие живые EN-реплики в русском митинге ниже
-        // порога уверенности 0.9 И не одиночки (EN встречается дважды).
+    func test_foreign_singletonRealEnglishNotDroppedEver() {
+        // Codex round 2: «could you repeat that» (en≈0.999), одна за митинг —
+        // ровно тот случай, из-за которого фильтр observe-only.
+        var segs = russianMeeting()
+        segs.append(seg("could you repeat that", 330, 332, .them))
+        let result = S.sanitize(segs)
+        XCTAssertTrue(result.kept.contains { $0.text == "could you repeat that" })
+    }
+
+    func test_foreign_rareMinorityLanguageTurnsNotEvenFlagged() {
+        // «can you hear me» (conf 0.85) / «please share screen» (0.77) — ниже
+        // порога уверенности 0.9 и не одиночки (EN дважды) → даже не в лог.
         var segs = russianMeeting()
         segs.append(seg("can you hear me", 300, 302, .me))
         segs.append(seg("please share screen", 305, 307, .them))
-        var dropped: [S.Drop] = []
-        XCTAssertEqual(S.filterForeignFragments(segs, dropped: &dropped).count, segs.count)
-        XCTAssertTrue(dropped.isEmpty)
+        XCTAssertTrue(S.detectForeignSuspects(segs).isEmpty)
     }
 
-    func test_foreign_longUtteranceNeverDropped() {
+    func test_foreign_longUtteranceNeverFlagged() {
         // Собеседник реально заговорил на третьем языке — 6+ слов не трогаем.
         var segs = russianMeeting()
-        segs.append(seg("Hola queria comentar el estado del proyecto antes de terminar la reunion", 130, 136, .them))
-        var dropped: [S.Drop] = []
-        XCTAssertEqual(S.filterForeignFragments(segs, dropped: &dropped).count, segs.count)
-        XCTAssertTrue(dropped.isEmpty)
+        segs.append(seg("Hola queria comentar el estado del proyecto antes de terminar la reunion", 330, 336, .them))
+        XCTAssertTrue(S.detectForeignSuspects(segs).isEmpty)
     }
 
     func test_foreign_bilingualMeetingBothLanguagesKept() {
@@ -269,21 +277,17 @@ final class MeetingTranscriptSanitizerTests: XCTestCase {
             segs.append(seg(t, Double(i * 10), Double(i * 10 + 5), i % 2 == 0 ? .me : .them))
         }
         segs.append(seg("what do you think about this", 300, 302, .them))
-        var dropped: [S.Drop] = []
-        XCTAssertEqual(S.filterForeignFragments(segs, dropped: &dropped).count, segs.count)
-        XCTAssertTrue(dropped.isEmpty)
+        XCTAssertTrue(S.detectForeignSuspects(segs).isEmpty)
     }
 
     func test_foreign_shortMeetingFilterOff() {
-        // <10 фраз — статистики нет, фильтр выключен даже для явного чужого языка.
+        // <20 фраз — статистики нет, детектор выключен даже для явного чужого языка.
         let segs = [
             seg("привет как дела", 0, 2, .me),
             seg("нормально спасибо", 3, 5, .them),
             seg("Gracias por ver", 6, 7, .them),
         ]
-        var dropped: [S.Drop] = []
-        XCTAssertEqual(S.filterForeignFragments(segs, dropped: &dropped).count, 3)
-        XCTAssertTrue(dropped.isEmpty)
+        XCTAssertTrue(S.detectForeignSuspects(segs).isEmpty)
     }
 
     // MARK: - sanitize (pipeline)
@@ -306,14 +310,15 @@ final class MeetingTranscriptSanitizerTests: XCTestCase {
         segs.append(seg("Хорошо.", 210, 211, .them))
         segs.append(seg("Хорошо.", 212, 213, .them))
         segs.append(seg("Хорошо.", 214, 215, .them))
-        // foreign fragment
+        // foreign fragment — flagged for the log, kept in transcript
         segs.append(seg("Gracias por ver el video", 220, 222, .them))
         let result = S.sanitize(segs.sorted { $0.startSec < $1.startSec })
         let reasons = Set(result.dropped.map { $0.reason.components(separatedBy: " ").first! })
         XCTAssertTrue(reasons.contains("cross-channel-echo"))
         XCTAssertTrue(reasons.contains("consecutive-duplicate"))
-        XCTAssertTrue(reasons.contains("foreign-language-fragment"))
-        XCTAssertEqual(result.dropped.count, 4) // 1 echo + 2 dup + 1 foreign
+        XCTAssertEqual(result.dropped.count, 3) // 1 echo + 2 dup; foreign NOT dropped
+        XCTAssertEqual(result.flaggedForeign.count, 1)
+        XCTAssertTrue(result.kept.contains { $0.text == "Gracias por ver el video" })
     }
 
     // MARK: - tokenSimilarity
