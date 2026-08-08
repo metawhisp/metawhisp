@@ -219,8 +219,22 @@ final class LicenseService: ObservableObject {
         } catch { return -1 }
     }
 
+    /// ITER-060.3 (Codex) — serialize verifications. The 12h timer and the
+    /// expiry timer can fire together; two interleaved verify() runs raced to
+    /// an inconsistent state (one path signOut-wiping the Keychain while the
+    /// other set isPro=true from stale locals). MainActor + this flag = only
+    /// one verification in flight; a concurrent request is simply skipped
+    /// (the surviving run reaches the same authoritative answer).
+    private var verifyInFlight = false
+
     /// Verify existing session token is still valid.
     private func verify(token: String) async {
+        guard !verifyInFlight else {
+            NSLog("[License] verify already in flight — skipping concurrent run")
+            return
+        }
+        verifyInFlight = true
+        defer { verifyInFlight = false }
         do {
             // AUD-025 — token in the Authorization header, not the URL.
             let url = URL(string: "\(api)/api/auth/session?machine_id=\(Self.machineId)")!
@@ -271,7 +285,16 @@ final class LicenseService: ObservableObject {
                         signOut()
                         return
                     case .keepQuiet:
-                        NSLog("[License] Token rejected (HTTP %d), license probe inconclusive (usage %d) — falling back to stamp TTL", status, usageStatus)
+                        // ITER-060.3 (Codex) — a LIVE key with an UNREACHABLE
+                        // probe (worker 5xx/offline) must NEVER cascade into
+                        // the stamp-TTL sign-out below: that recreated the 72h
+                        // logout for paying users whenever our worker was down
+                        // at exactly the stamp's expiry. Keep everything; the
+                        // 12h re-verify (or next launch) re-probes, and a truly
+                        // dead key still ends in the 401/403 → signOut branch
+                        // above once the worker answers.
+                        NSLog("[License] Token rejected (HTTP %d), license probe inconclusive (usage %d) — keeping cached state, will re-probe", status, usageStatus)
+                        return
                     }
                 }
                 let hasStamp = (lastVerifiedAt != nil)

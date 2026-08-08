@@ -155,6 +155,15 @@ final class AudioRecordingService: ObservableObject, AudioSource {
     func start() throws {
         guard !isRecording else { return }
 
+        // ITER-060.3 (Codex) — the device-change observer used to be installed
+        // only via warmUp(), which AppDelegate calls for the DICTATION mic
+        // alone. The meeting mic instance never observed device changes, so an
+        // AirPods connect/disconnect mid-meeting silently killed its capture
+        // while the recording looked alive through the system channel.
+        // observeDeviceChanges() is idempotent — installing here covers every
+        // instance that records.
+        observeDeviceChanges()
+
         // Reuse existing engine or create new
         let engine = self.engine ?? AVAudioEngine()
 

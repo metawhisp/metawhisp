@@ -1851,14 +1851,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             SuspectTranscriptLog.append(drop.segment.text, reason: drop.reason,
                                         context: drop.segment.speaker == .me ? "Me merged" : "Them merged")
         }
-        // Foreign-language suspects: observe-only telemetry (kept in the
-        // transcript) until Phase 2 pins the decode language — see
-        // detectForeignSuspects for why dropping is unsafe today.
-        for flag in sanitized.flaggedForeign {
-            NSLog("[MetaWhisp] 🌐 sanitize: flagged, KEPT (%@): '%@'", flag.reason, String(flag.segment.text.prefix(60)))
-            SuspectTranscriptLog.append(flag.segment.text, reason: flag.reason,
-                                        context: flag.segment.speaker == .me ? "Me merged" : "Them merged")
-        }
         let failedChunks = micResult.failedChunks + sysResult.failedChunks
         NSLog("[MetaWhisp] Meeting dual-stream: mic=%d segments, system=%d segments → %d merged, %d after sanitize (%d failed chunks)",
               micResult.segments.count, sysResult.segments.count, merged.count, sanitized.kept.count, failedChunks)
@@ -1879,13 +1871,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         guard !samples.isEmpty else { return ([], 0) }
         let chunks = AppDelegate.splitOnSilenceBoundaries(samples: samples, targetChunkSec: 300, searchWindowSec: 15)
         let label = speaker == .me ? "Me" : "Them"
-
-        // ITER-060.2 — per-channel language pinning (see
-        // shouldPinDetectedLanguage). A user-chosen Settings language wins;
-        // on «auto» the first substantial chunk's detected language locks the
-        // channel so later chunks can't flip to Spanish/Polish junk.
-        let userLang = TranscriptionLanguageResolver.resolveLanguage(AppSettings.shared.transcriptionLanguage)
-        var pinnedLang: String?
 
         var segments: [StreamSegment] = []
         // AUD-002 — count chunks that fail every retry so the caller can mark the
@@ -1912,7 +1897,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             }
 
             do {
-                let lang = userLang ?? pinnedLang
+                // ITER-060.3 — decode is ALWAYS auto when Settings say auto: a
+                // hard per-channel pin (reverted here) blocked live language
+                // switching mid-meeting (user decision 2026-08-08). Foreign
+                // junk is handled post-merge by the language-profile filter in
+                // MeetingTranscriptSanitizer instead.
+                let lang = TranscriptionLanguageResolver.resolveLanguage(AppSettings.shared.transcriptionLanguage)
                 // Brand glossary as prompt bias (BrandGlossary.canonicalNames).
                 // Forwarded to Whisper as initial_prompt and to Deepgram as
                 // keyterm (worker-side) — improves brand recognition (Brevo,
@@ -1958,15 +1948,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
                     continue
                 }
 
-                // ITER-060.2 — pin AFTER the hallucination filters so a junk
-                // chunk can never lock the channel to a junk language.
-                if userLang == nil, pinnedLang == nil,
-                   TranscriptionLanguageResolver.shouldPinDetectedLanguage(
-                       detected: result.language,
-                       wordCount: text.split(whereSeparator: { $0.isWhitespace }).count) {
-                    pinnedLang = result.language
-                    NSLog("[MetaWhisp] 🌐 %@ channel language pinned: %@", label, result.language ?? "?")
-                }
 
                 // ITER-026 — emit ONE StreamSegment per Whisper utterance, not
                 // per chunk. Previously we collapsed every chunk's text into a

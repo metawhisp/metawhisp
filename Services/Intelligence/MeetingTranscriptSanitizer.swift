@@ -12,13 +12,6 @@ enum MeetingTranscriptSanitizer {
     struct SanitizeResult: Equatable {
         var kept: [StreamSegment]
         var dropped: [Drop]
-        /// Foreign-language SUSPECTS — flagged for the log but NOT removed.
-        /// Codex review 2026-08-07 proved text statistics alone can't tell a
-        /// lone real «could you repeat that» (en 0.999) from a lone junk
-        /// Spanish fragment — so Phase 1 observes only. Dropping becomes safe
-        /// in Phase 2, when the meeting language is pinned at DECODE time and
-        /// wrong-language junk stops being produced at all.
-        var flaggedForeign: [Drop]
     }
 
     struct Drop: Equatable {
@@ -81,13 +74,13 @@ enum MeetingTranscriptSanitizer {
     // MARK: - Full sanitize pipeline (merged segments)
 
     /// Run all cross-segment cleanups in order: consecutive-identical dedup →
-    /// cross-channel echo dedup → foreign-fragment detection (observe-only).
+    /// cross-channel echo dedup → language-profile foreign-fragment filter.
     static func sanitize(_ merged: [StreamSegment]) -> SanitizeResult {
         var dropped: [Drop] = []
         var kept = dedupeConsecutiveIdentical(merged, dropped: &dropped)
         kept = dedupeCrossChannelEcho(kept, dropped: &dropped)
-        let flagged = detectForeignSuspects(kept)
-        return SanitizeResult(kept: kept, dropped: dropped, flaggedForeign: flagged)
+        kept = filterForeignFragments(kept, dropped: &dropped)
+        return SanitizeResult(kept: kept, dropped: dropped)
     }
 
     // MARK: - Consecutive identical utterances («Окей.» ×5 as separate segments)
@@ -179,46 +172,57 @@ enum MeetingTranscriptSanitizer {
 
     // MARK: - Foreign-fragment filter (language-agnostic)
 
-    /// Detect short fragments whose language appears exactly ONCE in the whole
-    /// meeting — OBSERVE-ONLY: they're flagged for the suspect log, never
-    /// removed. НИКАКИХ зашитых языков: «свои» языки — любые, реально
-    /// используемые в этом митинге (любая пара/тройка у любого юзера).
+    /// ITER-060.3 — language-PROFILE foreign-fragment filter (two-pass, runs
+    /// post-merge over the WHOLE meeting, both channels). НИКАКИХ зашитых
+    /// языков: «свои» языки — любые, на которых в митинге прозвучала хоть
+    /// одна содержательная (≥5 слов) фраза, в любой момент и любым каналом.
+    /// Юзер свободно переключается RU↔EN↔что угодно — все его языки входят
+    /// в профиль и не трогаются.
     ///
-    /// Почему не удаляем (Codex review 2026-08-07, два раунда): чисто
-    /// текстовой статистикой невозможно отличить одиночную ЖИВУЮ реплику
-    /// («could you repeat that», en 0.999) от одиночного мусорного
-    /// испанского/польского фрагмента — оба «язык-одиночка, высокая
-    /// уверенность, 3-5 слов». Любой порог рубит чью-то реальную речь.
-    /// Удаление станет безопасным в Фазе 2: язык митинга закрепляется на
-    /// этапе ДЕКОДИРОВАНИЯ, и иноязычный мусор перестаёт возникать вообще.
-    /// Пока — телеметрия для калибровки.
+    /// Дроп только когда ВСЁ сразу: язык фразы вне профиля + 3-5 слов +
+    /// уверенность распознавателя ≥0.9 + в митинге ≥20 надёжных фраз. Это
+    /// сигнатура дрейфа декодера (случайные испанские/польские вспышки).
+    /// Two-pass (Codex 2026-08-08): профиль считается по ВСЕМУ митингу до
+    /// любых суждений, поэтому ранняя короткая EN-фраза не гибнет, если EN
+    /// звучит содержательно ПОЗЖЕ. Осознанный residual (задокументирован):
+    /// единственная за весь митинг короткая фраза на языке, который больше
+    /// нигде не звучал, будет удалена — она неотличима от мусора; попадает
+    /// в suspect-log, откуда восстановима.
     private static let foreignMinMeetingUtterances = 20
+    /// Strictly ABOVE `foreignMaxWords`: a fragment inside the droppable 3-5
+    /// word range must never self-legitimize its own language into the profile
+    /// (a 5-word «Gracias por ver el video» did exactly that when this was 5).
+    private static let foreignSubstantialWords = 6
     private static let foreignMinWords = 3
     private static let foreignMaxWords = 5
     private static let foreignMinConfidence = 0.9
 
-    static func detectForeignSuspects(_ segments: [StreamSegment]) -> [Drop] {
-        let detections: [(index: Int, lang: String, confidence: Double)] = segments.enumerated().compactMap { i, seg in
+    static func filterForeignFragments(_ segments: [StreamSegment], dropped: inout [Drop]) -> [StreamSegment] {
+        let detections: [(index: Int, lang: String, confidence: Double, words: Int)] = segments.enumerated().compactMap { i, seg in
             guard let d = detectLanguage(seg.text) else { return nil }
-            return (i, d.lang, d.confidence)
+            return (i, d.lang, d.confidence, normalizedTokens(seg.text).count)
         }
         let confident = detections.filter { $0.confidence >= 0.5 }
-        guard confident.count >= foreignMinMeetingUtterances else { return [] }
+        guard confident.count >= foreignMinMeetingUtterances else { return segments }
 
-        var counts: [String: Int] = [:]
-        for d in confident { counts[d.lang, default: 0] += 1 }
+        // Pass 1 — the meeting's language profile: full-meeting view first.
+        let profile = Set(confident.filter { $0.words >= foreignSubstantialWords }.map { $0.lang })
+        guard !profile.isEmpty else { return segments }
 
+        // Pass 2 — judge fragments against the completed profile.
         let byIndex = Dictionary(uniqueKeysWithValues: detections.map { ($0.index, $0) })
-        var flagged: [Drop] = []
+        var kept: [StreamSegment] = []
         for (i, seg) in segments.enumerated() {
             if let d = byIndex[i],
                d.confidence >= foreignMinConfidence,
-               counts[d.lang] == 1,
-               (foreignMinWords ... foreignMaxWords).contains(normalizedTokens(seg.text).count) {
-                flagged.append(Drop(segment: seg, reason: "foreign-language-suspect (\(d.lang))"))
+               !profile.contains(d.lang),
+               (foreignMinWords ... foreignMaxWords).contains(d.words) {
+                dropped.append(Drop(segment: seg, reason: "foreign-language-fragment (\(d.lang))"))
+            } else {
+                kept.append(seg)
             }
         }
-        return flagged
+        return kept
     }
 
     /// Dominant language of a text via the OS recognizer, or nil when it has
