@@ -1887,11 +1887,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             // utterance timestamps below stay anchored to the RAW chunk position.
             let (chunk, leadOffsetSamples) = AppDelegate.trimSilenceEdges(samples: rawChunk)
             let leadSec = Double(leadOffsetSamples) / 16000.0
-            let rms = TranscriptionCoordinator.calculateRMS(chunk)
-            NSLog("[MetaWhisp] Meeting %@ chunk %d/%d: %d→%d samples after trim, RMS=%.4f",
-                  label, i + 1, chunks.count, rawChunk.count, chunk.count, rms)
 
-            if chunk.count < 8000 || rms < 0.0005 {
+            // ITER-060.4 — cut interior silence (>2s gaps) before the decoder:
+            // long quiet stretches are the substrate Whisper hallucinates over
+            // («Продолжение следует…», word loops; the mostly-silent channel
+            // measured 2.2× the garbage). Every utterance timestamp below is
+            // mapped BACK to the original timeline via cutResult.map, so the
+            // Me/Them merge and the echo-dedup windows stay correct.
+            let cutResult = MeetingAudioSilenceCutter.cut(samples: chunk)
+            let decodeSamples = cutResult.samples
+            if decodeSamples.count != chunk.count {
+                NSLog("[MetaWhisp] ✂️ %@ chunk %d: cut %.1fs interior silence (%.1fs → %.1fs)",
+                      label, i + 1,
+                      Double(chunk.count - decodeSamples.count) / 16000.0,
+                      Double(chunk.count) / 16000.0,
+                      Double(decodeSamples.count) / 16000.0)
+            }
+
+            let rms = TranscriptionCoordinator.calculateRMS(decodeSamples)
+            NSLog("[MetaWhisp] Meeting %@ chunk %d/%d: %d→%d samples after trim+cut, RMS=%.4f",
+                  label, i + 1, chunks.count, rawChunk.count, decodeSamples.count, rms)
+
+            if decodeSamples.count < 8000 || rms < 0.0005 {
                 NSLog("[MetaWhisp] ⏭️  %@ chunk %d too quiet/short — skip", label, i + 1)
                 continue
             }
@@ -1923,7 +1940,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
                             // Both channels still transcribe — only quota accounting
                             // is single-channel.
                             return try await engine.transcribe(
-                                audioSamples: chunk, language: lang,
+                                audioSamples: decodeSamples, language: lang,
                                 promptWords: TranscriptionLanguageResolver.enginePromptWords(language: lang),
                                 countUsage: countUsage)
                         } catch {
@@ -1997,7 +2014,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
                     // begins leadSec into the raw chunk — anchor it on the raw timeline
                     // like the per-utterance path (was chunkStartSec…chunkEndSec).
                     let fbStart = chunkStartSec + leadSec
-                    let fbEnd = min(chunkEndSec, fbStart + Double(chunk.count) / 16000.0)
+                    // ITER-060.4: the fallback covers the whole trimmed chunk —
+                    // its ORIGINAL duration, not the compressed decode length.
+                    let fbEnd = min(chunkEndSec, fbStart + cutResult.map.originalDuration)
                     segments.append(StreamSegment(text: cleanedText, startSec: fbStart, endSec: fbEnd, speaker: speaker))
                 } else {
                     for w in whisperSegments {
@@ -2032,10 +2051,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
                             NSLog("[MetaWhisp] 🧹 %@ chunk %d utt: stripped hallucination (was %d → %d chars)", label, i + 1, rawUtterance.count, stripped.count)
                         }
                         let utteranceText = BrandGlossary.applyCorrections(stripped)
-                        // TR-8: w.start/w.end are relative to the TRIMMED chunk —
-                        // add the trimmed-lead offset to stay on the raw timeline.
-                        let absStart = chunkStartSec + leadSec + w.start
-                        let absEnd = chunkStartSec + leadSec + w.end
+                        // TR-8: w.start/w.end are relative to the TRIMMED chunk;
+                        // ITER-060.4: they are ALSO on the compressed (silence-
+                        // cut) timeline — map back to raw chunk time first,
+                        // then add the trimmed-lead offset.
+                        let absStart = chunkStartSec + leadSec + cutResult.map.toOriginalSeconds(w.start)
+                        let absEnd = chunkStartSec + leadSec + cutResult.map.toOriginalSeconds(w.end)
                         segments.append(StreamSegment(text: utteranceText, startSec: absStart, endSec: absEnd, speaker: speaker))
                     }
                 }

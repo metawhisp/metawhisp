@@ -97,6 +97,39 @@ final class CloudWhisperEngine: TranscriptionEngine, @unchecked Sendable {
     }
 
     /// Pro: send audio to our server proxy
+    /// ITER-060.4 — which transport failures deserve a QUICK retry. Fast-fail
+    /// resolver/connect blips (Tailscale MagicDNS hiccup → «hostname could not
+    /// be found», 2026-08-08) resolve within a second — retrying masks them.
+    /// timedOut already burned the full timeout (retry doubles the wait) and
+    /// offline is not transient (fail fast so the Recovery save fires) — both
+    /// excluded.
+    nonisolated static func isTransientTransportError(_ error: Error) -> Bool {
+        guard let urlError = error as? URLError else { return false }
+        switch urlError.code {
+        case .cannotFindHost, .dnsLookupFailed, .cannotConnectToHost, .networkConnectionLost:
+            return true
+        default:
+            return false
+        }
+    }
+
+    /// URLSession data with a quick retry ladder for transient transport
+    /// errors (400ms, 800ms). Dictation used to make ONE attempt — a single
+    /// DNS blip failed the whole recording into Recovery.
+    private func dataWithTransientRetry(for request: URLRequest, label: String) async throws -> (Data, URLResponse) {
+        var attempt = 0
+        while true {
+            attempt += 1
+            do {
+                return try await URLSession.shared.data(for: request)
+            } catch {
+                guard attempt < 3, Self.isTransientTransportError(error) else { throw error }
+                NSLog("[CloudWhisper] %@ transport blip (attempt %d/3): %@ — retrying", label, attempt, error.localizedDescription)
+                try? await Task.sleep(for: .milliseconds(400 * attempt))
+            }
+        }
+    }
+
     private func transcribeViaProxy(audioSamples: [Float], language: String?, promptWords: [String], licenseKey: String, countUsage: Bool) async throws -> TranscriptionResult {
         let startTime = CFAbsoluteTimeGetCurrent()
         let wavData = WAVEncoder.encode(samples: audioSamples)
@@ -114,7 +147,7 @@ final class CloudWhisperEngine: TranscriptionEngine, @unchecked Sendable {
         request.httpBody = wavData
         request.timeoutInterval = 60
 
-        let (data, response) = try await URLSession.shared.data(for: request)
+        let (data, response) = try await dataWithTransientRetry(for: request, label: "PRO")
         let processingTime = CFAbsoluteTimeGetCurrent() - startTime
 
         if let http = response as? HTTPURLResponse, http.statusCode != 200 {
@@ -189,7 +222,7 @@ final class CloudWhisperEngine: TranscriptionEngine, @unchecked Sendable {
         request.httpBody = body
 
         // Send request
-        let (data, httpResponse) = try await URLSession.shared.data(for: request)
+        let (data, httpResponse) = try await dataWithTransientRetry(for: request, label: "BYOK")
         let processingTime = CFAbsoluteTimeGetCurrent() - startTime
 
         if let http = httpResponse as? HTTPURLResponse {
