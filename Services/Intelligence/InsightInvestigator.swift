@@ -1,0 +1,230 @@
+import Foundation
+
+/// ITER-027.6 — the INVESTIGATION loop behind proactive insights.
+///
+/// v1 made one blind LLM call over the latest screen — the model had nothing
+/// non-obvious to say, so it echoed the screen back («Rerun Failed Agents»
+/// while the user is looking at the failed-agents list; user verdict:
+/// «бесполезные подсказки»). The reference product's content is different
+/// because its MECHANIC is different: the model first investigates recent
+/// history with tools, confirms what it found, and only then advises —
+/// «you stashed changes 2h ago — git stash pop» comes from HISTORY, not from
+/// the current frame.
+///
+/// This engine is pure: tools execute over an in-memory snapshot array and
+/// the LLM round-trip is an injected `Transport`, so the whole loop is unit
+/// tested without network or SwiftData. Adapted to our constraints (copy
+/// methodology): structured search tools instead of raw SQL (no GRDB here),
+/// text confirmation via `get_screen_text` instead of a vision screenshot
+/// pass (our proxy models are text-only today).
+enum InsightInvestigator {
+
+    /// One screen-history record the tools can search. `id` for the model is
+    /// the array index — stable within a single run.
+    struct Snapshot: Equatable {
+        let time: Date
+        let app: String
+        let window: String
+        let ocr: String
+    }
+
+    /// One model turn from the tools endpoint.
+    struct ModelTurn {
+        let text: String
+        let toolName: String?
+        /// Parsed arguments of the first tool call (empty when none).
+        let toolArgs: [String: Any]
+        /// Raw arguments JSON string — echoed back in the assistant message.
+        let toolArgsRaw: String
+        let toolCallId: String?
+
+        init(text: String, toolName: String?, toolArgs: [String: Any] = [:],
+             toolArgsRaw: String = "{}", toolCallId: String? = nil) {
+            self.text = text
+            self.toolName = toolName
+            self.toolArgs = toolArgs
+            self.toolArgsRaw = toolArgsRaw
+            self.toolCallId = toolCallId
+        }
+    }
+
+    /// The LLM round-trip: (messages, tools) → one turn. Injected so tests
+    /// script the conversation.
+    typealias Transport = (_ messages: [[String: Any]], _ tools: [[String: Any]]) async throws -> ModelTurn
+
+    enum Outcome: Equatable {
+        case advice(ExtractedInsight)
+        case none(reason: String)
+    }
+
+    /// Hard cap on model turns — a runaway loop costs money every round.
+    static let maxRounds = 5
+    static let searchLimitCap = 20
+    static let snippetChars = 200
+    static let fullTextChars = 4000
+    static let defaultLookbackMinutes = 120.0
+
+    // MARK: - Tool schemas (OpenAI function format)
+
+    static func toolSchemas() -> [[String: Any]] {
+        func tool(_ name: String, _ description: String, _ props: [String: [String: Any]], required: [String]) -> [String: Any] {
+            [
+                "type": "function",
+                "function": [
+                    "name": name,
+                    "description": description,
+                    "parameters": [
+                        "type": "object",
+                        "properties": props,
+                        "required": required,
+                    ],
+                ],
+            ]
+        }
+        return [
+            tool("search_screen_history",
+                 "Search the user's screen-activity history from the last 2 hours. Returns matching records with id, time, app, window title and a 200-char OCR snippet. Use this to investigate what the user was ACTUALLY doing before advising.",
+                 [
+                    "app_contains": ["type": "string", "description": "Filter: app name contains this (case-insensitive). Optional."],
+                    "text_contains": ["type": "string", "description": "Filter: OCR text or window title contains this (case-insensitive). Optional."],
+                    "minutes_back": ["type": "number", "description": "How far back to search, minutes (max 120). Default 120."],
+                    "limit": ["type": "number", "description": "Max records (max 20). Default 10."],
+                 ], required: []),
+            tool("get_screen_text",
+                 "Fetch the FULL OCR text of one history record by its id (from search_screen_history). Confirm your hypothesis here BEFORE advising — never advise from a snippet alone.",
+                 ["id": ["type": "number", "description": "Record id from search results."]], required: ["id"]),
+            tool("provide_advice",
+                 "Surface ONE specific, non-obvious insight to the user. Only after investigating. Same quality bar as the system prompt: specific to their activity AND something they likely don't already know.",
+                 [
+                    "advice": ["type": "string", "description": "1-2 sentences, ≤100 chars, start with the actionable part."],
+                    "headline": ["type": "string", "description": "≤5 words, notification preview."],
+                    "reasoning": ["type": "string", "description": "Why this matters now — cite what you found while investigating."],
+                    "category": ["type": "string", "description": "productivity | communication | learning | other"],
+                    "source_app": ["type": "string", "description": "App where the context was observed."],
+                    "confidence": ["type": "number", "description": "0.60-1.00. Calibrate: 0.90+ = preventing a clear mistake; 0.75-0.89 = highly relevant non-obvious tip; 0.60-0.74 = useful but the user might already know."],
+                 ], required: ["advice", "category", "source_app", "confidence"]),
+            tool("no_advice",
+                 "Nothing worth surfacing after investigation. This ends the analysis — the correct outcome for MOST runs.",
+                 ["context_summary": ["type": "string", "description": "One line: what the user is doing."]], required: []),
+        ]
+    }
+
+    // MARK: - Tool execution (pure)
+
+    static func executeSearch(snapshots: [Snapshot], appContains: String?, textContains: String?,
+                              minutesBack: Double?, limit: Int?, now: Date) -> String {
+        let lookback = min(max(minutesBack ?? defaultLookbackMinutes, 1), defaultLookbackMinutes)
+        let cap = min(max(limit ?? 10, 1), searchLimitCap)
+        let cutoff = now.addingTimeInterval(-lookback * 60)
+        let fmt = DateFormatter()
+        fmt.dateFormat = "HH:mm"
+
+        var rows: [String] = []
+        for (i, s) in snapshots.enumerated() {
+            guard s.time >= cutoff else { continue }
+            if let a = appContains, !a.isEmpty,
+               !s.app.localizedCaseInsensitiveContains(a) { continue }
+            if let t = textContains, !t.isEmpty,
+               !s.ocr.localizedCaseInsensitiveContains(t),
+               !s.window.localizedCaseInsensitiveContains(t) { continue }
+            let snippet = String(s.ocr.prefix(snippetChars)).replacingOccurrences(of: "\n", with: " ")
+            rows.append("id=\(i) [\(fmt.string(from: s.time))] \(s.app) — \(String(s.window.prefix(60))) | \(snippet)")
+            if rows.count >= cap { break }
+        }
+        return rows.isEmpty ? "No matching records." : rows.joined(separator: "\n")
+    }
+
+    static func executeGetText(snapshots: [Snapshot], id: Int) -> String {
+        guard id >= 0, id < snapshots.count else {
+            return "Error: no record with id=\(id)."
+        }
+        let s = snapshots[id]
+        return "[\(s.app) — \(s.window)]\n" + String(s.ocr.prefix(fullTextChars))
+    }
+
+    // MARK: - The loop
+
+    static func run(snapshots: [Snapshot], systemUnused: Void = (), userPrompt: String,
+                    now: Date = Date(), transport: Transport) async -> Outcome {
+        var messages: [[String: Any]] = [["role": "user", "content": userPrompt]]
+        let tools = toolSchemas()
+
+        for round in 1 ... maxRounds {
+            let turn: ModelTurn
+            do {
+                turn = try await transport(messages, tools)
+            } catch {
+                return .none(reason: "transport error: \(error.localizedDescription)")
+            }
+
+            guard let tool = turn.toolName, let callId = turn.toolCallId else {
+                // Tools are mandatory in this loop — a bare text answer is the
+                // model dodging the contract. Silence beats junk.
+                return .none(reason: "no tool call in round \(round)")
+            }
+
+            switch tool {
+            case "provide_advice":
+                guard let advice = turn.toolArgs["advice"] as? String, !advice.isEmpty,
+                      let confidence = doubleArg(turn.toolArgs["confidence"]) else {
+                    return .none(reason: "malformed provide_advice args")
+                }
+                let insight = ExtractedInsight(
+                    body: advice,
+                    headline: turn.toolArgs["headline"] as? String,
+                    reasoning: turn.toolArgs["reasoning"] as? String,
+                    category: (turn.toolArgs["category"] as? String) ?? "other",
+                    sourceApp: (turn.toolArgs["source_app"] as? String) ?? "",
+                    confidence: confidence
+                )
+                return .advice(insight)
+
+            case "no_advice":
+                return .none(reason: (turn.toolArgs["context_summary"] as? String) ?? "no_advice")
+
+            case "search_screen_history":
+                let result = executeSearch(
+                    snapshots: snapshots,
+                    appContains: turn.toolArgs["app_contains"] as? String,
+                    textContains: turn.toolArgs["text_contains"] as? String,
+                    minutesBack: doubleArg(turn.toolArgs["minutes_back"]),
+                    limit: doubleArg(turn.toolArgs["limit"]).map(Int.init),
+                    now: now
+                )
+                appendToolExchange(&messages, turn: turn, tool: tool, callId: callId, result: result)
+
+            case "get_screen_text":
+                let id = doubleArg(turn.toolArgs["id"]).map(Int.init) ?? -1
+                let result = executeGetText(snapshots: snapshots, id: id)
+                appendToolExchange(&messages, turn: turn, tool: tool, callId: callId, result: result)
+
+            default:
+                appendToolExchange(&messages, turn: turn, tool: tool, callId: callId,
+                                   result: "Error: unknown tool \(tool).")
+            }
+        }
+        return .none(reason: "rounds exhausted (\(maxRounds))")
+    }
+
+    // MARK: - Helpers
+
+    private static func appendToolExchange(_ messages: inout [[String: Any]], turn: ModelTurn,
+                                           tool: String, callId: String, result: String) {
+        messages.append([
+            "role": "assistant",
+            "tool_calls": [[
+                "id": callId,
+                "type": "function",
+                "function": ["name": tool, "arguments": turn.toolArgsRaw],
+            ]],
+        ])
+        messages.append(["role": "tool", "tool_call_id": callId, "content": result])
+    }
+
+    private static func doubleArg(_ value: Any?) -> Double? {
+        if let d = value as? Double { return d }
+        if let i = value as? Int { return Double(i) }
+        if let s = value as? String { return Double(s) }
+        return nil
+    }
+}

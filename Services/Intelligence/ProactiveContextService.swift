@@ -52,6 +52,32 @@ final class ProactiveContextService: ObservableObject {
     /// How many minutes back the activity summary covers. Reference: 60.
     private let activityLookbackMinutes: TimeInterval = 60
 
+    /// ITER-027.6 — how far back the investigation tools can search, and the
+    /// record cap that bounds the in-memory snapshot array handed to the loop.
+    private let investigationLookbackMinutes: TimeInterval = 120
+    private let investigationMaxSnapshots = 400
+
+    /// Fetch the last 2h of screen contexts (newest first) for the
+    /// investigation loop. Empty array → assistant falls back to the legacy
+    /// single-pass path.
+    private func fetchHistorySnapshots(now: Date) -> [InsightInvestigator.Snapshot] {
+        guard let container = modelContainer else { return [] }
+        let cutoff = now.addingTimeInterval(-investigationLookbackMinutes * 60)
+        var descriptor = FetchDescriptor<ScreenContext>(
+            predicate: #Predicate { $0.timestamp >= cutoff },
+            sortBy: [SortDescriptor(\.timestamp, order: .reverse)]
+        )
+        descriptor.fetchLimit = investigationMaxSnapshots
+        let context = ModelContext(container)
+        guard let rows = try? context.fetch(descriptor) else { return [] }
+        return rows.map {
+            InsightInvestigator.Snapshot(
+                time: $0.timestamp, app: $0.appName,
+                window: $0.windowTitle, ocr: $0.ocrText
+            )
+        }
+    }
+
     func configure(modelContainer: ModelContainer,
                    insightAssistant: InsightAssistantService) {
         self.modelContainer = modelContainer
@@ -111,13 +137,16 @@ final class ProactiveContextService: ObservableObject {
         let activitySummary = buildActivitySummary(from: lookbackStart, to: now)
 
         // ── LLM call (the actual filter) ─────────────────────────────
+        // ITER-027.6 — hand the assistant 2h of screen history so it can
+        // INVESTIGATE with tools instead of echoing the current frame.
         let insight: ExtractedInsight?
         insight = await assistant.evaluate(
             appName: ctx.appName,
             windowTitle: ctx.windowTitle.isEmpty ? nil : ctx.windowTitle,
             ocr: ctx.ocrText,
             activitySummary: activitySummary,
-            licenseKey: licenseKey
+            licenseKey: licenseKey,
+            history: fetchHistorySnapshots(now: now)
         )
 
         guard let insight else { return }

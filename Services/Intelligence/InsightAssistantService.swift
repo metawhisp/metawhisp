@@ -67,7 +67,8 @@ final class InsightAssistantService: ObservableObject {
         windowTitle: String?,
         ocr: String,
         activitySummary: String,
-        licenseKey: String
+        licenseKey: String,
+        history: [InsightInvestigator.Snapshot] = []
     ) async -> ExtractedInsight? {
         guard !isEvaluating else { return nil }
         isEvaluating = true
@@ -103,6 +104,27 @@ final class InsightAssistantService: ObservableObject {
             previousInsights: recentInsights.map { $0.body }
         )
 
+        // ITER-027.6 — INVESTIGATION path (the content fix for «бесполезные
+        // подсказки»): with history available, the model must dig through the
+        // last 2h of screen activity with tools before it may advise. The
+        // single-pass legacy call below stays as the no-history fallback.
+        if !history.isEmpty {
+            let transport: InsightInvestigator.Transport = { [weak self] messages, tools in
+                guard let self else { throw CancellationError() }
+                return try await self.callProxyTools(
+                    system: InsightPrompts.investigationSystemPrompt,
+                    messages: messages, tools: tools, licenseKey: licenseKey
+                )
+            }
+            switch await InsightInvestigator.run(snapshots: history, userPrompt: userPrompt, transport: transport) {
+            case let .advice(insight):
+                return acceptCandidate(insight)
+            case let .none(reason):
+                NSLog("[Insight] investigation → no advice: %@", String(reason.prefix(120)))
+                return nil
+            }
+        }
+
         let raw: String
         do {
             raw = try await callProProxy(
@@ -117,27 +139,7 @@ final class InsightAssistantService: ObservableObject {
 
         switch InsightOutputParser.parse(jsonString: raw) {
         case let .provideInsight(insight):
-            // Confidence floor — the LLM's own confidence acts as a soft
-            // gate. We trust the model when it self-rates ≥ 0.90; for
-            // mid-range we still ship; below `minConfidence` we bin.
-            guard insight.confidence >= minConfidence else {
-                NSLog("[Insight] dropped — confidence %.2f below floor %.2f: %@",
-                      insight.confidence, minConfidence,
-                      String(insight.body.prefix(80)))
-                return nil
-            }
-            // Dedup against the rolling window. Survives restart because the
-            // caller seeds `recentInsights` from `InsightStorage` at launch.
-            if InsightDedupChecker.isDuplicate(candidate: insight, recent: recentInsights) {
-                NSLog("[Insight] dropped — duplicate of recent: %@",
-                      String(insight.body.prefix(80)))
-                return nil
-            }
-            // Record + return.
-            rememberLocally(insight)
-            NSLog("[Insight] ✅ surfacing: %@ (conf=%.2f)",
-                  String(insight.body.prefix(100)), insight.confidence)
-            return insight
+            return acceptCandidate(insight)
 
         case let .noInsight(reason):
             NSLog("[Insight] no advice: %@", reason)
@@ -148,6 +150,85 @@ final class InsightAssistantService: ObservableObject {
                   String(raw.prefix(200)))
             return nil
         }
+    }
+
+    /// Shared acceptance gate for BOTH paths (investigation + legacy single
+    /// pass): confidence floor → dedup window → remember + return.
+    private func acceptCandidate(_ insight: ExtractedInsight) -> ExtractedInsight? {
+        // Confidence floor — the LLM's own confidence acts as a soft gate.
+        guard insight.confidence >= minConfidence else {
+            NSLog("[Insight] dropped — confidence %.2f below floor %.2f: %@",
+                  insight.confidence, minConfidence,
+                  String(insight.body.prefix(80)))
+            return nil
+        }
+        // Dedup against the rolling window. Survives restart because the
+        // caller seeds `recentInsights` from `InsightStorage` at launch.
+        if InsightDedupChecker.isDuplicate(candidate: insight, recent: recentInsights) {
+            NSLog("[Insight] dropped — duplicate of recent: %@",
+                  String(insight.body.prefix(80)))
+            return nil
+        }
+        rememberLocally(insight)
+        NSLog("[Insight] ✅ surfacing: %@ (conf=%.2f)",
+              String(insight.body.prefix(100)), insight.confidence)
+        return insight
+    }
+
+    /// ITER-027.6 — tool-calling round-trip against the same worker endpoint
+    /// MetaChat uses. Returns ONE model turn for the investigation loop;
+    /// keeps the RAW tool arguments so the loop can echo them back verbatim.
+    private func callProxyTools(
+        system: String,
+        messages: [[String: Any]],
+        tools: [[String: Any]],
+        licenseKey: String
+    ) async throws -> InsightInvestigator.ModelTurn {
+        let url = URL(string: "https://api.metawhisp.com/api/pro/chat-with-tools")!
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("Bearer \(licenseKey)", forHTTPHeaderField: "Authorization")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.timeoutInterval = 45
+        let body: [String: Any] = [
+            "system": system,
+            "messages": messages,
+            "tools": tools,
+            "tier": Self.llmTier.rawValue,
+            "service_id": Self.llmServiceId,
+        ]
+        request.httpBody = try JSONSerialization.data(withJSONObject: body)
+
+        let (data, response) = try await URLSession.shared.data(for: request)
+        if let http = response as? HTTPURLResponse, http.statusCode != 200 {
+            throw NSError(domain: "Insight", code: http.statusCode, userInfo: [
+                NSLocalizedDescriptionKey: "chat-with-tools HTTP \(http.statusCode)",
+            ])
+        }
+        guard let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            throw NSError(domain: "Insight", code: -2, userInfo: [
+                NSLocalizedDescriptionKey: "malformed chat-with-tools response",
+            ])
+        }
+        let text = (obj["text"] as? String) ?? ""
+        guard let first = (obj["tool_calls"] as? [[String: Any]])?.first,
+              let function = first["function"] as? [String: Any],
+              let name = function["name"] as? String, !name.isEmpty else {
+            return InsightInvestigator.ModelTurn(text: text, toolName: nil)
+        }
+        let rawArgs = (function["arguments"] as? String) ?? "{}"
+        var parsedArgs: [String: Any] = [:]
+        if let argsData = rawArgs.data(using: .utf8),
+           let parsed = try? JSONSerialization.jsonObject(with: argsData) as? [String: Any] {
+            parsedArgs = parsed
+        }
+        return InsightInvestigator.ModelTurn(
+            text: text,
+            toolName: name,
+            toolArgs: parsedArgs,
+            toolArgsRaw: rawArgs,
+            toolCallId: (first["id"] as? String) ?? UUID().uuidString
+        )
     }
 
     /// Caller (ProactiveContextService) seeds the rolling dedup window at
