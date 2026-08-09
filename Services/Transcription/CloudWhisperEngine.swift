@@ -100,13 +100,19 @@ final class CloudWhisperEngine: TranscriptionEngine, @unchecked Sendable {
     /// ITER-060.4 — which transport failures deserve a QUICK retry. Fast-fail
     /// resolver/connect blips (Tailscale MagicDNS hiccup → «hostname could not
     /// be found», 2026-08-08) resolve within a second — retrying masks them.
+    ///
+    /// ONLY pre-send failures are retryable (Codex 2026-08-08): with these the
+    /// request never reached the server, so a retry cannot double-transcribe
+    /// or double-bill. `networkConnectionLost` is excluded — it can fire AFTER
+    /// the upload was accepted (server may have transcribed and billed while
+    /// we lost the response), and these POSTs carry no idempotency key.
     /// timedOut already burned the full timeout (retry doubles the wait) and
     /// offline is not transient (fail fast so the Recovery save fires) — both
-    /// excluded.
+    /// excluded too.
     nonisolated static func isTransientTransportError(_ error: Error) -> Bool {
         guard let urlError = error as? URLError else { return false }
         switch urlError.code {
-        case .cannotFindHost, .dnsLookupFailed, .cannotConnectToHost, .networkConnectionLost:
+        case .cannotFindHost, .dnsLookupFailed, .cannotConnectToHost:
             return true
         default:
             return false

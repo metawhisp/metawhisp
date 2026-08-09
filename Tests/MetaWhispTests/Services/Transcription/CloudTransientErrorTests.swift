@@ -13,7 +13,10 @@ final class CloudTransientErrorTests: XCTestCase {
         XCTAssertTrue(CloudWhisperEngine.isTransientTransportError(urlError(.cannotFindHost)))
         XCTAssertTrue(CloudWhisperEngine.isTransientTransportError(urlError(.dnsLookupFailed)))
         XCTAssertTrue(CloudWhisperEngine.isTransientTransportError(urlError(.cannotConnectToHost)))
-        XCTAssertTrue(CloudWhisperEngine.isTransientTransportError(urlError(.networkConnectionLost)))
+        // Codex 2026-08-08: networkConnectionLost can fire AFTER the upload
+        // was accepted — a retry could double-transcribe and double-bill a
+        // non-idempotent POST. Pre-send failures only.
+        XCTAssertFalse(CloudWhisperEngine.isTransientTransportError(urlError(.networkConnectionLost)))
     }
 
     func test_slowOrHopelessErrors_notRetryable() {

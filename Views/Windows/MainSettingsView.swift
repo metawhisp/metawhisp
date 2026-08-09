@@ -1455,7 +1455,7 @@ struct MainSettingsView: View {
                 }
                 Slider(value: $settings.proactiveCooldownMinutes, in: 1...30, step: 1)
                     .controlSize(.small)
-                Text("Minimum gap between chip surfaces. Default 5 min.")
+                Text("Minimum gap between chip surfaces. Default 10 min.")
                     .font(MW.monoSm).foregroundStyle(MW.textMuted)
 
                 GlassDivider()
