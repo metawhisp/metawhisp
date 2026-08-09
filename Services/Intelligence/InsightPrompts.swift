@@ -33,7 +33,7 @@ enum InsightPrompts {
           "reasoning": "<brief explanation why this matters now>",
           "category": "productivity" | "communication" | "learning" | "other",
           "source_app": "<app where the context was observed>",
-          "confidence": <0.60-1.00 number, NOT a string>,
+          "confidence": <0.60-1.00 number, NOT a string. Calibrate: 0.90+ = preventing a clear mistake; 0.75-0.89 = highly relevant non-obvious tip; 0.60-0.74 = useful but the user might already know>,
           "context_summary": "<brief summary of what user is looking at>",
           "current_activity": "<high-level description of user's activity>"
         }

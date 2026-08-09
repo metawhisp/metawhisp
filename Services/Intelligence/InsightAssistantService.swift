@@ -33,10 +33,13 @@ final class InsightAssistantService: ObservableObject {
 
     /// Lowest confidence we accept for a `provide_advice` outcome. Below
     /// this we treat the LLM's own self-doubt as a signal to stay silent.
-    /// Reference defaults to `0.85` — we ship at `0.75` for v1 because
-    /// our model surface is OpenAI gpt-4o-mini (proxied) which calibrates
-    /// slightly lower than reference Gemini Pro on the same prompt.
-    var minConfidence: Double = 0.75
+    /// 2026-08-08 — raised to the reference default 0.85 («high threshold —
+    /// only show when very confident»). The v1 experiment at 0.75 let
+    /// screen-echo junk through («Rerun Failed Agents» while the user is
+    /// LOOKING at the failed-agents list — user: «бесполезные подсказки»);
+    /// paired with the confidence RUBRIC in the prompt, 0.85 keeps only the
+    /// mistake-prevention / genuinely non-obvious classes.
+    var minConfidence: Double = 0.85
 
     /// Cap on the in-memory dedup window. Longer than the prompt's 30-cap
     /// so we keep dedup memory across multiple ticks even when the prompt

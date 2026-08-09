@@ -136,7 +136,10 @@ final class AppSettings: ObservableObject {
     @AppStorage("proactiveEnabled") var proactiveEnabled: Bool = false
     /// Minimum gap between chip surfaces. Lower = more useful but more intrusive.
     /// Default 5 min balances usefulness against annoyance.
-    @AppStorage("proactiveCooldownMinutes") var proactiveCooldownMinutes: Double = 5
+    // 2026-08-08 — 5 → 10 min: reference-parity cadence (its analysis interval
+    // is 600s). Half the interruptions; the valuable classes (creds on screen,
+    // wrong date/recipient) are not time-critical at 5-min granularity.
+    @AppStorage("proactiveCooldownMinutes") var proactiveCooldownMinutes: Double = 10
     /// Apps where proactive chip is DISABLED (comma-separated bundle-ids or display names).
     /// Sensitive apps like 1Password, Keychain, Terminal are banned by default.
     @AppStorage("proactiveBlacklist") var proactiveBlacklist: String = "1Password,Keychain Access,Terminal,iTerm,Activity Monitor,System Settings"
