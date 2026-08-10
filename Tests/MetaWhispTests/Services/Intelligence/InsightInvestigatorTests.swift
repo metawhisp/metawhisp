@@ -55,6 +55,25 @@ final class InsightInvestigatorTests: XCTestCase {
         XCTAssertTrue(I.executeGetText(snapshots: snaps, id: -1).hasPrefix("Error"))
     }
 
+    /// Drives the mandatory investigation (search → successful get_screen_text)
+    /// and then returns `final`. Advice is only reachable through this path.
+    private func investigateThen(_ final: I.ModelTurn) -> I.Transport {
+        var rounds = 0
+        return { _, _ in
+            rounds += 1
+            switch rounds {
+            case 1:
+                return I.ModelTurn(text: "", toolName: "search_screen_history", toolArgs: [:],
+                                   toolArgsRaw: "{}", toolCallId: "c1")
+            case 2:
+                return I.ModelTurn(text: "", toolName: "get_screen_text", toolArgs: ["id": 0],
+                                   toolArgsRaw: "{}", toolCallId: "c2")
+            default:
+                return final
+            }
+        }
+    }
+
     // MARK: - the loop
 
     func test_loop_investigateThenAdvise() async {
@@ -62,25 +81,138 @@ final class InsightInvestigatorTests: XCTestCase {
         var rounds = 0
         let outcome = await I.run(snapshots: snaps, userPrompt: "ctx", transport: { messages, _ in
             rounds += 1
-            if rounds == 1 {
+            switch rounds {
+            case 1:
                 return I.ModelTurn(text: "", toolName: "search_screen_history",
                                    toolArgs: ["text_contains": "stash"],
                                    toolArgsRaw: #"{"text_contains":"stash"}"#, toolCallId: "c1")
+            case 2:
+                // The tool result from round 1 must be in the transcript.
+                XCTAssertTrue(messages.contains { ($0["role"] as? String) == "tool" })
+                return I.ModelTurn(text: "", toolName: "get_screen_text",
+                                   toolArgs: ["id": 0], toolArgsRaw: #"{"id":0}"#, toolCallId: "c2")
+            default:
+                return I.ModelTurn(text: "", toolName: "provide_advice",
+                                   toolArgs: ["advice": "You stashed changes 2h ago — git stash pop",
+                                              "category": "productivity", "source_app": "Terminal",
+                                              "confidence": 0.9],
+                                   toolArgsRaw: "{}", toolCallId: "c3")
             }
-            // Round 2: the tool result from round 1 must be in the transcript.
-            let hasToolResult = messages.contains { ($0["role"] as? String) == "tool" }
-            XCTAssertTrue(hasToolResult)
-            return I.ModelTurn(text: "", toolName: "provide_advice",
-                               toolArgs: ["advice": "You stashed changes 2h ago — git stash pop",
-                                          "category": "productivity", "source_app": "Terminal",
-                                          "confidence": 0.9],
-                               toolArgsRaw: "{}", toolCallId: "c2")
         })
         guard case let .advice(insight) = outcome else {
             return XCTFail("expected advice, got \(outcome)")
         }
         XCTAssertEqual(insight.confidence, 0.9)
-        XCTAssertEqual(rounds, 2)
+        XCTAssertEqual(rounds, 3)
+    }
+
+    // MARK: - Codex 2026-08-10: advice REQUIRES a completed investigation
+
+    func test_loop_adviceWithoutInvestigation_isNudgedNotAccepted() async {
+        // The echo failure mode: the model skips investigation and comments on
+        // the current screen. It must be pushed back to the tools, not surfaced.
+        var rounds = 0
+        var sawNudge = false
+        let outcome = await I.run(snapshots: [snap(5, "App", "W", "text")], userPrompt: "ctx",
+                                  transport: { messages, _ in
+            rounds += 1
+            if rounds == 1 {
+                return I.ModelTurn(text: "", toolName: "provide_advice",
+                                   toolArgs: ["advice": "Rerun the failed agents",
+                                              "category": "other", "source_app": "App",
+                                              "confidence": 0.95],
+                                   toolArgsRaw: "{}", toolCallId: "c1")
+            }
+            let last = (messages.last?["content"] as? String) ?? ""
+            if last.lowercased().contains("investigate") { sawNudge = true }
+            return I.ModelTurn(text: "", toolName: "no_advice", toolArgs: [:],
+                               toolArgsRaw: "{}", toolCallId: "c2")
+        })
+        XCTAssertTrue(sawNudge, "model must be told to investigate first")
+        XCTAssertEqual(outcome, .none(reason: "no_advice"))
+    }
+
+    func test_loop_adviceAfterSearchButNoConfirmation_isNudged() async {
+        // Snippet-only advice is explicitly forbidden by the prompt — the
+        // model must confirm with get_screen_text before advising.
+        var rounds = 0
+        let outcome = await I.run(snapshots: [snap(5, "App", "W", "text")], userPrompt: "ctx",
+                                  transport: { _, _ in
+            rounds += 1
+            switch rounds {
+            case 1:
+                return I.ModelTurn(text: "", toolName: "search_screen_history", toolArgs: [:],
+                                   toolArgsRaw: "{}", toolCallId: "c1")
+            default:
+                return I.ModelTurn(text: "", toolName: "provide_advice",
+                                   toolArgs: ["advice": "something", "category": "other",
+                                              "source_app": "App", "confidence": 0.95],
+                                   toolArgsRaw: "{}", toolCallId: "c\(rounds)")
+            }
+        })
+        // Never accepted — the loop runs out of rounds instead.
+        XCTAssertEqual(outcome, .none(reason: "rounds exhausted (\(I.maxRounds))"))
+    }
+
+    func test_loop_failedConfirmationDoesNotUnlockAdvice() async {
+        // get_screen_text on a bad id returns an error — that is NOT a
+        // confirmed read and must not unlock provide_advice.
+        var rounds = 0
+        let outcome = await I.run(snapshots: [snap(5, "App", "W", "text")], userPrompt: "ctx",
+                                  transport: { _, _ in
+            rounds += 1
+            switch rounds {
+            case 1:
+                return I.ModelTurn(text: "", toolName: "search_screen_history", toolArgs: [:],
+                                   toolArgsRaw: "{}", toolCallId: "c1")
+            case 2:
+                return I.ModelTurn(text: "", toolName: "get_screen_text", toolArgs: ["id": 999],
+                                   toolArgsRaw: "{}", toolCallId: "c2")
+            default:
+                return I.ModelTurn(text: "", toolName: "provide_advice",
+                                   toolArgs: ["advice": "x", "category": "other",
+                                              "source_app": "App", "confidence": 0.95],
+                                   toolArgsRaw: "{}", toolCallId: "c\(rounds)")
+            }
+        })
+        XCTAssertEqual(outcome, .none(reason: "rounds exhausted (\(I.maxRounds))"))
+    }
+
+    // MARK: - Codex 2026-08-10: model-generated args must never crash the app
+
+    func test_nonFiniteNumericArgs_doNotCrash() async {
+        // `Double("NaN").map(Int.init)` traps. Tool args are model-generated
+        // and may be anything.
+        var rounds = 0
+        let outcome = await I.run(snapshots: [snap(5, "App", "W", "text")], userPrompt: "ctx",
+                                  transport: { _, _ in
+            rounds += 1
+            switch rounds {
+            case 1:
+                return I.ModelTurn(text: "", toolName: "search_screen_history",
+                                   toolArgs: ["limit": "NaN", "minutes_back": "Infinity"],
+                                   toolArgsRaw: "{}", toolCallId: "c1")
+            case 2:
+                return I.ModelTurn(text: "", toolName: "get_screen_text",
+                                   toolArgs: ["id": "Infinity"], toolArgsRaw: "{}", toolCallId: "c2")
+            case 3:
+                return I.ModelTurn(text: "", toolName: "get_screen_text",
+                                   toolArgs: ["id": 1e30], toolArgsRaw: "{}", toolCallId: "c3")
+            default:
+                return I.ModelTurn(text: "", toolName: "no_advice", toolArgs: [:],
+                                   toolArgsRaw: "{}", toolCallId: "c4")
+            }
+        })
+        XCTAssertEqual(outcome, .none(reason: "no_advice"))
+    }
+
+    func test_nonFiniteConfidence_suppressed() async {
+        let outcome = await I.run(snapshots: [snap(5, "App", "W", "text")], userPrompt: "ctx",
+                                  transport: investigateThen(
+            I.ModelTurn(text: "", toolName: "provide_advice",
+                        toolArgs: ["advice": "x", "confidence": "NaN"],
+                        toolArgsRaw: "{}", toolCallId: "c3")))
+        XCTAssertEqual(outcome, .none(reason: "malformed provide_advice args"))
     }
 
     func test_loop_noAdviceEnds() async {
@@ -117,10 +249,10 @@ final class InsightInvestigatorTests: XCTestCase {
     }
 
     func test_loop_malformedAdviceSuppressed() async {
-        let outcome = await I.run(snapshots: [], userPrompt: "ctx", transport: { _, _ in
+        let outcome = await I.run(snapshots: [snap(5, "App", "W", "text")], userPrompt: "ctx",
+                                  transport: investigateThen(
             I.ModelTurn(text: "", toolName: "provide_advice",
-                        toolArgs: ["category": "other"], toolArgsRaw: "{}", toolCallId: "c1")
-        })
+                        toolArgs: ["category": "other"], toolArgsRaw: "{}", toolCallId: "c3")))
         XCTAssertEqual(outcome, .none(reason: "malformed provide_advice args"))
     }
 

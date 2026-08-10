@@ -148,6 +148,11 @@ enum InsightInvestigator {
                     now: Date = Date(), transport: Transport) async -> Outcome {
         var messages: [[String: Any]] = [["role": "user", "content": userPrompt]]
         let tools = toolSchemas()
+        // Codex 2026-08-10 — the investigation is a CONTRACT, not a suggestion:
+        // without these the model could answer provide_advice on turn one and
+        // reproduce the exact screen-echo card this loop exists to prevent.
+        var didSearch = false
+        var didConfirmRead = false
 
         for round in 1 ... maxRounds {
             let turn: ModelTurn
@@ -165,6 +170,18 @@ enum InsightInvestigator {
 
             switch tool {
             case "provide_advice":
+                // Advice is unlocked only by a completed investigation: a
+                // search AND a successful full-text read to confirm it. A
+                // snippet is not evidence, and the current frame is not an
+                // insight. Nudge back to the tools instead of accepting.
+                guard didSearch, didConfirmRead else {
+                    let missing = !didSearch
+                        ? "call search_screen_history first"
+                        : "confirm your hypothesis with get_screen_text on a specific record first"
+                    appendToolExchange(&messages, turn: turn, tool: tool, callId: callId,
+                                       result: "Rejected: you must investigate before advising — \(missing). Advice based only on the current screen is an echo, not an insight; call no_advice if the history holds nothing.")
+                    continue
+                }
                 guard let advice = turn.toolArgs["advice"] as? String, !advice.isEmpty,
                       let confidence = doubleArg(turn.toolArgs["confidence"]) else {
                     return .none(reason: "malformed provide_advice args")
@@ -188,14 +205,18 @@ enum InsightInvestigator {
                     appContains: turn.toolArgs["app_contains"] as? String,
                     textContains: turn.toolArgs["text_contains"] as? String,
                     minutesBack: doubleArg(turn.toolArgs["minutes_back"]),
-                    limit: doubleArg(turn.toolArgs["limit"]).map(Int.init),
+                    limit: intArg(turn.toolArgs["limit"]),
                     now: now
                 )
+                didSearch = true
                 appendToolExchange(&messages, turn: turn, tool: tool, callId: callId, result: result)
 
             case "get_screen_text":
-                let id = doubleArg(turn.toolArgs["id"]).map(Int.init) ?? -1
+                let id = intArg(turn.toolArgs["id"]) ?? -1
                 let result = executeGetText(snapshots: snapshots, id: id)
+                // Only a SUCCESSFUL read counts as confirmation — an error
+                // ("no record with id=…") must not unlock advice.
+                if !result.hasPrefix("Error") { didConfirmRead = true }
                 appendToolExchange(&messages, turn: turn, tool: tool, callId: callId, result: result)
 
             default:
@@ -221,10 +242,23 @@ enum InsightInvestigator {
         messages.append(["role": "tool", "tool_call_id": callId, "content": result])
     }
 
+    /// Tool arguments are MODEL-GENERATED and may be anything, including
+    /// "NaN"/"Infinity" (Codex 2026-08-10 — `Double("NaN").map(Int.init)`
+    /// TRAPS, i.e. crashes the app). Non-finite values are rejected here so
+    /// no caller can convert them.
     private static func doubleArg(_ value: Any?) -> Double? {
-        if let d = value as? Double { return d }
-        if let i = value as? Int { return Double(i) }
-        if let s = value as? String { return Double(s) }
-        return nil
+        let parsed: Double?
+        if let d = value as? Double { parsed = d }
+        else if let i = value as? Int { parsed = Double(i) }
+        else if let s = value as? String { parsed = Double(s) }
+        else { parsed = nil }
+        guard let parsed, parsed.isFinite else { return nil }
+        return parsed
+    }
+
+    /// Finite-and-clamped integer conversion — `Int(1e30)` traps too.
+    private static func intArg(_ value: Any?) -> Int? {
+        guard let d = doubleArg(value) else { return nil }
+        return Int(min(max(d, -1_000_000), 1_000_000))
     }
 }
