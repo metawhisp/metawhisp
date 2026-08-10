@@ -90,6 +90,39 @@ final class MeetingRecorder: ObservableObject {
     nonisolated static func isRawSilence(_ rawRMS: Float) -> Bool {
         rawRMS < silenceRMSThreshold
     }
+
+    /// ITER-060.5 — why a meeting finalized with an empty transcript. A
+    /// mic-start failure is swallowed into `micOnlyMode` (see `start()`), so
+    /// without this the finalize path blamed the USER's silence for the APP's
+    /// own capture failure («No speech detected» after the founder spoke for
+    /// minutes, 2026-08-10).
+    enum EmptyTranscriptReason: Equatable {
+        case chunksFailed(Int)
+        case micNeverCaptured
+        case genuinelySilent
+
+        var userMessage: String {
+            switch self {
+            case let .chunksFailed(n):
+                return "❌ Meeting couldn't be transcribed (\(n) segment(s) failed) — nothing saved"
+            case .micNeverCaptured:
+                return "🎤 Microphone captured nothing — check mic permission and the input device in Settings"
+            case .genuinelySilent:
+                return "🎤 No speech detected in recording"
+            }
+        }
+    }
+
+    /// Half a second of mic audio — below this the capture was broken, not quiet.
+    private static let minMicSamplesForRealCapture = 8000
+
+    nonisolated static func emptyTranscriptReason(
+        failedChunks: Int, micSamples: Int, systemSamples: Int
+    ) -> EmptyTranscriptReason {
+        if failedChunks > 0 { return .chunksFailed(failedChunks) }
+        if micSamples < minMicSamplesForRealCapture { return .micNeverCaptured }
+        return .genuinelySilent
+    }
     /// How often we re-check the silence timer (seconds). Cheap — just a Combine
     /// publisher, no I/O.
     private let silenceCheckInterval: TimeInterval = 1.0

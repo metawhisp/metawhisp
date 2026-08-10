@@ -14,14 +14,6 @@ final class AudioRecordingService: ObservableObject, AudioSource {
     @Published var rawRMSLevel: Float = 0
     @Published var audioBars: [Float] = Array(repeating: 0, count: 24)
 
-    /// ITER-060.2 — enable Apple voice processing (AEC) on this mic instance.
-    /// Set ONCE on the meeting mic (AppDelegate.meetingMic): on speaker calls
-    /// the remote side's playback re-enters the mic and gets transcribed a
-    /// second time as garbled «Me:» lines (863 duplicates measured in the
-    /// 2026-08-07 audit). Dictation instances stay `false` — voice processing
-    /// adds latency/CPU and dictation has no far-end audio to cancel.
-    var useVoiceProcessing = false
-
     private var engine: AVAudioEngine?
     private var samples: [Float] = []
     private let targetSampleRate: Double = 16000
@@ -179,29 +171,20 @@ final class AudioRecordingService: ObservableObject, AudioSource {
 
         let inputNode = engine.inputNode
 
-        // ITER-060.2 — AEC. Must happen BEFORE reading the format and
-        // installing the tap: enabling voice processing changes the node's
-        // hardware format. Failure is non-fatal — a recording without AEC
-        // beats no recording (the text-level echo dedup stays as safety net).
-        // Also actively DISABLES voice processing when this instance doesn't
-        // want it, so a reused engine can't leak meeting-AEC into dictation.
-        if inputNode.isVoiceProcessingEnabled != useVoiceProcessing {
-            do {
-                try inputNode.setVoiceProcessingEnabled(useVoiceProcessing)
-                NSLog("[AudioRecording] Voice processing (AEC) %@", useVoiceProcessing ? "ON" : "OFF")
-            } catch {
-                NSLog("[AudioRecording] ⚠️ setVoiceProcessingEnabled(%@) failed: %@ — continuing without",
-                      useVoiceProcessing ? "true" : "false", error.localizedDescription)
-            }
-        }
-        if useVoiceProcessing, inputNode.isVoiceProcessingEnabled {
-            // Without this macOS DUCKS other applications' audio — i.e. it
-            // would quiet the very Zoom/Meet call being recorded.
-            inputNode.voiceProcessingOtherAudioDuckingConfiguration =
-                AVAudioVoiceProcessingOtherAudioDuckingConfiguration(
-                    enableAdvancedDucking: false, duckingLevel: .min)
-        }
-
+        // ITER-060.5 — AEC (setVoiceProcessingEnabled) REMOVED, 2026-08-10.
+        // It shipped in 1.3.23 and broke meeting recording: measured on the
+        // founder's Mac, enabling voice processing flips the built-in mic's
+        // input format from 3 channels to NINE, layout
+        // kAudioChannelLayoutTag_DiscreteInOrder — a shape this pipeline's
+        // «read channelData[0], downmix to 16k mono» path was never designed
+        // for. Symptom: meetings finalized with an empty transcript and
+        // «No speech detected in recording» while dictation (same hardware,
+        // no voice processing) worked fine in the same minute.
+        // Echo duplicates stay handled at the TEXT layer by
+        // MeetingTranscriptSanitizer.dedupeCrossChannelEcho (1.3.22, measured
+        // against 863 real duplicates) — that is the shipping defense.
+        // Any future AEC attempt must first prove, on real hardware, that the
+        // post-VP format still yields speech through the converter.
         let inputFormat = inputNode.outputFormat(forBus: 0)
 
         guard inputFormat.sampleRate > 0, inputFormat.channelCount > 0 else {

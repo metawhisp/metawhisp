@@ -45,13 +45,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     ///     literally went silent mid-meeting after the user did a voice question.
     /// Each AudioRecordingService owns its own AVAudioEngine — multiple
     /// engines tapping the default input device coexist fine.
-    private let meetingMic: AudioRecordingService = {
-        let mic = AudioRecordingService()
-        // ITER-060.2 — meetings get Apple AEC so speaker playback of the other
-        // side doesn't re-enter the mic (dictation `recorder` stays without).
-        mic.useVoiceProcessing = true
-        return mic
-    }()
+    private let meetingMic = AudioRecordingService()
     /// Captures mic + system audio in parallel for meeting recording.
     lazy var meetingRecorder = MeetingRecorder(mic: meetingMic, systemAudio: systemAudioCapture)
     var whisperEngine: WhisperKitEngine?
@@ -1781,15 +1775,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             let duration = Double(max(micSamples.count, sysSamples.count)) / 16000.0
 
             guard !dual.text.isEmpty else {
-                // AUD-002 — distinguish "genuinely silent" from "every chunk failed
-                // to transcribe". The latter is an error, not an empty meeting.
-                if dual.failedChunks > 0 {
-                    meetingRecorder.lastError = "❌ Meeting couldn't be transcribed (\(dual.failedChunks) segment(s) failed) — nothing saved"
-                    NSLog("[MetaWhisp] ❌ Meeting transcription fully failed: %d chunk(s) errored", dual.failedChunks)
-                } else {
-                    NSLog("[MetaWhisp] Meeting transcription empty (all chunks silent or hallucinated)")
-                    meetingRecorder.lastError = "🎤 No speech detected in recording"
-                }
+                // AUD-002 / ITER-060.5 — name the REAL cause: failed chunks,
+                // a mic that captured nothing (its start failure is swallowed
+                // into micOnlyMode), or genuine silence. Blaming the user's
+                // speech for a dead mic sent the founder chasing the wrong bug
+                // on 2026-08-10.
+                let reason = MeetingRecorder.emptyTranscriptReason(
+                    failedChunks: dual.failedChunks,
+                    micSamples: micSamples.count,
+                    systemSamples: sysSamples.count
+                )
+                meetingRecorder.lastError = reason.userMessage
+                NSLog("[MetaWhisp] ❌ Meeting empty — %@ (mic=%d samples, system=%d samples, failedChunks=%d)",
+                      "\(reason)", micSamples.count, sysSamples.count, dual.failedChunks)
                 return
             }
 
