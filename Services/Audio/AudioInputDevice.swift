@@ -78,6 +78,31 @@ enum AudioInputCatalog {
         return status == noErr
     }
 
+    /// Which device the engine's input is ACTUALLY bound to, as one log line.
+    ///
+    /// Added after the 2026-08-12 dead-mic incident: the input went digitally
+    /// silent and every hypothesis about why died on the same objection —
+    /// nothing in the pipeline had ever recorded which device was bound or in
+    /// what shape. Cheap enough to log on every `start()`, and it is the one
+    /// measurement that makes the next occurrence diagnosable.
+    static func boundInputDescription(for engine: AVAudioEngine) -> String {
+        guard let inputUnit = engine.inputNode.audioUnit else { return "<no input audio unit>" }
+        var deviceID = AudioDeviceID(0)
+        var size = UInt32(MemoryLayout<AudioDeviceID>.size)
+        let status = AudioUnitGetProperty(
+            inputUnit,
+            kAudioOutputUnitProperty_CurrentDevice,
+            kAudioUnitScope_Global,
+            0,
+            &deviceID,
+            &size
+        )
+        guard status == noErr else { return "<CurrentDevice query failed: \(status)>" }
+        let name = stringProperty(deviceID: deviceID, selector: kAudioObjectPropertyName) ?? "?"
+        let uid = stringProperty(deviceID: deviceID, selector: kAudioDevicePropertyDeviceUID) ?? "?"
+        return "\(name) [\(uid)] id=\(deviceID)"
+    }
+
     // MARK: - Private helpers
 
     private static func systemDefaultInputDeviceID() -> AudioDeviceID {

@@ -13,6 +13,11 @@ final class AudioRecordingService: ObservableObject, AudioSource {
     /// units-mismatch bug ITER-060 fixed; silence guards must use this one.
     @Published var rawRMSLevel: Float = 0
     @Published var audioBars: [Float] = Array(repeating: 0, count: 24)
+    /// Non-nil once the input has been delivering digital silence long enough
+    /// to be certain it is dead rather than quiet. The UI surfaces this — the
+    /// 2026-08-12 incident swallowed eight recordings without ever telling the
+    /// user the mic had stopped producing audio.
+    @Published var micHealthError: String?
 
     private var engine: AVAudioEngine?
     private var samples: [Float] = []
@@ -21,6 +26,18 @@ final class AudioRecordingService: ObservableObject, AudioSource {
     private var barPhase: Double = 0
     private var engineWarmed = false
     private var configObserver: Any?
+    /// Digital-silence watchdog, re-armed per recording.
+    private var deadMic = DeadMicDetector()
+    /// Set when the watchdog fires: this engine is suspect, so `stop()` drops
+    /// it and the next `start()` binds a fresh one. Rebuilding mid-recording is
+    /// deliberately NOT done — see the DEADLOCK RULES on `observeDeviceChanges`.
+    private var engineNeedsRebuild = false
+
+    /// Shown to the user when the input stream is dead. Names the remedy that
+    /// actually worked in the field, because the fault is usually below the app.
+    static let deadMicMessage =
+        "Microphone is delivering no audio. Reconnect it or restart macOS audio "
+            + "(Terminal: sudo killall coreaudiod), then record again."
 
     /// Request microphone permission using multiple strategies.
     func requestPermission() async -> Bool {
@@ -209,38 +226,51 @@ final class AudioRecordingService: ObservableObject, AudioSource {
         self.converter = converter
         self.samples = []
         self.samples.reserveCapacity(Int(targetSampleRate) * 60) // ~1 min pre-alloc
+        self.deadMic.reset()
+        self.micHealthError = nil
 
         inputNode.installTap(onBus: 0, bufferSize: 1024, format: inputFormat) { [weak self] buffer, _ in
             guard let self else { return }
 
             // Calculate audio level for UI + raw RMS for silence guards
             let (rawRMS, level) = self.calculateLevels(buffer: buffer)
+            let inputFrames = Int(buffer.frameLength)
 
             // Convert to 16kHz mono
             let frameCount = AVAudioFrameCount(
                 Double(buffer.frameLength) * self.targetSampleRate / inputFormat.sampleRate
             )
-            guard frameCount > 0,
-                  let outputBuffer = AVAudioPCMBuffer(pcmFormat: outputFormat, frameCapacity: frameCount) else {
-                return
-            }
-
-            var error: NSError?
-            let status = converter.convert(to: outputBuffer, error: &error) { _, outStatus in
-                outStatus.pointee = .haveData
-                return buffer
-            }
-
-            if status == .haveData, let channelData = outputBuffer.floatChannelData {
-                let count = Int(outputBuffer.frameLength)
-                let newSamples = Array(UnsafeBufferPointer(start: channelData[0], count: count))
-
-                Task { @MainActor in
-                    self.samples.append(contentsOf: newSamples)
-                    self.audioLevel = level
-                    self.rawRMSLevel = rawRMS
-                    self.updateBars(level: level)
+            var newSamples: [Float] = []
+            if frameCount > 0,
+               let outputBuffer = AVAudioPCMBuffer(pcmFormat: outputFormat, frameCapacity: frameCount) {
+                var error: NSError?
+                let status = converter.convert(to: outputBuffer, error: &error) { _, outStatus in
+                    outStatus.pointee = .haveData
+                    return buffer
                 }
+
+                if status == .haveData, let channelData = outputBuffer.floatChannelData {
+                    newSamples = Array(UnsafeBufferPointer(start: channelData[0],
+                                                           count: Int(outputBuffer.frameLength)))
+                } else if let error {
+                    // This NSError was captured and never read until 2026-08-12,
+                    // so a converter that quietly stopped producing audio looked
+                    // exactly like a silent room.
+                    NSLog("%@", "[AudioRecording] converter failed (status=\(status.rawValue)): "
+                        + error.localizedDescription)
+                }
+            }
+
+            // Meters and the silence watchdog read the RAW input buffer, so they
+            // must run whether or not conversion succeeded — publishing them
+            // only on success used to hide both halves of a failure.
+            Task { @MainActor in
+                if !newSamples.isEmpty { self.samples.append(contentsOf: newSamples) }
+                self.audioLevel = level
+                self.rawRMSLevel = rawRMS
+                self.updateBars(level: level)
+                self.observeStreamHealth(rms: rawRMS, frames: inputFrames,
+                                         sampleRate: inputFormat.sampleRate)
             }
         }
 
@@ -249,8 +279,33 @@ final class AudioRecordingService: ObservableObject, AudioSource {
             try engine.start()
         }
 
+        // The bind, on the record. Absent this line the 2026-08-12 dead-mic
+        // investigation had nothing to reason about: not the device, not the
+        // channel count, not the layout. Logged on EVERY start because the
+        // failure is intermittent and only the failing run's values matter.
+        NSLog("[AudioRecording] bind → %@ | %.0f Hz, %d ch, layout=%@",
+              AudioInputCatalog.boundInputDescription(for: engine),
+              inputFormat.sampleRate,
+              Int(inputFormat.channelCount),
+              inputFormat.channelLayout.map { "0x" + String($0.layoutTag, radix: 16) } ?? "<nil>")
+
         self.engine = engine
         self.isRecording = true
+    }
+
+    /// Watchdog for an input that has stopped producing audio entirely.
+    ///
+    /// Runs on the main actor (the tap hands it over) so the detector's state
+    /// is never touched from the audio thread.
+    private func observeStreamHealth(rms: Float, frames: Int, sampleRate: Double) {
+        guard isRecording,
+              deadMic.observe(rms: rms, frames: frames, sampleRate: sampleRate) else { return }
+
+        NSLog("[AudioRecording] ❌ input is DIGITAL SILENCE for %.1fs (bit-exact zero) — %@",
+              DeadMicDetector.deadAfterSeconds,
+              engine.map { AudioInputCatalog.boundInputDescription(for: $0) } ?? "<no engine>")
+        micHealthError = Self.deadMicMessage
+        engineNeedsRebuild = true
     }
 
     /// ITER-019 — total samples accumulated so far. `LiveMeetingAdvisor` uses
@@ -270,7 +325,21 @@ final class AudioRecordingService: ObservableObject, AudioSource {
     func stop() -> [Float] {
         engine?.inputNode.removeTap(onBus: 0)
         engine?.stop()
-        // Keep engine alive for reuse — don't nil it
+        // Keep engine alive for reuse — don't nil it...
+        // ...unless this recording caught the input delivering digital silence.
+        // Then the bind is suspect and reuse would carry the fault into every
+        // later recording, which is exactly how one dead mic ate eight
+        // dictations on 2026-08-12. Rebuilding happens HERE, between
+        // recordings — never mid-tap, per the DEADLOCK RULES above — and the
+        // release is handed off-main for the same reason.
+        if engineNeedsRebuild {
+            let dying = engine
+            engine = nil
+            engineWarmed = false
+            engineNeedsRebuild = false
+            NSLog("[AudioRecording] engine dropped after digital silence — next start() rebinds")
+            Task.detached(priority: .utility) { _ = dying?.isRunning }
+        }
         converter = nil
         isRecording = false
         audioLevel = 0

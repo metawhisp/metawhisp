@@ -1783,12 +1783,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
                 let reason = MeetingRecorder.emptyTranscriptReason(
                     failedChunks: dual.failedChunks,
                     micSamples: micSamples.count,
-                    systemSamples: sysSamples.count
+                    systemSamples: sysSamples.count,
+                    micPeakWasZero: meetingRecorder.micChannelWasSilent
                 )
                 meetingRecorder.lastError = reason.userMessage
                 NSLog("[MetaWhisp] ❌ Meeting empty — %@ (mic=%d samples, system=%d samples, failedChunks=%d)",
                       "\(reason)", micSamples.count, sysSamples.count, dual.failedChunks)
                 return
+            }
+
+            // A dead mic does NOT produce an empty meeting — the other side
+            // still arrives through the system channel, so the guard above
+            // never fires and a Them:-only transcript saves as if complete.
+            // That is exactly what happened on 2026-08-12 and nobody was told.
+            if meetingRecorder.micChannelWasSilent {
+                meetingRecorder.lastError = MeetingRecorder.EmptyTranscriptReason
+                    .micDeliveredSilence.userMessage
+                NSLog("[MetaWhisp] ⚠️ Meeting saved WITHOUT your side — mic channel was digital silence (%d samples)",
+                      micSamples.count)
             }
 
             // ITER-054 — book the meeting's quota ONCE, by wall-clock length,

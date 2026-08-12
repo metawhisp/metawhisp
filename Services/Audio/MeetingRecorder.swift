@@ -21,6 +21,12 @@ final class MeetingRecorder: ObservableObject {
     @Published var lastError: String?
     /// True if mic capture failed but system audio is still active (user will lose their own voice).
     @Published var micOnlyMode = false
+    /// Set at `stop()`: the mic channel was bit-exact zero for the whole call.
+    /// Published separately from `lastError` because this can be true even when
+    /// the meeting transcribed FINE — the other side comes through the system
+    /// channel, so a call with a dead mic saves a complete-looking Them:-only
+    /// transcript and nothing else in the pipeline notices.
+    @Published private(set) var micChannelWasSilent = false
     /// Wall-clock time when the current recording actually began. The MeetingTimer
     /// reads this so the elapsed counter is correct regardless of how many times
     /// the user opens / closes the menu-bar popover (previously the timer used
@@ -99,6 +105,7 @@ final class MeetingRecorder: ObservableObject {
     enum EmptyTranscriptReason: Equatable {
         case chunksFailed(Int)
         case micNeverCaptured
+        case micDeliveredSilence
         case genuinelySilent
 
         var userMessage: String {
@@ -107,6 +114,8 @@ final class MeetingRecorder: ObservableObject {
                 return "❌ Meeting couldn't be transcribed (\(n) segment(s) failed) — nothing saved"
             case .micNeverCaptured:
                 return "🎤 Microphone captured nothing — check mic permission and the input device in Settings"
+            case .micDeliveredSilence:
+                return "🎤 Microphone ran but produced no audio — " + AudioRecordingService.deadMicMessage
             case .genuinelySilent:
                 return "🎤 No speech detected in recording"
             }
@@ -116,11 +125,27 @@ final class MeetingRecorder: ObservableObject {
     /// Half a second of mic audio — below this the capture was broken, not quiet.
     private static let minMicSamplesForRealCapture = 8000
 
+    /// A mic channel that is bit-exact zero from end to end.
+    ///
+    /// This is a DIFFERENT failure from `micNeverCaptured`, which counts
+    /// samples: on 2026-08-12 the mic delivered 758 400 perfectly well-formed
+    /// samples that were every one of them zero, so every count-based guard
+    /// waved it through. Checked against the RAW buffer, before pause windows
+    /// are muted, so dictation pauses can't fake the verdict.
+    nonisolated static func isDigitalSilence(_ samples: [Float]) -> Bool {
+        guard samples.count >= minMicSamplesForRealCapture else { return false }
+        return !samples.contains { $0 != 0 }
+    }
+
+    /// `micPeakWasZero` defaults to `false` so existing callers keep their
+    /// behaviour; pass the measured verdict to get the sharper diagnosis.
     nonisolated static func emptyTranscriptReason(
-        failedChunks: Int, micSamples: Int, systemSamples: Int
+        failedChunks: Int, micSamples: Int, systemSamples: Int,
+        micPeakWasZero: Bool = false
     ) -> EmptyTranscriptReason {
         if failedChunks > 0 { return .chunksFailed(failedChunks) }
         if micSamples < minMicSamplesForRealCapture { return .micNeverCaptured }
+        if micPeakWasZero { return .micDeliveredSilence }
         return .genuinelySilent
     }
     /// How often we re-check the silence timer (seconds). Cheap — just a Combine
@@ -338,6 +363,10 @@ final class MeetingRecorder: ObservableObject {
         if pauseStartedAt != nil { resumeMic() }
 
         let rawMicSamples = mic.isRecording ? mic.stop() : []
+        // Judge the mic on the RAW buffer — `applyPauseMutes` writes literal
+        // zeros by design, so measuring after it would confuse "the user
+        // dictated" with "the microphone was dead".
+        micChannelWasSilent = Self.isDigitalSilence(rawMicSamples)
         let micSamples = applyPauseMutes(to: rawMicSamples)
         let sysSamples = systemAudio.stop()
 

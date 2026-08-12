@@ -235,6 +235,19 @@ final class TranscriptionCoordinator: ObservableObject {
         // Built-in MacBook mic: silence ~0.0002, quiet speech ~0.0005-0.002, normal ~0.003+
         // Threshold lowered to avoid dropping real speech recorded quietly
         let rms = Self.calculateRMS(samples)
+        // Digital silence is NOT a quiet room. RMS is zero only when every
+        // sample is zero, i.e. no signal arrived at all. Telling that user to
+        // "speak closer to the mic" is the advice that cost a day on
+        // 2026-08-12, when macOS fed the process eight recordings of nothing
+        // and the app never once said the microphone had gone dead.
+        if rms == 0, !samples.isEmpty {
+            NSLog("[Coordinator] ❌ recording was DIGITAL SILENCE (%d samples, RMS=0) — the mic delivered no audio",
+                  samples.count)
+            lastError = AudioRecordingService.deadMicMessage
+            abortVoiceQuestionIfActive(reason: AudioRecordingService.deadMicMessage)
+            stage = .idle
+            return
+        }
         if rms < 0.0003 {
             NSLog("[Coordinator] Audio too quiet (RMS=%.5f), skipping transcription", rms)
             abortVoiceQuestionIfActive(reason: "Audio too quiet — speak closer to the mic.")
