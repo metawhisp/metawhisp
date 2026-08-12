@@ -127,6 +127,39 @@ final class DeadMicDetectorTests: XCTestCase {
         XCTAssertNotNil(firstTrip(rms: 0, buffers: buffers, detector: &d))
     }
 
+    // MARK: - sawAudio — the false-positive guard
+
+    func test_sawAudio_falseUntilRealAudioArrives() {
+        var d = DeadMicDetector()
+        XCTAssertFalse(d.sawAudio)
+        _ = firstTrip(rms: 0, buffers: Int(2.0 * rate) / bufferFrames, detector: &d)
+        XCTAssertFalse(d.sawAudio, "Zeros must never count as audio")
+    }
+
+    func test_sawAudio_latchesOnOneRealBuffer() {
+        var d = DeadMicDetector()
+        _ = d.observe(rms: 0.01, frames: bufferFrames, sampleRate: rate)
+        XCTAssertTrue(d.sawAudio)
+        // And stays true through a later silence run — this is what tells the
+        // caller a mid-recording zero-run is ambiguous (Bluetooth silence
+        // suppression) rather than a dead microphone.
+        _ = firstTrip(rms: 0, buffers: Int(2.0 * rate) / bufferFrames, detector: &d)
+        XCTAssertTrue(d.sawAudio)
+    }
+
+    func test_sawAudio_notSetByNaN() {
+        var d = DeadMicDetector()
+        _ = d.observe(rms: .nan, frames: bufferFrames, sampleRate: rate)
+        XCTAssertFalse(d.sawAudio, "NaN is not evidence that the stream is alive")
+    }
+
+    func test_sawAudio_clearedByReset() {
+        var d = DeadMicDetector()
+        _ = d.observe(rms: 0.01, frames: bufferFrames, sampleRate: rate)
+        d.reset()
+        XCTAssertFalse(d.sawAudio)
+    }
+
     // MARK: - Corner cases
 
     func test_zeroFrameBuffers_areIgnored() {

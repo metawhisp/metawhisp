@@ -34,6 +34,15 @@ struct DeadMicDetector {
     /// not re-arm on every subsequent buffer.
     var isDead: Bool { tripped }
 
+    /// Did ANY non-zero sample arrive since the last `reset()`?
+    ///
+    /// This is what separates "the microphone is dead" from "the microphone
+    /// went quiet". Bluetooth headsets and interfaces with silence suppression
+    /// legitimately emit runs of bit-exact zeros between phrases, so a zero-run
+    /// on a stream that HAS produced audio is ambiguous and must not be thrown
+    /// in the user's face. A stream that has produced nothing at all is not.
+    private(set) var sawAudio = false
+
     /// Feed one tap buffer's RMS. Returns `true` exactly once: on the buffer
     /// that completes the dead-stream window.
     ///
@@ -50,6 +59,9 @@ struct DeadMicDetector {
             // Any real signal clears the run outright — a dead stream never
             // recovers on its own, so an interrupted run was never one.
             zeroSeconds = 0
+            // NaN is neither zero nor evidence of a live mic — don't let it
+            // vouch for the stream.
+            if rms.isFinite { sawAudio = true }
             return false
         }
 
@@ -66,5 +78,6 @@ struct DeadMicDetector {
     mutating func reset() {
         zeroSeconds = 0
         tripped = false
+        sawAudio = false
     }
 }

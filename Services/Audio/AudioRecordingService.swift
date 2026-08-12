@@ -301,9 +301,21 @@ final class AudioRecordingService: ObservableObject, AudioSource {
         guard isRecording,
               deadMic.observe(rms: rms, frames: frames, sampleRate: sampleRate) else { return }
 
-        NSLog("[AudioRecording] ❌ input is DIGITAL SILENCE for %.1fs (bit-exact zero) — %@",
-              DeadMicDetector.deadAfterSeconds,
-              engine.map { AudioInputCatalog.boundInputDescription(for: $0) } ?? "<no engine>")
+        let bind = engine.map { AudioInputCatalog.boundInputDescription(for: $0) } ?? "<no engine>"
+
+        // A zero-run on a stream that HAS delivered audio is ambiguous:
+        // Bluetooth headsets and interfaces with silence suppression emit
+        // bit-exact zeros between phrases, and telling that user their mic is
+        // dead would be a lie shown at the worst moment. Log it, don't shout.
+        guard !deadMic.sawAudio else {
+            NSLog("[AudioRecording] ⚠️ %.1fs of digital silence mid-recording (stream had audio before) — %@",
+                  DeadMicDetector.deadAfterSeconds, bind)
+            return
+        }
+
+        // Nothing but zeros since this recording began — the stream is dead.
+        NSLog("[AudioRecording] ❌ input is DIGITAL SILENCE for %.1fs, no audio at all this recording — %@",
+              DeadMicDetector.deadAfterSeconds, bind)
         micHealthError = Self.deadMicMessage
         engineNeedsRebuild = true
     }
