@@ -23,6 +23,12 @@ final class AppSettings: ObservableObject {
     /// If the picked device was unplugged, falls back to system default.
     @AppStorage("preferredInputDeviceUID") var preferredInputDeviceUID: String = ""
     @AppStorage("hotkeyMode") var hotkeyMode: String = "toggle" // toggle, pushToTalk
+    /// ITER-062 — requested ON by default; runtime activation still requires
+    /// macOS Accessibility permission and an active event tap.
+    @AppStorage("layoutFixEnabled_iter062") var layoutFixEnabled: Bool = true
+    @AppStorage("layoutFixAutoEnabled_iter062") var layoutFixAutoEnabled: Bool = true
+    @AppStorage("layoutFixDoubleShiftEnabled_iter062") var layoutFixDoubleShiftEnabled: Bool = true
+    @AppStorage("layoutFixSwitchInputSource_iter062") var layoutFixSwitchInputSource: Bool = true
     @AppStorage("soundEnabled") var soundEnabled: Bool = true
     @AppStorage("autoSubmit") var autoSubmit: Bool = true
     @AppStorage("processingMode") var processingMode: String = "raw"

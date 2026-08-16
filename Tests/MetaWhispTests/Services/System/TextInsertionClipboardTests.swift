@@ -11,6 +11,90 @@ import AppKit
 @MainActor
 final class TextInsertionClipboardTests: XCTestCase {
 
+    func test_pasteboardRestorationGuardRestoresOnlyWhenNoOtherCopyIntervened() {
+        XCTAssertTrue(
+            PasteboardRestorationGuard.shouldRestore(
+                currentChangeCount: 42,
+                expectedChangeCount: 42
+            )
+        )
+        XCTAssertFalse(
+            PasteboardRestorationGuard.shouldRestore(
+                currentChangeCount: 43,
+                expectedChangeCount: 42
+            )
+        )
+    }
+
+    func test_selectionCopyValidationRequiresTheExactExpectedToken() {
+        XCTAssertTrue(
+            SelectionCopyValidation.matches(
+                copiedText: "ghbdtn",
+                expectedText: "ghbdtn"
+            )
+        )
+        XCTAssertFalse(
+            SelectionCopyValidation.matches(
+                copiedText: "ghbdtn ",
+                expectedText: "ghbdtn"
+            )
+        )
+        XCTAssertFalse(
+            SelectionCopyValidation.matches(
+                copiedText: nil,
+                expectedText: "ghbdtn"
+            )
+        )
+    }
+
+    func test_replacementTransactionRestoresOriginalClipboardOnlyWhenItStillOwnsIt() {
+        let pasteboard = NSPasteboard.general
+        XCTAssertTrue(TextInsertionService.writeToClipboardVerified("original"))
+        let transaction = PasteboardReplacementTransaction(pasteboard: pasteboard)
+
+        XCTAssertTrue(transaction.prepare(replacement: "replacement"))
+        XCTAssertEqual(pasteboard.string(forType: .string), "replacement")
+
+        transaction.restoreIfOwned()
+        XCTAssertEqual(pasteboard.string(forType: .string), "original")
+    }
+
+    func test_replacementTransactionNeverOverwritesAnInterveningCopy() {
+        let pasteboard = NSPasteboard.general
+        XCTAssertTrue(TextInsertionService.writeToClipboardVerified("original"))
+        let transaction = PasteboardReplacementTransaction(pasteboard: pasteboard)
+
+        XCTAssertTrue(transaction.prepare(replacement: "replacement"))
+        XCTAssertTrue(TextInsertionService.writeToClipboardVerified("new user copy"))
+
+        transaction.restoreIfOwned()
+        XCTAssertEqual(pasteboard.string(forType: .string), "new user copy")
+    }
+
+    func test_selectionCopyTransactionNeverClaimsAnInterveningUserCopy() {
+        let pasteboard = NSPasteboard.general
+        XCTAssertTrue(TextInsertionService.writeToClipboardVerified("original"))
+        let transaction = PasteboardReplacementTransaction(pasteboard: pasteboard)
+
+        transaction.beginSelectionCopy()
+        XCTAssertTrue(TextInsertionService.writeToClipboardVerified("new user copy"))
+
+        transaction.restoreIfOwned()
+        XCTAssertEqual(pasteboard.string(forType: .string), "new user copy")
+    }
+
+    func test_replacementTransactionDetectsLostOwnershipBeforePaste() {
+        let pasteboard = NSPasteboard.general
+        XCTAssertTrue(TextInsertionService.writeToClipboardVerified("original"))
+        let transaction = PasteboardReplacementTransaction(pasteboard: pasteboard)
+
+        XCTAssertTrue(transaction.prepare(replacement: "replacement"))
+        XCTAssertTrue(transaction.stillOwns(contents: "replacement"))
+
+        XCTAssertTrue(TextInsertionService.writeToClipboardVerified("new user copy"))
+        XCTAssertFalse(transaction.stillOwns(contents: "replacement"))
+    }
+
     /// Save and restore the system pasteboard so tests don't clobber the
     /// developer's clipboard while running.
     private var savedClipboard: String?

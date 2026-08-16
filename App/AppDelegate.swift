@@ -52,6 +52,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     let textInserter = TextInsertionService()
     let soundService = SoundService()
     let hotkeyService = HotkeyService()
+    let layoutSwitchController = LayoutSwitchController()
+    let layoutFixFeedback = LayoutFixFeedbackController()
+#if DEBUG
+    /// I0-only, started exclusively with `--layout-fix-event-tap-probe`.
+    private var layoutFixEventTapProbe: GlobalInputEventTapProbe?
+#endif
     let modelManager = ModelManagerService()
     let historyService = HistoryService()
     let screenContext = ScreenContextService()
@@ -210,6 +216,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             NSApp.terminate(nil)
             return
         }
+
+#if DEBUG
+        startLayoutFixEventTapProbeIfRequested()
+#endif
 
         // AUD-024 — one-time migration of secrets from the legacy plaintext
         // `.secrets` file into the Keychain. Runs in the signed app (valid
@@ -806,6 +816,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             onVoiceQuestionStart: { [weak self] in self?.coordinator.startVoiceQuestion() },
             onVoiceQuestionStop: { [weak self] in self?.coordinator.stopVoiceQuestion() }
         )
+
+        layoutSwitchController.onAutomaticCorrection = { [weak self] correction in
+            self?.layoutFixFeedback.show(correction)
+        }
+        let layoutFixState = layoutSwitchController.start()
+        NSLog("[LayoutFix] Runtime state: %@", layoutFixState.rawValue)
 
         // 4. Find downloaded models
         await modelManager.fetchAvailableModels()
@@ -2272,6 +2288,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         // User may have changed permissions in System Settings — re-check everything
         PermissionsService.shared.refresh()
 
+#if DEBUG
+        startLayoutFixEventTapProbeIfRequested()
+#endif
+        _ = layoutSwitchController.start()
+
         // Re-start services that previously failed due to missing Screen Recording permission.
         // When user grants permission AFTER app launch and returns to the app, this catches that
         // transition and activates dependent services without requiring app restart.
@@ -2290,8 +2311,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        layoutSwitchController.stop()
+#if DEBUG
+        layoutFixEventTapProbe?.stop()
+#endif
         NSLog("[MetaWhisp] Terminating")
     }
+
+#if DEBUG
+    private func startLayoutFixEventTapProbeIfRequested() {
+        guard CommandLine.arguments.contains("--layout-fix-event-tap-probe") else { return }
+
+        let probe = layoutFixEventTapProbe ?? GlobalInputEventTapProbe()
+        let state = probe.start()
+        layoutFixEventTapProbe = probe
+        NSLog("[LayoutFixProbe] State: %@", state.rawValue)
+    }
+#endif
 
     /// Draw MW waveform logo programmatically for menu bar (template image).
     private static func createMWMenuBarIcon() -> NSImage {

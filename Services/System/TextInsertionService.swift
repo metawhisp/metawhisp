@@ -2,6 +2,99 @@ import AppKit
 import Carbon
 import Foundation
 
+/// Prevents a delayed restoration from overwriting a copy made by the user or
+/// another process after a temporary layout-correction paste.
+struct PasteboardRestorationGuard {
+    static func shouldRestore(currentChangeCount: Int, expectedChangeCount: Int) -> Bool {
+        currentChangeCount == expectedChangeCount
+    }
+}
+
+/// A copied selection must exactly match the range that the caller intended
+/// to replace. This prevents a stale selection or old clipboard value from
+/// being pasted over unrelated text.
+struct SelectionCopyValidation {
+    static func matches(copiedText: String?, expectedText: String) -> Bool {
+        copiedText == expectedText
+    }
+}
+
+/// Owns a temporary replacement value on the pasteboard. The original
+/// representations stay in RAM and are restored only if nothing else copied
+/// over the replacement in the meantime.
+final class PasteboardReplacementTransaction {
+    private let pasteboard: NSPasteboard
+    private let snapshot: PasteboardSnapshot
+    private var ownedChangeCount: Int?
+
+    init(pasteboard: NSPasteboard = .general) {
+        self.pasteboard = pasteboard
+        self.snapshot = PasteboardSnapshot(pasteboard: pasteboard)
+    }
+
+    @discardableResult
+    func prepare(replacement: String) -> Bool {
+        guard TextInsertionService.writeToClipboardVerified(replacement, to: pasteboard) else {
+            return false
+        }
+        markCurrentContentsAsOwned()
+        return true
+    }
+
+    func beginSelectionCopy() {
+        pasteboard.clearContents()
+        markCurrentContentsAsOwned()
+    }
+
+    func stillOwns(contents: String) -> Bool {
+        guard let ownedChangeCount,
+              pasteboard.changeCount == ownedChangeCount else {
+            return false
+        }
+        return pasteboard.string(forType: .string) == contents
+    }
+
+    private func markCurrentContentsAsOwned() {
+        ownedChangeCount = pasteboard.changeCount
+    }
+
+    func restoreIfOwned() {
+        guard let ownedChangeCount,
+              PasteboardRestorationGuard.shouldRestore(
+                  currentChangeCount: pasteboard.changeCount,
+                  expectedChangeCount: ownedChangeCount
+              ) else {
+            return
+        }
+        _ = snapshot.restore(to: pasteboard)
+    }
+}
+
+/// Keeps all available clipboard representations in RAM briefly. It is
+/// intentionally not persisted or logged.
+private struct PasteboardSnapshot {
+    private let items: [NSPasteboardItem]
+
+    init(pasteboard: NSPasteboard) {
+        items = (pasteboard.pasteboardItems ?? []).map { original in
+            let copy = NSPasteboardItem()
+            for type in original.types {
+                if let data = original.data(forType: type) {
+                    copy.setData(data, forType: type)
+                }
+            }
+            return copy
+        }
+    }
+
+    @discardableResult
+    func restore(to pasteboard: NSPasteboard) -> Bool {
+        pasteboard.clearContents()
+        guard !items.isEmpty else { return true }
+        return pasteboard.writeObjects(items)
+    }
+}
+
 /// Inserts transcribed text into the active application.
 /// Always copies to clipboard. If Accessibility is granted, also simulates Cmd+V.
 final class TextInsertionService {
@@ -84,18 +177,21 @@ final class TextInsertionService {
     ///     overwrote between our write and read).
     /// Returns true only when the verified read-back matches `text`.
     /// Static so tests can call without an instance.
-    static func writeToClipboardVerified(_ text: String, attempts: Int = 3) -> Bool {
-        let pb = NSPasteboard.general
+    static func writeToClipboardVerified(
+        _ text: String,
+        to pasteboard: NSPasteboard = .general,
+        attempts: Int = 3
+    ) -> Bool {
         for attempt in 1...attempts {
-            pb.clearContents()
-            let writeOK = pb.setString(text, forType: .string)
+            pasteboard.clearContents()
+            let writeOK = pasteboard.setString(text, forType: .string)
             // Tiny breath so any racing process gets a chance to land before
             // we read back. Empirically 5ms is enough on Apple Silicon — the
             // Universal Clipboard / pasteboard-manager polls run on ~50ms
             // cadence, so this either catches them on the same tick or our
             // re-write wins on the next attempt.
             usleep(5_000)
-            let readBack = pb.string(forType: .string)
+            let readBack = pasteboard.string(forType: .string)
             if writeOK, readBack == text {
                 if attempt > 1 {
                     NSLog("[TextInserter] clipboard write succeeded on attempt %d", attempt)
@@ -109,13 +205,74 @@ final class TextInsertionService {
         return false
     }
 
+    /// Replaces an AX-selected range only after a real Command-C confirms the
+    /// target editor committed that exact selection. This follows the same
+    /// copy-then-paste protocol used by layout switchers for rich editors
+    /// which acknowledge AX writes without applying them.
+    static func replaceVerifiedSelectionPreservingPasteboard(
+        expectedText: String,
+        replacement: String,
+        targetIsStillFocused: () -> Bool
+    ) async -> Bool {
+        guard targetIsStillFocused() else { return false }
+
+        let transaction = PasteboardReplacementTransaction()
+        defer { transaction.restoreIfOwned() }
+
+        let pasteboard = NSPasteboard.general
+        transaction.beginSelectionCopy()
+        guard postLayoutCommandKey(CGKeyCode(kVK_ANSI_C)) else { return false }
+        NSLog("[LayoutFix] Selection copy requested")
+
+        do {
+            try await Task.sleep(for: .milliseconds(150))
+        } catch {
+            return false
+        }
+
+        let copiedText = pasteboard.string(forType: .string)
+        guard targetIsStillFocused(),
+              SelectionCopyValidation.matches(copiedText: copiedText, expectedText: expectedText),
+              transaction.prepare(replacement: replacement) else {
+            return false
+        }
+
+        do {
+            try await Task.sleep(for: .milliseconds(32))
+        } catch {
+            return false
+        }
+
+        guard targetIsStillFocused(),
+              transaction.stillOwns(contents: replacement),
+              postLayoutCommandKey(CGKeyCode(kVK_ANSI_V)) else {
+            return false
+        }
+        NSLog("[LayoutFix] Selection paste requested")
+
+        do {
+            try await Task.sleep(for: .milliseconds(180))
+        } catch {
+            return false
+        }
+        return targetIsStillFocused()
+    }
+
     private func simulatePaste() {
+        guard Self.postCommandPaste() else {
+            NSLog("[TextInserter] ❌ Failed to create CGEvents")
+            return
+        }
+        NSLog("[TextInserter] ✅ Auto-pasted via Cmd+V")
+    }
+
+    @discardableResult
+    private static func postCommandPaste() -> Bool {
         let source = CGEventSource(stateID: .hidSystemState)
 
         guard let keyDown = CGEvent(keyboardEventSource: source, virtualKey: CGKeyCode(kVK_ANSI_V), keyDown: true),
               let keyUp = CGEvent(keyboardEventSource: source, virtualKey: CGKeyCode(kVK_ANSI_V), keyDown: false) else {
-            NSLog("[TextInserter] ❌ Failed to create CGEvents")
-            return
+            return false
         }
 
         keyDown.flags = .maskCommand
@@ -123,7 +280,21 @@ final class TextInsertionService {
 
         keyDown.post(tap: .cghidEventTap)
         keyUp.post(tap: .cghidEventTap)
+        return true
+    }
 
-        NSLog("[TextInserter] ✅ Auto-pasted via Cmd+V")
+    @discardableResult
+    private static func postLayoutCommandKey(_ virtualKey: CGKeyCode) -> Bool {
+        let source = CGEventSource(stateID: .hidSystemState)
+        guard let keyDown = CGEvent(keyboardEventSource: source, virtualKey: virtualKey, keyDown: true),
+              let keyUp = CGEvent(keyboardEventSource: source, virtualKey: virtualKey, keyDown: false) else {
+            return false
+        }
+
+        keyDown.flags = .maskCommand
+        keyUp.flags = .maskCommand
+        keyDown.post(tap: .cgAnnotatedSessionEventTap)
+        keyUp.post(tap: .cgAnnotatedSessionEventTap)
+        return true
     }
 }
