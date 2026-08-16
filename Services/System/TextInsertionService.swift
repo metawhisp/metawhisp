@@ -46,6 +46,26 @@ final class PasteboardReplacementTransaction {
         markCurrentContentsAsOwned()
     }
 
+    /// Our synthetic Cmd-C is executed by the TARGET APPLICATION, so it
+    /// advances `changeCount` exactly once — and until this existed, that
+    /// advance was indistinguishable from a stranger copying. `restoreIfOwned`
+    /// concluded it no longer owned the pasteboard and walked away, so every
+    /// aborted correction destroyed the user's clipboard and left the text
+    /// they had just typed sitting on it (release review, 2026-08-16; with
+    /// Universal Clipboard on, that text left the Mac).
+    ///
+    /// Exactly one advance is ours. Anything else is somebody else's copy and
+    /// must be left strictly alone.
+    @discardableResult
+    func acknowledgeSelectionCopy() -> Bool {
+        guard let ownedChangeCount,
+              pasteboard.changeCount == ownedChangeCount + 1 else {
+            return false
+        }
+        self.ownedChangeCount = pasteboard.changeCount
+        return true
+    }
+
     func stillOwns(contents: String) -> Bool {
         guard let ownedChangeCount,
               pasteboard.changeCount == ownedChangeCount else {
@@ -230,8 +250,12 @@ final class TextInsertionService {
             return false
         }
 
+        // Claim our own copy BEFORE anything can bail out, so every failure
+        // path below still restores the user's clipboard via the `defer`.
+        let ownsCopy = transaction.acknowledgeSelectionCopy()
         let copiedText = pasteboard.string(forType: .string)
         guard targetIsStillFocused(),
+              ownsCopy,
               SelectionCopyValidation.matches(copiedText: copiedText, expectedText: expectedText),
               transaction.prepare(replacement: replacement) else {
             return false
