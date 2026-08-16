@@ -260,7 +260,8 @@ final class FocusedTextGateway {
     func replaceTokenBeforeCaret(
         expectedToken: String,
         trailingText: String,
-        replacement: String
+        replacement: String,
+        isStillCurrent: @escaping @MainActor () -> Bool = { true }
     ) async -> ReplacementOutcome {
         guard AXIsProcessTrusted() else {
             return .skipped(.accessibilityDenied)
@@ -327,7 +328,8 @@ final class FocusedTextGateway {
             frontmostApplication: frontmostApplication,
             caretAfterReplacement: replacementRange.location
                 + (replacement as NSString).length
-                + (trailingText as NSString).length
+                + (trailingText as NSString).length,
+            isStillCurrent: isStillCurrent
         ) else {
             return .skipped(.mutationFailed)
         }
@@ -342,7 +344,8 @@ final class FocusedTextGateway {
     /// refused.
     func correctSelectedTextOrCurrentLine(
         typedIn source: KeyboardLayout,
-        mapper: KeyboardLayoutMapper = .russianEnglish
+        mapper: KeyboardLayoutMapper = .russianEnglish,
+        isStillCurrent: @escaping @MainActor () -> Bool = { true }
     ) async -> ManualCorrectionOutcome {
         guard AXIsProcessTrusted() else {
             return .skipped(.accessibilityDenied)
@@ -462,7 +465,8 @@ final class FocusedTextGateway {
             ),
             focusedElement: focusedElement,
             frontmostApplication: frontmostApplication,
-            caretAfterReplacement: caretAfterReplacement
+            caretAfterReplacement: caretAfterReplacement,
+            isStillCurrent: isStillCurrent
         ) else {
             return .skipped(.mutationFailed)
         }
@@ -481,11 +485,25 @@ final class FocusedTextGateway {
         originalSelection: NSRange,
         focusedElement: AXUIElement,
         frontmostApplication: NSRunningApplication,
-        caretAfterReplacement: Int?
+        caretAfterReplacement: Int?,
+        isStillCurrent: @escaping @MainActor () -> Bool
     ) async -> Bool {
         NSLog("[LayoutFix] Replacement started")
-        guard targetIsStillFocused(focusedElement, in: frontmostApplication) else {
-            NSLog("[LayoutFix] Replacement aborted: focus changed")
+
+        // Between selecting the word and pasting over it, the word sits in the
+        // user's document as a REAL selection. If they type in that window
+        // their character replaces it and our paste lands somewhere else
+        // entirely (release review, 2026-08-16). Focus and pid are unchanged by
+        // typing, so validity has to mean BOTH "same target" and "no newer key
+        // input" — checked at every existing checkpoint, including the one
+        // immediately before Cmd-V is posted.
+        let stillValid: @MainActor () -> Bool = { [weak self] in
+            guard let self, isStillCurrent() else { return false }
+            return self.targetIsStillFocused(focusedElement, in: frontmostApplication)
+        }
+
+        guard stillValid() else {
+            NSLog("[LayoutFix] Replacement aborted: target or input moved on")
             return false
         }
 
@@ -493,21 +511,15 @@ final class FocusedTextGateway {
             originalSelection: originalSelection,
             replacementRange: range,
             caretAfterSuccess: caretAfterReplacement,
-            targetIsStillFocused: { [weak self] in
-                guard let self else { return false }
-                return self.targetIsStillFocused(focusedElement, in: frontmostApplication)
-            },
+            targetIsStillFocused: stillValid,
             select: { [weak self] range in
                 self?.select(range, in: focusedElement) ?? false
             },
-            replace: { [weak self] in
+            replace: {
                 await TextInsertionService.replaceVerifiedSelectionPreservingPasteboard(
                     expectedText: expectedText,
                     replacement: replacement,
-                    targetIsStillFocused: {
-                        guard let self else { return false }
-                        return self.targetIsStillFocused(focusedElement, in: frontmostApplication)
-                    }
+                    targetIsStillFocused: stillValid
                 )
             },
             verify: { [weak self] in

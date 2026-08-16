@@ -438,7 +438,8 @@ private final class LayoutTextGatewaySpy: LayoutTextCorrecting {
     func replaceTokenBeforeCaret(
         expectedToken: String,
         trailingText: String,
-        replacement: String
+        replacement: String,
+        isStillCurrent: @escaping @MainActor () -> Bool
     ) async -> FocusedTextGateway.ReplacementOutcome {
         automaticRequests.append(
             AutomaticRequest(
@@ -455,7 +456,8 @@ private final class LayoutTextGatewaySpy: LayoutTextCorrecting {
 
     func correctSelectedTextOrCurrentLine(
         typedIn source: KeyboardLayout,
-        mapper: KeyboardLayoutMapper
+        mapper: KeyboardLayoutMapper,
+        isStillCurrent: @escaping @MainActor () -> Bool
     ) async -> FocusedTextGateway.ManualCorrectionOutcome {
         manualRequests.append(source)
         if manualDelayMilliseconds > 0 {

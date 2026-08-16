@@ -5,17 +5,24 @@ import Foundation
 
 /// Boundary around the focused-text mutation path. It permits controller
 /// dispatch to be tested without reading or changing any live editor text.
+/// `isStillCurrent` answers "does this correction still belong to the keystroke
+/// that asked for it?". The gateway holds a LIVE SELECTION in the user's
+/// document across an async round trip, so it must ask again at every
+/// checkpoint — before selecting, before copying, and immediately before the
+/// paste is posted. See `LayoutTypingRaceTests`.
 @MainActor
 protocol LayoutTextCorrecting: AnyObject {
     func replaceTokenBeforeCaret(
         expectedToken: String,
         trailingText: String,
-        replacement: String
+        replacement: String,
+        isStillCurrent: @escaping @MainActor () -> Bool
     ) async -> FocusedTextGateway.ReplacementOutcome
 
     func correctSelectedTextOrCurrentLine(
         typedIn source: KeyboardLayout,
-        mapper: KeyboardLayoutMapper
+        mapper: KeyboardLayoutMapper,
+        isStillCurrent: @escaping @MainActor () -> Bool
     ) async -> FocusedTextGateway.ManualCorrectionOutcome
 }
 
@@ -252,6 +259,12 @@ final class LayoutSwitchController {
     private var correctionIsInFlight = false
     private var didObserveInput = false
     private var lastInputContextIdentity: LayoutInputContextIdentity?
+    /// Bumped by every text-producing key event. A correction is stamped with
+    /// the value it was scheduled at; once the user types again the stamp is
+    /// stale and the correction must not touch the document. Modifier-only
+    /// events deliberately do NOT bump it — reaching for Shift to start the
+    /// next word inserts nothing and cannot eat a selection.
+    private var inputGeneration: UInt64 = 0
     var onAutomaticCorrection: ((LayoutCorrection) -> Void)?
 
     init(confidenceEngine: LayoutConfidenceEngine = LayoutConfidenceEngine()) {
@@ -376,6 +389,7 @@ final class LayoutSwitchController {
         keyCode: UInt16? = nil,
         flags: NSEvent.ModifierFlags
     ) {
+        inputGeneration &+= 1
         doubleShiftDetector.interrupt(
             ignoringNextShiftRelease: flags.contains(.shift)
         )
@@ -447,6 +461,7 @@ final class LayoutSwitchController {
             NSLog("[LayoutFix] Automatic correction skipped: another correction is active")
             return
         }
+        let scheduledGeneration = inputGeneration
         correctionTask?.cancel()
         correctionTask = Task { @MainActor [weak self] in
             NSLog("[LayoutFix] Automatic correction queued")
@@ -457,25 +472,40 @@ final class LayoutSwitchController {
                 return
             }
             guard !Task.isCancelled, let self else { return }
+            // The user typed on during the delay. Their next character would
+            // land inside the window where the word is selected, so the
+            // correction is already obsolete — drop it before touching text.
+            guard self.inputGeneration == scheduledGeneration else {
+                NSLog("[LayoutFix] Automatic correction dropped: typing continued")
+                return
+            }
             self.correctionIsInFlight = true
             defer {
                 self.correctionIsInFlight = false
                 self.correctionTask = nil
             }
             NSLog("[LayoutFix] Automatic correction dispatch started")
-            await self.applyAutomaticCorrection(bufferedToken: bufferedToken, correction: correction)
+            await self.applyAutomaticCorrection(
+                bufferedToken: bufferedToken,
+                correction: correction,
+                scheduledGeneration: scheduledGeneration
+            )
         }
     }
 
     private func applyAutomaticCorrection(
         bufferedToken: LayoutBufferedToken,
         correction: LayoutCorrection,
+        scheduledGeneration: UInt64,
         retriesRemaining: Int = 1
     ) async {
         let outcome = await textGateway.replaceTokenBeforeCaret(
             expectedToken: bufferedToken.token,
             trailingText: bufferedToken.trailingText,
-            replacement: correction.replacement
+            replacement: correction.replacement,
+            isStillCurrent: { [weak self] in
+                self?.inputGeneration == scheduledGeneration
+            }
         )
         if case .skipped(.staleTarget) = outcome, retriesRemaining > 0 {
             // Some editors publish the separator to Accessibility a little
@@ -486,10 +516,11 @@ final class LayoutSwitchController {
             } catch {
                 return
             }
-            guard !Task.isCancelled else { return }
+            guard !Task.isCancelled, inputGeneration == scheduledGeneration else { return }
             await applyAutomaticCorrection(
                 bufferedToken: bufferedToken,
                 correction: correction,
+                scheduledGeneration: scheduledGeneration,
                 retriesRemaining: retriesRemaining - 1
             )
             return
@@ -553,6 +584,7 @@ final class LayoutSwitchController {
             NSLog("[LayoutFix] Manual correction skipped: another correction is active")
             return
         }
+        let scheduledGeneration = inputGeneration
         correctionTask?.cancel()
         correctionTask = nil
         correctionIsInFlight = true
@@ -565,7 +597,10 @@ final class LayoutSwitchController {
             NSLog("[LayoutFix] Manual correction dispatch started")
             let outcome = await self.textGateway.correctSelectedTextOrCurrentLine(
                 typedIn: source,
-                mapper: .russianEnglish
+                mapper: .russianEnglish,
+                isStillCurrent: { [weak self] in
+                    self?.inputGeneration == scheduledGeneration
+                }
             )
             guard case let .corrected(correction) = outcome else {
                 if case let .skipped(reason) = outcome {
