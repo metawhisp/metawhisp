@@ -319,22 +319,61 @@ final class FocusedTextGateway {
             return .skipped(.staleTarget)
         }
 
-        guard await replaceAndVerify(
-            expectedText: expectedToken,
-            replacement: replacement,
-            in: replacementRange,
-            originalSelection: NSRange(location: caretRange.location, length: 0),
+        // The automatic path types instead of pasting. Everything above proved
+        // WHAT to replace and WHERE; from here it is a ~1 ms burst of key
+        // events with no selection left in the document and the clipboard never
+        // touched. The clipboard protocol could not survive a user who keeps
+        // typing — see LayoutKeystrokeReplacementTests.
+        guard let plan = LayoutKeystrokeReplacementPlan.plan(
+            token: expectedToken,
+            trailingText: trailingText,
+            replacement: replacement
+        ) else {
+            return .skipped(.noConvertibleText)
+        }
+
+        // Last check before we touch anything: same target, same keystroke.
+        guard isStillCurrent(),
+              targetIsStillFocused(focusedElement, in: frontmostApplication),
+              LayoutKeystrokeSender.send(plan) else {
+            return .skipped(.mutationFailed)
+        }
+
+        // Verification is a READ, so a user typing on cannot be harmed by it —
+        // at worst the check fails and we decline to switch the input source.
+        guard await replacementLanded(
+            replacement,
+            at: replacementRange.location,
             focusedElement: focusedElement,
-            frontmostApplication: frontmostApplication,
-            caretAfterReplacement: replacementRange.location
-                + (replacement as NSString).length
-                + (trailingText as NSString).length,
-            isStillCurrent: isStillCurrent
+            frontmostApplication: frontmostApplication
         ) else {
             return .skipped(.mutationFailed)
         }
 
         return .replaced
+    }
+
+    /// Polls the bounded Accessibility range until the replacement shows up.
+    /// Read-only, and short: editors commit a key burst in a few milliseconds.
+    private func replacementLanded(
+        _ replacement: String,
+        at location: Int,
+        focusedElement: AXUIElement,
+        frontmostApplication: NSRunningApplication
+    ) async -> Bool {
+        let range = NSRange(location: location, length: (replacement as NSString).length)
+        for _ in 0 ..< 15 {
+            do {
+                try await Task.sleep(for: .milliseconds(20))
+            } catch {
+                return false
+            }
+            guard targetIsStillFocused(focusedElement, in: frontmostApplication) else { return false }
+            if replacementIsVisible(replacement, in: range, from: focusedElement) {
+                return true
+            }
+        }
+        return false
     }
 
     /// Applies the explicit Double Shift intent to selected text, or the

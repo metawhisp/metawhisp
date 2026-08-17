@@ -38,6 +38,37 @@ final class LayoutTypingRaceTests: XCTestCase {
         }
     }
 
+    // MARK: - The requirement: a whole phrase, typed without pausing
+
+    func test_phraseTypedWithoutPausing_correctsEveryWord() async throws {
+        let gateway = TypingRaceGatewaySpy()
+        let inputSource = TypingRaceInputSourceSpy(current: .englishUS)
+        let controller = LayoutSwitchController(
+            textGateway: gateway,
+            inputSourceService: inputSource,
+            isKnownWord: { word, language in
+                language == .russian && ["привет", "как"].contains(word)
+            }
+        )
+
+        // ~200 WPM, faster than the founder types. Each word must be corrected
+        // before the next one is finished — the whole reason the automatic path
+        // types instead of pasting.
+        for character in "ghbdtn " {
+            controller.handleKeyDown(text: String(character), flags: [])
+        }
+        try await Task.sleep(for: .milliseconds(60))
+        for character in "rfr " {
+            controller.handleKeyDown(text: String(character), flags: [])
+        }
+        try await Task.sleep(for: .milliseconds(60))
+
+        XCTAssertEqual(gateway.automaticRequests.count, 2,
+                       "Both words of a phrase must be corrected while the user keeps typing")
+        XCTAssertEqual(gateway.automaticRequests.map(\.replacement), ["привет", "как"])
+        XCTAssertEqual(inputSource.selectedLayouts, [.russian, .russian])
+    }
+
     // MARK: - The regression
 
     func test_keystrokeDuringTheScheduleWindow_abortsTheCorrectionEntirely() async throws {
