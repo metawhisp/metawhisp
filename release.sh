@@ -71,6 +71,26 @@ DMG_SIZE=$(stat -f%z "$DMG")
 echo "    DMG size: $DMG_SIZE bytes"
 
 echo ""
+echo "==> Step 1c: Signing the DMG itself with Developer ID..."
+# 2026-08-17 — this step was missing. Apple happily notarizes an UNSIGNED disk
+# image (notarization checks what's inside it), so every release until now
+# shipped a container that `spctl -a -t open` rejected with "no usable
+# signature". Stapling still worked, so it went unnoticed.
+# Must run BEFORE notarization: signing rewrites the DMG bytes, which would
+# invalidate a ticket stapled to the unsigned version.
+DMG_SIGN_ID=$(security find-identity -v -p codesigning 2>/dev/null \
+    | awk '/Developer ID Application:.*\(6D6948Z4MW\)/ {print $2; exit}')
+if [ -z "${DMG_SIGN_ID:-}" ]; then
+    echo "ERROR: Developer ID Application cert (team 6D6948Z4MW) not in keychain."
+    echo "Refusing to ship an unsigned DMG — no ad-hoc fallback here."
+    exit 1
+fi
+codesign --force --sign "$DMG_SIGN_ID" --timestamp "$DMG"
+codesign --verify --strict --verbose=2 "$DMG" 2>&1 | tail -2
+DMG_SIZE=$(stat -f%z "$DMG")
+echo "    Signed DMG size: $DMG_SIZE bytes"
+
+echo ""
 echo "==> Step 2a: Notarizing DMG with Apple (MANDATORY in prod)..."
 # WHY: Without notarization Gatekeeper shows "Apple cannot check for malicious
 # software" on first launch for fresh downloads from the website — a
