@@ -14,7 +14,11 @@ final class AppSettings: ObservableObject {
     /// (review: without a cap, a deterministic load failure looped
     /// download-950MB → fail → delete → re-download forever).
     @AppStorage("bestModelUpgradeAttempts") var bestModelUpgradeAttempts: Int = 0
-    @AppStorage("transcriptionLanguage") var transcriptionLanguage: String = "ru"
+    /// Whisper identifies the language itself, so onboarding no longer asks —
+    /// see `OnboardingLanguageDefault`. Anyone who used the app before this
+    /// change is pinned to "ru" by the migration below, so only fresh installs
+    /// land on "auto".
+    @AppStorage("transcriptionLanguage") var transcriptionLanguage: String = OnboardingLanguageDefault.freshInstallDefault
 
     /// Audio input device override. Empty string = follow macOS default
     /// (whichever input device the system has selected). Otherwise persists
@@ -396,6 +400,24 @@ final class AppSettings: ObservableObject {
         self.cerebrasKey = KeychainHelper.load(key: "com.metawhisp.cerebrasKey") ?? ""
         self.groqKey = KeychainHelper.load(key: "com.metawhisp.groqKey") ?? ""
         self.deepgramKey = KeychainHelper.load(key: "com.metawhisp.deepgramKey") ?? ""
+        Self.pinTranscriptionLanguageForExistingUsers()
+    }
+
+    /// Runs once, before anything reads `transcriptionLanguage`.
+    ///
+    /// The code default moved from "ru" to "auto" when onboarding stopped asking
+    /// about language. `@AppStorage` writes a key only when something assigns
+    /// it, so a long-time user who never opened that setting has nothing stored
+    /// and would have been switched to auto without touching a thing. Write
+    /// their effective value down first; fresh installs fall through untouched.
+    private static func pinTranscriptionLanguageForExistingUsers() {
+        let defaults = UserDefaults.standard
+        guard let pinned = OnboardingLanguageDefault.valueToPersist(
+            storedLanguage: defaults.string(forKey: "transcriptionLanguage"),
+            hasCompletedOnboarding: defaults.bool(forKey: "hasCompletedOnboarding")
+        ) else { return }
+        defaults.set(pinned, forKey: "transcriptionLanguage")
+        NSLog("[Settings] Existing install pinned to transcriptionLanguage=%@ before the auto default", pinned)
     }
 
     /// The active API key for the selected provider.

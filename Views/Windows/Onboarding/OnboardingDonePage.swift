@@ -49,6 +49,8 @@ struct OnboardingDonePage: View {
                 arrowsAndLabels.padding(.horizontal, 24)
 
                 Spacer().frame(height: 0)
+
+                footer.padding(.horizontal, 24)
             }
 
             Spacer()
@@ -171,6 +173,54 @@ struct OnboardingDonePage: View {
         }
         .frame(height: 200)
     }
+
+    // MARK: - Footer
+
+    /// Two things that used to need their own screen. The menu-bar line stops
+    /// the "it disappeared" support message; the star is asked for exactly
+    /// once, here, after the app has already worked — and never blocks START.
+    private var footer: some View {
+        VStack(spacing: 8) {
+            HStack(spacing: 8) {
+                Image(systemName: "menubar.rectangle")
+                    .font(.system(size: 11, weight: .light))
+                    .foregroundStyle(MW.textMuted)
+                Text("MetaWhisp lives in your menu bar — top right corner")
+                    .font(.system(size: 10, design: .monospaced))
+                    .foregroundStyle(MW.textMuted)
+                Spacer(minLength: 0)
+            }
+
+            HStack(spacing: 10) {
+                Text("⭐️").font(.system(size: 15))
+                VStack(alignment: .leading, spacing: 1) {
+                    Text("Built in the open")
+                        .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                        .foregroundStyle(MW.textPrimary)
+                    Text("A star helps other people find it. That's the only ask.")
+                        .font(.system(size: 9.5, design: .monospaced))
+                        .foregroundStyle(MW.textMuted)
+                }
+                Spacer(minLength: 0)
+                Button {
+                    NSWorkspace.shared.open(Self.repositoryURL)
+                } label: {
+                    Text("STAR ON GITHUB")
+                        .font(.system(size: 9, weight: .bold, design: .monospaced)).tracking(1)
+                        .foregroundStyle(.black)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 6)
+                        .background(Color.white)
+                }
+                .buttonStyle(.plain)
+            }
+            .padding(10)
+            .background(Color.yellow.opacity(0.06))
+            .overlay(Rectangle().stroke(Color.yellow.opacity(0.28), lineWidth: MW.hairline))
+        }
+    }
+
+    static let repositoryURL = URL(string: "https://github.com/metawhisp/metawhisp")!
 
     // MARK: - Key
 

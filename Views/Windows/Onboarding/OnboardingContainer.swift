@@ -11,18 +11,23 @@ struct OnboardingContainer: View {
     @ObservedObject private var license = LicenseService.shared
     var onComplete: () -> Void
 
-    private let totalPages = 7
+    private let totalPages = 8
 
+    /// Order exists to serve the download, not the story: the engine is picked
+    /// on screen 2 so ~950 MB lands during the five screens of reading that
+    /// follow, and the microphone test waits until screen 7 so the first
+    /// sentence anyone dictates comes back from the good model.
     var body: some View {
         VStack(spacing: 0) {
             Group {
                 switch page {
                 case 0: OnboardingWelcomePage(appeared: appeared)
-                case 1: OnboardingFeaturesPage(appeared: appeared)
-                case 2: OnboardingModelPage(appeared: appeared, modelManager: modelManager, coordinator: coordinator)
-                case 3: OnboardingPermissionsPage(appeared: appeared)
-                case 4: OnboardingTryItPage(appeared: appeared, coordinator: coordinator)
-                case 5: OnboardingMenuBarPage(appeared: appeared)
+                case 1: OnboardingModelPage(appeared: appeared, modelManager: modelManager, coordinator: coordinator)
+                case 2: OnboardingPermissionsPage(appeared: appeared)
+                case 3: OnboardingFeaturesPage(appeared: appeared)
+                case 4: OnboardingTranslatePage(appeared: appeared)
+                case 5: OnboardingLayoutFixPage(appeared: appeared)
+                case 6: OnboardingTryItPage(appeared: appeared, coordinator: coordinator)
                 default: OnboardingDonePage(appeared: appeared)
                 }
             }
@@ -56,12 +61,13 @@ struct OnboardingContainer: View {
         )
     }
 
-    /// Block leaving the setup page (2) AND final completion until ready —
-    /// owned here so the bottom NEXT can't bypass a page-level check.
+    /// Block only the final step. The engine page used to block too, which
+    /// meant staring at a progress bar; now the whole point of putting it early
+    /// is that the user keeps moving while the model downloads behind them.
     private var nextBlocked: Bool {
         // FREE-9: "Set up later" lets the user finish without an engine; the
         // first dictation then shows the existing "set up transcription" error.
-        (page == 2 || page == totalPages - 1) && !setupReady && !setupDeferred
+        page == totalPages - 1 && !setupReady && !setupDeferred
     }
 
     private func goNext() {

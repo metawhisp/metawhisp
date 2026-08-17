@@ -22,13 +22,13 @@ struct OnboardingPermissionsPage: View {
 
             OnboardingHeader(
                 label: "PERMISSIONS",
-                title: "MetaWhisp needs two things",
+                title: "Two permissions. Here's exactly why.",
                 appeared: appeared
             )
 
             Spacer().frame(height: 8)
 
-            Text("These are required to record your voice and type text.")
+            Text("macOS will ask. We'd rather you knew what for before it does.")
                 .font(MW.monoSm).foregroundStyle(MW.textMuted)
                 .multilineTextAlignment(.center)
                 .opacity(appeared ? 1 : 0)
@@ -39,7 +39,7 @@ struct OnboardingPermissionsPage: View {
                 PermissionRow(
                     icon: "mic.fill",
                     title: "Microphone",
-                    description: "To hear your voice and transcribe it",
+                    description: "To hear your voice. Recording only while you hold the key.",
                     granted: micGranted
                 ) {
                     requestMic()
@@ -51,7 +51,7 @@ struct OnboardingPermissionsPage: View {
                 PermissionRow(
                     icon: "accessibility",
                     title: "Accessibility",
-                    description: "To type transcribed text into any app at your cursor",
+                    description: "To type the text where your cursor already is — no copy, no paste.",
                     granted: axGranted
                 ) {
                     requestAccessibility()

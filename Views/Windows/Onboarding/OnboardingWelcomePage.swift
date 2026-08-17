@@ -40,13 +40,24 @@ struct OnboardingWelcomePage: View {
 
             Spacer().frame(height: 12)
 
-            Text("Voice-to-text that lives on your Mac.")
+            // Names the payoff, not the plumbing — then answers the three
+            // objections a first-time user actually has (cloud? internet?
+            // money?) before they can be asked.
+            Text("Your voice becomes text. In every app you own.")
                 .font(.system(size: 14, design: .monospaced))
                 .foregroundStyle(MW.textSecondary)
                 .opacity(showTagline ? 1 : 0)
                 .offset(y: showTagline ? 0 : 10)
 
-            Spacer().frame(height: 28)
+            Spacer().frame(height: 6)
+
+            Text("Runs on your Mac. Works offline. Free to start.")
+                .font(.system(size: 11, design: .monospaced))
+                .foregroundStyle(MW.textMuted)
+                .opacity(showTagline ? 1 : 0)
+                .offset(y: showTagline ? 0 : 10)
+
+            Spacer().frame(height: 24)
 
             HStack(spacing: 16) {
                 featureChip(icon: "waveform", text: "Transcribe")

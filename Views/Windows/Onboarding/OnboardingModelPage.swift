@@ -21,22 +21,26 @@ struct OnboardingModelPage: View {
 
             OnboardingHeader(
                 label: "SETUP",
-                title: "Choose how to transcribe",
+                title: "Pick your engine — we'll start now",
                 appeared: appeared
             )
 
             Spacer().frame(height: 6)
 
-            Text("You can change this anytime in Settings.")
+            // This page moved to second in the flow so the download runs during
+            // the five screens that follow. Say so, or the user sits and waits.
+            Text("It downloads while you read the next few screens, so it's ready when you first speak.")
                 .font(MW.monoSm).foregroundStyle(MW.textMuted)
+                .multilineTextAlignment(.center)
+                .padding(.horizontal, 40)
                 .opacity(appeared ? 1 : 0)
 
             Spacer().frame(height: 20)
 
             // Tab selector
             HStack(spacing: 0) {
-                tabButton("🖥  Local", tab: .local, desc: "Free")
-                tabButton("☁️  Cloud", tab: .cloud, desc: "API Key")
+                tabButton("🖥  Local", tab: .local, desc: "Free · private")
+                tabButton("☁️  Cloud", tab: .cloud, desc: "Your API key")
                 tabButton("⭐️  Pro", tab: .pro, desc: "$7.77/mo")
             }
             .padding(.horizontal, 36)
@@ -88,7 +92,7 @@ struct OnboardingModelPage: View {
         VStack(alignment: .leading, spacing: 12) {
             // ITER-058.3 — quick start: Base auto-downloads the moment this page
             // appears; the best model installs silently in the background later.
-            Text("Quick model downloads now — the best model auto-installs in the background. 100% private, audio never leaves your Mac.")
+            Text("Your audio never leaves this Mac. No account, no key, no limit on how much you dictate.")
                 .font(MW.monoSm).foregroundStyle(MW.textSecondary)
                 .fixedSize(horizontal: false, vertical: true)
 

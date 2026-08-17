@@ -7,8 +7,6 @@ struct OnboardingFeaturesPage: View {
     @State private var demoText = ""
     @State private var pillPulse = false
     @State private var micBars: [CGFloat] = [0.3, 0.5, 0.4, 0.6, 0.3]
-    @State private var showTranslate = false
-    @State private var translatedText = ""
 
     var body: some View {
         VStack(spacing: 0) {
@@ -26,13 +24,19 @@ struct OnboardingFeaturesPage: View {
             transcribeSection
                 .padding(.horizontal, 40)
 
-            Spacer().frame(height: 20)
+            Spacer().frame(height: 16)
 
-            // Translate teaser
-            if showTranslate {
-                translateSection
-                    .padding(.horizontal, 40)
-                    .transition(.opacity.combined(with: .move(edge: .bottom)))
+            // Translation has its own screen now (it used to be a teaser here and
+            // nowhere else, which is why nobody knew the app translated). What
+            // belongs on THIS page is the setting we removed: language is not
+            // asked for anywhere, so say why that is a feature.
+            if step >= 3 {
+                Text("No language to set \u{2014} it hears which one you're speaking, and switches with you mid-sentence.")
+                    .font(.system(size: 11, design: .monospaced))
+                    .foregroundStyle(MW.textSecondary)
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal, 48)
+                    .transition(.opacity)
             }
 
             Spacer().frame(height: 16)
@@ -109,30 +113,6 @@ struct OnboardingFeaturesPage: View {
         .overlay(Rectangle().stroke(MW.idle.opacity(0.3), lineWidth: MW.hairline))
     }
 
-    // MARK: - Translate Section
-
-    private var translateSection: some View {
-        HStack(spacing: 10) {
-            Keycap(text: "Right ⌥")
-            VStack(alignment: .leading, spacing: 4) {
-                Text("Translate your voice")
-                    .font(.system(size: 12, weight: .medium, design: .monospaced))
-                    .foregroundStyle(MW.textPrimary)
-                if !translatedText.isEmpty {
-                    HStack(spacing: 6) {
-                        Text("🇺🇸→🇩🇪").font(.system(size: 12))
-                        Text(translatedText)
-                            .font(.system(size: 11, design: .monospaced))
-                            .foregroundStyle(MW.idle)
-                    }
-                }
-            }
-            Spacer()
-        }
-        .padding(12)
-        .mwCard(radius: MW.rSmall, elevation: .flat)
-    }
-
     // MARK: - App Badges
 
     private var appBadges: some View {
@@ -150,7 +130,7 @@ struct OnboardingFeaturesPage: View {
     // MARK: - Animation
 
     private func startDemo() {
-        step = 0; demoText = ""; pillPulse = false; showTranslate = false; translatedText = ""
+        step = 0; demoText = ""; pillPulse = false
 
         at(0.3) { withAnimation(.spring(response: 0.4, dampingFraction: 0.75)) { step = 1 } }
         at(0.9) {
@@ -162,10 +142,6 @@ struct OnboardingFeaturesPage: View {
             withAnimation(.spring(response: 0.4, dampingFraction: 0.75)) { step = 3 }
             typeDemo("Meeting notes for tomorrow...", speed: 0.04)
         }
-        at(3.0) {
-            withAnimation(.easeOut(duration: 0.4)) { showTranslate = true }
-            typeTranslation("Besprechungsnotizen für morgen...", speed: 0.03, delay: 0.3)
-        }
     }
 
     private func at(_ t: Double, action: @escaping () -> Void) {
@@ -176,14 +152,6 @@ struct OnboardingFeaturesPage: View {
         for (i, ch) in text.enumerated() {
             DispatchQueue.main.asyncAfter(deadline: .now() + Double(i) * speed) {
                 demoText += String(ch)
-            }
-        }
-    }
-
-    private func typeTranslation(_ text: String, speed: Double, delay: Double) {
-        for (i, ch) in text.enumerated() {
-            DispatchQueue.main.asyncAfter(deadline: .now() + delay + Double(i) * speed) {
-                translatedText += String(ch)
             }
         }
     }
