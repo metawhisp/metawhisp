@@ -942,12 +942,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         realtimeScreenReactor.configure(modelContainer: historyService.modelContainer)
         realtimeScreenReactor.meetingRecorder = meetingRecorder
         screenContext.onContextPersisted = { [weak self] ctx in
-            Task { @MainActor in
-                await self?.realtimeScreenReactor.react(to: ctx)
-                // ITER-015 — proactive chip evaluates the same context, gated hard
-                // by settings / cooldown / blacklist / composing-intent inside.
-                self?.proactiveContextService.onNewContext(ctx)
-            }
+            // ITER-064A.4 — two independent consumers of the same context. The
+            // reactor's model call is allowed 20 s; the proactive path used to
+            // wait behind it and so evaluated screens the user had left.
+            // ITER-015 — proactive is gated hard by settings / cooldown /
+            // blacklist inside `onNewContext`.
+            ScreenContextFanout.dispatch(
+                ctx,
+                toTaskReactor: { [weak self] c in await self?.realtimeScreenReactor.react(to: c) },
+                toProactive: { [weak self] c in self?.proactiveContextService.onNewContext(c) }
+            )
         }
         if AppSettings.shared.screenContextEnabled {
             // Degraded gating lives inside ScreenContextService.startMonitoring so it
