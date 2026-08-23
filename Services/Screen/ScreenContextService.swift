@@ -31,8 +31,9 @@ final class ScreenContextService: ObservableObject {
     }
 
     private var monitorTask: Task<Void, Never>?
-    private var lastAppName: String?
-    private var lastWindowTitle: String?
+    /// ITER-064A.3 — advanced only by an accepted frame, so a failed capture
+    /// stays eligible for the next poll.
+    private var captureMark = CaptureHighWaterMark()
     private var modelContainer: ModelContainer?
 
     /// Instant-detection observer for `NSWorkspace.didActivateApplicationNotification`.
@@ -250,9 +251,7 @@ final class ScreenContextService: ObservableObject {
         }
 
         // Only capture if app or window changed
-        guard appName != lastAppName || windowTitle != lastWindowTitle else { return }
-        lastAppName = appName
-        lastWindowTitle = windowTitle
+        guard captureMark.hasChanged(appName: appName, windowTitle: windowTitle) else { return }
 
         // ITER-053.1 purge fence — snapshot before the capture/OCR awaits.
         let epoch = captureEpoch
@@ -260,6 +259,10 @@ final class ScreenContextService: ObservableObject {
             // The user hit «Delete screen history» while this capture was in
             // flight — discard it rather than re-adding pre-delete OCR.
             guard epoch == captureEpoch else { return }
+            // ITER-064A.3 — consume the change only now, and from the window the
+            // frame actually came from: the user may have switched during the
+            // await, and a capture that failed above must be retried next poll.
+            captureMark.accept(appName: snapshot.appName, windowTitle: snapshot.windowTitle)
             lastContext = snapshot
             recentContexts.append(snapshot)
             if recentContexts.count > maxRecentContexts {
