@@ -53,6 +53,10 @@ final class ScreenContextService: ObservableObject {
     var onCallContext: ((String?) -> Void)?
     private var lastCallContext: String?
 
+    /// Apps already reported as "not captured because the allowlist is empty",
+    /// so the log gets one line per app rather than one per poll.
+    private var loggedSuppressedApps: Set<String> = []
+
     /// Fires after each newly-persisted ScreenContext (one per captured window change).
     /// Used by `RealtimeScreenReactor` (ITER-006) to do per-window LLM task checks with its
     /// own debounce/rate-limit. Hook layered on top of the polling loop — no extra timers.
@@ -234,16 +238,15 @@ final class ScreenContextService: ObservableObject {
             onCallContext?(currentCall)
         }
 
-        // Check blacklist
-        if blacklist.contains(bundleID) || blacklist.contains(appName) {
+        // ITER-064A.2 — one shared, tested permission rule (see
+        // `ScreenContextPolicy.isCaptureAllowed`). An empty allowlist means
+        // "nothing is allowed", not "everything is allowed".
+        guard ScreenContextPolicy.isCaptureAllowed(
+            appName: appName, bundleID: bundleID,
+            blacklist: blacklist, whitelist: whitelist
+        ) else {
+            logSuppressedCaptureIfNeeded(appName: appName, whitelist: whitelist)
             return
-        }
-
-        // Check whitelist (if set, only capture listed apps)
-        if let whitelist, !whitelist.isEmpty {
-            if !whitelist.contains(bundleID) && !whitelist.contains(appName) {
-                return
-            }
         }
 
         // Only capture if app or window changed
@@ -267,6 +270,17 @@ final class ScreenContextService: ObservableObject {
         }
     }
 
+    /// ITER-064A.2 — an empty allowlist is now fail-closed, which is correct
+    /// but invisible: nothing is captured and nothing says why. Log the reason
+    /// once per app so «Screen Context is on but the history is empty» is
+    /// diagnosable from the log instead of looking like a broken capture.
+    private func logSuppressedCaptureIfNeeded(appName: String, whitelist: Set<String>?) {
+        guard let whitelist, whitelist.isEmpty else { return }
+        guard !loggedSuppressedApps.contains(appName) else { return }
+        loggedSuppressedApps.insert(appName)
+        NSLog("[ScreenContext] Not capturing %@ — allowlist mode is on with no apps listed. Add apps in Settings, or switch to blacklist mode.", appName)
+    }
+
     private func captureActiveWindow(
         blacklist: Set<String>,
         whitelist: Set<String>?
@@ -275,12 +289,11 @@ final class ScreenContextService: ObservableObject {
         let appName = frontApp.localizedName ?? "Unknown"
         let bundleID = frontApp.bundleIdentifier ?? ""
 
-        // Safety checks
-        if blacklist.contains(bundleID) || blacklist.contains(appName) { return nil }
-        if let whitelist, !whitelist.isEmpty,
-           !whitelist.contains(bundleID) && !whitelist.contains(appName) {
-            return nil
-        }
+        // Safety checks — same shared rule as the change detector above.
+        guard ScreenContextPolicy.isCaptureAllowed(
+            appName: appName, bundleID: bundleID,
+            blacklist: blacklist, whitelist: whitelist
+        ) else { return nil }
 
         let windowTitle = getActiveWindowTitle(pid: frontApp.processIdentifier) ?? ""
 
