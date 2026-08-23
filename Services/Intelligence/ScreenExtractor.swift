@@ -186,7 +186,7 @@ final class ScreenExtractor: ObservableObject {
             // 2. Persist memories — linked back to the visit's ScreenContext.
             let existingMems = fetchRecentMemoryContents(in: ctx, limit: 100)
             var newMemories: [UserMemory] = []
-            for memJson in (parsed.memories ?? []) where memJson.visitIndex < trimmed.count {
+            for memJson in (parsed.memories ?? []) where Self.isValidVisitIndex(memJson.visitIndex, count: trimmed.count) {
                 let v = trimmed[memJson.visitIndex]
                 let wordCount = memJson.content.split(separator: " ").count
                 guard wordCount <= 15 else { continue }
@@ -220,7 +220,7 @@ final class ScreenExtractor: ObservableObject {
             var newTasks: [TaskItem] = []
             let dueParser = ISO8601DateFormatter()
             dueParser.formatOptions = [.withInternetDateTime]
-            for taskJson in (parsed.tasks ?? []) where taskJson.visitIndex < trimmed.count {
+            for taskJson in (parsed.tasks ?? []) where Self.isValidVisitIndex(taskJson.visitIndex, count: trimmed.count) {
                 let v = trimmed[taskJson.visitIndex]
                 // ITER-057.5 — whitelist: only conversation surfaces (messengers /
                 // mail / work browser tabs) produce tasks. Same gate as the reactor.
@@ -461,6 +461,18 @@ final class ScreenExtractor: ObservableObject {
         let joined = lines.joined(separator: "\n")
         if joined.count > 20000 { return String(joined.prefix(20000)) }
         return joined
+    }
+
+    // MARK: - Model index guard
+
+    /// The LLM supplies `visitIndex` for every memory/task it returns. It is a
+    /// raw `Int` off the wire, so it can be negative — and `trimmed[-1]` is a
+    /// fatal trap, not a caught error.
+    ///
+    /// Internal (not private) so `ScreenExtractorVisitIndexTests` pins the
+    /// contract, matching the `MemoryExtractor.parseResponse` convention.
+    nonisolated static func isValidVisitIndex(_ index: Int, count: Int) -> Bool {
+        index >= 0 && index < count
     }
 
     // MARK: - Response parse
