@@ -71,6 +71,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     let projectAggregator = ProjectAggregator()
     let chatToolExecutor = ChatToolExecutor()
     let proactiveContextService = ProactiveContextService()
+
+    /// ITER-067 — the only thing allowed to put a Screen Agent comment on
+    /// screen, and the only place its lifecycle is recorded. Built once the
+    /// store is available.
+    private(set) var screenAgentDelivery: ScreenAgentDeliveryService?
+
+    /// Open the Inbox on a specific comment. Wired in ITER-068 to the MetaChat
+    /// surface; for now it brings the window forward so a clicked card leads
+    /// somewhere instead of vanishing.
+    @MainActor
+    func openScreenAgentInbox(selecting itemID: UUID) {
+        pendingScreenAgentItemID = itemID
+        openMainWindow(tab: .chat)
+    }
+
+    /// The comment a click asked to open, read by the Inbox when it appears.
+    private(set) var pendingScreenAgentItemID: UUID?
+
+    @MainActor
+    func consumePendingScreenAgentItem() -> UUID? {
+        defer { pendingScreenAgentItemID = nil }
+        return pendingScreenAgentItemID
+    }
     /// ITER-027 — produces ONE actionable insight per evaluation tick
     /// (replaces cosine-retrieval list of related conversations). Wired
     /// into `proactiveContextService` so the existing `onNewContext` hook
@@ -939,6 +962,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         }
         // Realtime task reactor (ITER-006): fire LLM task classifier on each new ScreenContext.
         // Self-gated by settings toggle + debounce — wiring is fire-and-forget.
+        screenAgentDelivery = ScreenAgentDeliveryService(container: historyService.modelContainer)
         realtimeScreenReactor.configure(modelContainer: historyService.modelContainer)
         realtimeScreenReactor.meetingRecorder = meetingRecorder
         screenContext.onContextPersisted = { [weak self] ctx in

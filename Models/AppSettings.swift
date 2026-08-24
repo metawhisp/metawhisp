@@ -144,6 +144,11 @@ final class AppSettings: ObservableObject {
     // with 2-3 relevant memories / past decisions / pending tasks while user is
     // composing a reply in another app. Not a notification — NSWindow-based chip.
     @AppStorage("proactiveEnabled") var proactiveEnabled: Bool = false
+
+    /// ITER-067 — "be quiet for now", without turning the feature off and
+    /// losing the Inbox with it. Suppressed comments are still recorded and
+    /// still readable afterwards; they simply do not interrupt.
+    @AppStorage("screenAgentPaused") var screenAgentPaused: Bool = false
     /// Minimum gap between chip surfaces. Lower = more useful but more intrusive.
     /// Default 5 min balances usefulness against annoyance.
     // 2026-08-08 — 5 → 10 min: reference-parity cadence (its analysis interval

@@ -17,6 +17,12 @@ final class MWNotificationStack: ObservableObject {
     private var fadeTasks: [UUID: Task<Void, Never>] = [:]
 
     private let maxStack = 4
+
+    /// ITER-067 — how many cards can appear without displacing one already on
+    /// screen. The delivery authority asks before deciding to interrupt, so a
+    /// comment is held back and kept in the Inbox rather than shoving an
+    /// earlier one off before it was read.
+    var freeSlots: Int { max(0, maxStack - items.count) }
     private let autoDismissSeconds: TimeInterval = 6
 
     private init() {}

@@ -258,7 +258,7 @@ struct MainWindowView: View {
         case .weeklyInsights:
             WeeklyInsightsView()
         case .chat:
-            ChatView()
+            ChatWithInboxView()
         case .dictionary:
             DictionaryView()
         case .settings:

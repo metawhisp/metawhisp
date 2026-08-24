@@ -156,12 +156,23 @@ enum MetaWhispSchemaV3: VersionedSchema {
     }
 }
 
+/// ITER-067 — V4 adds `ScreenAgentItem`: the Screen Agent's comment as a
+/// durable row rather than a six-second banner that left no trace. Additive new
+/// entity, no change to any existing shape → lightweight stage.
+enum MetaWhispSchemaV4: VersionedSchema {
+    static var versionIdentifier = Schema.Version(4, 0, 0)
+
+    static var models: [any PersistentModel.Type] {
+        MetaWhispSchemaV3.models + [ScreenAgentItem.self]
+    }
+}
+
 /// Migration plan for the live store: V1 → V2 (ScreenObservation.embedding) →
 /// V3 (TaskItem.relevanceScore). All lightweight (additive optional columns),
 /// verified by `SchemaMigrationTests`.
 enum MetaWhispMigrationPlan: SchemaMigrationPlan {
     static var schemas: [any VersionedSchema.Type] {
-        [MetaWhispSchemaV1.self, MetaWhispSchemaV2.self, MetaWhispSchemaV3.self]
+        [MetaWhispSchemaV1.self, MetaWhispSchemaV2.self, MetaWhispSchemaV3.self, MetaWhispSchemaV4.self]
     }
     static var stages: [MigrationStage] {
         [
@@ -172,6 +183,10 @@ enum MetaWhispMigrationPlan: SchemaMigrationPlan {
             MigrationStage.lightweight(
                 fromVersion: MetaWhispSchemaV2.self,
                 toVersion: MetaWhispSchemaV3.self
+            ),
+            MigrationStage.lightweight(
+                fromVersion: MetaWhispSchemaV3.self,
+                toVersion: MetaWhispSchemaV4.self
             ),
         ]
     }

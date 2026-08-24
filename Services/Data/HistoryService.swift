@@ -26,7 +26,7 @@ final class HistoryService: ObservableObject {
             // ITER-049 B — versioned schema + migration plan (AUD-007).
             // ITER-057.2 — live shape is V3 (adds TaskItem.relevanceScore);
             // existing V1/V2 stores migrate through the plan's lightweight stages.
-            let schema = Schema(versionedSchema: MetaWhispSchemaV3.self)
+            let schema = Schema(versionedSchema: MetaWhispSchemaV4.self)
             let config = ModelConfiguration("MetaWhisp", schema: schema)
             modelContainer = try ModelContainer(
                 for: schema, migrationPlan: MetaWhispMigrationPlan.self, configurations: [config])

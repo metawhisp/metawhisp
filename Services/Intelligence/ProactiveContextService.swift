@@ -178,22 +178,60 @@ final class ProactiveContextService: ObservableObject {
         await storage.save(insight)
 
         // ── Surface ──────────────────────────────────────────────────
-        // Single-line render: headline as the card's main text, body as
-        // the secondary line. No more "list of related conversations".
-        lastSurfaceAt = Date()
+        // ITER-067 — the comment is written down first and shown second. It
+        // used to be pushed straight onto the stack with `onTap: nil`, so it
+        // bypassed the quiet-hours and pacing every other notification
+        // respects, clicking it did nothing, and nothing recorded that it had
+        // ever happened.
         let title = insight.headline?.trimmingCharacters(in: .whitespacesAndNewlines)
         let titleText = (title?.isEmpty == false) ? title! : insight.body
         let bodyText: String = (titleText == insight.body) ? "" : insight.body
+
+        guard let delivery = AppDelegate.shared?.screenAgentDelivery else { return }
+        let item = ScreenAgentItem(
+            runID: UUID(),
+            headline: titleText,
+            body: bodyText,
+            sourceApp: ctx.appName,
+            sourceWindowTitle: ctx.windowTitle,
+            capturedAt: ctx.timestamp,
+            evidenceContextIDs: [ctx.id]
+        )
+
+        let preflight = ScreenAgentDeliveryService.Preflight(
+            featureEnabled: settings.proactiveEnabled,
+            isPaused: settings.screenAgentPaused,
+            meetingInProgress: AppDelegate.shared?.meetingRecorder.isRecording ?? false,
+            pauseDuringMeetings: true,
+            // The purge fence above already proved this run is still wanted.
+            visitIsStillCurrent: epoch == purgeEpoch,
+            secondsSinceLastPresented: delivery.secondsSinceLastPresented,
+            minimumSecondsBetween: TimeInterval(max(60, settings.proactiveCooldownMinutes * 60)),
+            popupSlotsFree: MWNotificationStack.shared.freeSlots
+        )
+
+        guard let presented = delivery.deliver(item, preflight: preflight) else {
+            // Suppressed or unsaved. A suppressed comment is still in the Inbox;
+            // pacing is not advanced for something nobody saw.
+            return
+        }
+
+        lastSurfaceAt = Date()
+        let itemID = presented.id
         let note = MWNotification(
             kind: .proactive,
             title: titleText,
             body: bodyText,
-            onTap: nil,
+            onTap: { @MainActor in
+                AppDelegate.shared?.screenAgentDelivery?
+                    .recordInteraction(.opened, itemID: itemID)
+                AppDelegate.shared?.openScreenAgentInbox(selecting: itemID)
+            },
             proactiveItems: nil
         )
         MWNotificationStack.shared.push(note)
-        NSLog("[Proactive] ✅ surfaced insight in %@ (%d chars)",
-              ctx.appName, insight.body.count)
+        NSLog("[Proactive] ✅ surfaced insight in %@ (%d chars, item %@)",
+              ctx.appName, insight.body.count, itemID.uuidString)
     }
 
     // MARK: - Activity summary
