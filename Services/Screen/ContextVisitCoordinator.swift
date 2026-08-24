@@ -48,7 +48,15 @@ struct ContextVisitCoordinator {
         var contentHash: Int
     }
 
-    enum Observation: Equatable {
+    /// What a sighting *would* mean. Nothing is recorded until `commit`.
+    ///
+    /// `observe` used to mutate on the spot. If the frame it described then
+    /// failed to save, the generation and content hash had already moved on, so
+    /// the retry compared against state for a frame that was never stored and
+    /// concluded nothing had changed — the window went quiet with nothing in
+    /// history to show for it. Proposing and committing separately means state
+    /// advances only for frames that actually landed.
+    enum Proposal: Equatable {
         /// A different window, or the same one after a long absence.
         case opened(ContextVisit)
         /// Same window, new content: same visit, next generation.
@@ -59,31 +67,45 @@ struct ContextVisitCoordinator {
 
     /// An absence longer than this ends the visit. Coming back to a window an
     /// hour later is a new visit, not a resumption of the morning's.
-    static let maxGapSeconds: TimeInterval = 300
+    static let maxGapSeconds: Duration = .seconds(300)
 
     private(set) var current: ContextVisit?
     private var lastContentHash: Int?
-    private var lastSeenAt: Date?
+    private var lastSeenAt: ContinuousClock.Instant?
 
-    mutating func observe(_ sighting: Sighting, at now: Date) -> Observation {
+    /// What this sighting would mean, without recording anything.
+    ///
+    /// - Parameter now: a monotonic reading. Freshness must not be affected by
+    ///   the wall clock moving: a rollback would otherwise make stale work look
+    ///   current again until the clock caught up.
+    func propose(_ sighting: Sighting,
+                 at now: ContinuousClock.Instant,
+                 wallClock: Date) -> Proposal {
         let normalized = WindowTitleNormalizer.normalize(sighting.rawTitle)
 
         guard let existing = current,
               let seen = lastSeenAt,
               isSameWindow(existing, as: sighting, normalized: normalized),
               existing.displayID == sighting.displayID,
-              now.timeIntervalSince(seen) <= Self.maxGapSeconds
+              now >= seen,
+              now - seen <= Self.maxGapSeconds
         else {
-            return .opened(open(sighting, normalized: normalized, at: now))
+            return .opened(ContextVisit(
+                id: UUID(),
+                generation: 0,
+                bundleID: sighting.bundleID,
+                appName: sighting.appName,
+                normalizedTitle: normalized,
+                rawTitle: sighting.rawTitle,
+                windowID: sighting.windowID,
+                displayID: sighting.displayID,
+                startedAt: wallClock
+            ))
         }
 
-        // A clock reading that goes backwards must not make a live window look
-        // abandoned on the next tick.
-        lastSeenAt = max(seen, now)
         guard sighting.contentHash != lastContentHash else { return .unchanged }
-        lastContentHash = sighting.contentHash
 
-        let next = ContextVisit(
+        return .changed(ContextVisit(
             id: existing.id,
             generation: existing.generation + 1,
             bundleID: existing.bundleID,
@@ -93,9 +115,23 @@ struct ContextVisitCoordinator {
             windowID: existing.windowID,
             displayID: sighting.displayID,
             startedAt: existing.startedAt
-        )
-        current = next
-        return .changed(next)
+        ))
+    }
+
+    /// Record a proposal whose frame actually landed.
+    mutating func commit(_ proposal: Proposal,
+                         contentHash: Int,
+                         at now: ContinuousClock.Instant) {
+        switch proposal {
+        case .opened(let visit), .changed(let visit):
+            current = visit
+            lastContentHash = contentHash
+            lastSeenAt = now
+        case .unchanged:
+            // The window is still there and still the same; keep it alive so a
+            // quiet window does not age out while the user is reading it.
+            lastSeenAt = max(lastSeenAt ?? now, now)
+        }
     }
 
     /// Whether work started for this exact visit and generation may still be
@@ -105,9 +141,18 @@ struct ContextVisitCoordinator {
     /// closed, that capture permission was revoked or that the Mac slept, so a
     /// visit that stayed current until someone remembered to invalidate it
     /// would accept late work indefinitely.
-    func isCurrent(_ visit: ContextVisit, at now: Date) -> Bool {
-        guard current == visit, let seen = lastSeenAt else { return false }
-        return now.timeIntervalSince(seen) <= Self.maxGapSeconds
+    func isCurrent(_ visit: ContextVisit, at now: ContinuousClock.Instant) -> Bool {
+        guard current == visit, let seen = lastSeenAt, now >= seen else { return false }
+        return now - seen <= Self.maxGapSeconds
+    }
+
+    /// Strand everything in flight: screen history deleted, the feature turned
+    /// off, the data owner changed. Work that started before this point must
+    /// not be able to finish.
+    mutating func invalidateAll() {
+        current = nil
+        lastContentHash = nil
+        lastSeenAt = nil
     }
 
     /// The window ID is authoritative when the system provides one: a tab
@@ -122,32 +167,5 @@ struct ContextVisitCoordinator {
             return known == incoming
         }
         return visit.windowID == sighting.windowID && visit.normalizedTitle == normalized
-    }
-
-    /// Strand everything in flight: screen history deleted, the feature turned
-    /// off, the data owner changed. Work that started before this point must
-    /// not be able to finish.
-    mutating func invalidateAll() {
-        current = nil
-        lastContentHash = nil
-        lastSeenAt = nil
-    }
-
-    private mutating func open(_ s: Sighting, normalized: String?, at now: Date) -> ContextVisit {
-        let visit = ContextVisit(
-            id: UUID(),
-            generation: 0,
-            bundleID: s.bundleID,
-            appName: s.appName,
-            normalizedTitle: normalized,
-            rawTitle: s.rawTitle,
-            windowID: s.windowID,
-            displayID: s.displayID,
-            startedAt: now
-        )
-        current = visit
-        lastContentHash = s.contentHash
-        lastSeenAt = now
-        return visit
     }
 }
