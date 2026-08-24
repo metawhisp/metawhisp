@@ -10,7 +10,7 @@ specs (`064...072`), and the repository-local execution skill.
 
 ## Active iteration
 
-`ITER-064A` — четыре подтверждённых дефекта. Код закрыт, ожидается ревью Codex.
+`ITER-065` — контексты-визиты, фокусный захват, приватность, свежесть.
 
 Порядок итераций переупорядочен — см. `specs/screen-agent/EXECUTION-ORDER.md`.
 Схема V4 перенесена из `ITER-064` в `ITER-067`; фикстуры сокращены с 60 до 15 и
@@ -22,7 +22,16 @@ The repository-wide `specs/iterations/PROGRESS.md` currently tracks another acti
 
 - [x] ITER-064A — подтверждённые дефекты (краш, fail-open allowlist, сдвиг отметки, сериализация)
 - [ ] ITER-064B — contracts + replay (без SwiftData; после 065)
-- [ ] ITER-065 — context visits, focused capture, privacy and freshness
+- [~] ITER-065 — context visits, focused capture, privacy and freshness
+  - [x] 065.1 визит: идентичность, поколение, самоистекающая свежесть — `e372f32`, `4ab7346`
+  - [x] 065.2 fail-closed политика — закрыт в 064A (`a6f2a48`, `e7896b6`)
+  - [x] 065.3 фокусное окно и его монитор — `de08192`, `4ab7346`
+  - [x] 065.4 отпечаток содержимого + тайминги — `9f1be75`
+  - [x] 065.5 OCR с главного потока в фон + bounds — `b436baa`
+  - [x] 065.6 типизированные исходы захвата, сохранение до колбэка — `e11baaf`
+  - [x] 065.7 очередь newest-value, пропуски прогонов, дедлайн — `5ac25a9`, `4ab7346`
+  - [ ] 065.8 проводка в продакшен (shadow)
+  - [ ] 065.9 живой прогон на подписанной сборке — требует сборки
 - [ ] ITER-066 — grounded director, candidate producers and prompt V1
 - [ ] ITER-067 — persistent delivery and MetaChat Inbox
 - [ ] ITER-068 — anchored MetaChat continuation and confirmed actions
@@ -85,4 +94,20 @@ Live artifact: не выполнялся; проверка только сбор
 Open issue: пустой allowlist теперь замолкает без видимого статуса в Settings → ITER-072
 Commits: 3ee79a3, a6f2a48, 0fbc5eb, 9aa384e
 Next single item: ревью Codex, затем ITER-065
+```
+
+## Журнал — ITER-065
+
+```text
+Date/time: 2026-08-24, вторая половина
+Закрыто: 065.1, 065.3, 065.4, 065.5, 065.6, 065.7 (065.2 закрыт ранее в 064A)
+Ревью Codex раунд 1: Request changes, 7 находок по 065.1/065.3/065.7 — все исправлены в 4ab7346
+  критично: очередь без идентичности прогона (submit(A)→cancelAll→submit(C)→finish(A) ломал C)
+  высоко:   дедлайна не было вообще; выбор окна проваливался наружу тремя способами;
+            визит не истекал сам; монитор не в предикате; заголовок вместо windowID
+Ревью Codex раунд 2: запущено по 065.4/065.5/065.6 + вопрос про 065.8
+Гейт: 1011 тестов, 0 падений, 36 критических сюит, PASS
+Открыто: 065.8 проводка; 065.9 живой прогон (нужна подписанная сборка — не выполнялся)
+Не проверено: ничего из ITER-065 не работало на живом экране. Только модульные тесты.
+Следующий шаг: дождаться раунда 2, затем 065.8
 ```
