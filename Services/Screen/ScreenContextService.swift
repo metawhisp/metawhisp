@@ -63,6 +63,10 @@ final class ScreenContextService: ObservableObject {
     /// so the log gets one line per app rather than one per poll.
     private var loggedSuppressedApps: Set<String> = []
 
+    /// ITER-065.6 — why the last attempt to read the screen produced what it
+    /// did. Carries no screen content, so it is safe for health reporting.
+    private(set) var lastCaptureOutcome: ScreenCaptureOutcome = .captured(ocrCharacters: 0)
+
     /// Fires after each newly-persisted ScreenContext (one per captured window change).
     /// Used by `RealtimeScreenReactor` (ITER-006) to do per-window LLM task checks with its
     /// own debounce/rate-limit. Hook layered on top of the polling loop — no extra timers.
@@ -243,6 +247,7 @@ final class ScreenContextService: ObservableObject {
             appName: appName, bundleID: bundleID,
             blacklist: blacklist, whitelist: whitelist
         ) else {
+            lastCaptureOutcome = .excluded
             logSuppressedCaptureIfNeeded(appName: appName, whitelist: whitelist)
             return
         }
@@ -283,17 +288,22 @@ final class ScreenContextService: ObservableObject {
             // The user hit «Delete screen history» while this capture was in
             // flight — discard it rather than re-adding pre-delete OCR.
             guard epoch == captureEpoch else { return }
-            // ITER-064A.3 — consume the change only now, and from the window the
-            // frame actually came from: the user may have switched during the
-            // await, and a capture that failed above must be retried next poll.
-            captureMark.accept(appName: snapshot.appName, windowTitle: snapshot.windowTitle)
             lastContext = snapshot
             recentContexts.append(snapshot)
             if recentContexts.count > maxRecentContexts {
                 recentContexts.removeFirst()
             }
-            // Persist to SwiftData
+            // Persist first — it is what decides this cycle's outcome.
             persistContext(snapshot)
+
+            // ITER-064A.3 — consume the change from the window the frame
+            // actually came from: the user may have switched during the await.
+            // ITER-065.6 — and only when this cycle actually landed. A frame
+            // that could not be stored leaves the window eligible for the next
+            // poll instead of being marked as already in history.
+            if lastCaptureOutcome.consumesWindowTurn {
+                captureMark.accept(appName: snapshot.appName, windowTitle: snapshot.windowTitle)
+            }
         }
     }
 
@@ -327,15 +337,15 @@ final class ScreenContextService: ObservableObject {
 
         let windowTitle = getActiveWindowTitle(pid: frontApp.processIdentifier) ?? ""
 
-        // Capture screenshot of the active window
+        // ITER-065.6 — a failed grab used to return a snapshot carrying the app
+        // name, the window title and an empty OCR string, which is exactly what
+        // a genuinely blank window looks like. That row was persisted, the
+        // capture mark advanced so the window was never retried, and the agent
+        // was woken for a frame nobody had managed to read. A failure is now a
+        // failure.
         guard let image = await captureScreenshot(frontPID: frontApp.processIdentifier) else {
-            // Fallback: create context with just app/window info (no OCR)
-            return ScreenContextSnapshot(
-                timestamp: Date(),
-                appName: appName,
-                windowTitle: windowTitle,
-                ocrText: ""
-            )
+            lastCaptureOutcome = .captureFailed
+            return nil
         }
 
         // Run OCR on the screenshot (on-device via Vision framework)
@@ -433,7 +443,19 @@ final class ScreenContextService: ObservableObject {
             ocrText: snapshot.ocrText
         )
         ctx.insert(record)
-        try? ctx.save()
+        do {
+            try ctx.save()
+        } catch {
+            // ITER-065.6 — this was `try? save()` followed by an unconditional
+            // callback, so the agent could be reasoning about a row that was
+            // never written. Nothing downstream may treat an unsaved frame as
+            // history.
+            lastCaptureOutcome = .persistenceFailed
+            NSLog("[ScreenContext] Persist failed (%@) — not waking the agent", error.localizedDescription)
+            return
+        }
+
+        lastCaptureOutcome = .captured(ocrCharacters: snapshot.ocrText.count)
 
         // Fire realtime hook for ITER-006 reactor (per-window LLM task check).
         // Callback handles its own guards/debounce — we just pass every persisted row.
