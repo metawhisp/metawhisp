@@ -59,6 +59,7 @@ CRITICAL_SUITES=(
     # screen capture privacy + freshness
     ScreenContextPolicyTests
     ContextVisitCoordinatorTests
+    ScreenAgentRunQueueTests
     CaptureHighWaterMarkTests
     ScreenContextFanoutTests
     ScreenExtractorVisitIndexTests
