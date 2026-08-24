@@ -1999,14 +1999,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
                 let text = result.text.trimmingCharacters(in: .whitespacesAndNewlines)
                 guard !text.isEmpty else { continue }
 
-                if TranscriptionCoordinator.isAlwaysHallucination(text) {
-                    NSLog("[MetaWhisp] ⚠️  %@ chunk %d: filtered always-hallucination: '%@'", label, i + 1, String(text.prefix(60)))
+                // ITER-073.4 — strip the artifact, then judge what is left.
+                // These two checks used to run on the raw chunk text and
+                // `continue`, discarding a whole chunk of the call because an
+                // artifact was spliced into it. See `MeetingChunkTextGate`.
+                guard let text = MeetingChunkTextGate.keep(text: text, rms: rms) else {
+                    NSLog("[MetaWhisp] ⚠️  %@ chunk %d: nothing but artifact (RMS=%.4f): '%@'",
+                          label, i + 1, rms, String(text.prefix(60)))
                     SuspectTranscriptLog.append(text, reason: "always-hallucination", context: "\(label) chunk \(i + 1)")  // TR-12
-                    continue
-                }
-                if rms < 0.003, TranscriptionCoordinator.isHallucination(text) {
-                    NSLog("[MetaWhisp] ⚠️  %@ chunk %d: filtered hallucination (RMS=%.4f): '%@'", label, i + 1, rms, String(text.prefix(60)))
-                    SuspectTranscriptLog.append(text, reason: "low-rms-hallucination", context: "\(label) chunk \(i + 1)")  // TR-12
                     continue
                 }
 

@@ -46,6 +46,10 @@ CRITICAL_SUITES=(
     LayoutClipboardOwnershipTests
     LayoutTypingRaceTests
     # meetings
+    MeetingChunkTextGateTests
+    MeetingChunkBudgetTests
+    CloudRequestTimeoutTests
+    MeetingChunkRetryPolicyTests
     MeetingRecorderSilenceTests
     MeetingAudioSilenceCutterTests
     DualStreamMergerTests
