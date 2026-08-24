@@ -85,6 +85,9 @@ struct ScreenAgentInboxView: View {
             }
 
             HStack(spacing: 10) {
+                Button("Ask MetaWhisp") { ask(item) }
+                    .buttonStyle(.link)
+                    .font(.system(size: 11, weight: .medium))
                 Button("Later") { mark(item, .later) }
                     .buttonStyle(.link)
                     .font(.system(size: 11))
@@ -163,6 +166,17 @@ struct ScreenAgentInboxView: View {
             selectedID = pending
             filter = .all
         }
+    }
+
+    /// Continue this comment in the conversation, with its screen pinned.
+    private func ask(_ item: ScreenAgentItem) {
+        AppDelegate.shared?.screenAgentDelivery?.recordInteraction(.opened, itemID: item.id)
+        NotificationCenter.default.post(
+            name: .screenAgentAnchorChat,
+            object: ScreenAgentThreadAnchor(item: item)
+        )
+        NotificationCenter.default.post(name: .screenAgentShowChatPane, object: nil)
+        reload()
     }
 
     private func mark(_ item: ScreenAgentItem, _ interaction: ScreenAgentDelivery.Interaction) {

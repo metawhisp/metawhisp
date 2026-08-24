@@ -34,6 +34,9 @@ struct ChatWithInboxView: View {
             case .inbox: ScreenAgentInboxView()
             }
         }
+        .onReceive(NotificationCenter.default.publisher(for: .screenAgentShowChatPane)) { _ in
+            pane = .chat
+        }
         .onAppear {
             // A clicked card asked for a specific comment — land on the Inbox
             // rather than dropping the user into an unrelated chat.

@@ -8,6 +8,8 @@ struct ChatView: View {
     @Query(sort: \ChatMessage.createdAt, order: .forward) private var messages: [ChatMessage]
     @ObservedObject private var settings = AppSettings.shared
     @ObservedObject private var license = LicenseService.shared
+    /// The Screen Agent comment this conversation is about, if any.
+    @State private var anchor: ScreenAgentThreadAnchor?
     @State private var inputText: String = ""
     @State private var isSending: Bool = false
     @State private var errorMsg: String?
@@ -44,6 +46,15 @@ struct ChatView: View {
         // (matches the expected "click chip → answer" UX). Without auto-submit
         // the chip felt like a dead-end — text appeared in the input box and
         // nothing happened until the user manually pressed Enter.
+        // ITER-068 — a card asked to be continued. The comment and the screen it
+        // came from are pinned for this conversation; the question stays the
+        // user's to write.
+        .onReceive(NotificationCenter.default.publisher(for: .screenAgentAnchorChat)) { notification in
+            if let anchor = notification.object as? ScreenAgentThreadAnchor {
+                self.anchor = anchor
+                inputFocused = true
+            }
+        }
         .onReceive(NotificationCenter.default.publisher(for: .proactivePrefillChat)) { notification in
             if let q = notification.object as? String, !q.isEmpty {
                 inputText = q
@@ -261,6 +272,38 @@ struct ChatView: View {
 
     private var inputBar: some View {
         VStack(spacing: 0) {
+            // ITER-068 — say plainly what this conversation is anchored to, and
+            // when that screen was seen. Without it the user cannot tell whether
+            // an answer is about the comment or about whatever is in front of
+            // them now.
+            if let anchor {
+                HStack(spacing: 8) {
+                    Image(systemName: "quote.opening")
+                        .font(.system(size: 10))
+                        .foregroundStyle(.secondary)
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text(anchor.headline)
+                            .font(.system(size: 11, weight: .medium))
+                            .lineLimit(1)
+                        Text("\(anchor.sourceApp) · \(ScreenAgentThreadAnchor.relativeAge(from: anchor.capturedAt, to: Date()))")
+                            .font(.system(size: 9, design: .monospaced))
+                            .foregroundStyle(.tertiary)
+                    }
+                    Spacer(minLength: 0)
+                    Button {
+                        self.anchor = nil
+                    } label: {
+                        Image(systemName: "xmark.circle.fill")
+                            .font(.system(size: 11))
+                            .foregroundStyle(.tertiary)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Stop asking about this comment")
+                }
+                .padding(.horizontal, 16)
+                .padding(.vertical, 8)
+                .background(Color.accentColor.opacity(0.07))
+            }
             if let err = errorMsg {
                 Text(err)
                     .font(MW.monoSm)
@@ -306,6 +349,16 @@ struct ChatView: View {
         let text = inputText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty, !isSending else { return }
         inputText = ""
+        // ITER-068 — the anchored comment goes with the first question only.
+        // After that the conversation has its own history and repeating it
+        // would just crowd the context.
+        let outgoing: String
+        if let anchor {
+            outgoing = anchor.frozenContextBlock() + "\n\n" + text
+            self.anchor = nil
+        } else {
+            outgoing = text
+        }
         isSending = true
         errorMsg = nil
         Task { @MainActor in
@@ -314,7 +367,7 @@ struct ChatView: View {
                 isSending = false
                 return
             }
-            await appDelegate.chatService.send(text)
+            await appDelegate.chatService.send(outgoing)
             if let err = appDelegate.chatService.lastError {
                 errorMsg = err
             }

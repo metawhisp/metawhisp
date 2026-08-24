@@ -121,6 +121,11 @@ final class ProactiveContextService: ObservableObject {
         // ITER-064A.9 — snapshot before any await, checked again after the model
         // call: the user can delete their screen history mid-flight.
         let epoch = purgeEpoch
+        // ITER-067 — one identity for this whole analysis, minted before any
+        // work. Delivery is idempotent by it, so a run that somehow reports
+        // twice cannot leave the user with the same comment twice. Minting it
+        // at the point of delivery instead would have made that check inert.
+        let runID = UUID()
         // ── Hard gates ────────────────────────────────────────────────
         guard settings.proactiveEnabled else { return }
         guard !isRunning else { return }
@@ -189,7 +194,7 @@ final class ProactiveContextService: ObservableObject {
 
         guard let delivery = AppDelegate.shared?.screenAgentDelivery else { return }
         let item = ScreenAgentItem(
-            runID: UUID(),
+            runID: runID,
             headline: titleText,
             body: bodyText,
             sourceApp: ctx.appName,

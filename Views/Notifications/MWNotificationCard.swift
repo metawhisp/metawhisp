@@ -124,4 +124,11 @@ extension Notification.Name {
     /// `object: String` = the query to pre-fill in MetaChat input. ChatView
     /// listens via `.onReceive(...)` and writes it into its input field.
     static let proactivePrefillChat = Notification.Name("MetaWhisp.proactivePrefillChat")
+
+    /// ITER-068 — "continue this comment". Carries a `ScreenAgentThreadAnchor`,
+    /// not a question: the user writes their own.
+    static let screenAgentAnchorChat = Notification.Name("MetaWhisp.screenAgentAnchorChat")
+
+    /// Switch the MetaChat pane back to the conversation.
+    static let screenAgentShowChatPane = Notification.Name("MetaWhisp.screenAgentShowChatPane")
 }
