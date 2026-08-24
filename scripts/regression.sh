@@ -58,6 +58,7 @@ CRITICAL_SUITES=(
     DeadMicDetectorTests
     # screen capture privacy + freshness
     ScreenContextPolicyTests
+    ContextVisitCoordinatorTests
     CaptureHighWaterMarkTests
     ScreenContextFanoutTests
     ScreenExtractorVisitIndexTests

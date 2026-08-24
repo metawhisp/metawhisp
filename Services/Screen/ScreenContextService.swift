@@ -304,6 +304,9 @@ final class ScreenContextService: ObservableObject {
     private func logSuppressedCaptureIfNeeded(appName: String, whitelist: Set<String>?) {
         guard let whitelist, whitelist.isEmpty else { return }
         guard !loggedSuppressedApps.contains(appName) else { return }
+        // Codex review — bounded. One line per app is the point; an unbounded
+        // set of every app name ever focused is not worth keeping around.
+        if loggedSuppressedApps.count >= 64 { loggedSuppressedApps.removeAll() }
         loggedSuppressedApps.insert(appName)
         NSLog("[ScreenContext] Not capturing %@ — allowlist mode is on with no apps listed. Add apps in Settings, or switch to blacklist mode.", appName)
     }
