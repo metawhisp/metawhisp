@@ -24,8 +24,8 @@ final class HistoryService: ObservableObject {
     init() {
         do {
             // ITER-049 B — versioned schema + migration plan (AUD-007).
-            // ITER-057.2 — live shape is V3 (adds TaskItem.relevanceScore);
-            // existing V1/V2 stores migrate through the plan's lightweight stages.
+            // ITER-067 — live shape is V4 (adds ScreenAgentItem); existing
+            // V1/V2/V3 stores migrate through the plan's lightweight stages.
             let schema = Schema(versionedSchema: MetaWhispSchemaV4.self)
             let config = ModelConfiguration("MetaWhisp", schema: schema)
             modelContainer = try ModelContainer(
@@ -43,8 +43,13 @@ final class HistoryService: ObservableObject {
             StoreHealthSignal.shared.set(healthy: false)   // ITER-049 A2 — reachable by singleton hooks
             Self.log.error("Store DEGRADED — running a temporary in-memory session; original store preserved")
             do {
+                // ITER-067 — derived from the versioned schema rather than a
+                // hand-kept list. The list had already fallen behind by one
+                // entity: a degraded session would have crashed the moment
+                // anything touched the new one, which is exactly when the app
+                // can least afford another failure.
                 modelContainer = try ModelContainer(
-                    for: HistoryItem.self, ScreenContext.self, AdviceItem.self, UserMemory.self, TaskItem.self, ChatMessage.self, Conversation.self, ScreenObservation.self, IndexedFile.self, DailySummary.self, Goal.self, ProjectAlias.self, AuditLog.self, PatternDigest.self,
+                    for: Schema(versionedSchema: MetaWhispSchemaV4.self),
                     configurations: ModelConfiguration(isStoredInMemoryOnly: true))
             } catch {
                 Self.log.error("In-memory fallback also failed: \(error)")

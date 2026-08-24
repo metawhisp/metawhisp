@@ -51,10 +51,10 @@ final class SchemaMigrationTests: XCTestCase {
         }
 
         // 2. Reopen the SAME file under the latest schema + the migration plan.
-        let v3Schema = Schema(versionedSchema: MetaWhispSchemaV3.self)
-        let cfg2 = ModelConfiguration(schema: v3Schema, url: storeURL)
+        let latestSchema = Schema(versionedSchema: MetaWhispSchemaV4.self)
+        let cfg2 = ModelConfiguration(schema: latestSchema, url: storeURL)
         let container2 = try ModelContainer(
-            for: v3Schema, migrationPlan: MetaWhispMigrationPlan.self, configurations: [cfg2])
+            for: latestSchema, migrationPlan: MetaWhispMigrationPlan.self, configurations: [cfg2])
         let ctx2 = ModelContext(container2)
 
         // 3. Rows intact; migrated rows carry nil in the added columns.
@@ -88,10 +88,10 @@ final class SchemaMigrationTests: XCTestCase {
             try ctx.save()
         }
 
-        let v3Schema = Schema(versionedSchema: MetaWhispSchemaV3.self)
-        let cfg = ModelConfiguration(schema: v3Schema, url: storeURL)
+        let latestSchema = Schema(versionedSchema: MetaWhispSchemaV4.self)
+        let cfg = ModelConfiguration(schema: latestSchema, url: storeURL)
         let container = try ModelContainer(
-            for: v3Schema, migrationPlan: MetaWhispMigrationPlan.self, configurations: [cfg])
+            for: latestSchema, migrationPlan: MetaWhispMigrationPlan.self, configurations: [cfg])
         let ctx = ModelContext(container)
         let tasks = try ctx.fetch(FetchDescriptor<TaskItem>())
         XCTAssertEqual(tasks.count, 1)
@@ -100,10 +100,10 @@ final class SchemaMigrationTests: XCTestCase {
     }
 
     func testFreshStoreCreatesUnderV3() throws {
-        let v3Schema = Schema(versionedSchema: MetaWhispSchemaV3.self)
-        let cfg = ModelConfiguration(schema: v3Schema, url: storeURL)
+        let latestSchema = Schema(versionedSchema: MetaWhispSchemaV4.self)
+        let cfg = ModelConfiguration(schema: latestSchema, url: storeURL)
         XCTAssertNoThrow(try ModelContainer(
-            for: v3Schema, migrationPlan: MetaWhispMigrationPlan.self, configurations: [cfg]))
+            for: latestSchema, migrationPlan: MetaWhispMigrationPlan.self, configurations: [cfg]))
     }
 
     /// The frozen V1 observation shape must stay frozen: this pins its fields
@@ -142,10 +142,10 @@ final class SchemaMigrationTests: XCTestCase {
             throw XCTSkip("Set MW_REAL_STORE_COPY to a copy of the real store to run this proof")
         }
         let url = URL(fileURLWithPath: path)
-        let v3Schema = Schema(versionedSchema: MetaWhispSchemaV3.self)
-        let cfg = ModelConfiguration(schema: v3Schema, url: url)
+        let latestSchema = Schema(versionedSchema: MetaWhispSchemaV4.self)
+        let cfg = ModelConfiguration(schema: latestSchema, url: url)
         let container = try ModelContainer(
-            for: v3Schema, migrationPlan: MetaWhispMigrationPlan.self, configurations: [cfg])
+            for: latestSchema, migrationPlan: MetaWhispMigrationPlan.self, configurations: [cfg])
         let ctx = ModelContext(container)
         let memories = try ctx.fetch(FetchDescriptor<UserMemory>()).count
         let tasks = try ctx.fetch(FetchDescriptor<TaskItem>()).count
@@ -155,5 +155,57 @@ final class SchemaMigrationTests: XCTestCase {
         print("[RealStoreVerify] memories=\(memories) tasks=\(tasks) conversations=\(convos) history=\(history) observations=\(observations)")
         XCTAssertGreaterThan(memories + tasks + convos + history, 0,
                              "real store must open under the latest schema with its data intact (lightweight migration)")
+    }
+}
+
+extension SchemaMigrationTests {
+
+    /// ITER-067 — the store on a real user's disk is V3. It has their
+    /// dictations, meetings, tasks and memories in it, and this is the change
+    /// that asks it to become V4. A lightweight stage adding one entity should
+    /// be safe; "should be" is not a thing to find out from a bug report.
+    func test_v3StoreOpensAsV4WithEverythingIntact() throws {
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("mw-v3-to-v4-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let storeURL = dir.appendingPathComponent("store.sqlite")
+
+        // A V3 store with the user's real kinds of data in it.
+        do {
+            let v3 = Schema(versionedSchema: MetaWhispSchemaV3.self)
+            let container = try ModelContainer(
+                for: v3, configurations: [ModelConfiguration(schema: v3, url: storeURL)])
+            let ctx = ModelContext(container)
+            ctx.insert(TaskItem(taskDescription: "Send the deck", status: "staged"))
+            ctx.insert(UserMemory(content: "Prefers async updates", category: "system",
+                                  sourceApp: "Slack", confidence: 0.9))
+            ctx.insert(ScreenContext(appName: "Slack", windowTitle: "#launch", ocrText: "hello"))
+            try ctx.save()
+        }
+
+        // Reopen it the way the shipped app will.
+        let latest = Schema(versionedSchema: MetaWhispSchemaV4.self)
+        let container = try ModelContainer(
+            for: latest, migrationPlan: MetaWhispMigrationPlan.self,
+            configurations: [ModelConfiguration(schema: latest, url: storeURL)])
+        let ctx = ModelContext(container)
+
+        XCTAssertEqual(try ctx.fetch(FetchDescriptor<TaskItem>()).count, 1,
+                       "a V3 store must keep its tasks")
+        XCTAssertEqual(try ctx.fetch(FetchDescriptor<UserMemory>()).count, 1,
+                       "a V3 store must keep its memories")
+        XCTAssertEqual(try ctx.fetch(FetchDescriptor<ScreenContext>()).count, 1,
+                       "a V3 store must keep its screen history")
+        XCTAssertEqual(try ctx.fetch(FetchDescriptor<ScreenAgentItem>()).count, 0,
+                       "the new entity starts empty rather than inventing rows")
+
+        // And the new entity is usable straight away, not merely declared.
+        let item = ScreenAgentItem(
+            runID: UUID(), headline: "Anna is waiting for the deck",
+            body: "", sourceApp: "Slack", sourceWindowTitle: "#launch", capturedAt: Date())
+        ctx.insert(item)
+        try ctx.save()
+        XCTAssertEqual(try ctx.fetch(FetchDescriptor<ScreenAgentItem>()).count, 1)
     }
 }
