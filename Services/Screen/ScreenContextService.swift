@@ -175,7 +175,10 @@ final class ScreenContextService: ObservableObject {
         guard ScreenContextPolicy.isCaptureAllowed(
             appName: appName, bundleID: bundleID,
             blacklist: policy.blacklist, whitelist: policy.whitelist
-        ) else { return }
+        ) else {
+            lastCaptureOutcome = .excluded
+            return
+        }
 
         let windowTitle = getActiveWindowTitle(pid: frontApp.processIdentifier) ?? ""
         let currentCall = SystemAudioCaptureService.detectCallContext(
@@ -217,7 +220,10 @@ final class ScreenContextService: ObservableObject {
     func captureNow() async -> ScreenContextSnapshot? {
         // AUD-023 — respect the master toggle. If the user turned Screen Context
         // off, do NOT capture the screen even for an on-demand voice question.
-        guard AppSettings.shared.screenContextEnabled else { return nil }
+        guard AppSettings.shared.screenContextEnabled else {
+            lastCaptureOutcome = .excluded
+            return nil
+        }
         // AUD-021 — apply the user's blacklist/whitelist here too (not only the
         // default password-app list), so an excluded app isn't captured on demand.
         let policy = currentPolicy()
@@ -369,36 +375,62 @@ final class ScreenContextService: ObservableObject {
     private func captureScreenshot(frontPID: pid_t) async -> CGImage? {
         guard #available(macOS 14.0, *) else { return nil }
 
+        guard CGPreflightScreenCaptureAccess() else {
+            lastCaptureOutcome = .permissionDenied
+            return nil
+        }
+
         do {
             let content = try await SCShareableContent.current
-            guard let display = content.displays.first else { return nil }
 
-            // AUD-022 — capture only the front app's content. Exclude every window
-            // not owned by the front app so a password manager / private chat
-            // visible beside the focused app is never OCR'd into history or AI.
+            // ITER-065.8 — AUD-022 excluded other apps but kept every window of
+            // the front app and captured a whole display, so two windows of one
+            // app were merged into one blob and a second monitor was ignored
+            // entirely. Bounds, on-screen state and window level come along now;
+            // the old mapping supplied only id and pid, leaving every rectangle
+            // zero.
             let refs = content.windows.map {
                 ActiveAppCaptureFilter.WindowRef(
                     id: Int($0.windowID),
-                    ownerPID: Int($0.owningApplication?.processID ?? -1)
+                    ownerPID: Int($0.owningApplication?.processID ?? -1),
+                    bounds: $0.frame,
+                    isOnScreen: $0.isOnScreen,
+                    layer: $0.windowLayer
                 )
             }
-            let excludeIDs = Set(ActiveAppCaptureFilter.windowsToExclude(refs, frontPID: Int(frontPID)))
-            let excludeWindows = content.windows.filter { excludeIDs.contains(Int($0.windowID)) }
 
-            let filter = SCContentFilter(display: display, excludingWindows: excludeWindows)
+            let selection = ActiveAppCaptureFilter.selectFocusedWindow(
+                refs,
+                frontPID: Int(frontPID),
+                focusedBounds: focusedWindowBounds(pid: frontPID)
+            )
+            guard case .window(let chosenID) = selection else {
+                // Reading every candidate and labelling the result with one of
+                // them would be confidently wrong, so nothing is read.
+                lastCaptureOutcome = selection == .ambiguous ? .ambiguousWindow : .captureFailed
+                return nil
+            }
+            guard let window = content.windows.first(where: { Int($0.windowID) == chosenID }) else {
+                lastCaptureOutcome = .captureFailed
+                return nil
+            }
+
+            // Include-only. Filtering a display down by exclusions would still
+            // carry every sibling window of the same app.
+            let filter = SCContentFilter(desktopIndependentWindow: window)
             let config = SCStreamConfiguration()
-            config.width = Int(display.width)
-            config.height = Int(display.height)
+            config.width = Int(window.frame.width)
+            config.height = Int(window.frame.height)
             config.pixelFormat = kCVPixelFormatType_32BGRA
             config.showsCursor = false
 
-            let image = try await SCScreenshotManager.captureImage(
+            return try await SCScreenshotManager.captureImage(
                 contentFilter: filter,
                 configuration: config
             )
-            return image
         } catch {
             NSLog("[ScreenContext] Screenshot failed: %@", error.localizedDescription)
+            lastCaptureOutcome = .captureFailed
             return nil
         }
     }
@@ -434,6 +466,32 @@ final class ScreenContextService: ObservableObject {
     }
 
     /// Get the title of the active window using Accessibility API.
+    /// Screen rectangle of the app's focused window, from Accessibility.
+    ///
+    /// ITER-065.8 — this is what tells two windows of one app apart. Without it
+    /// the capture had no way to know which of them the user was reading, so it
+    /// took all of them and merged the text.
+    private func focusedWindowBounds(pid: pid_t) -> CGRect? {
+        let appElement = AXUIElementCreateApplication(pid)
+        var focused: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(appElement, kAXFocusedWindowAttribute as CFString, &focused) == .success,
+              let window = focused else { return nil }
+        let element = window as! AXUIElement
+
+        var positionValue: CFTypeRef?
+        var sizeValue: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(element, kAXPositionAttribute as CFString, &positionValue) == .success,
+              AXUIElementCopyAttributeValue(element, kAXSizeAttribute as CFString, &sizeValue) == .success
+        else { return nil }
+
+        var origin = CGPoint.zero
+        var size = CGSize.zero
+        guard AXValueGetValue(positionValue as! AXValue, .cgPoint, &origin),
+              AXValueGetValue(sizeValue as! AXValue, .cgSize, &size)
+        else { return nil }
+        return CGRect(origin: origin, size: size)
+    }
+
     private func getActiveWindowTitle(pid: pid_t) -> String? {
         let appElement = AXUIElementCreateApplication(pid)
         var focusedWindow: CFTypeRef?
