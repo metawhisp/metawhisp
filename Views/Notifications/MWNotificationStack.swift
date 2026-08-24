@@ -27,6 +27,15 @@ final class MWNotificationStack: ObservableObject {
 
     private init() {}
 
+    /// Tell the durable record what became of a Screen Agent card. Cards that
+    /// are not Screen Agent comments carry no item ID and are ignored.
+    private func recordScreenAgentOutcome(_ card: MWNotification,
+                                          _ interaction: ScreenAgentDelivery.Interaction) {
+        guard let itemID = card.screenAgentItemID else { return }
+        AppDelegate.shared?.screenAgentDelivery?.recordInteraction(interaction, itemID: itemID)
+    }
+
+
     // MARK: - Public
 
     /// Push a new card. If the stack is full, drops the oldest.
@@ -34,6 +43,10 @@ final class MWNotificationStack: ObservableObject {
         // FIFO drop when over cap.
         while items.count >= maxStack, let oldest = items.last {
             cancelFade(for: oldest.id)
+            // It was on screen; it may not have been read. That is a different
+            // fact from the user closing it, and recording it as nothing at all
+            // is how a comment silently ceases to exist.
+            recordScreenAgentOutcome(oldest, .replaced)
             items.removeLast()
         }
         // Insert at index 0 so the newest is at the top of the visual stack.
@@ -49,7 +62,14 @@ final class MWNotificationStack: ObservableObject {
     }
 
     /// Dismiss one card by id. No-op if not present.
-    func dismiss(id: UUID) {
+    ///
+    /// `reason` separates the user closing a card from it fading out on its
+    /// own. Treating a timeout as a dismissal would teach the product that
+    /// silence is rejection.
+    func dismiss(id: UUID, reason: ScreenAgentDelivery.Interaction = .dismissed) {
+        if let card = items.first(where: { $0.id == id }) {
+            recordScreenAgentOutcome(card, reason)
+        }
         cancelFade(for: id)
         withAnimation(.easeOut(duration: 0.2)) {
             items.removeAll { $0.id == id }
@@ -85,7 +105,9 @@ final class MWNotificationStack: ObservableObject {
         fadeTasks[id] = Task { @MainActor [weak self] in
             try? await Task.sleep(for: .seconds(self?.autoDismissSeconds ?? 6))
             guard !Task.isCancelled else { return }
-            self?.dismiss(id: id)
+            // Faded out on its own — nobody closed it, and nobody may have read
+            // it either.
+            self?.dismiss(id: id, reason: .timedOut)
         }
     }
 

@@ -55,6 +55,22 @@ final class ScreenAgentDeliveryService {
     private let container: ModelContainer
     private var lastPresentedAt: Date?
 
+    /// Pacing has to outlive the process. Keeping it only in memory meant a
+    /// relaunch reset the user's chosen quiet interval and the next comment
+    /// could arrive immediately — the app forgetting a preference precisely
+    /// because it restarted.
+    private var lastPresentedAtPersisted: Date? {
+        get {
+            let seconds = UserDefaults.standard.double(forKey: Self.lastPresentedKey)
+            return seconds > 0 ? Date(timeIntervalSince1970: seconds) : nil
+        }
+        set {
+            UserDefaults.standard.set(newValue?.timeIntervalSince1970 ?? 0, forKey: Self.lastPresentedKey)
+        }
+    }
+
+    private static let lastPresentedKey = "screenAgentLastPresentedAt"
+
     init(container: ModelContainer) {
         self.container = container
     }
@@ -76,17 +92,29 @@ final class ScreenAgentDeliveryService {
             predicate: #Predicate { $0.runID == runID }
         )
         existing.fetchLimit = 1
-        if let already = try? context.fetch(existing), !already.isEmpty {
-            NSLog("[ScreenAgentDelivery] run %@ already produced an item — not duplicating",
-                  runID.uuidString)
+        do {
+            if try !context.fetch(existing).isEmpty {
+                NSLog("[ScreenAgentDelivery] run %@ already produced an item — not duplicating",
+                      runID.uuidString)
+                return nil
+            }
+        } catch {
+            // A failed duplicate check is not proof there is no duplicate.
+            // Reading it as "go ahead" is how one comment becomes two.
+            NSLog("[ScreenAgentDelivery] duplicate check failed (%@) — not delivering",
+                  error.localizedDescription)
             return nil
         }
 
         let decision = Self.decide(preflight)
         switch decision {
         case .present:
-            item.deliveryOutcome = ScreenAgentDelivery.Outcome.presented.rawValue
-            item.deliveredAt = Date()
+            // Still pending. Writing `presented` here would be a claim about
+            // something that has not happened yet: the popup is built and
+            // pushed afterwards, and a quit or a render failure in between
+            // would leave durable history saying the user saw something they
+            // never did. `confirmPresented` is what makes it true.
+            item.deliveryOutcome = ScreenAgentDelivery.Outcome.pending.rawValue
         case .suppress(let reason):
             item.deliveryOutcome = ScreenAgentDelivery.Outcome.suppressed.rawValue
             item.suppressionReason = reason.rawValue
@@ -108,15 +136,35 @@ final class ScreenAgentDeliveryService {
                   item.suppressionReason ?? "?")
             return nil
         }
-        lastPresentedAt = Date()
         return item
+    }
+
+    /// The card is on screen. Only now is `presented` a fact, and only now does
+    /// pacing start counting — advancing it earlier would let a comment nobody
+    /// saw hold back the next one.
+    func confirmPresented(itemID: UUID) {
+        let context = ModelContext(container)
+        var descriptor = FetchDescriptor<ScreenAgentItem>(predicate: #Predicate { $0.id == itemID })
+        descriptor.fetchLimit = 1
+        guard let item = (try? context.fetch(descriptor))?.first else { return }
+        item.deliveryOutcome = ScreenAgentDelivery.Outcome.presented.rawValue
+        item.deliveredAt = Date()
+        do {
+            try context.save()
+        } catch {
+            NSLog("[ScreenAgentDelivery] could not record presentation: %@", error.localizedDescription)
+            return
+        }
+        lastPresentedAt = Date()
+        lastPresentedAtPersisted = Date()
     }
 
     /// Seconds since the last comment the user actually saw. Pacing counts
     /// presentations, not generations — otherwise a quiet period spent
     /// suppressing things reads as a busy one.
     var secondsSinceLastPresented: TimeInterval? {
-        lastPresentedAt.map { Date().timeIntervalSince($0) }
+        let last = lastPresentedAt ?? lastPresentedAtPersisted
+        return last.map { Date().timeIntervalSince($0) }
     }
 
     /// Record what the user did, separately from whether it was shown.
@@ -127,13 +175,24 @@ final class ScreenAgentDeliveryService {
         )
         descriptor.fetchLimit = 1
         guard let item = (try? context.fetch(descriptor))?.first else { return }
+        // First answer wins. A card can be opened and then also time out, and
+        // overwriting `opened` with `timedOut` would turn something the user
+        // acted on into something they ignored.
+        guard item.interaction == ScreenAgentDelivery.Interaction.none.rawValue else { return }
         item.interaction = interaction.rawValue
         item.interactedAt = Date()
-        try? context.save()
+        do {
+            try context.save()
+        } catch {
+            NSLog("[ScreenAgentDelivery] could not record interaction: %@", error.localizedDescription)
+        }
     }
 
     /// Newest first, for the Inbox.
-    func recentItems(limit: Int = 100) -> [ScreenAgentItem] {
+    /// Newest first. The cap used to be 100 with no way past it, so a comment
+    /// older than that stayed in the database and vanished from every filter —
+    /// durable in name only.
+    func recentItems(limit: Int = 500) -> [ScreenAgentItem] {
         let context = ModelContext(container)
         var descriptor = FetchDescriptor<ScreenAgentItem>(
             sortBy: [SortDescriptor(\.createdAt, order: .reverse)]

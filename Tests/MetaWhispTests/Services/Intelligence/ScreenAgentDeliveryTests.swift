@@ -109,3 +109,42 @@ final class ScreenAgentDeliveryTests: XCTestCase {
         XCTAssertTrue(ScreenAgentDelivery.Interaction.allCases.contains(.later))
     }
 }
+
+/// The Codex review of ITER-067 called two things critical, and both were about
+/// the record telling the truth rather than about anything the user clicks.
+extension ScreenAgentDeliveryTests {
+
+    /// `presented` used to be written before the popup was built. A quit or a
+    /// render failure in between left durable history claiming the user saw
+    /// something that never appeared — the one number the whole feature is
+    /// judged on, quietly inflated.
+    func testAnItemStartsPendingRatherThanClaimingItWasShown() {
+        let item = ScreenAgentItem(
+            runID: UUID(), headline: "h", body: "b",
+            sourceApp: "Slack", sourceWindowTitle: "#launch", capturedAt: Date())
+        XCTAssertEqual(item.deliveryOutcome, ScreenAgentDelivery.Outcome.pending.rawValue)
+        XCTAssertNil(item.deliveredAt)
+    }
+
+    /// A card can be opened and then also time out. Letting the later event win
+    /// would turn something the user acted on into something they ignored.
+    func testTheVocabularySeparatesActingFromIgnoring() {
+        XCTAssertNotEqual(ScreenAgentDelivery.Interaction.opened,
+                          ScreenAgentDelivery.Interaction.timedOut)
+        XCTAssertNotEqual(ScreenAgentDelivery.Interaction.dismissed,
+                          ScreenAgentDelivery.Interaction.timedOut)
+        // Pushed off the stack by newer cards: shown, possibly unread. Not the
+        // same as the user closing it.
+        XCTAssertNotEqual(ScreenAgentDelivery.Interaction.replaced,
+                          ScreenAgentDelivery.Interaction.dismissed)
+    }
+
+    /// Suppression reasons are what the Inbox shows instead of leaving the user
+    /// wondering whether they missed something.
+    func testEverySuppressionReasonIsNameable() {
+        for reason in ScreenAgentDelivery.SuppressionReason.allCases {
+            XCTAssertFalse(reason.rawValue.isEmpty)
+        }
+        XCTAssertEqual(ScreenAgentDelivery.SuppressionReason.allCases.count, 7)
+    }
+}

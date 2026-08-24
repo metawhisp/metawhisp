@@ -19,6 +19,7 @@ struct ScreenAgentInboxView: View {
     @State private var filter: Filter = .new
     @State private var items: [ScreenAgentItem] = []
     @State private var selectedID: UUID?
+    @FocusState private var focusedID: UUID?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -39,6 +40,13 @@ struct ScreenAgentInboxView: View {
                     LazyVStack(spacing: 0) {
                         ForEach(visible, id: \.id) { item in
                             row(item)
+                                .focusable()
+                                .focused($focusedID, equals: item.id)
+                                // Return opens the comment in conversation, the
+                                // same thing the mouse does. Without it the
+                                // whole surface was mouse-only.
+                                .onKeyPress(.return) { ask(item); return .handled }
+                                .onKeyPress(.space) { ask(item); return .handled }
                             Divider()
                         }
                     }
@@ -46,6 +54,12 @@ struct ScreenAgentInboxView: View {
             }
         }
         .onAppear(perform: reload)
+        .onReceive(NotificationCenter.default.publisher(for: .screenAgentOpenItem)) { _ in
+            // The view may already be mounted, in which case onAppear never
+            // fires again and a clicked card would land on whatever was last
+            // being looked at.
+            reload()
+        }
         .onReceive(NotificationCenter.default.publisher(
             for: NSApplication.didBecomeActiveNotification)) { _ in reload() }
     }
@@ -100,10 +114,21 @@ struct ScreenAgentInboxView: View {
         .padding(.horizontal, 16)
         .padding(.vertical, 12)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(item.id == selectedID ? Color.accentColor.opacity(0.08) : .clear)
+        .background(highlight(item))
+        .overlay(alignment: .leading) {
+            // A visible focus ring, not just a tint: keyboard users need to see
+            // where they are.
+            if focusedID == item.id {
+                Rectangle().fill(Color.accentColor).frame(width: 3)
+            }
+        }
         .contentShape(Rectangle())
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel("\(item.sourceApp): \(item.headline). \(item.body)")
+        .onTapGesture { ask(item) }
+        // `.contain` rather than `.combine`: the buttons inside stay reachable
+        // as their own elements instead of being flattened into the label.
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel(accessibilityLabel(item))
+        .accessibilityHint("Press Return to continue this comment in the conversation")
     }
 
     /// Says plainly why a comment never interrupted, instead of leaving the
@@ -128,6 +153,23 @@ struct ScreenAgentInboxView: View {
         return Text(text)
             .font(.system(size: 9, design: .monospaced))
             .foregroundStyle(.tertiary)
+    }
+
+    private func highlight(_ item: ScreenAgentItem) -> Color {
+        if focusedID == item.id { return Color.accentColor.opacity(0.12) }
+        if item.id == selectedID { return Color.accentColor.opacity(0.08) }
+        return .clear
+    }
+
+    /// Reads the whole row in one breath, including why it was held back —
+    /// a sighted user gets that from the badge.
+    private func accessibilityLabel(_ item: ScreenAgentItem) -> String {
+        var parts = ["\(item.sourceApp), \(relativeAge(item.capturedAt))", item.headline]
+        if !item.body.isEmpty { parts.append(item.body) }
+        if item.deliveryOutcome == ScreenAgentDelivery.Outcome.suppressed.rawValue {
+            parts.append("Held back, not shown at the time")
+        }
+        return parts.joined(separator: ". ")
     }
 
     private var emptyState: some View {

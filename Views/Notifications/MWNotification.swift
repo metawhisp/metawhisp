@@ -15,26 +15,36 @@ struct MWNotification: Identifiable {
     let title: String
     let body: String
     let createdAt: Date
+    /// ITER-067 — the durable Screen Agent comment this card is showing, when
+    /// it is showing one. Lets the stack report what became of the card:
+    /// timed out, closed, or pushed off by newer ones. Without it those all
+    /// looked identical to "nothing happened", and a comment the user never got
+    /// to read was indistinguishable from one they ignored.
+    var screenAgentItemID: UUID?
+
     /// Click → execute. Pass `nil` for purely informational cards.
     let onTap: (@MainActor () -> Void)?
 
     init(
+        id: UUID = UUID(),
         kind: Kind,
         title: String,
         body: String,
         onTap: (@MainActor () -> Void)? = nil,
+        screenAgentItemID: UUID? = nil,
         proactiveItems: Void? = nil
     ) {
         // ITER-027.5 — `proactiveItems` parameter retained as a no-op for
         // the few call sites that still pass `proactiveItems: nil`. They'll
         // be cleaned up in a follow-up; for now this keeps the diff minimal.
         _ = proactiveItems
-        self.id = UUID()
+        self.id = id
         self.kind = kind
         self.title = title
         self.body = body
         self.createdAt = Date()
         self.onTap = onTap
+        self.screenAgentItemID = screenAgentItemID
     }
 
     enum Kind {

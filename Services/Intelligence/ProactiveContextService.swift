@@ -121,11 +121,12 @@ final class ProactiveContextService: ObservableObject {
         // ITER-064A.9 — snapshot before any await, checked again after the model
         // call: the user can delete their screen history mid-flight.
         let epoch = purgeEpoch
-        // ITER-067 — one identity for this whole analysis, minted before any
-        // work. Delivery is idempotent by it, so a run that somehow reports
-        // twice cannot leave the user with the same comment twice. Minting it
-        // at the point of delivery instead would have made that check inert.
-        let runID = UUID()
+        // ITER-067 — the identity of this run. There is one analysis per
+        // captured context, so the context's own ID is the stable surrogate
+        // until a durable run record exists: a fresh UUID per call made the
+        // idempotency check inert, and one minted here would still not survive
+        // a relaunch mid-run.
+        let runID = ctx.id
         // ── Hard gates ────────────────────────────────────────────────
         guard settings.proactiveEnabled else { return }
         guard !isRunning else { return }
@@ -208,8 +209,14 @@ final class ProactiveContextService: ObservableObject {
             isPaused: settings.screenAgentPaused,
             meetingInProgress: AppDelegate.shared?.meetingRecorder.isRecording ?? false,
             pauseDuringMeetings: true,
-            // The purge fence above already proved this run is still wanted.
-            visitIsStillCurrent: epoch == purgeEpoch,
+            // ITER-067 — the purge fence only proves history was not deleted.
+            // The promise is narrower and more important: the user is still
+            // looking at the screen this is about. `lastAcceptedContextID` is
+            // whatever the capture path most recently committed, so a window
+            // switch during the model call retires this run rather than
+            // interrupting someone about a screen they left.
+            visitIsStillCurrent: epoch == purgeEpoch
+                && AppDelegate.shared?.screenContext.lastAcceptedContextID == ctx.id,
             secondsSinceLastPresented: delivery.secondsSinceLastPresented,
             minimumSecondsBetween: TimeInterval(max(60, settings.proactiveCooldownMinutes * 60)),
             popupSlotsFree: MWNotificationStack.shared.freeSlots
@@ -223,7 +230,11 @@ final class ProactiveContextService: ObservableObject {
 
         lastSurfaceAt = Date()
         let itemID = presented.id
+        // The record says `presented` only once the card is actually on screen.
+        defer { delivery.confirmPresented(itemID: itemID) }
+        let noteID = UUID()
         let note = MWNotification(
+            id: noteID,
             kind: .proactive,
             title: titleText,
             body: bodyText,
@@ -231,7 +242,11 @@ final class ProactiveContextService: ObservableObject {
                 AppDelegate.shared?.screenAgentDelivery?
                     .recordInteraction(.opened, itemID: itemID)
                 AppDelegate.shared?.openScreenAgentInbox(selecting: itemID)
+                // Opening it is the end of the card's life on screen; leaving
+                // it up invites repeated clicks that overwrite the record.
+                MWNotificationStack.shared.dismiss(id: noteID, reason: .opened)
             },
+            screenAgentItemID: itemID,
             proactiveItems: nil
         )
         MWNotificationStack.shared.push(note)

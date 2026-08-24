@@ -131,4 +131,11 @@ extension Notification.Name {
 
     /// Switch the MetaChat pane back to the conversation.
     static let screenAgentShowChatPane = Notification.Name("MetaWhisp.screenAgentShowChatPane")
+
+    /// A specific comment was asked for; the Inbox reloads and selects it even
+    /// when it is already on screen.
+    static let screenAgentOpenItem = Notification.Name("MetaWhisp.screenAgentOpenItem")
+
+    /// Switch the MetaChat pane to the Inbox.
+    static let screenAgentShowInboxPane = Notification.Name("MetaWhisp.screenAgentShowInboxPane")
 }

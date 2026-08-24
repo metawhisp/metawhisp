@@ -66,6 +66,9 @@ final class ScreenContextService: ObservableObject {
     /// did. Carries no screen content, so it is safe for health reporting.
     private(set) var lastCaptureOutcome: ScreenCaptureOutcome = .captured(ocrCharacters: 0)
 
+    /// ID of the most recently accepted screen row.
+    private(set) var lastAcceptedContextID: UUID?
+
     /// Fires after each newly-persisted ScreenContext (one per captured window change).
     /// Used by `RealtimeScreenReactor` (ITER-006) to do per-window LLM task checks with its
     /// own debounce/rate-limit. Hook layered on top of the polling loop — no extra timers.
@@ -459,6 +462,10 @@ final class ScreenContextService: ObservableObject {
         }
 
         lastCaptureOutcome = .captured(ocrCharacters: snapshot.ocrText.count)
+        // ITER-067 — the screen the user is on right now, as far as capture
+        // knows. Read at the last moment before interrupting, so a comment
+        // about a window they have already left can be recognised as such.
+        lastAcceptedContextID = record.id
 
         // Fire realtime hook for ITER-006 reactor (per-window LLM task check).
         // Callback handles its own guards/debounce — we just pass every persisted row.

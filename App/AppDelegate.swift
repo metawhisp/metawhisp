@@ -84,6 +84,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     func openScreenAgentInbox(selecting itemID: UUID) {
         pendingScreenAgentItemID = itemID
         openMainWindow(tab: .chat)
+        // The window and the pane may both already be where we want them, in
+        // which case nothing would otherwise redraw.
+        NotificationCenter.default.post(name: .screenAgentShowInboxPane, object: nil)
+        NotificationCenter.default.post(name: .screenAgentOpenItem, object: itemID)
     }
 
     /// The comment a click asked to open, read by the Inbox when it appears.
