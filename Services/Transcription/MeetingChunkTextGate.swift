@@ -18,26 +18,42 @@ import Foundation
 @MainActor
 enum MeetingChunkTextGate {
 
-    /// The text to keep, or `nil` to drop this chunk.
-    ///
+    /// What to do with this chunk. Carries the drop reason so the suspect log
+    /// keeps saying WHY a stretch of a call was discarded — a plain `nil`
+    /// collapsed three different causes into one label.
+    enum Decision: Equatable {
+        case keep(String)
+        case drop(reason: String)
+    }
+
     /// - Parameter rms: level of the decoded audio. A near-silent channel is
     ///   where Whisper invents filler, so a known filler phrase over silence is
     ///   still discarded — but quiet speech that says something real is not.
-    static func keep(text: String, rms: Float) -> String? {
+    static func decide(text: String, rms: Float) -> Decision {
         let stripped = TranscriptionCoordinator
             .stripHallucinationTokens(text)
             .trimmingCharacters(in: .whitespacesAndNewlines)
 
         // Nothing but the artifact was there.
-        guard !stripped.isEmpty else { return nil }
+        guard !stripped.isEmpty else { return .drop(reason: "artifact-only") }
 
         // Judge the remainder, not the original: gibberish and bare
         // subtitle-attribution lines still go.
-        guard !TranscriptionCoordinator.isAlwaysHallucination(stripped) else { return nil }
+        guard !TranscriptionCoordinator.isAlwaysHallucination(stripped) else {
+            return .drop(reason: "always-hallucination")
+        }
 
         // Filler invented over a silent channel.
-        if rms < 0.003, TranscriptionCoordinator.isHallucination(stripped) { return nil }
+        if rms < 0.003, TranscriptionCoordinator.isHallucination(stripped) {
+            return .drop(reason: "low-rms-hallucination")
+        }
 
-        return stripped
+        return .keep(stripped)
+    }
+
+    /// Convenience for callers that only need the surviving text.
+    static func keep(text: String, rms: Float) -> String? {
+        if case .keep(let kept) = decide(text: text, rms: rms) { return kept }
+        return nil
     }
 }

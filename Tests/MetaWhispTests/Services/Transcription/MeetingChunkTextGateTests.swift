@@ -35,9 +35,40 @@ final class MeetingChunkTextGateTests: XCTestCase {
         XCTAssertNil(MeetingChunkTextGate.keep(text: "привет hello こんにちは γεια", rms: 0.05))
     }
 
-    /// A near-silent channel that produced a known filler phrase stays dropped.
+    /// A near-silent channel that produced filler stays dropped — whether the
+    /// filler is a known artifact token (removed by stripping) or a repetition
+    /// loop (caught by the silence branch).
     func testLowRMSHallucinationIsDropped() {
         XCTAssertNil(MeetingChunkTextGate.keep(text: "Спасибо за просмотр", rms: 0.001))
+        XCTAssertNil(MeetingChunkTextGate.keep(
+            text: "ну и комьюнити ну и комьюнити ну и комьюнити ну и комьюнити ну и комьюнити",
+            rms: 0.001))
+    }
+
+    /// The same repetition over a channel that actually has level is NOT
+    /// discarded — a person really can repeat themselves, and the silence gate
+    /// is what separates the two cases.
+    func testTheSameRepetitionOverRealAudioIsKept() {
+        XCTAssertNotNil(MeetingChunkTextGate.keep(
+            text: "ну и комьюнити ну и комьюнити ну и комьюнити ну и комьюнити ну и комьюнити",
+            rms: 0.05))
+    }
+
+    /// The suspect log has to keep saying WHY, or a whole class of loss becomes
+    /// invisible in the diagnostics.
+    func testDropReasonsStayDistinct() {
+        XCTAssertEqual(MeetingChunkTextGate.decide(text: "Субтитры сделал DimaTorzok", rms: 0.05),
+                       .drop(reason: "artifact-only"))
+        XCTAssertEqual(MeetingChunkTextGate.decide(text: "привет hello こんにちは γεια", rms: 0.05),
+                       .drop(reason: "always-hallucination"))
+        // Not an artifact token, so stripping leaves it intact — it reaches the
+        // silence branch, where a phrase looping over a near-silent channel is
+        // what Whisper does instead of admitting it heard nothing.
+        XCTAssertEqual(
+            MeetingChunkTextGate.decide(
+                text: "ну и комьюнити ну и комьюнити ну и комьюнити ну и комьюнити ну и комьюнити",
+                rms: 0.001),
+            .drop(reason: "low-rms-hallucination"))
     }
 
     // MARK: the speech that used to go with it

@@ -2003,10 +2003,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
                 // These two checks used to run on the raw chunk text and
                 // `continue`, discarding a whole chunk of the call because an
                 // artifact was spliced into it. See `MeetingChunkTextGate`.
-                guard let text = MeetingChunkTextGate.keep(text: text, rms: rms) else {
-                    NSLog("[MetaWhisp] ⚠️  %@ chunk %d: nothing but artifact (RMS=%.4f): '%@'",
-                          label, i + 1, rms, String(text.prefix(60)))
-                    SuspectTranscriptLog.append(text, reason: "always-hallucination", context: "\(label) chunk \(i + 1)")  // TR-12
+                let decision = MeetingChunkTextGate.decide(text: text, rms: rms)
+                guard case .keep(let text) = decision else {
+                    guard case .drop(let reason) = decision else { continue }
+                    NSLog("[MetaWhisp] ⚠️  %@ chunk %d: dropped as %@ (RMS=%.4f): '%@'",
+                          label, i + 1, reason, rms, String(text.prefix(60)))
+                    SuspectTranscriptLog.append(text, reason: reason, context: "\(label) chunk \(i + 1)")  // TR-12
                     continue
                 }
 
