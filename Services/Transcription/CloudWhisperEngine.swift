@@ -119,6 +119,30 @@ final class CloudWhisperEngine: TranscriptionEngine, @unchecked Sendable {
         }
     }
 
+    /// How long to give one transcribe request, scaled to the audio it carries.
+    ///
+    /// This was a flat 60 seconds regardless of payload. Dictation fits in that;
+    /// meeting chunks do not. On 2026-08-24 six consecutive requests failed at
+    /// exactly the 60-second mark — a 167.9s chunk, a 104.8s chunk and a 149.4s
+    /// chunk, each attempted twice — and all three were dropped from the saved
+    /// transcript. Successful chunks that morning topped out around 130s of
+    /// audio, so the ceiling was landing mid-range, not at some extreme.
+    ///
+    /// Whether the 60 seconds was spent uploading or waiting for the server to
+    /// finish is not something the client log can separate. A budget that grows
+    /// with the audio covers both.
+    ///
+    /// The 60-second floor is deliberate: dictation is interactive, the user is
+    /// waiting, and a fast honest failure into Recovery beats a long hang. The
+    /// ceiling stops a dead server from holding a meeting finalize open forever.
+    nonisolated static func requestTimeout(forAudioSeconds seconds: Double) -> TimeInterval {
+        let floor: TimeInterval = 60
+        let ceiling: TimeInterval = 600
+        guard seconds.isFinite else { return seconds.isNaN ? floor : ceiling }
+        guard seconds > 0 else { return floor }
+        return min(ceiling, max(floor, 30 + seconds * 1.5))
+    }
+
     /// URLSession data with a quick retry ladder for transient transport
     /// errors (400ms, 800ms). Dictation used to make ONE attempt — a single
     /// DNS blip failed the whole recording into Recovery.
@@ -151,7 +175,7 @@ final class CloudWhisperEngine: TranscriptionEngine, @unchecked Sendable {
         request.setValue("Bearer \(licenseKey)", forHTTPHeaderField: "Authorization")
         request.setValue("audio/wav", forHTTPHeaderField: "Content-Type")
         request.httpBody = wavData
-        request.timeoutInterval = 60
+        request.timeoutInterval = Self.requestTimeout(forAudioSeconds: audioDuration)
 
         let (data, response) = try await dataWithTransientRetry(for: request, label: "PRO")
         let processingTime = CFAbsoluteTimeGetCurrent() - startTime
@@ -198,7 +222,8 @@ final class CloudWhisperEngine: TranscriptionEngine, @unchecked Sendable {
         request.httpMethod = "POST"
         request.setValue("Bearer \(apiKey.trimmingCharacters(in: .whitespacesAndNewlines))", forHTTPHeaderField: "Authorization")
         request.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
-        request.timeoutInterval = 60
+        // Same budget as the PRO path — a free-tier meeting chunks identically.
+        request.timeoutInterval = Self.requestTimeout(forAudioSeconds: audioDuration)
 
         var body = Data()
 

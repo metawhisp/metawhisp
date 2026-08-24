@@ -1889,6 +1889,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     /// Each surviving chunk produces one StreamSegment whose start/end seconds
     /// reflect the chunk's position in the original buffer (for downstream
     /// time-sorted merge with the other channel).
+    /// Longest meeting chunk the finalize pass will send in one request.
+    ///
+    /// Was 300. Paired with a flat 60-second request budget that had no idea
+    /// how much audio it was carrying, that produced chunks nothing could
+    /// deliver: on 2026-08-24 a 167.9s, a 104.8s and a 149.4s chunk each failed
+    /// twice at the 60-second mark and were dropped from a saved transcript.
+    /// Chunks up to about 130s were coming back fine that same morning.
+    ///
+    /// Lowered so a single bad minute of network costs less of the call, and
+    /// pinned against the request budget by `MeetingChunkBudgetTests` so the
+    /// two constants can no longer drift apart unnoticed.
+    static let meetingTargetChunkSec = 150
+
     private func transcribeStreamChunked(
         samples: [Float],
         engine: TranscriptionEngine,
@@ -1896,7 +1909,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         countUsage: Bool
     ) async -> (segments: [StreamSegment], failedChunks: Int) {
         guard !samples.isEmpty else { return ([], 0) }
-        let chunks = AppDelegate.splitOnSilenceBoundaries(samples: samples, targetChunkSec: 300, searchWindowSec: 15)
+        let chunks = AppDelegate.splitOnSilenceBoundaries(
+            samples: samples, targetChunkSec: Self.meetingTargetChunkSec, searchWindowSec: 15)
         let label = speaker == .me ? "Me" : "Them"
 
         var segments: [StreamSegment] = []
@@ -1966,10 +1980,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
                             // so a dual-stream meeting costs 1× its length, not 2×.
                             // Both channels still transcribe — only quota accounting
                             // is single-channel.
+                            // ITER-073.2 — a replay must not be billed again:
+                            // the attempt that vanished may already have been
+                            // transcribed and metered server-side.
                             return try await engine.transcribe(
                                 audioSamples: decodeSamples, language: lang,
                                 promptWords: TranscriptionLanguageResolver.enginePromptWords(language: lang),
-                                countUsage: countUsage)
+                                countUsage: MeetingChunkRetryPolicy.shouldMeter(
+                                    attempt: attempt, callerWantsMetering: countUsage))
                         } catch {
                             NSLog("[MetaWhisp] ❌ Meeting %@ chunk %d transcribe attempt %d/2 failed: %@",
                                   label, i + 1, attempt, error.localizedDescription)
@@ -2090,7 +2108,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             } catch {
                 // AUD-002 — both retries failed; record the loss so it isn't hidden.
                 failedChunks += 1
-                NSLog("[MetaWhisp] ❌ Meeting %@ chunk %d failed (lost from transcript): %@", label, i + 1, error.localizedDescription)
+                // ITER-073.3 — and keep the audio. Dictation has written a
+                // Recovery WAV on failure for a long time; a meeting chunk just
+                // evaporated, so the only copy of that stretch of the call was
+                // gone the moment the second attempt failed. Save the raw chunk
+                // (pre-trim, pre-cut) so nothing is destroyed by a bad minute of
+                // network.
+                let recovered = TranscriptionCoordinator.saveSamplesAsWav(rawChunk)
+                NSLog("[MetaWhisp] ❌ Meeting %@ chunk %d failed (lost from transcript): %@ — audio recovery: %@",
+                      label, i + 1, error.localizedDescription,
+                      recovered?.path ?? "SAVE FAILED")
             }
         }
         return (segments, failedChunks)
