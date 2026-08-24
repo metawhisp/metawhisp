@@ -1576,6 +1576,7 @@ struct MainSettingsView: View {
             // make them discard themselves instead of re-inserting.
             AppDelegate.shared?.screenExtractor.invalidatePendingWork()
             AppDelegate.shared?.realtimeScreenReactor.invalidatePendingWork()
+            AppDelegate.shared?.proactiveContextService.invalidatePendingWork()
             let ctx = ModelContext(container)
             let deleted = try ScreenRetention.deleteAll(in: ctx)
             // The destructive privacy action covers the in-session buffers

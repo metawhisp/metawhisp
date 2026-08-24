@@ -957,9 +957,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             // Degraded gating lives inside ScreenContextService.startMonitoring so it
             // covers every start path (launch / Settings toggle / didBecomeActive).
             let interval = AppSettings.shared.screenContextInterval
-            // AUD-021 — apply the user's Settings blacklist/whitelist choice.
-            let screenPolicy = ScreenContextPolicy.resolve(mode: AppSettings.shared.screenContextMode, appList: AppSettings.shared.screenContextAppList)
-            screenContext.startMonitoring(interval: interval, blacklist: screenPolicy.blacklist, whitelist: screenPolicy.whitelist)
+            screenContext.startMonitoring(interval: interval)
         }
 
         // 9a. Configure MemoryExtractor + TaskExtractor — both trigger-based on voice transcription.
@@ -1328,8 +1326,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
                         if newScreenContext {
                             // Proactively request permission so user sees TCC dialog
                             _ = await PermissionsService.shared.requestScreenRecording()
-                            let screenPolicy = ScreenContextPolicy.resolve(mode: AppSettings.shared.screenContextMode, appList: AppSettings.shared.screenContextAppList)
-                            self.screenContext.startMonitoring(interval: AppSettings.shared.screenContextInterval, blacklist: screenPolicy.blacklist, whitelist: screenPolicy.whitelist)
+                            self.screenContext.startMonitoring(interval: AppSettings.shared.screenContextInterval)
                             NSLog("[MetaWhisp] Screen context enabled")
                         } else {
                             self.screenContext.stopMonitoring()
@@ -2308,8 +2305,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
 
             if hasScreen && AppSettings.shared.screenContextEnabled && !screenContext.isActive {
                 NSLog("[MetaWhisp] 🔄 Screen Recording granted — restarting ScreenContext monitor")
-                let screenPolicy = ScreenContextPolicy.resolve(mode: AppSettings.shared.screenContextMode, appList: AppSettings.shared.screenContextAppList)
-                screenContext.startMonitoring(interval: AppSettings.shared.screenContextInterval, blacklist: screenPolicy.blacklist, whitelist: screenPolicy.whitelist)
+                screenContext.startMonitoring(interval: AppSettings.shared.screenContextInterval)
             }
         }
     }

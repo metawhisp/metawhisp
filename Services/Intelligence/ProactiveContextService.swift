@@ -97,6 +97,18 @@ final class ProactiveContextService: ObservableObject {
 
     /// Called on every new `ScreenContext` row persisted (existing hook).
     /// Gated hard — most calls exit early without doing any work.
+    /// ITER-064A.9 — purge fence, same shape as `ScreenExtractor` and
+    /// `RealtimeScreenReactor` already have. This service was the one screen
+    /// consumer the delete path did not invalidate, so an insight whose model
+    /// call was in flight when the user deleted their screen history would come
+    /// back, get saved as a memory, and be surfaced — derived entirely from
+    /// rows that no longer exist.
+    private var purgeEpoch = 0
+
+    func invalidatePendingWork() {
+        purgeEpoch += 1
+    }
+
     func onNewContext(_ ctx: ScreenContext) {
         Task { @MainActor [weak self] in
             await self?.evaluateAndSurface(ctx: ctx)
@@ -106,6 +118,9 @@ final class ProactiveContextService: ObservableObject {
     // MARK: - Pipeline
 
     private func evaluateAndSurface(ctx: ScreenContext) async {
+        // ITER-064A.9 — snapshot before any await, checked again after the model
+        // call: the user can delete their screen history mid-flight.
+        let epoch = purgeEpoch
         // ── Hard gates ────────────────────────────────────────────────
         guard settings.proactiveEnabled else { return }
         guard !isRunning else { return }
@@ -150,6 +165,14 @@ final class ProactiveContextService: ObservableObject {
         )
 
         guard let insight else { return }
+
+        // ITER-064A.9 — the screen rows this insight was derived from may have
+        // been deleted while the model was thinking. Drop it rather than saving
+        // a memory the user can no longer trace to any source.
+        guard epoch == purgeEpoch else {
+            NSLog("[Proactive] Screen history deleted mid-run — discarding insight")
+            return
+        }
 
         // ── Persist for cross-restart dedup ──────────────────────────
         await storage.save(insight)

@@ -28,6 +28,11 @@ final class ScreenContextService: ObservableObject {
         captureEpoch += 1
         recentContexts.removeAll()
         lastContext = nil
+        // ITER-064A.7 — the mark says "this window is already in history". After
+        // a purge that is no longer true for any window, and a capture dropped
+        // by the epoch fence never advanced it either. Leaving it set meant a
+        // window the user was still sitting on could never be captured again.
+        captureMark = CaptureHighWaterMark()
     }
 
     private var monitorTask: Task<Void, Never>?
@@ -88,18 +93,22 @@ final class ScreenContextService: ObservableObject {
     ]
 
     /// Start monitoring screen context (captures on window change).
-    func startMonitoring(
-        interval: TimeInterval = 30,
-        blacklist: Set<String> = [],
-        whitelist: Set<String>? = nil
-    ) {
+    /// ITER-064A.5 — no policy parameters. The loop resolves the user's current
+    /// blacklist/allowlist on every tick via `currentPolicy()`, so a Settings
+    /// change takes effect on the next poll instead of at the next relaunch.
+    func startMonitoring(interval: TimeInterval = 30) {
         guard !isActive else { return }
         // ITER-049 A2 — a degraded (temporary in-memory) session is read-only; don't
         // capture OCR into the empty store or stage candidates from it. Covers every
         // start path (launch, Settings toggle, applicationDidBecomeActive re-arm).
         guard StoreHealthSignal.shared.isHealthy else { return }
 
-        let mergedBlacklist = defaultBlacklist.union(blacklist)
+        // ITER-064A.6 — claim the slot here, synchronously on the main actor,
+        // not inside the task. `isActive` used to be set only after the TCC
+        // preflight await, so two starts arriving during that window each got
+        // past the guard and left two polling loops running against one service.
+        // Both would then capture and persist the same window.
+        isActive = true
 
         monitorTask = Task { [weak self] in
             guard let self else { return }
@@ -118,7 +127,6 @@ final class ScreenContextService: ObservableObject {
                 }
             }
 
-            await MainActor.run { self.isActive = true }
             NSLog("[ScreenContext] ✅ Monitoring started (interval: %.0fs)", interval)
 
             // Subscribe to instant app-activation notifications for fast call
@@ -134,15 +142,13 @@ final class ScreenContextService: ObservableObject {
                         queue: .main
                     ) { [weak self] _ in
                         Task { [weak self] in
-                            await self?.checkCallContextInstant(
-                                blacklist: mergedBlacklist
-                            )
+                            await self?.checkCallContextInstant()
                         }
                     }
             }
 
             while !Task.isCancelled {
-                await self.captureIfChanged(blacklist: mergedBlacklist, whitelist: whitelist)
+                await self.captureIfChanged()
                 try? await Task.sleep(for: .seconds(interval))
             }
         }
@@ -154,14 +160,19 @@ final class ScreenContextService: ObservableObject {
     /// of `captureIfChanged` but skips OCR + persistence (no expensive work
     /// on every app switch). Same dedup via `lastCallContext` so we never
     /// double-fire.
-    private func checkCallContextInstant(blacklist: Set<String>) async {
+    private func checkCallContextInstant() async {
         guard let frontApp = await MainActor.run(body: { NSWorkspace.shared.frontmostApplication }) else { return }
         let appName = frontApp.localizedName ?? "Unknown"
         let bundleID = frontApp.bundleIdentifier ?? ""
 
-        // Bail on privacy-blacklisted apps (1Password etc) — don't even
-        // peek at their window titles.
-        if blacklist.contains(bundleID) || blacklist.contains(appName) { return }
+        // ITER-064A.8 — this path only ever got the blacklist, so an allowlist
+        // could not stop it reading titles or starting a recording. Same rule as
+        // the polling path now: don't even peek at a window we may not look at.
+        let policy = currentPolicy()
+        guard ScreenContextPolicy.isCaptureAllowed(
+            appName: appName, bundleID: bundleID,
+            blacklist: policy.blacklist, whitelist: policy.whitelist
+        ) else { return }
 
         let windowTitle = getActiveWindowTitle(pid: frontApp.processIdentifier) ?? ""
         let currentCall = SystemAudioCaptureService.detectCallContext(
@@ -188,6 +199,17 @@ final class ScreenContextService: ObservableObject {
         NSLog("[ScreenContext] Monitoring stopped")
     }
 
+    /// ITER-064A.5 — the user's current capture policy. Read per use, never
+    /// stored: a stored copy is what let a Settings change be ignored until
+    /// relaunch.
+    private func currentPolicy() -> (blacklist: Set<String>, whitelist: Set<String>?) {
+        ScreenContextPolicy.effective(
+            alwaysExcluded: defaultBlacklist,
+            mode: AppSettings.shared.screenContextMode,
+            appList: AppSettings.shared.screenContextAppList
+        )
+    }
+
     /// Force capture current screen context.
     func captureNow() async -> ScreenContextSnapshot? {
         // AUD-023 — respect the master toggle. If the user turned Screen Context
@@ -195,22 +217,35 @@ final class ScreenContextService: ObservableObject {
         guard AppSettings.shared.screenContextEnabled else { return nil }
         // AUD-021 — apply the user's blacklist/whitelist here too (not only the
         // default password-app list), so an excluded app isn't captured on demand.
-        let policy = ScreenContextPolicy.resolve(
-            mode: AppSettings.shared.screenContextMode,
-            appList: AppSettings.shared.screenContextAppList
-        )
+        let policy = currentPolicy()
         return await captureActiveWindow(
-            blacklist: defaultBlacklist.union(policy.blacklist),
+            blacklist: policy.blacklist,
             whitelist: policy.whitelist
         )
     }
 
     // MARK: - Private
 
-    private func captureIfChanged(blacklist: Set<String>, whitelist: Set<String>?) async {
+    private func captureIfChanged() async {
         guard let frontApp = NSWorkspace.shared.frontmostApplication else { return }
         let appName = frontApp.localizedName ?? "Unknown"
         let bundleID = frontApp.bundleIdentifier ?? ""
+
+        let policy = currentPolicy()
+        let blacklist = policy.blacklist
+        let whitelist = policy.whitelist
+
+        // ITER-064A.8 — the permission check now covers call detection too. It
+        // used to sit below, so an app the user had not allowed still had its
+        // window title read and could auto-start a meeting recording: no OCR
+        // row, but the recorder ran anyway.
+        guard ScreenContextPolicy.isCaptureAllowed(
+            appName: appName, bundleID: bundleID,
+            blacklist: blacklist, whitelist: whitelist
+        ) else {
+            logSuppressedCaptureIfNeeded(appName: appName, whitelist: whitelist)
+            return
+        }
 
         // Get window title via Accessibility API (needed for both OCR and call detection)
         let windowTitle = getActiveWindowTitle(pid: frontApp.processIdentifier) ?? ""
@@ -237,17 +272,6 @@ final class ScreenContextService: ObservableObject {
             lastCallContext = currentCall
             NSLog("[ScreenContext] Call context changed: %@", currentCall ?? "nil")
             onCallContext?(currentCall)
-        }
-
-        // ITER-064A.2 — one shared, tested permission rule (see
-        // `ScreenContextPolicy.isCaptureAllowed`). An empty allowlist means
-        // "nothing is allowed", not "everything is allowed".
-        guard ScreenContextPolicy.isCaptureAllowed(
-            appName: appName, bundleID: bundleID,
-            blacklist: blacklist, whitelist: whitelist
-        ) else {
-            logSuppressedCaptureIfNeeded(appName: appName, whitelist: whitelist)
-            return
         }
 
         // Only capture if app or window changed

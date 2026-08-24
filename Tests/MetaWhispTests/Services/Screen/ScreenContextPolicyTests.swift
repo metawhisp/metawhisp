@@ -76,6 +76,51 @@ final class ScreenContextPolicyTests: XCTestCase {
             blacklist: ["Terminal"], whitelist: ["Terminal"]))
     }
 
+    // MARK: - effective(...)
+
+    /// ITER-064A.5 — the capture loop used to be handed a policy once, at start,
+    /// and hold it for the life of the monitor task. Switching Settings to
+    /// allowlist mode then left the running loop on the old `nil` whitelist,
+    /// capturing everything until relaunch — the same fail-open one layer up.
+    /// The loop now asks for the effective policy on every tick, so these pin
+    /// what "effective" means.
+    func test_effective_mergesTheAlwaysExcludedApps() {
+        let p = ScreenContextPolicy.effective(
+            alwaysExcluded: ["com.apple.Passwords"],
+            mode: "blacklist",
+            appList: "Telegram"
+        )
+        XCTAssertTrue(p.blacklist.contains("com.apple.Passwords"))
+        XCTAssertTrue(p.blacklist.contains("Telegram"))
+        XCTAssertNil(p.whitelist)
+    }
+
+    /// The always-excluded apps survive allowlist mode, where the parsed
+    /// blacklist is empty.
+    func test_effective_alwaysExcludedSurvivesAllowlistMode() {
+        let p = ScreenContextPolicy.effective(
+            alwaysExcluded: ["com.apple.Passwords"],
+            mode: "whitelist",
+            appList: "Xcode"
+        )
+        XCTAssertEqual(p.whitelist, ["Xcode"])
+        XCTAssertTrue(p.blacklist.contains("com.apple.Passwords"))
+        XCTAssertFalse(ScreenContextPolicy.isCaptureAllowed(
+            appName: "Passwords", bundleID: "com.apple.Passwords",
+            blacklist: p.blacklist, whitelist: p.whitelist),
+            "a password manager stays excluded even if the user allowlists it")
+    }
+
+    func test_effective_emptyAllowlistStillFailsClosed() {
+        let p = ScreenContextPolicy.effective(
+            alwaysExcluded: [], mode: "whitelist", appList: ""
+        )
+        XCTAssertEqual(p.whitelist, [])
+        XCTAssertFalse(ScreenContextPolicy.isCaptureAllowed(
+            appName: "Safari", bundleID: "com.apple.Safari",
+            blacklist: p.blacklist, whitelist: p.whitelist))
+    }
+
     func test_trimsWhitespaceAndDropsEmptyEntries() {
         let p = ScreenContextPolicy.resolve(mode: "blacklist", appList: " A ,, B ,")
         XCTAssertEqual(p.blacklist, ["A", "B"])

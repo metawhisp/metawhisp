@@ -33,6 +33,28 @@ enum ScreenContextPolicy {
         return (blacklist: set, whitelist: nil)
     }
 
+    /// ITER-064A.5 — the whole policy, resolved from current settings.
+    ///
+    /// The monitor loop used to be handed `(blacklist, whitelist)` once, when it
+    /// started, and hold that for its lifetime. Nothing restarted it when the
+    /// user changed mode or edited the app list, so switching to allowlist mode
+    /// left the running loop on the old `nil` whitelist and it kept capturing
+    /// everything until relaunch — the same fail-open as an empty allowlist, one
+    /// layer up. Callers now ask for this per tick instead of storing it.
+    ///
+    /// `alwaysExcluded` are the built-in privacy exclusions (password managers,
+    /// Keychain). They are merged into the blacklist, which beats the allowlist,
+    /// so allowlisting a password manager cannot expose it.
+    static func effective(
+        alwaysExcluded: Set<String>,
+        mode: String,
+        appList: String
+    ) -> (blacklist: Set<String>, whitelist: Set<String>?) {
+        let resolved = resolve(mode: mode, appList: appList)
+        return (blacklist: alwaysExcluded.union(resolved.blacklist),
+                whitelist: resolved.whitelist)
+    }
+
     /// The single capture-permission decision. Both `ScreenContextService`
     /// checkpoints (the change detector and the actual window grab) used to
     /// carry their own copy of this rule, which is how the empty-whitelist
