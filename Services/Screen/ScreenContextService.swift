@@ -2,7 +2,6 @@ import AppKit
 import Foundation
 import ScreenCaptureKit
 import SwiftData
-import Vision
 
 /// Captures the active window and extracts text via Apple Vision OCR.
 /// All processing is on-device — no data leaves the Mac.
@@ -349,7 +348,9 @@ final class ScreenContextService: ObservableObject {
         }
 
         // Run OCR on the screenshot (on-device via Vision framework)
-        let ocrText = await performOCR(on: image)
+        // ITER-065.5 — Vision runs off the main thread now; the flat text
+        // it produces is byte-identical to what this line used to return.
+        let ocrText = await ScreenOCR.recognize(image).text
 
         let snapshot = ScreenContextSnapshot(
             timestamp: Date(),
@@ -403,36 +404,6 @@ final class ScreenContextService: ObservableObject {
     }
 
     /// Perform OCR using Apple Vision framework (fully on-device).
-    private func performOCR(on image: CGImage) async -> String {
-        await withCheckedContinuation { continuation in
-            let request = VNRecognizeTextRequest { request, error in
-                guard let observations = request.results as? [VNRecognizedTextObservation] else {
-                    continuation.resume(returning: "")
-                    return
-                }
-
-                let text = observations
-                    .compactMap { $0.topCandidates(1).first?.string }
-                    .joined(separator: "\n")
-
-                continuation.resume(returning: text)
-            }
-
-            request.recognitionLevel = .accurate
-            request.usesLanguageCorrection = true
-            // Support multiple languages
-            request.recognitionLanguages = ["en-US", "ru-RU", "de-DE", "fr-FR", "es-ES"]
-            request.automaticallyDetectsLanguage = true
-
-            let handler = VNImageRequestHandler(cgImage: image, options: [:])
-            do {
-                try handler.perform([request])
-            } catch {
-                NSLog("[ScreenContext] OCR failed: %@", error.localizedDescription)
-                continuation.resume(returning: "")
-            }
-        }
-    }
 
     private func persistContext(_ snapshot: ScreenContextSnapshot) {
         guard let container = modelContainer else { return }
