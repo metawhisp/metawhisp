@@ -61,6 +61,7 @@ CRITICAL_SUITES=(
     ContextVisitCoordinatorTests
     ScreenAgentRunQueueTests
     FocusedWindowSelectionTests
+    ScreenAgentTimingPolicyTests
     ActiveAppCaptureFilterTests
     CaptureHighWaterMarkTests
     ScreenContextFanoutTests

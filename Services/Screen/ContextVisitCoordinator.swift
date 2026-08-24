@@ -69,16 +69,17 @@ struct ContextVisitCoordinator {
         let normalized = WindowTitleNormalizer.normalize(sighting.rawTitle)
 
         guard let existing = current,
-              existing.bundleID == sighting.bundleID,
-              existing.windowID == sighting.windowID,
-              existing.normalizedTitle == normalized,
               let seen = lastSeenAt,
+              isSameWindow(existing, as: sighting, normalized: normalized),
+              existing.displayID == sighting.displayID,
               now.timeIntervalSince(seen) <= Self.maxGapSeconds
         else {
             return .opened(open(sighting, normalized: normalized, at: now))
         }
 
-        lastSeenAt = now
+        // A clock reading that goes backwards must not make a live window look
+        // abandoned on the next tick.
+        lastSeenAt = max(seen, now)
         guard sighting.contentHash != lastContentHash else { return .unchanged }
         lastContentHash = sighting.contentHash
 
@@ -87,7 +88,7 @@ struct ContextVisitCoordinator {
             generation: existing.generation + 1,
             bundleID: existing.bundleID,
             appName: existing.appName,
-            normalizedTitle: existing.normalizedTitle,
+            normalizedTitle: normalized,
             rawTitle: sighting.rawTitle,
             windowID: existing.windowID,
             displayID: sighting.displayID,
@@ -99,8 +100,28 @@ struct ContextVisitCoordinator {
 
     /// Whether work started for this exact visit and generation may still be
     /// used. Every await in the agent path is expected to re-ask.
-    func isCurrent(_ visit: ContextVisit) -> Bool {
-        current == visit
+    ///
+    /// Freshness expires on its own. Nothing calls back to say a window was
+    /// closed, that capture permission was revoked or that the Mac slept, so a
+    /// visit that stayed current until someone remembered to invalidate it
+    /// would accept late work indefinitely.
+    func isCurrent(_ visit: ContextVisit, at now: Date) -> Bool {
+        guard current == visit, let seen = lastSeenAt else { return false }
+        return now.timeIntervalSince(seen) <= Self.maxGapSeconds
+    }
+
+    /// The window ID is authoritative when the system provides one: a tab
+    /// switch or a document rename changes the title of the same window, and
+    /// that is the visit continuing. The normalized title is the fallback for
+    /// when there is no ID to go on.
+    private func isSameWindow(_ visit: ContextVisit,
+                              as sighting: Sighting,
+                              normalized: String?) -> Bool {
+        guard visit.bundleID == sighting.bundleID else { return false }
+        if let known = visit.windowID, let incoming = sighting.windowID {
+            return known == incoming
+        }
+        return visit.windowID == sighting.windowID && visit.normalizedTitle == normalized
     }
 
     /// Strand everything in flight: screen history deleted, the feature turned

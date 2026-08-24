@@ -91,6 +91,80 @@ final class FocusedWindowSelectionTests: XCTestCase {
             .window(id: 1))
     }
 
+    // MARK: Codex review — failing open and ties
+
+    /// Accessibility said the focused window is somewhere the only candidate
+    /// is not. That is a real disagreement about what the user is looking at,
+    /// and answering it by shrugging and returning the single candidate is
+    /// exactly the "confidently wrong" behavior this iteration exists to stop.
+    func testDisagreeingWithAccessibilityIsNotResolvedByGuessing() {
+        let onlyWindow = win(1, pid: 100, .init(x: 0, y: 0, width: 800, height: 600))
+        let axSaysElsewhere = CGRect(x: 1920, y: 0, width: 800, height: 600)
+        XCTAssertEqual(
+            ActiveAppCaptureFilter.selectFocusedWindow([onlyWindow], frontPID: 100,
+                                                       focusedBounds: axSaysElsewhere),
+            .ambiguous)
+    }
+
+    /// Two windows at identical bounds both score a perfect match, so whichever
+    /// happens to be first in the array would win. Order of a system API's
+    /// return value must not decide which of the user's windows gets read.
+    func testIdenticalCandidatesAreAmbiguousNotArrayOrder() {
+        let rect = CGRect(x: 0, y: 0, width: 800, height: 600)
+        let windows = [win(1, pid: 100, rect), win(2, pid: 100, rect)]
+        XCTAssertEqual(
+            ActiveAppCaptureFilter.selectFocusedWindow(windows, frontPID: 100, focusedBounds: rect),
+            .ambiguous)
+        XCTAssertEqual(
+            ActiveAppCaptureFilter.selectFocusedWindow(windows.reversed(), frontPID: 100,
+                                                       focusedBounds: rect),
+            .ambiguous,
+            "the answer cannot depend on which order the windows arrived in")
+    }
+
+    /// A clear winner still wins — the margin rule must not make everything
+    /// ambiguous.
+    func testAClearWinnerIsStillChosen() {
+        let target = CGRect(x: 1920, y: 0, width: 800, height: 600)
+        let windows = [win(1, pid: 100, .init(x: 0, y: 0, width: 800, height: 600)),
+                       win(2, pid: 100, target)]
+        XCTAssertEqual(
+            ActiveAppCaptureFilter.selectFocusedWindow(windows, frontPID: 100, focusedBounds: target),
+            .window(id: 2))
+    }
+
+    /// A focused modal — a save sheet, a settings dialog, a form — sits above
+    /// the normal window level. Filtering to layer 0 discarded exactly the
+    /// windows the agent is most likely to have something useful to say about,
+    /// and picked the document underneath instead.
+    func testAFocusedModalIsACandidate() {
+        let document = win(1, pid: 100, .init(x: 0, y: 0, width: 800, height: 600))
+        let modal = win(2, pid: 100, .init(x: 200, y: 150, width: 400, height: 300), layer: 8)
+        XCTAssertEqual(
+            ActiveAppCaptureFilter.selectFocusedWindow([document, modal], frontPID: 100,
+                                                       focusedBounds: modal.bounds),
+            .window(id: 2))
+    }
+
+    /// Menu-bar extras and tooltips live far above and are still excluded.
+    func testMenuBarAndTooltipLevelsAreStillExcluded() {
+        let real = win(1, pid: 100, .init(x: 0, y: 0, width: 800, height: 600))
+        let menuExtra = win(2, pid: 100, .init(x: 1700, y: 0, width: 200, height: 24), layer: 25)
+        let tooltip = win(3, pid: 100, .init(x: 300, y: 300, width: 180, height: 40), layer: 101)
+        XCTAssertEqual(
+            ActiveAppCaptureFilter.selectFocusedWindow([real, menuExtra, tooltip],
+                                                       frontPID: 100, focusedBounds: nil),
+            .window(id: 1))
+    }
+
+    /// Two displays showing exactly half a window each cannot be resolved by
+    /// array order either.
+    func testAnExactDisplayTieResolvesToNothing() {
+        let straddling = CGRect(x: 1620, y: 0, width: 600, height: 600)  // 300 each side
+        XCTAssertNil(ActiveAppCaptureFilter.displayContaining(
+            straddling, displays: [main, second]))
+    }
+
     // MARK: choosing the display
 
     private let main = ActiveAppCaptureFilter.DisplayRef(

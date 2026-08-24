@@ -16,36 +16,49 @@ import XCTest
 final class ScreenAgentRunQueueTests: XCTestCase {
 
     private func token(_ n: Int) -> String { "ctx-\(n)" }
+    private let t0 = Date(timeIntervalSince1970: 1_700_000_000)
+
+    private func start(_ q: inout ScreenAgentRunQueue<String>, _ n: Int,
+                       at: Date? = nil) -> ScreenAgentRunQueue<String>.RunPermit {
+        guard case .startNow(_, let permit) = q.submit(token(n), at: at ?? t0) else {
+            fatalError("expected \(n) to start")
+        }
+        return permit
+    }
 
     func testFirstContextStartsImmediately() {
         var q = ScreenAgentRunQueue<String>()
-        XCTAssertEqual(q.submit(token(1)), .startNow(token(1)))
+        _ = start(&q, 1)
         XCTAssertTrue(q.isRunning)
     }
 
     /// The defect. A context arriving mid-run must be held, not dropped.
     func testContextArrivingMidRunIsHeldNotDropped() {
         var q = ScreenAgentRunQueue<String>()
-        _ = q.submit(token(1))
-        XCTAssertEqual(q.submit(token(2)), .queued,
+        let a = start(&q, 1)
+        XCTAssertEqual(q.submit(token(2), at: t0), .queued,
                        "the screen the user just moved to was being thrown away")
-        XCTAssertEqual(q.finish(), .startNow(token(2)))
+        guard case .startNow(let next, _) = q.finish(a, at: t0) else {
+            return XCTFail("the held context must run next")
+        }
+        XCTAssertEqual(next, token(2))
     }
 
     /// Newest wins: while one run is busy, only the latest screen is worth
     /// anything. B is superseded by C before either runs.
     func testNewerPendingReplacesOlderPending() {
         var q = ScreenAgentRunQueue<String>()
-        _ = q.submit(token(1))
-        XCTAssertEqual(q.submit(token(2)), .queued)
-        XCTAssertEqual(q.submit(token(3)), .replacedPending(dropped: token(2)))
-        XCTAssertEqual(q.finish(), .startNow(token(3)), "C is current, B never was")
+        let a = start(&q, 1)
+        XCTAssertEqual(q.submit(token(2), at: t0), .queued)
+        XCTAssertEqual(q.submit(token(3), at: t0), .replacedPending(dropped: token(2)))
+        guard case .startNow(let next, _) = q.finish(a, at: t0) else { return XCTFail() }
+        XCTAssertEqual(next, token(3), "C is current, B never was")
     }
 
     func testQueueDrainsToIdle() {
         var q = ScreenAgentRunQueue<String>()
-        _ = q.submit(token(1))
-        XCTAssertEqual(q.finish(), .idle)
+        let a = start(&q, 1)
+        XCTAssertEqual(q.finish(a, at: t0), .idle)
         XCTAssertFalse(q.isRunning)
     }
 
@@ -53,20 +66,74 @@ final class ScreenAgentRunQueueTests: XCTestCase {
     /// must strand both the active run and anything waiting.
     func testCancelAllClearsRunningAndPending() {
         var q = ScreenAgentRunQueue<String>()
-        _ = q.submit(token(1))
-        _ = q.submit(token(2))
+        let a = start(&q, 1)
+        _ = q.submit(token(2), at: t0)
         q.cancelAll()
         XCTAssertFalse(q.isRunning)
-        XCTAssertEqual(q.finish(), .idle, "nothing queued may start after a cancel")
+        XCTAssertEqual(q.finish(a, at: t0), .idle, "nothing queued may start after a cancel")
     }
 
     /// A run that ends after a cancel must not be able to start the next one —
     /// the cancel happened while it was in flight.
     func testFinishAfterCancelDoesNotResurrectAPendingContext() {
         var q = ScreenAgentRunQueue<String>()
-        _ = q.submit(token(1))
-        _ = q.submit(token(2))
+        let a = start(&q, 1)
+        _ = q.submit(token(2), at: t0)
         q.cancelAll()
-        XCTAssertEqual(q.finish(), .idle)
+        XCTAssertEqual(q.finish(a, at: t0), .idle)
+    }
+
+    // MARK: run identity — Codex review
+
+    /// The bug a permit exists to stop: a run that was cancelled comes back
+    /// late and finishes somebody else's run.
+    ///
+    /// submit(A) -> cancelAll() -> submit(C) -> late finish(A). Without run
+    /// identity that stale completion clears isRunning, so D can start
+    /// alongside C, or it promotes D while C is still going.
+    func testAStaleCompletionCannotFinishANewerRun() {
+        var q = ScreenAgentRunQueue<String>()
+        let a = start(&q, 1)
+        q.cancelAll()
+        let c = start(&q, 3)
+        XCTAssertEqual(q.finish(a, at: t0), .idle, "A's completion must be ignored entirely")
+        XCTAssertTrue(q.isRunning, "C is still running")
+        guard case .startNow(let next, _) = { () -> ScreenAgentRunQueue<String>.Outcome in
+            _ = q.submit(token(4), at: t0)
+            return q.finish(c, at: t0)
+        }() else { return XCTFail("C's own completion should promote D") }
+        XCTAssertEqual(next, token(4))
+    }
+
+    /// A run reporting completion twice must not promote two contexts.
+    func testDoubleCompletionIsIgnored() {
+        var q = ScreenAgentRunQueue<String>()
+        let a = start(&q, 1)
+        _ = q.submit(token(2), at: t0)
+        guard case .startNow(_, _) = q.finish(a, at: t0) else { return XCTFail() }
+        XCTAssertEqual(q.finish(a, at: t0), .idle, "the same run cannot finish twice")
+    }
+
+    // MARK: deadline
+
+    /// A context that waited out the deadline is not worth showing — by then
+    /// the user has moved on, which is the entire failure this iteration
+    /// exists to stop.
+    func testAContextThatWaitedPastTheDeadlineIsDropped() {
+        var q = ScreenAgentRunQueue<String>()
+        let a = start(&q, 1)
+        _ = q.submit(token(2), at: t0)
+        let late = t0.addingTimeInterval(ScreenAgentTimingPolicy.endToEndDeadline + 1)
+        XCTAssertEqual(q.finish(a, at: late), .expired(token(2)))
+        XCTAssertFalse(q.isRunning, "an expired context does not occupy the runner")
+    }
+
+    func testAContextInsideTheDeadlineStillRuns() {
+        var q = ScreenAgentRunQueue<String>()
+        let a = start(&q, 1)
+        _ = q.submit(token(2), at: t0)
+        let soon = t0.addingTimeInterval(ScreenAgentTimingPolicy.endToEndDeadline - 1)
+        guard case .startNow(let next, _) = q.finish(a, at: soon) else { return XCTFail() }
+        XCTAssertEqual(next, token(2))
     }
 }

@@ -61,17 +61,28 @@ enum ActiveAppCaptureFilter {
         let candidates = windows.filter {
             $0.ownerPID == frontPID
                 && $0.isOnScreen
-                && $0.layer == 0
+                && $0.layer < Self.overlayLayerFloor
                 && $0.bounds.width > 1
                 && $0.bounds.height > 1
         }
         guard !candidates.isEmpty else { return .notFound }
 
         if let focusedBounds, focusedBounds.width > 1, focusedBounds.height > 1 {
-            let best = candidates
-                .map { ($0, overlapRatio($0.bounds, focusedBounds)) }
-                .max { $0.1 < $1.1 }
-            if let best, best.1 >= 0.6 { return .window(id: best.0.id) }
+            var ranked: [(window: WindowRef, score: CGFloat)] = []
+            for candidate in candidates {
+                ranked.append((candidate, overlapRatio(candidate.bounds, focusedBounds)))
+            }
+            ranked.sort { $0.score > $1.score }
+            guard let best = ranked.first, best.score >= minimumOverlap else {
+                // Accessibility says focus is somewhere none of these windows
+                // are. That is a real disagreement about what the user is
+                // looking at, and answering it by returning whatever is left
+                // would be confidently wrong.
+                return .ambiguous
+            }
+            let runnerUp: CGFloat = ranked.dropFirst().first?.score ?? 0
+            guard best.score - runnerUp >= minimumMargin else { return .ambiguous }
+            return .window(id: best.window.id)
         }
 
         guard candidates.count == 1 else { return .ambiguous }
@@ -84,12 +95,37 @@ enum ActiveAppCaptureFilter {
     /// on no display at all (a monitor was just unplugged) resolves to nothing
     /// rather than to an arbitrary monitor.
     static func displayContaining(_ bounds: CGRect, displays: [DisplayRef]) -> DisplayRef? {
-        let scored = displays
-            .map { ($0, $0.frame.intersection(bounds)) }
-            .filter { !$0.1.isNull && $0.1.width > 0 && $0.1.height > 0 }
-            .map { ($0.0, $0.1.width * $0.1.height) }
-        return scored.max { $0.1 < $1.1 }?.0
+        var ranked: [(display: DisplayRef, area: CGFloat)] = []
+        for display in displays {
+            let hit: CGRect = display.frame.intersection(bounds)
+            guard !hit.isNull, hit.width > 0, hit.height > 0 else { continue }
+            ranked.append((display, hit.width * hit.height))
+        }
+        ranked.sort { $0.area > $1.area }
+        guard let best = ranked.first else { return nil }
+        // A window split evenly across two screens has no answer, and picking
+        // whichever the system happened to list first is not one.
+        let runnerUp: CGFloat = ranked.dropFirst().first?.area ?? 0
+        guard best.area > runnerUp else { return nil }
+        return best.display
     }
+
+    /// Window levels at or above this are chrome, not content: menu-bar extras,
+    /// tooltips, popovers. Below it sit ordinary document windows *and* the
+    /// floating, utility and modal levels — a save sheet, a settings dialog or
+    /// a form is exactly the window the agent is most likely to have something
+    /// useful to say about, and an earlier `layer == 0` rule discarded all of
+    /// them and read the document underneath instead.
+    static let overlayLayerFloor = 20
+
+    /// How much of the focused rectangle a window must account for before it
+    /// counts as that window at all.
+    static let minimumOverlap: CGFloat = 0.6
+
+    /// How far ahead of the runner-up the winner must be. Two windows at
+    /// identical bounds both score a perfect match, and the order a system API
+    /// returned them in must not decide which of the user's windows gets read.
+    static let minimumMargin: CGFloat = 0.15
 
     /// Intersection as a fraction of the larger rectangle, so a small window
     /// sitting inside a big one does not score as a match.

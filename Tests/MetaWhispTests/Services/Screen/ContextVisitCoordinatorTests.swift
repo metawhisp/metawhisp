@@ -30,7 +30,7 @@ final class ContextVisitCoordinatorTests: XCTestCase {
             return XCTFail("first sighting must open a visit")
         }
         XCTAssertEqual(visit.generation, 0)
-        XCTAssertTrue(c.isCurrent(visit))
+        XCTAssertTrue(c.isCurrent(visit, at: t0))
     }
 
     func testSameWindowSameContentDoesNotReopen() {
@@ -57,8 +57,8 @@ final class ContextVisitCoordinatorTests: XCTestCase {
             return XCTFail("a different app is a different visit")
         }
         XCTAssertNotEqual(a.id, b.id)
-        XCTAssertFalse(c.isCurrent(a), "the Slack visit is over")
-        XCTAssertTrue(c.isCurrent(b))
+        XCTAssertFalse(c.isCurrent(a, at: t0), "the Slack visit is over")
+        XCTAssertTrue(c.isCurrent(b, at: t0))
     }
 
     /// Two windows of one app are two visits — otherwise a claim about one
@@ -86,8 +86,8 @@ final class ContextVisitCoordinatorTests: XCTestCase {
         }
         XCTAssertEqual(next.id, first.id, "still the same window")
         XCTAssertEqual(next.generation, first.generation + 1)
-        XCTAssertFalse(c.isCurrent(first), "the older generation is no longer current")
-        XCTAssertTrue(c.isCurrent(next))
+        XCTAssertFalse(c.isCurrent(first, at: t0), "the older generation is no longer current")
+        XCTAssertTrue(c.isCurrent(next, at: t0))
     }
 
     // MARK: freshness — the reason all of this exists
@@ -101,9 +101,9 @@ final class ContextVisitCoordinatorTests: XCTestCase {
         var third = slack("#random"); third.windowID = 33
         guard case .opened(let cc) = c.observe(third, at: t0.addingTimeInterval(2)) else { return XCTFail() }
 
-        XCTAssertFalse(c.isCurrent(a))
-        XCTAssertFalse(c.isCurrent(b))
-        XCTAssertTrue(c.isCurrent(cc))
+        XCTAssertFalse(c.isCurrent(a, at: t0))
+        XCTAssertFalse(c.isCurrent(b, at: t0))
+        XCTAssertTrue(c.isCurrent(cc, at: t0))
     }
 
     /// Deleting screen history, turning the feature off, or the data owner
@@ -111,9 +111,9 @@ final class ContextVisitCoordinatorTests: XCTestCase {
     func testInvalidateStrandsWorkInFlight() {
         var c = ContextVisitCoordinator()
         guard case .opened(let visit) = c.observe(slack(), at: t0) else { return XCTFail() }
-        XCTAssertTrue(c.isCurrent(visit))
+        XCTAssertTrue(c.isCurrent(visit, at: t0))
         c.invalidateAll()
-        XCTAssertFalse(c.isCurrent(visit), "work started before the purge must not be able to finish")
+        XCTAssertFalse(c.isCurrent(visit, at: t0), "work started before the purge must not be able to finish")
     }
 
     /// After invalidation the very next sighting opens a fresh visit rather
@@ -126,6 +126,78 @@ final class ContextVisitCoordinatorTests: XCTestCase {
             return XCTFail("a sighting after invalidation must open a new visit")
         }
         XCTAssertNotEqual(before.id, after.id)
+    }
+
+    // MARK: Codex review
+
+    /// A visit the user left behind must stop being current on its own. The
+    /// window was closed, capture permission was revoked, the Mac slept —
+    /// nothing calls back to say so, and a visit that stays current forever
+    /// means late work is accepted forever.
+    func testAVisitGoesStaleOnItsOwnWithoutBeingToldTo() {
+        var c = ContextVisitCoordinator()
+        guard case .opened(let visit) = c.observe(slack(), at: t0) else { return XCTFail() }
+        XCTAssertTrue(c.isCurrent(visit, at: t0.addingTimeInterval(10)))
+        XCTAssertFalse(
+            c.isCurrent(visit, at: t0.addingTimeInterval(ContextVisitCoordinator.maxGapSeconds + 1)),
+            "nothing reported this window closing, so freshness has to expire by itself")
+    }
+
+    /// Dragging a window to the other monitor changes which screen the agent
+    /// should be reading. The display was recorded but never compared, so this
+    /// returned .unchanged and work bound to the old screen stayed current.
+    func testMovingAWindowToAnotherDisplayIsAChange() {
+        var c = ContextVisitCoordinator()
+        var onFirst = slack(); onFirst.displayID = 1
+        guard case .opened(let before) = c.observe(onFirst, at: t0) else { return XCTFail() }
+        var onSecond = slack(); onSecond.displayID = 2
+        let result = c.observe(onSecond, at: t0.addingTimeInterval(2))
+        XCTAssertNotEqual(result, .unchanged, "a different screen is a different context")
+        XCTAssertFalse(c.isCurrent(before, at: t0.addingTimeInterval(2)))
+    }
+
+    /// The window ID is authoritative when the system gives us one. A tab
+    /// switch or a document rename changes the title of the same window, and
+    /// that is the same visit continuing — not a brand new one.
+    func testTitleChangeInAKnownWindowContinuesTheSameVisit() {
+        var c = ContextVisitCoordinator()
+        guard case .opened(let first) = c.observe(slack("#launch", hash: 1), at: t0) else {
+            return XCTFail()
+        }
+        let renamed = ContextVisitCoordinator.Sighting(
+            bundleID: "com.tinyspeck.slackmacgap", appName: "Slack",
+            rawTitle: "#random", windowID: 11, displayID: 1, contentHash: 2)
+        guard case .changed(let next) = c.observe(renamed, at: t0.addingTimeInterval(2)) else {
+            return XCTFail("the same window with a new title is the same visit")
+        }
+        XCTAssertEqual(next.id, first.id)
+        XCTAssertEqual(next.generation, first.generation + 1)
+    }
+
+    /// Without a window ID the normalized title is all there is to go on, so it
+    /// still separates visits.
+    func testWithoutAWindowIDTheTitleStillSeparatesVisits() {
+        var c = ContextVisitCoordinator()
+        var a = slack("#launch"); a.windowID = nil
+        var b = slack("#random"); b.windowID = nil
+        guard case .opened(let first) = c.observe(a, at: t0) else { return XCTFail() }
+        guard case .opened(let second) = c.observe(b, at: t0.addingTimeInterval(1)) else {
+            return XCTFail("with no window id, a different title is a different window")
+        }
+        XCTAssertNotEqual(first.id, second.id)
+    }
+
+    /// A timestamp that goes backwards must not corrupt the gap arithmetic —
+    /// it would otherwise make a live window look abandoned on the next tick.
+    func testATimestampGoingBackwardsIsIgnored() {
+        var c = ContextVisitCoordinator()
+        guard case .opened(let first) = c.observe(slack(hash: 1), at: t0) else { return XCTFail() }
+        _ = c.observe(slack(hash: 1), at: t0.addingTimeInterval(-600))
+        let result = c.observe(slack(hash: 2), at: t0.addingTimeInterval(1))
+        guard case .changed(let next) = result else {
+            return XCTFail("a backwards clock reading must not end the visit")
+        }
+        XCTAssertEqual(next.id, first.id)
     }
 
     /// Returning to a window after a long gap is a new visit, not a resumption
