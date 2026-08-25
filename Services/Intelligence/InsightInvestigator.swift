@@ -268,7 +268,11 @@ enum InsightInvestigator {
                 usedTaskSearch = true
                 let query = (turn.toolArgs["query"] as? String) ?? ""
                 let result = await searchTasks(query)
-                retrieved.append(.init(id: "t\(retrieved.count)", text: result))
+                // An error result reaches the model as feedback but never the
+                // evidence allowlist — a failed search proves nothing.
+                if !result.hasPrefix("Error") {
+                    retrieved.append(.init(id: "t\(retrieved.count)", text: result))
+                }
                 appendToolExchange(&messages, turn: turn, tool: tool, callId: callId, result: result)
 
             case "search_memories":
@@ -285,7 +289,11 @@ enum InsightInvestigator {
                 usedMemorySearch = true
                 let query = (turn.toolArgs["query"] as? String) ?? ""
                 let result = await searchMemories(query)
-                retrieved.append(.init(id: "m\(retrieved.count)", text: result))
+                // An error result reaches the model as feedback but never the
+                // evidence allowlist — a failed search proves nothing.
+                if !result.hasPrefix("Error") {
+                    retrieved.append(.init(id: "m\(retrieved.count)", text: result))
+                }
                 appendToolExchange(&messages, turn: turn, tool: tool, callId: callId, result: result)
 
             default:

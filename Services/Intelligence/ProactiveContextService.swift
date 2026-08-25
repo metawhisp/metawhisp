@@ -204,14 +204,17 @@ final class ProactiveContextService: ObservableObject {
             history: history,
             searchTasks: toolExecutor.map { executor in
                 { query in
-                    (await executor.executeReadOnly(
-                        .init(id: nil, tool: "searchTasks", args: ["query": query, "limit": "8"]))).summary
+                    let result = await executor.executeReadOnly(
+                        .init(id: nil, tool: "searchTasks", args: ["query": query, "limit": "8"]))
+                    // Codex P1 — a failure summary is not evidence.
+                    return result.ok ? result.summary : "Error: task search failed"
                 }
             },
             searchMemories: toolExecutor.map { executor in
                 { query in
-                    (await executor.executeReadOnly(
-                        .init(id: nil, tool: "searchMemories", args: ["query": query, "limit": "8"]))).summary
+                    let result = await executor.executeReadOnly(
+                        .init(id: nil, tool: "searchMemories", args: ["query": query, "limit": "8"]))
+                    return result.ok ? result.summary : "Error: memory search failed"
                 }
             }
         )
@@ -260,6 +263,9 @@ final class ProactiveContextService: ObservableObject {
                 isStillCurrent: { [weak self] in
                     self?.purgeEpoch == epoch
                         && AppDelegate.shared?.screenContext.lastAcceptedContextID == ctx.id
+                        // Codex P0 — master-off mid-flight kills the result.
+                        && AppSettings.shared.screenContextEnabled
+                        && AppSettings.shared.proactiveEnabled
                 })
             if case .facts(let facts) = outcome, !facts.isEmpty {
                 let (seeingEvidence, seeingIDs) = ScreenAgentCandidateAdapter.evidence(

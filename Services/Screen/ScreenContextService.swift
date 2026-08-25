@@ -229,6 +229,11 @@ final class ScreenContextService: ObservableObject {
             instantAppActivationObserver = nil
         }
         isActive = false
+        // Codex P0 — strand whatever is mid-await and drop the frame vision
+        // could still read: stopping capture stops its products too.
+        captureEpoch += 1
+        frameCache.invalidateAll()
+        pendingFrame = nil
         NSLog("[ScreenContext] Monitoring stopped")
     }
 
@@ -262,7 +267,18 @@ final class ScreenContextService: ObservableObject {
 
     // MARK: - Private
 
+    /// Codex P1 — poll tick and settle tasks may otherwise interleave their
+    /// awaits and bind screen B's pixels to screen A's row.
+    private var captureInFlight = false
+
     private func captureIfChanged() async {
+        // Codex P0 — settle tasks from the activation observer are fired and
+        // forgotten, so they arrive here AFTER stopMonitoring or master-off.
+        // Off means off for work in flight too, not just for the next tick.
+        guard isActive, AppSettings.shared.screenContextEnabled else { return }
+        guard !captureInFlight else { return }
+        captureInFlight = true
+        defer { captureInFlight = false }
         guard let frontApp = NSWorkspace.shared.frontmostApplication else { return }
         let appName = frontApp.localizedName ?? "Unknown"
         let bundleID = frontApp.bundleIdentifier ?? ""
@@ -319,7 +335,11 @@ final class ScreenContextService: ObservableObject {
         if let snapshot = await captureActiveWindow(blacklist: blacklist, whitelist: whitelist) {
             // The user hit «Delete screen history» while this capture was in
             // flight — discard it rather than re-adding pre-delete OCR.
-            guard epoch == captureEpoch else { return }
+            // Codex P0 — and re-check the switches: they can flip during the
+            // screenshot/OCR awaits, and a frame captured under permission is
+            // not a frame that may be persisted after it was withdrawn.
+            guard epoch == captureEpoch, isActive,
+                  AppSettings.shared.screenContextEnabled else { return }
             lastContext = snapshot
             recentContexts.append(snapshot)
             if recentContexts.count > maxRecentContexts {

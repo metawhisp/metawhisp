@@ -57,7 +57,9 @@ enum ScreenRetention {
         // this they were the one screen-derived artifact retention never
         // touched.
         if let cut = cutoff(now: now, days: rawDays) {
-            let pred = #Predicate<ScreenAgentItem> { $0.createdAt < cut }
+            // Codex P2 — age by the screen the comment describes, not by when
+            // the decision row happened to be written.
+            let pred = #Predicate<ScreenAgentItem> { $0.capturedAt < cut }
             let items = try ctx.fetchCount(FetchDescriptor<ScreenAgentItem>(predicate: pred))
             if items > 0 { try ctx.delete(model: ScreenAgentItem.self, where: pred) }
             observations += items

@@ -292,11 +292,22 @@ final class ScreenAgentDeliveryService {
     /// Presentations in the trailing 24 hours — the reference counts a rolling
     /// window, not local midnight.
     func presentedInLast24h() -> Int {
+        // Codex P2 — the presentation event is deliveredAt, not createdAt, and
+        // a fetch error fails CLOSED: an interruption gate that cannot count
+        // must not answer "zero, go ahead".
         let cutoff = Date().addingTimeInterval(-24 * 3600)
         let presented = ScreenAgentDelivery.Outcome.presented.rawValue
         let descriptor = FetchDescriptor<ScreenAgentItem>(
-            predicate: #Predicate { $0.deliveryOutcome == presented && $0.createdAt > cutoff })
-        return (try? ModelContext(container).fetchCount(descriptor)) ?? 0
+            predicate: #Predicate { $0.deliveryOutcome == presented })
+        do {
+            return try ModelContext(container).fetch(descriptor)
+                .filter { ($0.deliveredAt ?? .distantPast) > cutoff }
+                .count
+        } catch {
+            NSLog("[ScreenAgentDelivery] budget count failed (%@) — failing closed",
+                  error.localizedDescription)
+            return Int.max
+        }
     }
 
     /// Newest first. The cap used to be 100 with no way past it, so a comment
