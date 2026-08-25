@@ -175,6 +175,13 @@ final class InsightAssistantService: ObservableObject {
         return insight
     }
 
+    /// Codex P0 — undo a session-dedup entry for an insight a downstream guard
+    /// rejected. Remembering happened at return time, so without this a
+    /// rejection also silenced every equivalent retry for the whole session.
+    func retract(_ insight: ExtractedInsight) {
+        recentInsights.removeAll { $0.body == insight.body }
+    }
+
     /// ITER-027.6 — tool-calling round-trip against the same worker endpoint
     /// MetaChat uses. Returns ONE model turn for the investigation loop;
     /// keeps the RAW tool arguments so the loop can echo them back verbatim.

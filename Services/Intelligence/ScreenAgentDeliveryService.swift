@@ -202,6 +202,9 @@ final class ScreenAgentDeliveryService {
         guard let item = (try? context.fetch(descriptor))?.first else { return }
         item.feedbackReason = feedback.rawValue
         item.feedbackAt = Date()
+        if item.semanticSignature.isEmpty {
+            item.semanticSignature = ScreenAgentDirector.semanticSignature(of: item.headline)
+        }
         do {
             try context.save()
         } catch {
@@ -219,21 +222,35 @@ final class ScreenAgentDeliveryService {
     /// the current pacing window. `tooIntrusive` is deliberately absent: it was
     /// about timing, and blocking the content would answer a complaint nobody
     /// made.
+    ///
+    /// Codex P1, confirmed by a live probe: the predicate version of this
+    /// force-unwrapped an optional, SwiftData rejected it at runtime, and
+    /// `(try? …) ?? []` read that failure as "no feedback exists" — feedback
+    /// was being recorded and then never consulted, with nothing in any log.
+    /// Plain fetch, in-memory filter: the table is small and a failure is loud.
     func rejectedSignatures() -> [String] {
         let pacing = ScreenAgentPacing(rawValue: AppSettings.shared.screenAgentPacing) ?? .balanced
         let cutoff = Date().addingTimeInterval(-pacing.duplicateWindowSeconds)
-        let blocking = [ScreenAgentDelivery.Feedback.wrong.rawValue,
-                        ScreenAgentDelivery.Feedback.repeated.rawValue,
-                        ScreenAgentDelivery.Feedback.obvious.rawValue]
-        let descriptor = FetchDescriptor<ScreenAgentItem>(
-            predicate: #Predicate { item in
-                item.feedbackAt != nil && item.feedbackAt! > cutoff
-            }
-        )
-        let rows = (try? ModelContext(container).fetch(descriptor)) ?? []
-        return rows
-            .filter { blocking.contains($0.feedbackReason ?? "") }
-            .map(\.semanticSignature)
+        let blocking: Set<String> = [ScreenAgentDelivery.Feedback.wrong.rawValue,
+                                     ScreenAgentDelivery.Feedback.repeated.rawValue,
+                                     ScreenAgentDelivery.Feedback.obvious.rawValue]
+        let rows: [ScreenAgentItem]
+        do {
+            rows = try ModelContext(container).fetch(FetchDescriptor<ScreenAgentItem>())
+        } catch {
+            NSLog("[ScreenAgentDelivery] could not read feedback (%@)", error.localizedDescription)
+            return []
+        }
+        return rows.compactMap { row in
+            guard let at = row.feedbackAt, at > cutoff,
+                  blocking.contains(row.feedbackReason ?? "") else { return nil }
+            // Rows migrated from V4 carry an empty signature; compute rather
+            // than silently exempting exactly the comments the user already
+            // complained about.
+            return row.semanticSignature.isEmpty
+                ? ScreenAgentDirector.semanticSignature(of: row.headline)
+                : row.semanticSignature
+        }
     }
 
     /// Newest first. The cap used to be 100 with no way past it, so a comment

@@ -497,7 +497,11 @@ final class ScreenExtractor: ObservableObject {
             let start = df.string(from: v.startedAt)
             let end = df.string(from: v.endedAt)
             let title = v.windowTitle ?? ""
-            lines.append("Visit \(i + 1) — \(v.appName) · \(start)-\(end) · \(title)")
+            // Codex P1 — the parser and the prompt's own instructions are
+            // zero-based, but the labels said "Visit 1". A model following the
+            // labels dropped the only visit or validated against the wrong
+            // OCR; a model following the instructions contradicted the labels.
+            lines.append("Visit \(i) — \(v.appName) · \(start)-\(end) · \(title)")
             if !v.ocrPreview.isEmpty {
                 lines.append("  OCR: \(v.ocrPreview)")
             }

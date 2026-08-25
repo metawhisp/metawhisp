@@ -163,17 +163,20 @@ final class ScreenAgentReplayTests: XCTestCase {
 
         var failures: [String] = []
         for testCase in insightCases {
+            // body stays exactly what the fixture says — padding it with the
+            // headline created a mid-string capitalized word that read as a
+            // proper noun and defeated the vagueness check.
             let insight = ExtractedInsight(
-                body: testCase.body.isEmpty ? testCase.headline : testCase.body,
+                body: testCase.body,
                 headline: testCase.headline,
                 reasoning: nil,
                 category: "other",
                 sourceApp: "Test",
                 confidence: testCase.confidence
             )
-            let evidence = ScreenAgentCandidateAdapter.evidence(
+            let (evidence, ids) = ScreenAgentCandidateAdapter.evidence(
                 contextID: UUID(), ocrText: testCase.screen)
-            let candidate = ScreenAgentCandidateAdapter.candidate(from: insight)
+            let candidate = ScreenAgentCandidateAdapter.candidate(from: insight, citing: ids)
             let decision = ScreenAgentDirector.decide(
                 candidates: [candidate], evidence: evidence,
                 screenText: testCase.screen, recentHeadlines: [])

@@ -76,6 +76,10 @@ struct ScreenAgentHealth: Equatable {
         if paused { return .init(state: .paused) }
         if !hasPermission { return .init(state: .noPermission) }
         if allowlistIsActiveAndEmpty { return .init(state: .nothingAllowed) }
+        if case .permissionDenied = captureOutcome { return .init(state: .noPermission) }
+        if case .ambiguousWindow = captureOutcome {
+            return .init(state: .degraded(reason: "cannot tell which window is focused"))
+        }
         if case .persistenceFailed = captureOutcome {
             return .init(state: .degraded(reason: "screen history could not be saved"))
         }

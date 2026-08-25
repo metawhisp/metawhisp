@@ -1,3 +1,4 @@
+import CoreGraphics
 import Foundation
 import SwiftData
 
@@ -107,11 +108,38 @@ final class ProactiveContextService: ObservableObject {
 
     func invalidatePendingWork() {
         purgeEpoch += 1
+        runQueue.cancelAll()
     }
+
+    /// ITER-066 follow-up (Codex P0) — the newest-value queue, actually wired.
+    /// It was written, tested and then left as dead code while production kept
+    /// the `guard !isRunning` drop, which discards exactly the screens the
+    /// user moves to during a slow model call.
+    private var runQueue = ScreenAgentRunQueue<ScreenContext>()
 
     func onNewContext(_ ctx: ScreenContext) {
         Task { @MainActor [weak self] in
-            await self?.evaluateAndSurface(ctx: ctx)
+            guard let self else { return }
+            if case .startNow(let token, let permit) = self.runQueue.submit(ctx, at: Date()) {
+                await self.drive(token, permit: permit)
+            }
+        }
+    }
+
+    /// Run one context, then whatever was newest while it ran. Depth is
+    /// bounded: the queue holds at most one pending context.
+    private func drive(_ ctx: ScreenContext,
+                       permit: ScreenAgentRunQueue<ScreenContext>.RunPermit) async {
+        isRunning = true
+        await evaluateAndSurface(ctx: ctx)
+        switch runQueue.finish(permit, at: Date()) {
+        case .startNow(let next, let nextPermit):
+            await drive(next, permit: nextPermit)
+        case .expired(let dropped):
+            isRunning = false
+            NSLog("[Proactive] pending context expired unshown (%@)", dropped.appName)
+        default:
+            isRunning = false
         }
     }
 
@@ -128,12 +156,13 @@ final class ProactiveContextService: ObservableObject {
         // a relaunch mid-run.
         let runID = ctx.id
         // ── Hard gates ────────────────────────────────────────────────
-        guard settings.proactiveEnabled else { return }
-        guard !isRunning else { return }
-        if let last = lastSurfaceAt {
-            let cooldownSeconds = max(60, settings.proactiveCooldownMinutes * 60)
-            guard Date().timeIntervalSince(last) > cooldownSeconds else { return }
-        }
+        guard settings.proactiveEnabled, settings.screenContextEnabled else { return }
+        // ITER-070 follow-up (Codex) — one pacing choice governs the cost gate
+        // too. The legacy cooldown sat in front of the delivery gate, so
+        // "Frequent" was silently overridden by whatever the old slider said.
+        let pacing = ScreenAgentPacing(rawValue: settings.screenAgentPacing) ?? .balanced
+        if let since = AppDelegate.shared?.screenAgentDelivery?.secondsSinceLastPresented,
+           since < pacing.minimumSecondsBetween { return }
         guard ctx.ocrText.count >= minContextChars else { return }
         guard !isBlacklisted(appName: ctx.appName) else { return }
         // No composing-app whitelist (removed 2026-05-11). The LLM is the
@@ -161,13 +190,14 @@ final class ProactiveContextService: ObservableObject {
         // ITER-027.6 — hand the assistant 2h of screen history so it can
         // INVESTIGATE with tools instead of echoing the current frame.
         let insight: ExtractedInsight?
+        let history = fetchHistorySnapshots(now: now)
         insight = await assistant.evaluate(
             appName: ctx.appName,
             windowTitle: ctx.windowTitle.isEmpty ? nil : ctx.windowTitle,
             ocr: ctx.ocrText,
             activitySummary: activitySummary,
             licenseKey: licenseKey,
-            history: fetchHistorySnapshots(now: now)
+            history: history
         )
 
         guard let insight else { return }
@@ -183,8 +213,13 @@ final class ProactiveContextService: ObservableObject {
         // say — rather than pretending a richer contract exists.
         // ITER-066 — production and the replay deck share this adapter, so a
         // fixture exercises the exact bridge a live insight crosses.
-        let evidence = ScreenAgentCandidateAdapter.evidence(contextID: ctx.id, ocrText: ctx.ocrText)
-        let candidate = ScreenAgentCandidateAdapter.candidate(from: insight)
+        // Codex P0 — the investigator reads history, so history is legitimate
+        // evidence. Citing only the current screen silenced every historical
+        // insight wholesale as "ungrounded": the claim was true, the runtime
+        // had simply thrown away where it came from.
+        let (evidence, evidenceIDs) = ScreenAgentCandidateAdapter.evidence(
+            contextID: ctx.id, ocrText: ctx.ocrText, history: history)
+        let candidate = ScreenAgentCandidateAdapter.candidate(from: insight, citing: evidenceIDs)
         let decision = ScreenAgentDirector.decide(
             candidates: [candidate],
             evidence: evidence,
@@ -196,6 +231,16 @@ final class ProactiveContextService: ObservableObject {
         guard case .item(let directedHeadline, let directedBody, _) = decision else {
             if case .silence(let reason) = decision {
                 NSLog("[Proactive] silent — %@", reason.rawValue)
+                // Codex P0 — the assistant remembers an insight in its session
+                // dedup the moment it returns it, so a director rejection also
+                // blocked every retry of the same idea for the session. A
+                // guard-level rejection is the director's verdict on THIS
+                // attempt, not a fact about the idea; the user's own verdicts
+                // (duplicate, userRejected) do stay remembered.
+                switch reason {
+                case .duplicate, .userRejected: break
+                default: assistant.retract(insight)
+                }
             }
             return
         }
@@ -232,7 +277,12 @@ final class ProactiveContextService: ObservableObject {
         )
 
         let preflight = ScreenAgentDeliveryService.Preflight(
-            featureEnabled: settings.proactiveEnabled,
+            // Codex P0 — the final gate re-checks everything that can be
+            // withdrawn mid-run: the master capture toggle and the TCC
+            // permission, not only the agent toggle.
+            featureEnabled: settings.proactiveEnabled
+                && settings.screenContextEnabled
+                && CGPreflightScreenCaptureAccess(),
             isPaused: settings.screenAgentPaused,
             meetingInProgress: AppDelegate.shared?.meetingRecorder.isRecording ?? false,
             pauseDuringMeetings: true,
@@ -243,7 +293,9 @@ final class ProactiveContextService: ObservableObject {
             // switch during the model call retires this run rather than
             // interrupting someone about a screen they left.
             visitIsStillCurrent: epoch == purgeEpoch
-                && AppDelegate.shared?.screenContext.lastAcceptedContextID == ctx.id,
+                && AppDelegate.shared?.screenContext.lastAcceptedContextID == ctx.id
+                && Date().timeIntervalSince(ctx.timestamp)
+                    <= ScreenAgentTimingPolicy.maxResultAgeSeconds,
             secondsSinceLastPresented: delivery.secondsSinceLastPresented,
             // ITER-070 — one plain-language choice governs this now.
             minimumSecondsBetween: (ScreenAgentPacing(rawValue: settings.screenAgentPacing)

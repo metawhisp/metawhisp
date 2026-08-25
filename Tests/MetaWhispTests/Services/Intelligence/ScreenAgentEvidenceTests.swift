@@ -91,4 +91,29 @@ final class ScreenAgentEvidenceTests: XCTestCase {
     func testAShortButSpecificQuoteIsAccepted() {
         XCTAssertNil(evidence().validate(citedIDs: ["e1"], quote: "16:00"))
     }
+
+    // MARK: Codex final review
+
+    /// "13" inside "2013" proves nothing about 13. Substring matching accepted
+    /// it; whole-token matching does not.
+    func testANumberInsideALargerNumberIsNotAMatch() {
+        let ev = ScreenAgentEvidence([.init(id: "e1", contextID: UUID(),
+                                            text: "Copyright 2013 Example Corp")])
+        XCTAssertEqual(ev.validate(citedIDs: ["e1"], quotes: ["13"]), .quoteNotInSource)
+    }
+
+    func testANameInsideALongerNameIsNotAMatch() {
+        let ev = ScreenAgentEvidence([.init(id: "e1", contextID: UUID(),
+                                            text: "Anna: send the deck")])
+        XCTAssertEqual(ev.validate(citedIDs: ["e1"], quotes: ["Ann"]), .quoteNotInSource)
+        XCTAssertNil(ev.validate(citedIDs: ["e1"], quotes: ["Anna"]))
+    }
+
+    /// Smart punctuation is what OCR and models actually produce, and a quote
+    /// must not fail on a character nobody can see.
+    func testSmartPunctuationDoesNotDefeatAQuote() {
+        let ev = ScreenAgentEvidence([.init(id: "e1", contextID: UUID(),
+                                            text: "Anna\u{2019}s deck \u{2014} due today")])
+        XCTAssertNil(ev.validate(citedIDs: ["e1"], quotes: ["Anna's deck - due today"]))
+    }
 }

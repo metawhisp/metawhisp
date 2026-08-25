@@ -82,13 +82,30 @@ struct ScreenAgentEvidence {
         let haystacks = cited.map { Self.normalize($0.text) }
         for quote in quotes {
             let needle = Self.normalize(quote)
-            // A one- or two-character "quote" substring-matches almost any
-            // screen, so it evidences nothing while looking like it does.
-            // Short but real quotes — a time, a name — still clear this.
+            // A one-character "quote" substring-matches almost any screen, so
+            // it evidences nothing while looking like it does. Short but real
+            // quotes — a count, a time — still clear this.
             guard needle.count >= Self.minimumQuoteCharacters else { return .quoteNotInSource }
-            guard haystacks.contains(where: { $0.contains(needle) }) else { return .quoteNotInSource }
+            guard haystacks.contains(where: { Self.occurs(needle, in: $0) }) else {
+                return .quoteNotInSource
+            }
         }
         return nil
+    }
+
+    /// Whole-token for single tokens: "13" inside "2013" and "ann" inside
+    /// "anna" prove nothing, and plain containment accepted both. Multi-word
+    /// quotes keep containment — their own words bound them.
+    static func occurs(_ needle: String, in haystack: String) -> Bool {
+        guard !needle.contains(" ") else { return haystack.contains(needle) }
+        let pattern = "(?<![\\p{L}\\p{N}])"
+            + NSRegularExpression.escapedPattern(for: needle)
+            + "(?![\\p{L}\\p{N}])"
+        guard let regex = try? NSRegularExpression(pattern: pattern) else {
+            return haystack.contains(needle)
+        }
+        let range = NSRange(haystack.startIndex..., in: haystack)
+        return regex.firstMatch(in: haystack, range: range) != nil
     }
 
     /// Below this a quote cannot be told apart from a coincidence. Two, not
@@ -100,7 +117,18 @@ struct ScreenAgentEvidence {
     /// Lowercased, whitespace-collapsed. OCR spacing is not stable enough to
     /// compare literally, and being strict about it would reject real quotes.
     static func normalize(_ text: String) -> String {
+        // OCR and model output disagree about punctuation constantly: smart
+        // quotes, em dashes, nonbreaking spaces. Fold them before comparing or
+        // a genuine quote fails on a character nobody can see.
         text.lowercased()
+            .replacingOccurrences(of: "\u{00A0}", with: " ")
+            .replacingOccurrences(of: "\u{2018}", with: "'")
+            .replacingOccurrences(of: "\u{2019}", with: "'")
+            .replacingOccurrences(of: "\u{201C}", with: "\"")
+            .replacingOccurrences(of: "\u{201D}", with: "\"")
+            .replacingOccurrences(of: "\u{2013}", with: "-")
+            .replacingOccurrences(of: "\u{2014}", with: "-")
+            .replacingOccurrences(of: "\u{2026}", with: "...")
             .components(separatedBy: .whitespacesAndNewlines)
             .filter { !$0.isEmpty }
             .joined(separator: " ")

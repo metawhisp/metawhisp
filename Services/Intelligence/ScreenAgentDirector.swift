@@ -111,7 +111,8 @@ enum ScreenAgentDirector {
         // passed cites a genuine number and lies about its state. The word the
         // claim uses is absent, its opposite is present — that is not a
         // paraphrase, it is a reversal.
-        if contradictsScreen(best.headline + " " + best.body, screen: screenText) {
+        if contradictsScreen(best.headline + " " + best.body, screen: screenText,
+                             anchors: (best.quote.map { [$0] } ?? []) + best.anchors) {
             return .silence(.ungrounded)
         }
 
@@ -123,7 +124,13 @@ enum ScreenAgentDirector {
             return .silence(.unsafeContent)
         }
 
-        if echoes(best.headline, of: screenText) { return .silence(.echoesTheScreen) }
+        // An echo with a body that adds something is not an echo — restating
+        // the visible headline is how a comment introduces the context its
+        // body explains. Silence only when there is nothing beyond the screen.
+        if echoes(best.headline, of: screenText),
+           best.body.isEmpty || echoes(best.body, of: screenText) {
+            return .silence(.echoesTheScreen)
+        }
         if recentHeadlines.contains(where: { isNearDuplicate($0, best.headline) }) {
             return .silence(.duplicate)
         }
@@ -168,19 +175,44 @@ enum ScreenAgentDirector {
         ("connected", "disconnected"),
     ]
 
-    static func contradictsScreen(_ claim: String, screen: String) -> Bool {
-        let claimWords = Set(ScreenAgentEvidence.normalize(claim)
-            .components(separatedBy: CharacterSet.alphanumerics.inverted))
-        let screenWords = Set(ScreenAgentEvidence.normalize(screen)
-            .components(separatedBy: CharacterSet.alphanumerics.inverted))
+    static func contradictsScreen(_ claim: String, screen: String,
+                                  anchors: [String] = []) -> Bool {
+        let claimWords = Set(tokenize(claim))
+        let screenTokens = tokenize(screen)
+        let screenWords = Set(screenTokens)
+        // Codex P1 — polarity has to be judged next to the entity the claim
+        // names. A CI page saying "4021 passed; 4020 failed" contains both
+        // words globally, so a global rule waves "Build 4021 failed" through;
+        // the words within a couple of tokens of 4021 are what decide.
+        let anchorTokens = Set(anchors.flatMap(tokenize).filter { $0.count >= 2 })
+
         for (a, b) in polarityPairs {
-            // Both directions; and only when the claim's word is absent from
-            // the screen while its opposite is present. A screen showing both
-            // (a CI page listing passes and failures) decides nothing.
-            if claimWords.contains(a), !screenWords.contains(a), screenWords.contains(b) { return true }
-            if claimWords.contains(b), !screenWords.contains(b), screenWords.contains(a) { return true }
+            for (x, y) in [(a, b), (b, a)] where claimWords.contains(x) {
+                if !anchorTokens.isEmpty {
+                    var supporting = false
+                    var opposing = false
+                    for (idx, token) in screenTokens.enumerated() where anchorTokens.contains(token) {
+                        let lo = max(0, idx - 2)
+                        let hi = min(screenTokens.count - 1, idx + 2)
+                        let window = Set(screenTokens[lo...hi])
+                        if window.contains(x) { supporting = true }
+                        if window.contains(y) { opposing = true }
+                    }
+                    if supporting { continue }
+                    if opposing { return true }
+                    // The anchor never appeared near either word — fall back to
+                    // the whole screen.
+                }
+                if !screenWords.contains(x), screenWords.contains(y) { return true }
+            }
         }
         return false
+    }
+
+    private static func tokenize(_ text: String) -> [String] {
+        ScreenAgentEvidence.normalize(text)
+            .components(separatedBy: CharacterSet.alphanumerics.inverted)
+            .filter { !$0.isEmpty }
     }
 
     /// A comment that is already on screen verbatim tells the user nothing they
@@ -197,6 +229,17 @@ enum ScreenAgentDirector {
         let wordsA = contentWords(a)
         let wordsB = contentWords(b)
         guard !wordsA.isEmpty, !wordsB.isEmpty else { return false }
+        // Codex P1 — a changed outcome is news, not a repeat. "4021 passed"
+        // and "4021 failed" share nearly every word and say opposite things;
+        // so do "by 16:00" and "by 17:00". Suppressing the update because it
+        // resembles the original is the worst possible use of dedup.
+        for (x, y) in polarityPairs {
+            if (wordsA.contains(x) && wordsB.contains(y))
+                || (wordsA.contains(y) && wordsB.contains(x)) { return false }
+        }
+        let numsA = wordsA.filter { $0.allSatisfy(\.isNumber) }
+        let numsB = wordsB.filter { $0.allSatisfy(\.isNumber) }
+        if numsA != numsB { return false }
         let shared = wordsA.intersection(wordsB).count
         let smaller = min(wordsA.count, wordsB.count)
         return Double(shared) / Double(smaller) >= 0.6
@@ -235,7 +278,10 @@ enum ScreenAgentDirector {
         return Set(
             ScreenAgentEvidence.normalize(text)
                 .components(separatedBy: CharacterSet.alphanumerics.inverted)
-                .filter { $0.count > 2 && !stop.contains($0) }
+                // Numbers stay whatever their length: "16" and "00" are the
+                // two halves of a deadline, and dropping them made 16:00 and
+                // 17:00 indistinguishable.
+                .filter { ($0.count > 2 || $0.allSatisfy(\.isNumber)) && !stop.contains($0) }
         )
     }
 }

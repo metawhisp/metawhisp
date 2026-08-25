@@ -76,8 +76,10 @@ final class ScreenAgentDirectorTests: XCTestCase {
     /// assistant becomes noise.
     func testAClaimThatOnlyRepeatsTheScreenIsSilenced() {
         let onScreen = "Anna: please send the final deck today by 16:00"
+        // An empty body isolates the echo rule: a body that adds something is
+        // covered by testAnEchoWithANovelBodyStillSpeaks.
         XCTAssertEqual(
-            decide([candidate(headline: "please send the final deck today")],
+            decide([candidate(headline: "please send the final deck today", body: "")],
                    screenText: onScreen),
             .silence(.echoesTheScreen))
     }
@@ -220,6 +222,39 @@ final class ScreenAgentDirectorTests: XCTestCase {
             ScreenAgentDirector.decide(candidates: [c], evidence: ev,
                                        screenText: screen, recentHeadlines: []),
             .silence(.ungrounded))
+    }
+
+    /// Codex P1 — polarity judged next to the entity. The global rule waved
+    /// this through because "failed" appears somewhere on the screen; the words
+    /// next to 4021 are what decide.
+    func testPolarityIsJudgedNextToTheNamedEntity() {
+        XCTAssertTrue(ScreenAgentDirector.contradictsScreen(
+            "Build 4021 failed", screen: "4021 passed; 4020 failed", anchors: ["4021"]))
+        XCTAssertFalse(ScreenAgentDirector.contradictsScreen(
+            "Build 4021 failed", screen: "4020 passed, 4021 failed, 4022 passed",
+            anchors: ["4021"]))
+    }
+
+    /// A changed outcome is news. Suppressing the update because it resembles
+    /// the original is the worst possible use of dedup.
+    func testAChangedOutcomeIsNotADuplicate() {
+        XCTAssertFalse(ScreenAgentDirector.isNearDuplicate(
+            "Build 4021 passed", "Build 4021 failed"))
+        XCTAssertFalse(ScreenAgentDirector.isNearDuplicate(
+            "Anna needs the deck by 16:00", "Anna needs the deck by 17:00"))
+    }
+
+    /// A visible headline with a body that adds history is not an echo.
+    func testAnEchoWithANovelBodyStillSpeaks() {
+        let screen = "PR #88: fix the flaky login test"
+        let ev = ScreenAgentEvidence([.init(id: "e1", contextID: UUID(), text: screen)])
+        let c = ScreenAgentDirector.Candidate(
+            headline: "PR #88: fix the flaky login test",
+            body: "You reviewed the same failure in March and the fix was reverted",
+            citedEvidenceIDs: ["e1"], quote: "88", confidence: 0.9, namesReferent: true)
+        guard case .item = ScreenAgentDirector.decide(
+            candidates: [c], evidence: ev, screenText: screen, recentHeadlines: [])
+        else { return XCTFail("a body that adds context must not be silenced as an echo") }
     }
 
     // MARK: helpers

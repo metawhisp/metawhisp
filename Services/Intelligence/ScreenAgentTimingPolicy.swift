@@ -25,4 +25,10 @@ enum ScreenAgentTimingPolicy {
     /// on and a comment is worse than silence, so late work is dropped rather
     /// than delivered.
     static let endToEndDeadline: TimeInterval = 10
+
+    /// Oldest capture a comment may still be delivered about. The proactive
+    /// pipeline legitimately takes tens of seconds — investigation rounds are
+    /// slow — but past two minutes "about what you are looking at" is no
+    /// longer true no matter what the window title says.
+    static let maxResultAgeSeconds: TimeInterval = 120
 }
