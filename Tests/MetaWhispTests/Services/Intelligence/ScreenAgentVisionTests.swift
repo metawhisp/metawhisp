@@ -18,8 +18,8 @@ final class ScreenAgentVisionTests: XCTestCase {
 
     func testTheCacheHoldsExactlyOneFrame() {
         let cache = ScreenAgentFrameCache()
-        cache.store(contextID: ctxA, jpeg: Data([1]), capturedAt: t0)
-        cache.store(contextID: ctxB, jpeg: Data([2]), capturedAt: t0)
+        cache.store(contextID: ctxA, jpeg: Data([1]), generation: 1, capturedAt: t0)
+        cache.store(contextID: ctxB, jpeg: Data([2]), generation: 1, capturedAt: t0)
         XCTAssertNil(cache.take(matching: ctxA, at: t0),
                      "storing a new frame must forget the old one — capacity is the privacy bound")
         XCTAssertNotNil(cache.take(matching: ctxB, at: t0))
@@ -27,23 +27,37 @@ final class ScreenAgentVisionTests: XCTestCase {
 
     func testAFrameForADifferentContextIsNotServed() {
         let cache = ScreenAgentFrameCache()
-        cache.store(contextID: ctxA, jpeg: Data([1]), capturedAt: t0)
+        cache.store(contextID: ctxA, jpeg: Data([1]), generation: 1, capturedAt: t0)
         XCTAssertNil(cache.take(matching: ctxB, at: t0),
                      "a vision call about the wrong screen is worse than none")
     }
 
     func testAnExpiredFrameIsNotServed() {
         let cache = ScreenAgentFrameCache()
-        cache.store(contextID: ctxA, jpeg: Data([1]), capturedAt: t0)
+        cache.store(contextID: ctxA, jpeg: Data([1]), generation: 1, capturedAt: t0)
         let late = t0.addingTimeInterval(ScreenAgentFrameCache.maxAgeSeconds + 1)
         XCTAssertNil(cache.take(matching: ctxA, at: late))
     }
 
     func testInvalidateAllEmptiesTheCache() {
         let cache = ScreenAgentFrameCache()
-        cache.store(contextID: ctxA, jpeg: Data([1]), capturedAt: t0)
+        cache.store(contextID: ctxA, jpeg: Data([1]), generation: 1, capturedAt: t0)
         cache.invalidateAll()
         XCTAssertNil(cache.take(matching: ctxA, at: t0))
+    }
+
+    /// ITER-069 §4 — the request carries generation and frame content hash, so
+    /// the frame must know both about itself.
+    func testTheFrameCarriesItsGenerationAndContentHash() {
+        let cache = ScreenAgentFrameCache()
+        cache.store(contextID: ctxA, jpeg: Data([1, 2, 3]), generation: 7, capturedAt: t0)
+        let frame = cache.take(matching: ctxA, at: t0)
+        XCTAssertEqual(frame?.generation, 7)
+        // SHA-256 of the exact bytes — stable, and different bytes differ.
+        XCTAssertEqual(frame?.contentHash,
+                       ScreenAgentFrameCache.contentHash(of: Data([1, 2, 3])))
+        XCTAssertNotEqual(ScreenAgentFrameCache.contentHash(of: Data([1, 2, 3])),
+                          ScreenAgentFrameCache.contentHash(of: Data([1, 2, 4])))
     }
 
     // MARK: - consent
@@ -51,7 +65,7 @@ final class ScreenAgentVisionTests: XCTestCase {
     /// Spec case 1: text-cloud consent alone never permits an image send.
     func testTextConsentAloneNeverPermitsAnImage() async {
         let cache = ScreenAgentFrameCache()
-        cache.store(contextID: ctxA, jpeg: Data([1]))
+        cache.store(contextID: ctxA, jpeg: Data([1]), generation: 1)
         let transport = FakeTransport(respondWith: ctxA)
         let client = ScreenAgentVisionClient(transport: transport, cache: cache)
         let outcome = await client.analyzeCurrentFrame(
@@ -65,7 +79,7 @@ final class ScreenAgentVisionTests: XCTestCase {
     /// Revoking consent while the model is thinking discards the result.
     func testConsentRevokedMidCallDiscardsTheAnswer() async {
         let cache = ScreenAgentFrameCache()
-        cache.store(contextID: ctxA, jpeg: Data([1]))
+        cache.store(contextID: ctxA, jpeg: Data([1]), generation: 1)
         var consent = true
         let transport = FakeTransport(respondWith: ctxA, onAnalyze: { consent = false })
         let client = ScreenAgentVisionClient(transport: transport, cache: cache)
@@ -81,8 +95,31 @@ final class ScreenAgentVisionTests: XCTestCase {
     /// Spec case 3: a response for a different frame is rejected.
     func testAResponseForADifferentContextIsRejected() async {
         let cache = ScreenAgentFrameCache()
-        cache.store(contextID: ctxA, jpeg: Data([1]))
+        cache.store(contextID: ctxA, jpeg: Data([1]), generation: 1)
         let transport = FakeTransport(respondWith: ctxB)   // answers about the wrong frame
+        let client = ScreenAgentVisionClient(transport: transport, cache: cache)
+        let outcome = await client.analyzeCurrentFrame(
+            contextID: ctxA, visualConsentGranted: { true }, isStillCurrent: { true })
+        XCTAssertEqual(outcome, .stale)
+    }
+
+    /// ITER-069 §4 — the response is accepted only if visit ID, generation AND
+    /// frame hash all still match. An answer that cannot echo the generation
+    /// it was asked about is an answer to some other question.
+    func testAResponseEchoingTheWrongGenerationIsRejected() async {
+        let cache = ScreenAgentFrameCache()
+        cache.store(contextID: ctxA, jpeg: Data([1]), generation: 3)
+        let transport = FakeTransport(respondWith: ctxA, echoGeneration: 2)
+        let client = ScreenAgentVisionClient(transport: transport, cache: cache)
+        let outcome = await client.analyzeCurrentFrame(
+            contextID: ctxA, visualConsentGranted: { true }, isStillCurrent: { true })
+        XCTAssertEqual(outcome, .stale)
+    }
+
+    func testAResponseEchoingTheWrongFrameHashIsRejected() async {
+        let cache = ScreenAgentFrameCache()
+        cache.store(contextID: ctxA, jpeg: Data([1]), generation: 1)
+        let transport = FakeTransport(respondWith: ctxA, echoHash: "not-the-frame")
         let client = ScreenAgentVisionClient(transport: transport, cache: cache)
         let outcome = await client.analyzeCurrentFrame(
             contextID: ctxA, visualConsentGranted: { true }, isStillCurrent: { true })
@@ -92,7 +129,7 @@ final class ScreenAgentVisionTests: XCTestCase {
     /// Spec case 2: the user left the screen before the answer arrived.
     func testLeavingTheScreenMidCallDiscardsTheAnswer() async {
         let cache = ScreenAgentFrameCache()
-        cache.store(contextID: ctxA, jpeg: Data([1]))
+        cache.store(contextID: ctxA, jpeg: Data([1]), generation: 1)
         var current = true
         let transport = FakeTransport(respondWith: ctxA, onAnalyze: { current = false })
         let client = ScreenAgentVisionClient(transport: transport, cache: cache)
@@ -105,7 +142,7 @@ final class ScreenAgentVisionTests: XCTestCase {
     /// dressed up as vision.
     func testTransportFailureIsFailureNotAFallback() async {
         let cache = ScreenAgentFrameCache()
-        cache.store(contextID: ctxA, jpeg: Data([1]))
+        cache.store(contextID: ctxA, jpeg: Data([1]), generation: 1)
         let transport = FakeTransport(respondWith: ctxA, fail: true)
         let client = ScreenAgentVisionClient(transport: transport, cache: cache)
         let outcome = await client.analyzeCurrentFrame(
@@ -115,7 +152,7 @@ final class ScreenAgentVisionTests: XCTestCase {
 
     func testTheHappyPathReturnsFacts() async {
         let cache = ScreenAgentFrameCache()
-        cache.store(contextID: ctxA, jpeg: Data([1]))
+        cache.store(contextID: ctxA, jpeg: Data([1]), generation: 1)
         let transport = FakeTransport(
             respondWith: ctxA,
             facts: [.init(evidenceID: "v1", statement: "Company field is empty")])
@@ -135,15 +172,22 @@ final class ScreenAgentVisionTests: XCTestCase {
         private let facts: [ScreenAgentVisionResponse.VisualFact]
         private let fail: Bool
         private let onAnalyze: (@MainActor () -> Void)?
+        /// nil = echo the request faithfully, like the worker does.
+        private let echoGeneration: Int?
+        private let echoHash: String?
         private(set) var calls = 0
 
         init(respondWith: UUID,
              facts: [ScreenAgentVisionResponse.VisualFact] = [],
              fail: Bool = false,
+             echoGeneration: Int? = nil,
+             echoHash: String? = nil,
              onAnalyze: (@MainActor () -> Void)? = nil) {
             self.respondWith = respondWith
             self.facts = facts
             self.fail = fail
+            self.echoGeneration = echoGeneration
+            self.echoHash = echoHash
             self.onAnalyze = onAnalyze
         }
 
@@ -153,7 +197,11 @@ final class ScreenAgentVisionTests: XCTestCase {
             calls += 1
             onAnalyze?()
             if fail { throw Failure() }
-            return ScreenAgentVisionResponse(contextID: respondWith, facts: facts)
+            return ScreenAgentVisionResponse(
+                contextID: respondWith,
+                generation: echoGeneration ?? request.generation,
+                frameHash: echoHash ?? request.frameHash,
+                facts: facts)
         }
     }
 }

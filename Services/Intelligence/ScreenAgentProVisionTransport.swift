@@ -25,20 +25,28 @@ struct ScreenAgentProVisionTransport: ScreenAgentVisionTransport {
         urlRequest.timeoutInterval = 30
         urlRequest.httpBody = try JSONEncoder().encode(Payload(
             image_b64: request.jpeg.base64EncodedString(),
-            context_id: request.contextID.uuidString))
+            context_id: request.contextID.uuidString,
+            generation: request.generation,
+            frame_hash: request.frameHash))
 
         let (data, response) = try await URLSession.shared.data(for: urlRequest)
         guard (response as? HTTPURLResponse)?.statusCode == 200 else { throw TransportError() }
 
         let reply = try JSONDecoder().decode(Reply.self, from: data)
+        // A missing echo maps to values that can never match — the client's
+        // same-frame check rejects instead of trusting silence.
         return ScreenAgentVisionResponse(
             contextID: UUID(uuidString: reply.context_id) ?? UUID(),
+            generation: reply.generation ?? -1,
+            frameHash: reply.frame_hash ?? "",
             facts: reply.facts.map { .init(evidenceID: $0.id, statement: $0.statement) })
     }
 
     private struct Payload: Encodable {
         let image_b64: String
         let context_id: String
+        let generation: Int
+        let frame_hash: String
     }
 
     private struct Reply: Decodable {
@@ -47,6 +55,8 @@ struct ScreenAgentProVisionTransport: ScreenAgentVisionTransport {
             let statement: String
         }
         let context_id: String
+        let generation: Int?
+        let frame_hash: String?
         let facts: [Fact]
     }
 }

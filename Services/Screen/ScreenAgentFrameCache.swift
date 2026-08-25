@@ -1,5 +1,6 @@
 import AppKit
 import CoreGraphics
+import CryptoKit
 import Foundation
 
 /// The one frame vision is allowed to look at, and nowhere else it may live.
@@ -15,6 +16,11 @@ final class ScreenAgentFrameCache {
     struct CachedFrame {
         let contextID: UUID
         let jpeg: Data
+        /// The capture epoch this frame belongs to. ITER-069 §4 — the vision
+        /// request carries it, the response must echo it.
+        let generation: Int
+        /// SHA-256 of the exact bytes sent, computed once at store time.
+        let contentHash: String
         let capturedAt: Date
     }
 
@@ -25,8 +31,13 @@ final class ScreenAgentFrameCache {
     static let maxAgeSeconds: TimeInterval = ScreenAgentTimingPolicy.maxResultAgeSeconds
 
     /// Keep exactly this frame, forgetting any previous one.
-    func store(contextID: UUID, jpeg: Data, capturedAt: Date = Date()) {
-        frame = CachedFrame(contextID: contextID, jpeg: jpeg, capturedAt: capturedAt)
+    func store(contextID: UUID, jpeg: Data, generation: Int, capturedAt: Date = Date()) {
+        frame = CachedFrame(contextID: contextID, jpeg: jpeg, generation: generation,
+                            contentHash: Self.contentHash(of: jpeg), capturedAt: capturedAt)
+    }
+
+    static func contentHash(of data: Data) -> String {
+        SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
     }
 
     /// The frame for this exact context, if it is still fresh. A mismatched

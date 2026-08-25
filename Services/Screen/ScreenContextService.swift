@@ -519,7 +519,7 @@ final class ScreenContextService: ObservableObject {
         if let frame = pendingFrame,
            AppSettings.shared.screenAgentVisualConsent,
            let jpeg = ScreenFrameEncoder.downscaledJPEG(from: frame) {
-            frameCache.store(contextID: record.id, jpeg: jpeg)
+            frameCache.store(contextID: record.id, jpeg: jpeg, generation: captureEpoch)
         }
         pendingFrame = nil
 

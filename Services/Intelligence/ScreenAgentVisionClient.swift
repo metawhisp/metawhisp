@@ -13,11 +13,19 @@ protocol ScreenAgentVisionTransport {
 struct ScreenAgentVisionRequest {
     let contextID: UUID
     let jpeg: Data
+    /// ITER-069 §4 — the request carries runtime-issued generation and frame
+    /// content hash; the response is accepted only if all still match.
+    let generation: Int
+    let frameHash: String
 }
 
 struct ScreenAgentVisionResponse {
     /// Echoed by the transport so a late answer can be tied to its question.
     let contextID: UUID
+    /// Echoed generation and frame hash — an answer that cannot name the
+    /// exact frame it was asked about is an answer to some other question.
+    let generation: Int
+    let frameHash: String
     /// Visible-state facts, each with a runtime-consumable evidence tag.
     /// The transport composes no user-facing prose.
     let facts: [VisualFact]
@@ -64,16 +72,21 @@ final class ScreenAgentVisionClient {
         let response: ScreenAgentVisionResponse
         do {
             response = try await transport.analyze(
-                ScreenAgentVisionRequest(contextID: contextID, jpeg: frame.jpeg))
+                ScreenAgentVisionRequest(contextID: contextID, jpeg: frame.jpeg,
+                                         generation: frame.generation,
+                                         frameHash: frame.contentHash))
         } catch {
             NSLog("[ScreenAgentVision] transport failed: %@", error.localizedDescription)
             return .failed
         }
 
         // Same-frame proof, both directions: the answer names the question it
-        // is answering, and the world has not moved on meanwhile. Consent is
+        // is answering — visit ID, generation and frame hash all echoed back
+        // (ITER-069 §4) — and the world has not moved on meanwhile. Consent is
         // re-checked because revoking it mid-call must discard the result.
         guard response.contextID == contextID,
+              response.generation == frame.generation,
+              response.frameHash == frame.contentHash,
               visualConsentGranted(), isStillCurrent() else { return .stale }
         return .facts(response.facts)
     }
