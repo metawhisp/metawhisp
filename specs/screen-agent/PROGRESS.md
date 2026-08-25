@@ -193,3 +193,27 @@ Data safety: CLEAN по вердикту ревью (V3→V4→V5, живой с
 Гейт: 1134 теста, 0 падений, 47 критических сюит, PASS
 Осталось: bounded retrieval (069.6/7), visual replay (069.9), живая матрица (069.10)
 ```
+
+## Журнал — 2026-08-25, вечер: батч-ревью Codex + deck до минимума DoD
+
+```text
+Ревью Codex по батчу (retrieval/pacing/announce/vision/event-capture): Request changes.
+P0 закрыт: master-off теперь фенсит работу в полёте (settle-таски, re-check после
+await'ов, epoch bump + сброс кадра в stopMonitoring, vision гибнет при выключении).
+P1/P2 закрыты: reentrancy-флаг захвата; ошибка поиска не становится evidence;
+дневной бюджет по deliveredAt и fail-closed; retention по capturedAt.
+
+Deck 27 → 40 (минимум DoD выполнен) по распределению классов из ТЗ.
+Новые кейсы поймали 4 дыры директора, все починены:
+  перефразированное эхо (покрытие по словам + стемминг);
+  русская морфология ломала дедуп (лёгкий стеммер RU/EN);
+  платёжный приказ со страницы обходил эхо (гард unsafeContent);
+  пустой токен: "".allSatisfy(isNumber) вакуумно true — солил все множества.
+TEST-02 из продуктовой спеки — в deck в обе стороны (с retrieval и без).
+
+Замер p95 инструментирован: NSLog latency= на каждом показе.
+
+Гейт: 1149 тестов, 0 падений, 48 критических сюит, PASS. Приложение стоит.
+Открыто: deck→60; Run/Delivery-записи; vision hypothesis/hash echo;
+per-record retrieval refs; онбординг и подтверждение закрытия задач — решения владельца.
+```
