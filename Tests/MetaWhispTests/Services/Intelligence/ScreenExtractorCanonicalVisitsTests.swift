@@ -111,6 +111,32 @@ final class ScreenExtractorCanonicalVisitsTests: XCTestCase {
         XCTAssertEqual(visits.first?.startedAt, frames.first?.timestamp)
     }
 
+    /// ITER-071.3 — an ordered page: the batch is the OLDEST visits and the
+    /// checkpoint is the last moment consumed, so what does not fit is the
+    /// next page rather than something quietly dropped.
+    func testTheBatchIsTheOldestVisitsSoNothingIsSkipped() throws {
+        let cap = ScreenExtractor.maxVisitsPerBatchForTests
+        // cap + 3 visits, each its own window, one minute apart.
+        let contexts = (0 ..< (cap + 3)).map {
+            context("App\($0)", "Window \($0)", "text \($0)", at: 1000 + Double($0) * 60)
+        }
+        let records = contexts.enumerated().map { i, c in
+            record(app: "App\(i)", title: "Window \(i)",
+                   startedAt: 1000 + Double(i) * 60, frames: [c.id])
+        }
+        let visits = ScreenExtractor().canonicalVisits(for: contexts, records: records)
+        XCTAssertEqual(visits.count, cap + 3)
+
+        let batch = Array(visits.prefix(cap))
+        XCTAssertEqual(batch.first?.appName, "App0",
+                       "the oldest visit must be in the batch, not stranded behind the checkpoint")
+        let checkpoint = try XCTUnwrap(batch.last?.endedAt)
+        for visit in visits.dropFirst(cap) {
+            XCTAssertGreaterThan(visit.startedAt, checkpoint,
+                                 "a deferred visit must still be ahead of the checkpoint")
+        }
+    }
+
     /// A record whose frames were all retention-pruned contributes nothing —
     /// and must not crash or fabricate an empty visit.
     func testARecordWithNoLiveFramesIsSkipped() {

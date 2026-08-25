@@ -30,6 +30,9 @@ final class ScreenExtractor: ObservableObject {
     private let visitGapSeconds: TimeInterval = 60 * 5  // 5 min
     /// Max visits per batch call (trims prompt size).
     private let maxVisitsPerBatch = 20
+    /// The page size, visible to tests so the paging contract is pinned
+    /// against the real number rather than a copy of it.
+    nonisolated static let maxVisitsPerBatchForTests = 20
     /// Preview chars from OCR per visit in the prompt.
     private let ocrPreviewChars = 300
 
@@ -93,8 +96,10 @@ final class ScreenExtractor: ObservableObject {
         let since = lastRun ?? Date().addingTimeInterval(-3600)
 
         // Fetch ScreenContexts since last run, oldest first.
+        // Strictly newer than the checkpoint: an inclusive boundary re-read
+        // and re-processed the row the last pass ended on, every pass (Codex).
         var descriptor = FetchDescriptor<ScreenContext>(
-            predicate: #Predicate { $0.timestamp >= since },
+            predicate: #Predicate { $0.timestamp > since },
             sortBy: [SortDescriptor(\.timestamp, order: .forward)]
         )
         descriptor.fetchLimit = 500
@@ -126,16 +131,19 @@ final class ScreenExtractor: ObservableObject {
         }
         let visits = canonicalVisits(for: contexts, records: visitRecords)
         guard !visits.isEmpty else { lastRun = Date(); return }
-        // ITER-071 — the newest N are processed, and the checkpoint used to
-        // jump past the rest anyway, so a busy hour silently lost its earlier
-        // visits forever. Keep the checkpoint at the oldest visit that is
-        // actually going to be looked at, and let the next pass pick up what
-        // was left behind.
-        let trimmed = Array(visits.suffix(maxVisitsPerBatch))
+        // ITER-071.3 — an ordered page, oldest first. Taking the NEWEST twenty
+        // and then checkpointing at the oldest of those meant everything older
+        // sat before the new floor and was never fetched again: the visits the
+        // log called "deferred" were being lost, not deferred (Codex).
+        //
+        // The checkpoint is the last moment this pass actually consumed, so a
+        // deferred visit is simply the next page — nothing skipped, nothing
+        // read twice.
+        let trimmed = Array(visits.prefix(maxVisitsPerBatch))
         let droppedCount = visits.count - trimmed.count
-        let checkpointFloor: Date? = droppedCount > 0 ? trimmed.first?.startedAt : nil
+        let checkpointFloor: Date? = droppedCount > 0 ? trimmed.last?.endedAt : nil
         if droppedCount > 0 {
-            NSLog("[ScreenExtractor] %d visits deferred to the next pass (batch cap %d)",
+            NSLog("[ScreenExtractor] %d visits queued for the next pass (batch cap %d)",
                   droppedCount, maxVisitsPerBatch)
         }
 
