@@ -1023,7 +1023,7 @@ final class ChatService: ObservableObject {
         guard let container = modelContainer else { return "" }
         let ctx = ModelContext(container)
         let desc = FetchDescriptor<UserMemory>(
-            predicate: #Predicate { !$0.isDismissed },
+            predicate: #Predicate { !$0.isDismissed && !$0.needsReview },
             sortBy: [SortDescriptor(\.createdAt, order: .reverse)]
         )
         let all = (try? ctx.fetch(desc)) ?? []

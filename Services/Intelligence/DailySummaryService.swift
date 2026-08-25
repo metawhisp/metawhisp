@@ -546,7 +546,7 @@ final class DailySummaryService: ObservableObject {
     private func fetchMemoriesAdded(ctx: ModelContext, from start: Date, to end: Date) -> [UserMemory] {
         var desc = FetchDescriptor<UserMemory>(
             predicate: #Predicate {
-                !$0.isDismissed && $0.createdAt >= start && $0.createdAt < end
+                !$0.isDismissed && !$0.needsReview && $0.createdAt >= start && $0.createdAt < end
             },
             sortBy: [SortDescriptor(\.createdAt, order: .forward)]
         )

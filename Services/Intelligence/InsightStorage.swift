@@ -112,7 +112,7 @@ final class InsightStorage {
         let ctx = ModelContext(modelContainer)
         var desc = FetchDescriptor<UserMemory>(
             predicate: #Predicate { mem in
-                mem.category == "system" && !mem.isDismissed
+                mem.category == "system" && !mem.isDismissed && !mem.needsReview
             },
             sortBy: [SortDescriptor(\.createdAt, order: .reverse)]
         )

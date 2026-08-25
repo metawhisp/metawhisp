@@ -24,6 +24,7 @@ struct MemoriesView: View {
 
     enum Filter: String, CaseIterable {
         case all = "All"
+        case review = "Needs review"
         case system = "System"
         case interesting = "Interesting"
     }
@@ -49,7 +50,27 @@ struct MemoriesView: View {
                     ScrollView {
                         LazyVStack(spacing: 6) {
                             ForEach(filteredMemories) { memory in
-                                MemoryRowView(memory: memory, onEdit: { editingMemory = memory }, onDelete: { delete(memory) })
+                                VStack(alignment: .leading, spacing: 6) {
+                                    MemoryRowView(memory: memory,
+                                                  onEdit: { editingMemory = memory },
+                                                  onDelete: { delete(memory) })
+                                    if memory.needsReview {
+                                        HStack(spacing: 8) {
+                                            Text("Read off your screen — not used until you confirm")
+                                                .font(MW.monoSm)
+                                                .foregroundStyle(MW.textMuted)
+                                            Spacer()
+                                            Button("Confirm") { confirm(memory) }
+                                                .buttonStyle(.borderless)
+                                                .font(MW.monoSm)
+                                            Button("Discard") { delete(memory) }
+                                                .buttonStyle(.borderless)
+                                                .font(MW.monoSm)
+                                                .foregroundStyle(MW.textMuted)
+                                        }
+                                        .padding(.horizontal, 4)
+                                    }
+                                }
                             }
                         }
                         .padding(16)
@@ -161,9 +182,25 @@ struct MemoriesView: View {
 
     private var filteredMemories: [UserMemory] {
         switch selectedFilter {
-        case .all: return memories
-        case .system: return memories.filter { $0.category == "system" }
-        case .interesting: return memories.filter { $0.category == "interesting" }
+        // ITER-071.6 — proposals read off the screen are held out of the main
+        // list: they are not facts about the user until the user says so.
+        case .all: return memories.filter { !$0.needsReview }
+        case .review: return memories.filter { $0.needsReview }
+        case .system: return memories.filter { $0.category == "system" && !$0.needsReview }
+        case .interesting:
+            return memories.filter { $0.category == "interesting" && !$0.needsReview }
+        }
+    }
+
+    /// Accept a screen-proposed fact: from here on the assistant may use it.
+    private func confirm(_ memory: UserMemory) {
+        do {
+            try MutationService.shared.commit(.memorySaved(memory.id), in: modelContext) {
+                memory.needsReview = false
+                memory.updatedAt = Date()
+            }
+        } catch {
+            NSLog("[Memories] confirm failed: %@", error.localizedDescription)
         }
     }
 

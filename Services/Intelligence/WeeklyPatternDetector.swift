@@ -389,7 +389,7 @@ final class WeeklyPatternDetector: ObservableObject {
 
     private func fetchMemories(ctx: ModelContext, from: Date) -> [UserMemory] {
         var desc = FetchDescriptor<UserMemory>(
-            predicate: #Predicate { !$0.isDismissed && $0.createdAt >= from },
+            predicate: #Predicate { !$0.isDismissed && !$0.needsReview && $0.createdAt >= from },
             sortBy: [SortDescriptor(\.createdAt, order: .forward)]
         )
         desc.fetchLimit = 60

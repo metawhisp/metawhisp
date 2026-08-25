@@ -24,7 +24,8 @@ enum MetaWhispSchemaV1: VersionedSchema {
 
     static var models: [any PersistentModel.Type] {
         [
-            HistoryItem.self, ScreenContext.self, AdviceItem.self, UserMemory.self,
+            HistoryItem.self, ScreenContext.self, AdviceItem.self,
+            MetaWhispFrozenMemory.UserMemory.self,
             MetaWhispSchemaV2.TaskItem.self,            // frozen pre-relevanceScore shape (same in V1+V2)
             ChatMessage.self, Conversation.self,
             MetaWhispSchemaV1.ScreenObservation.self,   // frozen pre-embedding shape
@@ -84,7 +85,8 @@ enum MetaWhispSchemaV2: VersionedSchema {
 
     static var models: [any PersistentModel.Type] {
         [
-            HistoryItem.self, ScreenContext.self, AdviceItem.self, UserMemory.self,
+            HistoryItem.self, ScreenContext.self, AdviceItem.self,
+            MetaWhispFrozenMemory.UserMemory.self,
             MetaWhispSchemaV2.TaskItem.self,   // frozen pre-relevanceScore shape
             ChatMessage.self, Conversation.self, ScreenObservation.self,
             IndexedFile.self, DailySummary.self, Goal.self, ProjectAlias.self,
@@ -148,7 +150,8 @@ enum MetaWhispSchemaV3: VersionedSchema {
 
     static var models: [any PersistentModel.Type] {
         [
-            HistoryItem.self, ScreenContext.self, AdviceItem.self, UserMemory.self,
+            HistoryItem.self, ScreenContext.self, AdviceItem.self,
+            MetaWhispFrozenMemory.UserMemory.self,
             TaskItem.self, ChatMessage.self, Conversation.self, ScreenObservation.self,
             IndexedFile.self, DailySummary.self, Goal.self, ProjectAlias.self,
             AuditLog.self, PatternDigest.self,
@@ -291,6 +294,52 @@ enum MetaWhispSchemaV6: VersionedSchema {
     }
 }
 
+/// FROZEN pre-review shape of `UserMemory`, nested so the entity name matches
+/// the store. Referenced by V1…V7 because the model did not change across
+/// them; V8 adds `needsReview`. Never edit this copy.
+///
+/// The V5 lesson, applied before the fact this time: a field added to a live
+/// model that older versions still reference silently changes what those
+/// versions claim the store looked like, and the migration proof migrates
+/// from a shape that never shipped.
+enum MetaWhispFrozenMemory {
+    @Model
+    final class UserMemory {
+        var id: UUID
+        var content: String
+        var category: String
+        var sourceApp: String
+        var windowTitle: String?
+        var confidence: Double
+        var contextSummary: String?
+        var isDismissed: Bool
+        var conversationId: UUID?
+        var screenContextId: UUID?
+        var sourceFile: String?
+        var createdAt: Date
+        var updatedAt: Date
+        var embedding: Data?
+        var headline: String?
+        var reasoning: String?
+        var tagsCSV: String?
+        var kind: String?
+        var subject: String?
+        var characterization: String?
+        var project: String?
+
+        init(content: String, category: String, sourceApp: String, confidence: Double) {
+            self.id = UUID()
+            self.content = content
+            self.category = category
+            self.sourceApp = sourceApp
+            self.confidence = confidence
+            self.isDismissed = false
+            self.createdAt = Date()
+            self.updatedAt = Date()
+        }
+    }
+}
+
 /// Visit-wiring step 2 — the durable visit row. Additive entity, no live
 /// shape changes, so no new frozen copy is needed; built from V3 + live
 /// models like V6 (inheriting a version that pins a frozen copy would ship
@@ -305,6 +354,24 @@ enum MetaWhispSchemaV7: VersionedSchema {
     }
 }
 
+/// ITER-071.6 — V8 adds `UserMemory.needsReview`: a fact the hourly screen
+/// analysis proposed is stored but not believed until the user confirms it.
+/// Additive optional-with-default column → lightweight stage.
+enum MetaWhispSchemaV8: VersionedSchema {
+    static var versionIdentifier = Schema.Version(8, 0, 0)
+
+    static var models: [any PersistentModel.Type] {
+        [
+            HistoryItem.self, ScreenContext.self, AdviceItem.self, UserMemory.self,
+            TaskItem.self, ChatMessage.self, Conversation.self, ScreenObservation.self,
+            IndexedFile.self, DailySummary.self, Goal.self, ProjectAlias.self,
+            AuditLog.self, PatternDigest.self,
+            ScreenAgentItem.self, ScreenAgentRun.self, ScreenAgentDeliveryRecord.self,
+            ContextVisitRecord.self,
+        ]
+    }
+}
+
 /// Migration plan for the live store: V1 → V2 (ScreenObservation.embedding) →
 /// V3 (TaskItem.relevanceScore). All lightweight (additive optional columns),
 /// verified by `SchemaMigrationTests`.
@@ -312,7 +379,7 @@ enum MetaWhispMigrationPlan: SchemaMigrationPlan {
     static var schemas: [any VersionedSchema.Type] {
         [MetaWhispSchemaV1.self, MetaWhispSchemaV2.self, MetaWhispSchemaV3.self,
          MetaWhispSchemaV4.self, MetaWhispSchemaV5.self, MetaWhispSchemaV6.self,
-         MetaWhispSchemaV7.self]
+         MetaWhispSchemaV7.self, MetaWhispSchemaV8.self]
     }
     static var stages: [MigrationStage] {
         [
@@ -339,6 +406,10 @@ enum MetaWhispMigrationPlan: SchemaMigrationPlan {
             MigrationStage.lightweight(
                 fromVersion: MetaWhispSchemaV6.self,
                 toVersion: MetaWhispSchemaV7.self
+            ),
+            MigrationStage.lightweight(
+                fromVersion: MetaWhispSchemaV7.self,
+                toVersion: MetaWhispSchemaV8.self
             ),
         ]
     }

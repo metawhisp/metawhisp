@@ -52,6 +52,9 @@ final class UserProfileService {
     static func buildSections(from memories: [UserMemory]) -> [Section] {
         let visible = memories.filter { mem in
             guard !mem.isDismissed else { return false }
+            // ITER-071.6 — a screen-proposed fact is not part of who the user
+            // is until they confirm it.
+            guard !mem.needsReview else { return false }
             // Drop person-kind memories — they describe other humans, not the user.
             if let k = mem.kind, k == "person" { return false }
             return true

@@ -226,6 +226,10 @@ final class ScreenExtractor: ObservableObject {
                     conversationId: nil,
                     screenContextId: v.lastContextId
                 )
+                // ITER-071.6 — a fact read off the screen is a PROPOSAL. It is
+                // kept, so nothing is lost, but the assistant does not treat it
+                // as something it knows about the user until the user says so.
+                mem.needsReview = true
                 ctx.insert(mem)
                 newMemories.append(mem)
             }

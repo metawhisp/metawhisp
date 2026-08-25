@@ -183,7 +183,7 @@ final class MeetingCoachService {
     private func fetchRelevantMemoryContext(query: String) -> String {
         guard let container = modelContainer else { return "" }
         let ctx = ModelContext(container)
-        var desc = FetchDescriptor<UserMemory>(predicate: #Predicate { !$0.isDismissed })
+        var desc = FetchDescriptor<UserMemory>(predicate: #Predicate { !$0.isDismissed && !$0.needsReview })
         desc.fetchLimit = 500
         let all = (try? ctx.fetch(desc)) ?? []
         let lower = query.lowercased()

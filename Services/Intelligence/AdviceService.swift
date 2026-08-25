@@ -448,7 +448,7 @@ final class AdviceService: ObservableObject {
         guard let container = modelContainer else { return [] }
         let ctx = ModelContext(container)
         var desc = FetchDescriptor<UserMemory>(
-            predicate: #Predicate { !$0.isDismissed },
+            predicate: #Predicate { !$0.isDismissed && !$0.needsReview },
             sortBy: [SortDescriptor(\.createdAt, order: .reverse)]
         )
         desc.fetchLimit = limit
@@ -495,7 +495,7 @@ final class AdviceService: ObservableObject {
         guard let container = modelContainer else { return [] }
         let ctx = ModelContext(container)
         let desc = FetchDescriptor<UserMemory>(
-            predicate: #Predicate<UserMemory> { !$0.isDismissed && $0.embedding != nil },
+            predicate: #Predicate<UserMemory> { !$0.isDismissed && !$0.needsReview && $0.embedding != nil },
             sortBy: [SortDescriptor(\.createdAt, order: .reverse)]
         )
         let candidates = (try? ctx.fetch(desc)) ?? []
