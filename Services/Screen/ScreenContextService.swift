@@ -34,12 +34,38 @@ final class ScreenContextService: ObservableObject {
         // by the epoch fence never advanced it either. Leaving it set meant a
         // window the user was still sitting on could never be captured again.
         captureMark = CaptureHighWaterMark()
+        // The shadow forgets with it — a purged visit must not stay current.
+        visitCoordinator.invalidateAll()
+        lastCommittedToken = 0
     }
 
     private var monitorTask: Task<Void, Never>?
     /// ITER-064A.3 — advanced only by an accepted frame, so a failed capture
     /// stays eligible for the next poll.
     private var captureMark = CaptureHighWaterMark()
+
+    /// ITER-065 wiring, step 3 — the visit coordinator, in SHADOW: it observes
+    /// every decision the mark makes and logs where it would have decided
+    /// differently (ids and proposal kinds only, never titles or OCR). The
+    /// mark stays authoritative until the shadow has real-usage evidence.
+    /// Sightings carry windowID/displayID = nil ALWAYS: the nil/non-nil
+    /// asymmetry in window matching would otherwise open a visit every tick.
+    private var visitCoordinator = ContextVisitCoordinator()
+    private let visitClock = ContinuousClock()
+    /// Interim in-process change token (FNV-1a of the accepted OCR) until the
+    /// content-fingerprint iteration. Never comparable across launches.
+    private var lastCommittedToken = 0
+
+    /// Deterministic across the process, unlike `hashValue` (per-process
+    /// seeded): FNV-1a over UTF-8.
+    static func stableToken(_ text: String) -> Int {
+        var hash: UInt64 = 0xcbf29ce484222325
+        for byte in text.utf8 {
+            hash ^= UInt64(byte)
+            hash = hash &* 0x100000001b3
+        }
+        return Int(bitPattern: UInt(truncatingIfNeeded: hash))
+    }
     private var modelContainer: ModelContainer?
 
     /// Instant-detection observer for `NSWorkspace.didActivateApplicationNotification`.
@@ -332,7 +358,23 @@ final class ScreenContextService: ObservableObject {
         }
 
         // Only capture if app or window changed
-        guard captureMark.hasChanged(appName: appName, windowTitle: windowTitle) else { return }
+        guard captureMark.hasChanged(appName: appName, windowTitle: windowTitle) else {
+            // Shadow: the same tick through the coordinator. An unchanged
+            // window keeps the visit alive — the keep-alive the mark never
+            // had, and the reason a long read must not expire mid-dwell.
+            let proposal = visitCoordinator.propose(
+                .init(bundleID: bundleID, appName: appName, rawTitle: windowTitle,
+                      windowID: nil, displayID: nil, contentHash: lastCommittedToken),
+                at: visitClock.now, wallClock: Date())
+            if case .unchanged = proposal {
+                visitCoordinator.commit(proposal, contentHash: lastCommittedToken,
+                                        at: visitClock.now)
+            } else {
+                NSLog("[VisitShadow] diverged on quiet tick: mark=unchanged shadow=%@",
+                      String(describing: proposal).hasPrefix("opened") ? "opened" : "changed")
+            }
+            return
+        }
 
         // ITER-053.1 purge fence — snapshot before the capture/OCR awaits.
         let epoch = captureEpoch
@@ -360,6 +402,20 @@ final class ScreenContextService: ObservableObject {
             // poll instead of being marked as already in history.
             if lastCaptureOutcome.consumesWindowTurn {
                 captureMark.accept(appName: snapshot.appName, windowTitle: snapshot.windowTitle)
+                // Shadow: commit a proposal RE-DERIVED from the snapshot —
+                // the identity of the window that was actually read, not the
+                // one this tick started on (the user can switch mid-await).
+                let token = Self.stableToken(snapshot.ocrText)
+                let proposal = visitCoordinator.propose(
+                    .init(bundleID: snapshot.bundleID, appName: snapshot.appName,
+                          rawTitle: snapshot.windowTitle,
+                          windowID: nil, displayID: nil, contentHash: token),
+                    at: visitClock.now, wallClock: Date())
+                if case .unchanged = proposal {
+                    NSLog("[VisitShadow] diverged on accept: mark=changed shadow=unchanged")
+                }
+                visitCoordinator.commit(proposal, contentHash: token, at: visitClock.now)
+                lastCommittedToken = token
             }
         }
     }
