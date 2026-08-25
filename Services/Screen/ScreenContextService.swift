@@ -111,6 +111,89 @@ final class ScreenContextService: ObservableObject {
     /// Set the model container for SwiftData persistence.
     func configure(modelContainer: ModelContainer) {
         self.modelContainer = modelContainer
+        // Visit-wiring step 4 — a crash or kill leaves the last visit open
+        // forever; nothing will come back to close it, so startup does.
+        let ctx = ModelContext(modelContainer)
+        Self.reconcileOpenVisits(in: ctx)
+    }
+
+    /// Close visit rows a dead process left open. Reason code only.
+    static func reconcileOpenVisits(in ctx: ModelContext, now: Date = Date()) {
+        let openPred = #Predicate<ContextVisitRecord> { $0.endedAt == nil }
+        guard let open = try? ctx.fetch(FetchDescriptor<ContextVisitRecord>(predicate: openPred)),
+              !open.isEmpty else { return }
+        for row in open {
+            row.endedAt = now
+            row.invalidationReason = "startup_reconcile"
+        }
+        try? ctx.save()
+    }
+
+    /// Apply one committed-to-be proposal to the durable visit table, inside
+    /// the same context (and save) that persists the screen row it describes.
+    /// `.opened` closes whatever was open — same window again means the gap
+    /// expired, a different one means the user switched.
+    static func upsertVisitRecord(
+        proposal: ContextVisitCoordinator.Proposal,
+        acceptedContextID: UUID,
+        captureState: String,
+        token: Int,
+        in ctx: ModelContext,
+        now: Date = Date()
+    ) {
+        switch proposal {
+        case .unchanged:
+            return
+        case .opened(let visit):
+            let openPred = #Predicate<ContextVisitRecord> { $0.endedAt == nil }
+            if let open = try? ctx.fetch(FetchDescriptor<ContextVisitRecord>(predicate: openPred)) {
+                for row in open {
+                    row.endedAt = now
+                    row.invalidationReason =
+                        (row.bundleID == visit.bundleID
+                         && row.normalizedTitle == visit.normalizedTitle)
+                        ? "gap_expired" : "context_switch"
+                }
+            }
+            let record = ContextVisitRecord(
+                id: visit.id, generation: visit.generation,
+                bundleID: visit.bundleID, appName: visit.appName,
+                rawTitle: visit.rawTitle, normalizedTitle: visit.normalizedTitle,
+                startedAt: visit.startedAt, captureState: captureState)
+            record.lastObservedAt = now
+            record.latestScreenContextID = acceptedContextID
+            record.latestContentHash = token
+            record.appendFrameID(acceptedContextID)
+            ctx.insert(record)
+        case .changed(let visit):
+            let visitID = visit.id
+            var descriptor = FetchDescriptor<ContextVisitRecord>(
+                predicate: #Predicate { $0.id == visitID })
+            descriptor.fetchLimit = 1
+            guard let row = (try? ctx.fetch(descriptor))?.first else {
+                // The row was pruned or purged mid-visit — recreate rather
+                // than lose the remainder of the visit.
+                let record = ContextVisitRecord(
+                    id: visit.id, generation: visit.generation,
+                    bundleID: visit.bundleID, appName: visit.appName,
+                    rawTitle: visit.rawTitle, normalizedTitle: visit.normalizedTitle,
+                    startedAt: visit.startedAt, captureState: captureState)
+                record.lastObservedAt = now
+                record.latestScreenContextID = acceptedContextID
+                record.latestContentHash = token
+                record.appendFrameID(acceptedContextID)
+                ctx.insert(record)
+                return
+            }
+            row.generation = visit.generation
+            row.rawTitle = visit.rawTitle
+            row.normalizedTitle = visit.normalizedTitle
+            row.lastObservedAt = now
+            row.captureState = captureState
+            row.latestScreenContextID = acceptedContextID
+            row.latestContentHash = token
+            row.appendFrameID(acceptedContextID)
+        }
     }
 
     /// In-memory snapshot (not persisted — used for advice generation).
@@ -392,8 +475,22 @@ final class ScreenContextService: ObservableObject {
             if recentContexts.count > maxRecentContexts {
                 recentContexts.removeFirst()
             }
+            // The proposal is derived from the SNAPSHOT — the identity of the
+            // window that was actually read, not the one this tick started on
+            // (the user can switch mid-await). Proposed before persist so the
+            // durable visit row lands in the same save as the screen row;
+            // committed only after that save succeeds — the exact reason
+            // propose and commit are separate calls.
+            let token = Self.stableToken(snapshot.ocrText)
+            let proposal = visitCoordinator.propose(
+                .init(bundleID: snapshot.bundleID, appName: snapshot.appName,
+                      rawTitle: snapshot.windowTitle,
+                      windowID: nil, displayID: nil, contentHash: token),
+                at: visitClock.now, wallClock: Date())
+
             // Persist first — it is what decides this cycle's outcome.
-            persistContext(snapshot, frame: capture.frame)
+            persistContext(snapshot, frame: capture.frame,
+                           visitProposal: proposal, visitToken: token)
 
             // ITER-064A.3 — consume the change from the window the frame
             // actually came from: the user may have switched during the await.
@@ -402,15 +499,6 @@ final class ScreenContextService: ObservableObject {
             // poll instead of being marked as already in history.
             if lastCaptureOutcome.consumesWindowTurn {
                 captureMark.accept(appName: snapshot.appName, windowTitle: snapshot.windowTitle)
-                // Shadow: commit a proposal RE-DERIVED from the snapshot —
-                // the identity of the window that was actually read, not the
-                // one this tick started on (the user can switch mid-await).
-                let token = Self.stableToken(snapshot.ocrText)
-                let proposal = visitCoordinator.propose(
-                    .init(bundleID: snapshot.bundleID, appName: snapshot.appName,
-                          rawTitle: snapshot.windowTitle,
-                          windowID: nil, displayID: nil, contentHash: token),
-                    at: visitClock.now, wallClock: Date())
                 if case .unchanged = proposal {
                     NSLog("[VisitShadow] diverged on accept: mark=changed shadow=unchanged")
                 }
@@ -555,7 +643,9 @@ final class ScreenContextService: ObservableObject {
 
     /// Perform OCR using Apple Vision framework (fully on-device).
 
-    private func persistContext(_ snapshot: ScreenContextSnapshot, frame: CGImage?) {
+    private func persistContext(_ snapshot: ScreenContextSnapshot, frame: CGImage?,
+                                visitProposal: ContextVisitCoordinator.Proposal? = nil,
+                                visitToken: Int = 0) {
         guard let container = modelContainer else { return }
         let ctx = ModelContext(container)
         let record = ScreenContext(
@@ -564,6 +654,13 @@ final class ScreenContextService: ObservableObject {
             ocrText: snapshot.ocrText
         )
         ctx.insert(record)
+        // Visit-wiring step 4 — the durable visit row rides the SAME save as
+        // the screen row it describes: both land or neither does.
+        if let visitProposal {
+            Self.upsertVisitRecord(
+                proposal: visitProposal, acceptedContextID: record.id,
+                captureState: "captured", token: visitToken, in: ctx)
+        }
         do {
             try ctx.save()
         } catch {

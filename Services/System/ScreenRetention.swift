@@ -74,7 +74,13 @@ enum ScreenRetention {
             if recs > 0 {
                 try ctx.delete(model: ScreenAgentDeliveryRecord.self, where: recPred)
             }
-            observations += runs + recs
+            // Visits age by when they were last SEEN — a long visit whose
+            // start predates the cutoff is still current history.
+            let visitPred = #Predicate<ContextVisitRecord> { $0.lastObservedAt < cut }
+            let visits = try ctx.fetchCount(
+                FetchDescriptor<ContextVisitRecord>(predicate: visitPred))
+            if visits > 0 { try ctx.delete(model: ContextVisitRecord.self, where: visitPred) }
+            observations += runs + recs + visits
         }
         if contexts + observations > 0 { try ctx.save() }
         return (contexts, observations)
@@ -130,9 +136,12 @@ enum ScreenRetention {
         if runs > 0 { try ctx.delete(model: ScreenAgentRun.self) }
         let deliveries = try ctx.fetchCount(FetchDescriptor<ScreenAgentDeliveryRecord>())
         if deliveries > 0 { try ctx.delete(model: ScreenAgentDeliveryRecord.self) }
+        // Visits describe stretches of the very history being deleted.
+        let visits = try ctx.fetchCount(FetchDescriptor<ContextVisitRecord>())
+        if visits > 0 { try ctx.delete(model: ContextVisitRecord.self) }
         for row in doomedTasks { ctx.delete(row) }
         for row in doomedMemories { ctx.delete(row) }
-        if contexts + observations + agentItems + runs + deliveries
+        if contexts + observations + agentItems + runs + deliveries + visits
             + taskIds.count + memoryIds.count > 0 { try ctx.save() }
         return DeleteAllResult(contexts: contexts, observations: observations,
                                taskIds: taskIds, memoryIds: memoryIds)
