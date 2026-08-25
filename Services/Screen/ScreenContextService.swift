@@ -152,14 +152,20 @@ final class ScreenContextService: ObservableObject {
         if let last = lastQuietDurableTouch, now.timeIntervalSince(last) < 3600 { return }
         guard let container = modelContainer,
               let visitID = visitCoordinator.current?.id else { return }
-        lastQuietDurableTouch = now
         let ctx = ModelContext(container)
         var descriptor = FetchDescriptor<ContextVisitRecord>(
             predicate: #Predicate { $0.id == visitID })
         descriptor.fetchLimit = 1
         guard let row = (try? ctx.fetch(descriptor))?.first else { return }
         row.lastObservedAt = now
-        try? ctx.save()
+        // The throttle advances only on a write that landed — advancing first
+        // meant one failed save silenced the next hour of retries (Codex).
+        do {
+            try ctx.save()
+            lastQuietDurableTouch = now
+        } catch {
+            NSLog("[ScreenContext] visit keep-alive failed: %@", error.localizedDescription)
+        }
     }
 
     /// Close visit rows a dead process left open. Reason code only.
@@ -209,11 +215,15 @@ final class ScreenContextService: ObservableObject {
             let openPred = #Predicate<ContextVisitRecord> { $0.endedAt == nil }
             if let open = try? ctx.fetch(FetchDescriptor<ContextVisitRecord>(predicate: openPred)) {
                 for row in open {
-                    row.endedAt = now
-                    row.invalidationReason =
-                        (row.bundleID == visit.bundleID
-                         && row.normalizedTitle == visit.normalizedTitle)
-                        ? "gap_expired" : "context_switch"
+                    let sameWindow = row.bundleID == visit.bundleID
+                        && row.normalizedTitle == visit.normalizedTitle
+                    // A visit ends when it was last SEEN, never at the moment
+                    // the next one opens: stop at noon, come back at two, and
+                    // closing at "now" hands the earlier app two hours it was
+                    // never observed for (Codex). The day report reads this
+                    // field, so the lie would reach the user.
+                    row.endedAt = sameWindow ? row.lastObservedAt : now
+                    row.invalidationReason = sameWindow ? "gap_expired" : "context_switch"
                 }
             }
             let record = ContextVisitRecord(
@@ -405,6 +415,12 @@ final class ScreenContextService: ObservableObject {
         // could still read: stopping capture stops its products too.
         captureEpoch += 1
         frameCache.invalidateAll()
+        // The accepted-screen identity goes with it: turning the feature off
+        // and on again inside five minutes used to leave a model call from
+        // before the pause able to pass the final freshness check (Codex).
+        lastAcceptedContextID = nil
+        visitCoordinator.invalidateAll()
+        lastCommittedToken = 0
         NSLog("[ScreenContext] Monitoring stopped")
     }
 
@@ -528,11 +544,10 @@ final class ScreenContextService: ObservableObject {
             // not a frame that may be persisted after it was withdrawn.
             guard epoch == captureEpoch, isActive,
                   AppSettings.shared.screenContextEnabled else { return }
-            lastContext = snapshot
-            recentContexts.append(snapshot)
-            if recentContexts.count > maxRecentContexts {
-                recentContexts.removeFirst()
-            }
+            // The in-memory buffers advance only for a frame that actually
+            // landed — advice reads `recentContexts`, so a failed save used to
+            // still send OCR to a model with no durable source row (Codex).
+            // Filled in right after persist, below.
             // The proposal is derived from the SNAPSHOT — the identity of the
             // window that was actually read, not the one this tick started on
             // (the user can switch mid-await). Proposed before persist so the
@@ -556,6 +571,11 @@ final class ScreenContextService: ObservableObject {
             // that could not be stored leaves the window eligible for the next
             // poll instead of being marked as already in history.
             if lastCaptureOutcome.consumesWindowTurn {
+                lastContext = snapshot
+                recentContexts.append(snapshot)
+                if recentContexts.count > maxRecentContexts {
+                    recentContexts.removeFirst()
+                }
                 visitCoordinator.commit(proposal, contentHash: token, at: visitClock.now)
                 lastCommittedToken = token
             }

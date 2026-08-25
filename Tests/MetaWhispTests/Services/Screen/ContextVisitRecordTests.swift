@@ -124,6 +124,52 @@ final class ContextVisitRecordTests: XCTestCase {
         XCTAssertEqual(rows.first?.generation, 0, "unchanged must not bump the generation")
     }
 
+    /// The guarantee the retired mark used to hold: a visit ends when it was
+    /// last SEEN. Closing at the moment the next visit opens hands the earlier
+    /// app every hour the app was not even running.
+    func testAGapClosesThePreviousVisitAtItsLastObservationNotAtReopen() throws {
+        let ctx = try makeContext()
+        let noon = Date(timeIntervalSince1970: 1_800_000_000)
+        let first = visit(title: "Inbox")
+        ScreenContextService.upsertVisitRecord(
+            proposal: .opened(first), acceptedContextID: UUID(),
+            captureState: "captured", token: 1, in: ctx, now: noon)
+
+        // Two hours later the app comes back to the same window.
+        let twoPM = noon.addingTimeInterval(7200)
+        ScreenContextService.upsertVisitRecord(
+            proposal: .opened(visit(title: "Inbox")), acceptedContextID: UUID(),
+            captureState: "captured", token: 1, in: ctx, now: twoPM)
+        try ctx.save()
+
+        let closed = try XCTUnwrap(ctx.fetch(FetchDescriptor<ContextVisitRecord>())
+            .first { $0.id == first.id })
+        XCTAssertEqual(closed.invalidationReason, "gap_expired")
+        XCTAssertEqual(closed.endedAt, noon,
+                       "the visit must not be credited with the two hours nobody was watching")
+    }
+
+    /// A real switch is different: the previous window was current until the
+    /// moment the user left it.
+    func testASwitchClosesThePreviousVisitAtTheSwitchMoment() throws {
+        let ctx = try makeContext()
+        let t0 = Date(timeIntervalSince1970: 1_800_000_000)
+        let first = visit(title: "Inbox")
+        ScreenContextService.upsertVisitRecord(
+            proposal: .opened(first), acceptedContextID: UUID(),
+            captureState: "captured", token: 1, in: ctx, now: t0)
+        let later = t0.addingTimeInterval(120)
+        ScreenContextService.upsertVisitRecord(
+            proposal: .opened(visit(bundle: "com.apple.Safari", app: "Safari", title: "Docs")),
+            acceptedContextID: UUID(), captureState: "captured", token: 2, in: ctx, now: later)
+        try ctx.save()
+
+        let closed = try XCTUnwrap(ctx.fetch(FetchDescriptor<ContextVisitRecord>())
+            .first { $0.id == first.id })
+        XCTAssertEqual(closed.invalidationReason, "context_switch")
+        XCTAssertEqual(closed.endedAt, later)
+    }
+
     func testFrameIDsAreBounded() throws {
         let ctx = try makeContext()
         let v = visit()
