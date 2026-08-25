@@ -350,7 +350,9 @@ final class ProactiveContextService: ObservableObject {
             // ITER-070 — one plain-language choice governs this now.
             minimumSecondsBetween: (ScreenAgentPacing(rawValue: settings.screenAgentPacing)
                 ?? .balanced).minimumSecondsBetween,
-            popupSlotsFree: MWNotificationStack.shared.freeSlots
+            popupSlotsFree: MWNotificationStack.shared.freeSlots,
+            presentedLast24h: delivery.presentedInLast24h(),
+            dailyLimit: (ScreenAgentPacing(rawValue: settings.screenAgentPacing) ?? .balanced).dailyLimit
         )
 
         guard let presented = delivery.deliver(item, preflight: preflight) else {

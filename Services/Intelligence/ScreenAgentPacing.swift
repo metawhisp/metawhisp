@@ -26,17 +26,29 @@ enum ScreenAgentPacing: String, CaseIterable, Identifiable {
     /// experienced.
     var explanation: String {
         switch self {
-        case .quiet: return "At most a few times a day, only when it really matters."
-        case .balanced: return "Around once an hour when there is something worth saying."
-        case .frequent: return "As soon as there is something specific, at most every few minutes."
+        case .quiet: return "At most 10 a day, an hour apart, only when it really matters."
+        case .balanced: return "Up to 20 a day, half an hour apart, when there is something worth saying."
+        case .frequent: return "As soon as there is something specific — minutes apart, up to 60 a day."
         }
     }
 
+    /// Ported from the reference implementation's measured budget table
+    /// (cooldown 60/30/3 minutes for its levels 1/2/4). Not invented.
     var minimumSecondsBetween: TimeInterval {
         switch self {
-        case .quiet: return 4 * 3600
-        case .balanced: return 3600
-        case .frequent: return 300
+        case .quiet: return 60 * 60
+        case .balanced: return 30 * 60
+        case .frequent: return 3 * 60
+        }
+    }
+
+    /// The reference pairs every cooldown with a daily ceiling (10/20/60 for
+    /// the same levels); a cooldown alone bounds the gap, not the day.
+    var dailyLimit: Int {
+        switch self {
+        case .quiet: return 10
+        case .balanced: return 20
+        case .frequent: return 60
         }
     }
 

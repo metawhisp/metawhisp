@@ -171,6 +171,8 @@ enum ScreenAgentDelivery {
         case staleVisit
         case stackFull
         case featureOff
+        /// The day's ceiling for this pacing mode is spent.
+        case dailyBudget
         case persistenceFailed
     }
 }

@@ -18,13 +18,16 @@ final class ScreenAgentDeliveryTests: XCTestCase {
         visitIsStillCurrent: Bool = true,
         secondsSinceLastPresented: TimeInterval? = nil,
         minimumSecondsBetween: TimeInterval = 300,
-        popupSlotsFree: Int = 4
+        popupSlotsFree: Int = 4,
+        presentedLast24h: Int = 0,
+        dailyLimit: Int = .max
     ) -> ScreenAgentDeliveryService.Preflight {
         .init(featureEnabled: featureEnabled, isPaused: isPaused,
               meetingInProgress: meetingInProgress, pauseDuringMeetings: pauseDuringMeetings,
               visitIsStillCurrent: visitIsStillCurrent,
               secondsSinceLastPresented: secondsSinceLastPresented,
-              minimumSecondsBetween: minimumSecondsBetween, popupSlotsFree: popupSlotsFree)
+              minimumSecondsBetween: minimumSecondsBetween, popupSlotsFree: popupSlotsFree,
+              presentedLast24h: presentedLast24h, dailyLimit: dailyLimit)
     }
 
     func testAGoodCommentIsPresented() {
@@ -100,7 +103,22 @@ final class ScreenAgentDeliveryTests: XCTestCase {
         }
     }
 
-    /// Closing a popup is not feedback, and a timeout is not a judgement.
+    /// Ported from the reference: a cooldown bounds the gap, the daily ceiling
+    /// bounds the day.
+    func testTheDailyCeilingSuppressesTheEleventhQuietCard() {
+        XCTAssertEqual(
+            ScreenAgentDeliveryService.decide(preflight(
+                secondsSinceLastPresented: 7200,
+                presentedLast24h: 10, dailyLimit: 10)),
+            .suppress(.dailyBudget))
+        XCTAssertEqual(
+            ScreenAgentDeliveryService.decide(preflight(
+                secondsSinceLastPresented: 7200,
+                presentedLast24h: 9, dailyLimit: 10)),
+            .present)
+    }
+
+        /// Closing a popup is not feedback, and a timeout is not a judgement.
     /// Interaction is a separate axis from whether it was shown at all.
     func testInteractionIsSeparateFromDelivery() {
         XCTAssertNotEqual(ScreenAgentDelivery.Outcome.presented.rawValue,
@@ -145,6 +163,9 @@ extension ScreenAgentDeliveryTests {
         for reason in ScreenAgentDelivery.SuppressionReason.allCases {
             XCTAssertFalse(reason.rawValue.isEmpty)
         }
-        XCTAssertEqual(ScreenAgentDelivery.SuppressionReason.allCases.count, 7)
+        XCTAssertEqual(
+            Set(ScreenAgentDelivery.SuppressionReason.allCases.map(\.rawValue)).count,
+            ScreenAgentDelivery.SuppressionReason.allCases.count,
+            "two reasons sharing a code would make the Inbox labels lie")
     }
 }

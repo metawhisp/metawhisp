@@ -180,6 +180,7 @@ struct ScreenAgentInboxView: View {
             case .stackFull: text = "held — no room on screen"
             case .staleVisit: text = "held — you had moved on"
             case .featureOff: text = "held — feature was off"
+            case .dailyBudget: text = "held — enough for today"
             default: text = "held"
             }
         } else if let given = item.feedbackReason,

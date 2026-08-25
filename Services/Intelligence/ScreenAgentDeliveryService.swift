@@ -26,6 +26,9 @@ final class ScreenAgentDeliveryService {
         var secondsSinceLastPresented: TimeInterval?
         var minimumSecondsBetween: TimeInterval
         var popupSlotsFree: Int
+        /// Presentations in the trailing 24 hours, against the mode's ceiling.
+        var presentedLast24h: Int = 0
+        var dailyLimit: Int = .max
     }
 
     enum Decision: Equatable {
@@ -48,6 +51,10 @@ final class ScreenAgentDeliveryService {
         if let since = p.secondsSinceLastPresented, since < p.minimumSecondsBetween {
             return .suppress(.pacing)
         }
+        // Ported from the reference budget: a cooldown bounds the gap between
+        // interruptions, the daily ceiling bounds the day. Without it a busy
+        // day at one-per-cooldown is still dozens of interruptions.
+        guard p.presentedLast24h < p.dailyLimit else { return .suppress(.dailyBudget) }
         guard p.popupSlotsFree > 0 else { return .suppress(.stackFull) }
         return .present
     }
@@ -251,6 +258,16 @@ final class ScreenAgentDeliveryService {
                 ? ScreenAgentDirector.semanticSignature(of: row.headline)
                 : row.semanticSignature
         }
+    }
+
+    /// Presentations in the trailing 24 hours — the reference counts a rolling
+    /// window, not local midnight.
+    func presentedInLast24h() -> Int {
+        let cutoff = Date().addingTimeInterval(-24 * 3600)
+        let presented = ScreenAgentDelivery.Outcome.presented.rawValue
+        let descriptor = FetchDescriptor<ScreenAgentItem>(
+            predicate: #Predicate { $0.deliveryOutcome == presented && $0.createdAt > cutoff })
+        return (try? ModelContext(container).fetchCount(descriptor)) ?? 0
     }
 
     /// Newest first. The cap used to be 100 with no way past it, so a comment
