@@ -335,6 +335,33 @@ extension ScreenAgentDeliveryTests {
             "six seconds is how long a card survives beside someone who is typing")
     }
 
+    /// A prompt is the behaviour of this product. One edit to the wording made
+    /// the agent silent, and the journal recorded promptVersion = "" — so
+    /// recovering it meant remembering rather than querying.
+    @MainActor
+    func testARunRecordsWhichPromptTextProducedIt() throws {
+        let (service, container) = try makeService()
+        _ = service.beginRun(contextID: UUID(), trigger: "contextAccepted",
+                             deadlineAt: Date().addingTimeInterval(10))
+        let run = try XCTUnwrap(
+            ModelContext(container).fetch(FetchDescriptor<ScreenAgentRun>()).first)
+        XCTAssertEqual(run.promptVersion, ScreenAgentPrompts.insight.version)
+        XCTAssertTrue(run.promptVersion.hasPrefix("insight.v"))
+    }
+
+    /// The signature is derived from the text, so it cannot be forgotten: a
+    /// changed word changes it. And it must survive a relaunch — `hashValue`
+    /// is seeded per process and would regroup the journal every launch.
+    func testThePromptSignatureFollowsTheTextAndIsStable() {
+        let a = PromptDescriptor(name: "x", version: 1, text: "say less")
+        let b = PromptDescriptor(name: "x", version: 1, text: "say less.")
+        XCTAssertNotEqual(a.version, b.version, "a changed word must change the signature")
+        XCTAssertEqual(a.version, PromptDescriptor(name: "x", version: 1, text: "say less").version)
+        XCTAssertEqual(PromptDescriptor.signature(of: ""),
+                       String(PromptDescriptor.signature(of: "")),
+                       "the signature is a pure function of the text")
+    }
+
     /// The interaction ends the presentation's lifecycle.
     @MainActor
     func testAnInteractionTerminalizesTheDeliveryRecord() throws {

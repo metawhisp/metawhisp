@@ -280,7 +280,8 @@ final class ScreenAgentDeliveryService {
     /// because a minted UUID would not survive a relaunch mid-run and the
     /// idempotency check would go inert).
     @discardableResult
-    func beginRun(contextID: UUID, trigger: String, deadlineAt: Date) -> UUID? {
+    func beginRun(contextID: UUID, trigger: String, deadlineAt: Date,
+                  promptVersion: String = ScreenAgentPrompts.insight.version) -> UUID? {
         let context = ModelContext(container)
         // Crash reconciliation, done lazily: a run the process died inside
         // stays "running" forever otherwise — the journal claiming an analysis
@@ -296,7 +297,8 @@ final class ScreenAgentDeliveryService {
             }
         }
         let run = ScreenAgentRun(
-            contextID: contextID, trigger: trigger, deadlineAt: deadlineAt)
+            contextID: contextID, trigger: trigger, deadlineAt: deadlineAt,
+            promptVersion: promptVersion)
         context.insert(run)
         do {
             try context.save()
