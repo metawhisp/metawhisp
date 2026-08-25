@@ -417,6 +417,7 @@ final class RealtimeScreenReactor: ObservableObject {
                 try MutationService.shared.commit(.taskSaved(task.id), in: ctx)
                 NSLog("[RealtimeReactor] ✅ Auto-completed fulfilled task: %@",
                       String(task.taskDescription.prefix(60)))
+                announceCompletion(of: task)
             } catch {
                 NSLog("[RealtimeReactor] ⚠️ Fulfillment save failed: %@", error.localizedDescription)
                 break
@@ -424,7 +425,44 @@ final class RealtimeScreenReactor: ObservableObject {
         }
     }
 
-    /// Last N dismissed tasks — injected into the prompt as negative examples
+    /// ITER-066 follow-up (Codex live-safety finding) — completing a task from
+    /// screen evidence used to be silent: the strong quote gate meant it was
+    /// rarely wrong, and the silence meant that when it WAS wrong, nothing told
+    /// the user their task list had changed. The mutation is now announced with
+    /// a durable card, so it can be noticed and reversed in Workspace.
+    ///
+    /// runID is the task's own ID: a task completes once, and a duplicate
+    /// announcement for the same completion is refused by the delivery layer.
+    private func announceCompletion(of task: TaskItem) {
+        guard let delivery = AppDelegate.shared?.screenAgentDelivery else { return }
+        let item = ScreenAgentItem(
+            runID: task.id,
+            headline: "Marked done: \(String(task.taskDescription.prefix(80)))",
+            body: "Seen completed on screen. If that's wrong, reopen it in Workspace.",
+            sourceApp: "Workspace",
+            sourceWindowTitle: "",
+            capturedAt: Date()
+        )
+        guard let announced = delivery.announce(item) else { return }
+        let itemID = announced.id
+        let noteID = UUID()
+        let note = MWNotification(
+            id: noteID,
+            kind: .task,
+            title: "✓ Task marked done",
+            body: String(task.taskDescription.prefix(100)),
+            onTap: { @MainActor in
+                AppDelegate.shared?.screenAgentDelivery?
+                    .recordInteraction(.opened, itemID: itemID)
+                AppDelegate.shared?.openScreenAgentInbox(selecting: itemID)
+                MWNotificationStack.shared.dismiss(id: noteID, reason: .opened)
+            },
+            screenAgentItemID: itemID
+        )
+        MWNotificationStack.shared.push(note)
+    }
+
+        /// Last N dismissed tasks — injected into the prompt as negative examples
     /// (reference: user-deleted tasks are «do not re-extract similar»).
     private func recentDismissedDescriptions(limit: Int) -> [String] {
         guard let container = modelContainer else { return [] }

@@ -260,6 +260,35 @@ final class ScreenAgentDeliveryService {
         }
     }
 
+    /// Record something the agent already DID, visibly and durably.
+    ///
+    /// Announcements deliberately skip pacing and the daily ceiling: those
+    /// gates decide whether an interruption is worth it, and this is not an
+    /// offer to interrupt — the mutation has happened. Suppressing the
+    /// announcement would not prevent anything; it would hide it, which is the
+    /// exact silence this exists to end. Idempotent by runID like everything
+    /// else.
+    @discardableResult
+    func announce(_ item: ScreenAgentItem) -> ScreenAgentItem? {
+        let context = ModelContext(container)
+        let runID = item.runID
+        var existing = FetchDescriptor<ScreenAgentItem>(
+            predicate: #Predicate { $0.runID == runID })
+        existing.fetchLimit = 1
+        if let already = try? context.fetch(existing), !already.isEmpty { return nil }
+
+        item.deliveryOutcome = ScreenAgentDelivery.Outcome.presented.rawValue
+        item.deliveredAt = Date()
+        context.insert(item)
+        do {
+            try context.save()
+        } catch {
+            NSLog("[ScreenAgentDelivery] announce persist failed: %@", error.localizedDescription)
+            return nil
+        }
+        return item
+    }
+
     /// Presentations in the trailing 24 hours — the reference counts a rolling
     /// window, not local midnight.
     func presentedInLast24h() -> Int {
