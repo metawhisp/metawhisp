@@ -127,6 +127,17 @@ final class ScreenAgentDeliveryService {
             item.suppressionReason = reason.rawValue
         }
 
+        // Plan §4 — the delivery is an EVENT with its own row. The item keeps
+        // its lifecycle fields for the Inbox; the record keeps the history a
+        // re-presentation would otherwise overwrite.
+        let record = ScreenAgentDeliveryRecord(itemID: item.id, runID: item.runID)
+        if case .suppress(let reason) = decision {
+            record.deliveryOutcome = "suppressed"
+            record.outcomeReason = reason.rawValue
+            record.terminalAt = Date()
+        }
+        context.insert(record)
+
         context.insert(item)
         do {
             try context.save()
@@ -156,6 +167,10 @@ final class ScreenAgentDeliveryService {
         guard let item = (try? context.fetch(descriptor))?.first else { return }
         item.deliveryOutcome = ScreenAgentDelivery.Outcome.presented.rawValue
         item.deliveredAt = Date()
+        if let record = latestDeliveryRecord(itemID: itemID, in: context) {
+            record.deliveryOutcome = "presented"
+            record.presentedAt = Date()
+        }
         do {
             try context.save()
         } catch {
@@ -164,6 +179,15 @@ final class ScreenAgentDeliveryService {
         }
         lastPresentedAt = Date()
         lastPresentedAtPersisted = Date()
+    }
+
+    private func latestDeliveryRecord(
+        itemID: UUID, in context: ModelContext) -> ScreenAgentDeliveryRecord? {
+        var descriptor = FetchDescriptor<ScreenAgentDeliveryRecord>(
+            predicate: #Predicate { $0.itemID == itemID },
+            sortBy: [SortDescriptor(\.queuedAt, order: .reverse)])
+        descriptor.fetchLimit = 1
+        return (try? context.fetch(descriptor))?.first
     }
 
     /// Seconds since the last comment the user actually saw. Pacing counts
@@ -188,10 +212,55 @@ final class ScreenAgentDeliveryService {
         guard item.interaction == ScreenAgentDelivery.Interaction.none.rawValue else { return }
         item.interaction = interaction.rawValue
         item.interactedAt = Date()
+        if let record = latestDeliveryRecord(itemID: itemID, in: context),
+           record.interactionOutcome == nil {
+            record.interactionOutcome = interaction.rawValue
+            record.interactionAt = Date()
+        }
         do {
             try context.save()
         } catch {
             NSLog("[ScreenAgentDelivery] could not record interaction: %@", error.localizedDescription)
+        }
+    }
+
+    // MARK: - The run journal (plan §4)
+
+    /// One row per analysis run, silences included. «Why did it speak at 15:04
+    /// and not at 15:02» is answerable only if the runs that said nothing
+    /// exist somewhere too.
+    func beginRun(contextID: UUID, trigger: String, deadlineAt: Date) {
+        let context = ModelContext(container)
+        context.insert(ScreenAgentRun(
+            contextID: contextID, trigger: trigger, deadlineAt: deadlineAt))
+        do {
+            try context.save()
+        } catch {
+            NSLog("[ScreenAgentRun] could not journal run start: %@", error.localizedDescription)
+        }
+    }
+
+    /// Close the journal row for this context's running analysis. Reason codes
+    /// only — "item" when something was shown, the director's silence reason
+    /// otherwise. The evidence refs are the allowlist IDs the decision cited,
+    /// preserved past the run (they used to be discarded with it).
+    func completeRun(contextID: UUID, outcomeReason: String,
+                     evidenceRefs: [String] = [], modelRoute: String = "") {
+        let context = ModelContext(container)
+        var descriptor = FetchDescriptor<ScreenAgentRun>(
+            predicate: #Predicate { $0.contextID == contextID && $0.status == "running" },
+            sortBy: [SortDescriptor(\.startedAt, order: .reverse)])
+        descriptor.fetchLimit = 1
+        guard let run = (try? context.fetch(descriptor))?.first else { return }
+        run.status = "completed"
+        run.completedAt = Date()
+        run.outcomeReason = outcomeReason
+        run.setEvidenceRefs(evidenceRefs)
+        run.modelRoute = modelRoute
+        do {
+            try context.save()
+        } catch {
+            NSLog("[ScreenAgentRun] could not journal run outcome: %@", error.localizedDescription)
         }
     }
 

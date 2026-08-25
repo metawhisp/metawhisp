@@ -208,6 +208,20 @@ final class ProactiveContextService: ObservableObject {
         isRunning = true
         defer { isRunning = false }
 
+        // ── The run journal (plan §4) ────────────────────────────────
+        // Every analysis run leaves a row, silences included. Preflight
+        // rejections above never started an analysis and stay unjournaled.
+        let journal = AppDelegate.shared?.screenAgentDelivery
+        journal?.beginRun(
+            contextID: ctx.id, trigger: "contextAccepted",
+            deadlineAt: Date().addingTimeInterval(ScreenAgentTimingPolicy.endToEndDeadline))
+        var runOutcome = "abandoned"
+        var runEvidence: [String] = []
+        defer {
+            journal?.completeRun(contextID: ctx.id, outcomeReason: runOutcome,
+                                 evidenceRefs: runEvidence)
+        }
+
         // ── Activity summary (last hour) ─────────────────────────────
         let now = Date()
         let lookbackStart = now.addingTimeInterval(-activityLookbackMinutes * 60)
@@ -247,7 +261,10 @@ final class ProactiveContextService: ObservableObject {
         )
         insight = evaluation?.insight
 
-        guard let insight else { return }
+        guard let insight else {
+            runOutcome = "noProposal"
+            return
+        }
 
         // ITER-066 — the director decides, not the producer. Everything above
         // this line proposes; nothing above it may interrupt the user.
@@ -316,8 +333,9 @@ final class ProactiveContextService: ObservableObject {
                 )
             }
         }
-        guard case .item(let directedHeadline, let directedBody, _) = decision else {
+        guard case .item(let directedHeadline, let directedBody, let citedIDs) = decision else {
             if case .silence(let reason) = decision {
+                runOutcome = reason.rawValue
                 NSLog("[Proactive] silent — %@", reason.rawValue)
                 // Codex P0 — the assistant remembers an insight in its session
                 // dedup the moment it returns it, so a director rejection also
@@ -333,10 +351,16 @@ final class ProactiveContextService: ObservableObject {
             return
         }
 
+        // The director said item; the journal keeps what it cited, past the
+        // run — the decision's evidence IDs used to be discarded here (Codex).
+        runOutcome = "item"
+        runEvidence = citedIDs
+
         // ITER-064A.9 — the screen rows this insight was derived from may have
         // been deleted while the model was thinking. Drop it rather than saving
         // a memory the user can no longer trace to any source.
         guard epoch == purgeEpoch else {
+            runOutcome = "invalidated"
             NSLog("[Proactive] Screen history deleted mid-run — discarding insight")
             return
         }

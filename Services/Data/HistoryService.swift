@@ -26,7 +26,7 @@ final class HistoryService: ObservableObject {
             // ITER-049 B — versioned schema + migration plan (AUD-007).
             // ITER-067 — live shape is V4 (adds ScreenAgentItem); existing
             // V1/V2/V3 stores migrate through the plan's lightweight stages.
-            let schema = Schema(versionedSchema: MetaWhispSchemaV5.self)
+            let schema = Schema(versionedSchema: MetaWhispSchemaV6.self)
             let config = ModelConfiguration("MetaWhisp", schema: schema)
             modelContainer = try ModelContainer(
                 for: schema, migrationPlan: MetaWhispMigrationPlan.self, configurations: [config])
@@ -49,7 +49,7 @@ final class HistoryService: ObservableObject {
                 // anything touched the new one, which is exactly when the app
                 // can least afford another failure.
                 modelContainer = try ModelContainer(
-                    for: Schema(versionedSchema: MetaWhispSchemaV5.self),
+                    for: Schema(versionedSchema: MetaWhispSchemaV6.self),
                     configurations: ModelConfiguration(isStoredInMemoryOnly: true))
             } catch {
                 Self.log.error("In-memory fallback also failed: \(error)")

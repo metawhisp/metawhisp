@@ -228,12 +228,25 @@ enum MetaWhispSchemaV5: VersionedSchema {
     }
 }
 
+/// Plan §4 — the run/delivery journal as entities of their own, linked to the
+/// legacy models by UUID only. V6 adds tables and touches no shipped shape,
+/// but the V5 lesson stands: it is a version and a stage regardless.
+enum MetaWhispSchemaV6: VersionedSchema {
+    static var versionIdentifier = Schema.Version(6, 0, 0)
+
+    static var models: [any PersistentModel.Type] {
+        MetaWhispSchemaV5.models
+            + [ScreenAgentRun.self, ScreenAgentDeliveryRecord.self]
+    }
+}
+
 /// Migration plan for the live store: V1 → V2 (ScreenObservation.embedding) →
 /// V3 (TaskItem.relevanceScore). All lightweight (additive optional columns),
 /// verified by `SchemaMigrationTests`.
 enum MetaWhispMigrationPlan: SchemaMigrationPlan {
     static var schemas: [any VersionedSchema.Type] {
-        [MetaWhispSchemaV1.self, MetaWhispSchemaV2.self, MetaWhispSchemaV3.self, MetaWhispSchemaV4.self, MetaWhispSchemaV5.self]
+        [MetaWhispSchemaV1.self, MetaWhispSchemaV2.self, MetaWhispSchemaV3.self,
+         MetaWhispSchemaV4.self, MetaWhispSchemaV5.self, MetaWhispSchemaV6.self]
     }
     static var stages: [MigrationStage] {
         [
@@ -252,6 +265,10 @@ enum MetaWhispMigrationPlan: SchemaMigrationPlan {
             MigrationStage.lightweight(
                 fromVersion: MetaWhispSchemaV4.self,
                 toVersion: MetaWhispSchemaV5.self
+            ),
+            MigrationStage.lightweight(
+                fromVersion: MetaWhispSchemaV5.self,
+                toVersion: MetaWhispSchemaV6.self
             ),
         ]
     }

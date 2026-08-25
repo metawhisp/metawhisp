@@ -63,6 +63,18 @@ enum ScreenRetention {
             let items = try ctx.fetchCount(FetchDescriptor<ScreenAgentItem>(predicate: pred))
             if items > 0 { try ctx.delete(model: ScreenAgentItem.self, where: pred) }
             observations += items
+            // Plan §4 — the run/delivery journal ages out on the same clock:
+            // it links to screen rows by UUID and must not outlive them.
+            let runPred = #Predicate<ScreenAgentRun> { $0.startedAt < cut }
+            let runs = try ctx.fetchCount(FetchDescriptor<ScreenAgentRun>(predicate: runPred))
+            if runs > 0 { try ctx.delete(model: ScreenAgentRun.self, where: runPred) }
+            let recPred = #Predicate<ScreenAgentDeliveryRecord> { $0.queuedAt < cut }
+            let recs = try ctx.fetchCount(
+                FetchDescriptor<ScreenAgentDeliveryRecord>(predicate: recPred))
+            if recs > 0 {
+                try ctx.delete(model: ScreenAgentDeliveryRecord.self, where: recPred)
+            }
+            observations += runs + recs
         }
         if contexts + observations > 0 { try ctx.save() }
         return (contexts, observations)
@@ -112,9 +124,16 @@ enum ScreenRetention {
         // titles, so leaving them behind quietly broke the one-click promise.
         let agentItems = try ctx.fetchCount(FetchDescriptor<ScreenAgentItem>())
         if agentItems > 0 { try ctx.delete(model: ScreenAgentItem.self) }
+        // Plan §4 — delete-all cascades through the UUID links: the journal
+        // describes runs over screens that no longer exist.
+        let runs = try ctx.fetchCount(FetchDescriptor<ScreenAgentRun>())
+        if runs > 0 { try ctx.delete(model: ScreenAgentRun.self) }
+        let deliveries = try ctx.fetchCount(FetchDescriptor<ScreenAgentDeliveryRecord>())
+        if deliveries > 0 { try ctx.delete(model: ScreenAgentDeliveryRecord.self) }
         for row in doomedTasks { ctx.delete(row) }
         for row in doomedMemories { ctx.delete(row) }
-        if contexts + observations + agentItems + taskIds.count + memoryIds.count > 0 { try ctx.save() }
+        if contexts + observations + agentItems + runs + deliveries
+            + taskIds.count + memoryIds.count > 0 { try ctx.save() }
         return DeleteAllResult(contexts: contexts, observations: observations,
                                taskIds: taskIds, memoryIds: memoryIds)
     }

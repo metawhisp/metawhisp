@@ -1,3 +1,4 @@
+import SwiftData
 import XCTest
 @testable import MetaWhisp
 
@@ -167,5 +168,78 @@ extension ScreenAgentDeliveryTests {
             Set(ScreenAgentDelivery.SuppressionReason.allCases.map(\.rawValue)).count,
             ScreenAgentDelivery.SuppressionReason.allCases.count,
             "two reasons sharing a code would make the Inbox labels lie")
+    }
+
+    // MARK: - the run/delivery journal (plan §4)
+
+    @MainActor
+    private func makeService() throws -> (ScreenAgentDeliveryService, ModelContainer) {
+        let container = try ModelContainer(
+            for: ScreenAgentItem.self, ScreenAgentRun.self, ScreenAgentDeliveryRecord.self,
+            configurations: ModelConfiguration(isStoredInMemoryOnly: true))
+        return (ScreenAgentDeliveryService(container: container), container)
+    }
+
+    private func makeItem(runID: UUID = UUID()) -> ScreenAgentItem {
+        ScreenAgentItem(
+            runID: runID, headline: "Presentation due at 16:00",
+            body: "Sam is waiting.", sourceApp: "Mail",
+            sourceWindowTitle: "Inbox", capturedAt: Date())
+    }
+
+    /// «Why did it speak at 15:04 and not 15:02» needs a row, silences
+    /// included — a run that leaves no trace cannot be audited, only believed.
+    @MainActor
+    func testARunIsJournaledFromStartToOutcome() throws {
+        let (service, container) = try makeService()
+        let ctxID = UUID()
+        service.beginRun(contextID: ctxID, trigger: "contextAccepted",
+                         deadlineAt: Date().addingTimeInterval(10))
+        service.completeRun(contextID: ctxID, outcomeReason: "echoesTheScreen",
+                            evidenceRefs: ["e1", "d0"], modelRoute: "pro")
+
+        let runs = try ModelContext(container).fetch(FetchDescriptor<ScreenAgentRun>())
+        XCTAssertEqual(runs.count, 1)
+        XCTAssertEqual(runs.first?.status, "completed")
+        XCTAssertEqual(runs.first?.outcomeReason, "echoesTheScreen")
+        XCTAssertEqual(runs.first?.evidenceRefs, ["e1", "d0"])
+        XCTAssertEqual(runs.first?.modelRoute, "pro")
+        XCTAssertNotNil(runs.first?.completedAt)
+    }
+
+    /// An item is the thing; a delivery is an event that happened to it.
+    @MainActor
+    func testADeliveryRecordFollowsTheItemLifecycle() throws {
+        let (service, container) = try makeService()
+        let item = makeItem()
+        XCTAssertNotNil(service.deliver(item, preflight: preflight()))
+
+        let ctx = ModelContext(container)
+        var records = try ctx.fetch(FetchDescriptor<ScreenAgentDeliveryRecord>())
+        XCTAssertEqual(records.count, 1)
+        XCTAssertEqual(records.first?.deliveryOutcome, "pending")
+        XCTAssertEqual(records.first?.itemID, item.id)
+
+        service.confirmPresented(itemID: item.id)
+        service.recordInteraction(.opened, itemID: item.id)
+
+        records = try ModelContext(container).fetch(FetchDescriptor<ScreenAgentDeliveryRecord>())
+        XCTAssertEqual(records.first?.deliveryOutcome, "presented")
+        XCTAssertNotNil(records.first?.presentedAt)
+        XCTAssertEqual(records.first?.interactionOutcome, "opened")
+        XCTAssertNotNil(records.first?.interactionAt)
+    }
+
+    @MainActor
+    func testASuppressedDeliveryRecordIsTerminal() throws {
+        let (service, container) = try makeService()
+        XCTAssertNil(service.deliver(makeItem(), preflight: preflight(isPaused: true)))
+
+        let records = try ModelContext(container)
+            .fetch(FetchDescriptor<ScreenAgentDeliveryRecord>())
+        XCTAssertEqual(records.count, 1)
+        XCTAssertEqual(records.first?.deliveryOutcome, "suppressed")
+        XCTAssertEqual(records.first?.outcomeReason, "paused")
+        XCTAssertNotNil(records.first?.terminalAt)
     }
 }
