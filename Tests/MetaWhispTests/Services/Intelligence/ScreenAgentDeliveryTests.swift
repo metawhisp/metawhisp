@@ -324,6 +324,17 @@ extension ScreenAgentDeliveryTests {
         XCTAssertNotNil(records.first?.presentedAt)
     }
 
+    /// Every card the feature produced in a real day was recorded as
+    /// timedOut: nobody had read one. A card that asks for a decision must
+    /// outlive a toast that reports a fact.
+    @MainActor
+    func testAnAgentCardOutlivesAPlainToast() {
+        XCTAssertGreaterThanOrEqual(
+            MWNotificationStack.agentCardLifetimeForTests,
+            MWNotificationStack.toastLifetimeForTests * 5,
+            "six seconds is how long a card survives beside someone who is typing")
+    }
+
     /// The interaction ends the presentation's lifecycle.
     @MainActor
     func testAnInteractionTerminalizesTheDeliveryRecord() throws {

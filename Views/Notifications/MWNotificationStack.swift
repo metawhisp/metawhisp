@@ -25,6 +25,19 @@ final class MWNotificationStack: ObservableObject {
     var freeSlots: Int { max(0, maxStack - items.count) }
     private let autoDismissSeconds: TimeInterval = 6
 
+    /// A Screen Agent card asks for a decision; a toast reports a fact that
+    /// already happened. Measured on real use: fourteen cards in a day, every
+    /// single one recorded as timedOut — six seconds is how long a card
+    /// survives next to someone who is typing, so the feature had never
+    /// actually been read. Rare by design (a cooldown between them), so a
+    /// longer life costs nothing in clutter.
+    private let agentCardDismissSeconds: TimeInterval = 45
+
+    /// Visible to tests so the difference between the two lifetimes is a
+    /// pinned contract rather than a number someone can quietly equalize.
+    static let toastLifetimeForTests: TimeInterval = 6
+    static let agentCardLifetimeForTests: TimeInterval = 45
+
     private init() {}
 
     /// Tell the durable record what became of a Screen Agent card. Cards that
@@ -102,8 +115,10 @@ final class MWNotificationStack: ObservableObject {
 
     private func armFade(for id: UUID) {
         cancelFade(for: id)
+        let isAgentCard = items.first { $0.id == id }?.screenAgentItemID != nil
+        let life = isAgentCard ? agentCardDismissSeconds : autoDismissSeconds
         fadeTasks[id] = Task { @MainActor [weak self] in
-            try? await Task.sleep(for: .seconds(self?.autoDismissSeconds ?? 6))
+            try? await Task.sleep(for: .seconds(life))
             guard !Task.isCancelled else { return }
             // Faded out on its own — nobody closed it, and nobody may have read
             // it either.
