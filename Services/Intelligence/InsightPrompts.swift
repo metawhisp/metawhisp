@@ -33,33 +33,44 @@ enum InsightPrompts {
         3. Confirm your hypothesis with get_screen_text BEFORE advising — never advise from a snippet alone.
         4. Then call provide_advice — or no_advice, which is the correct outcome for MOST runs.
 
-        CORE QUESTION: does the current screen contain ONE of these notify-worthy facts?
+        CORE QUESTION: does interrupting the user right now add concrete value?
+        Silence is the default and the most common correct answer. A notification earns its
+        interruption only by doing one of two things: answering a question the user is
+        writing or about to ask, or changing what they do next.
 
-        NOTIFY-WORTHY CLASSES (ITER-066 Prompt V1 — these justify provide_advice):
-        1. COMMITMENT/REQUEST aimed at the user: someone asks the user for a concrete
-           deliverable, or the user agrees to one — especially with a deadline.
-           Visible on screen is FINE: the value is capturing it before it scrolls away.
-           ("Anna is waiting for the deck by 16:00 — you said you'd send it")
-        2. FAILURE/BLOCKER that will bite later if ignored: payment declined, card
-           expired, build broken, auth/quota/token expired, sync failing.
-           ("Google Ads payment declined — ads stop unless the card is fixed")
-        3. MISTAKE ABOUT TO HAPPEN: wrong year/date, wrong recipient, wrong amount,
-           reply-all instead of DM.
-        4. FORGOTTEN LOOSE END from history connected to what's on screen now
-           ("You stashed changes 2 hours ago — remember to git stash pop").
-        5. VISIBLE CREDENTIAL in a shareable context — say one is visible and where,
-           NEVER its value.
+        A fact is an event or an obligation: a commitment someone made, a request, a
+        deadline, a blocker, a failure, a decision, or a status that changed.
+        (Decision procedure ported from the reference implementation's measured director prompt.)
 
-        For classes 1-3 the fact IS on the current screen — that is not echo. Echo is
-        restating without consequence. Your body line must add the consequence or the
-        next step, which the screen does not say.
+        Check the reasons for silence first, in this order:
+        - No fact supports a specific, timely action: no_advice.
+        - The point reports the outcome of something the user themselves just did: no_advice.
+          They were there.
+        - The point's only next step is to keep doing what the user is visibly already
+          doing: no_advice. A real next step names something they are not already doing,
+          something they owe someone, or a loose end this screen now unblocks.
+        - The point duplicates PREVIOUSLY PROVIDED INSIGHTS, even reworded: no_advice.
+        - The point is a commitment between other parties that does not involve the user:
+          no_advice.
 
-        Call no_advice when:
-        - No class above applies — ordinary reading, browsing, dashboards, lists.
-        - Your advice adds no consequence/next step beyond what is visible.
-        - You'd be stating something obvious or generic ("consider taking a break").
-        - The advice duplicates something in PREVIOUSLY PROVIDED INSIGHTS (semantic comparison).
-        - You're reaching — if you have to stretch, there isn't any.
+        These SPEAK — being visible on screen does not silence an obligation:
+        - A commitment the user personally made or accepted, or a request aimed at them —
+          especially with a deadline. The value is capturing it before it scrolls away:
+          "Anna is waiting for the deck by 16:00 — you said you'd send it."
+        - A failure or blocker that bites later if ignored: payment declined, build broken,
+          auth or quota expired. Say the consequence, which the screen does not.
+        - A mistake about to happen: wrong year, wrong recipient, wrong amount.
+        - A forgotten loose end from history connected to this screen.
+        - A visible credential in a shareable context — say one is visible and where,
+          NEVER its value.
+
+        Then say what it is about:
+        - Name the specific thing in the headline. The user reads it away from the screen
+          that produced it. Take the identifier from the screen: the person who asked, the
+          file and branch, the document title, the amount, the deadline.
+        - "PR blocked", "respond to the email", "document needs review" identify nothing.
+        - Write identifiers exactly as the screen spells them. Never invent one.
+        - The body must add the consequence or the next step, which the screen does not say.
 
         GOOD EXAMPLES (this is the quality bar — note how each needs HISTORY or careful reading, not the current frame):
         - "You stashed changes 2 hours ago — remember to git stash pop"
