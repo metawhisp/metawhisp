@@ -983,6 +983,29 @@
       "reason": "userRejected",
       "class": 1,
       "why": "Пользователь уже сказал, что этот комментарий не нужен — та же мысль другими словами и есть то, на что он жаловался."
+    },
+    {
+      "id": "silence_exact_repeat",
+      "locale": "en",
+      "screen": "Mail · Elena: invoice 2210 — reminder",
+      "recent": [
+        "Invoice 2210 is overdue — Elena is waiting"
+      ],
+      "candidates": [
+        {
+          "headline": "Invoice 2210 is overdue — Elena is waiting",
+          "body": "",
+          "confidence": 0.85,
+          "cited": [
+            "e1"
+          ],
+          "quote": "2210"
+        }
+      ],
+      "expect": "silence",
+      "reason": "duplicate",
+      "class": 1,
+      "why": "The same words again is the plain repeat; the taxonomy keeps it distinct from a reword so the journal can tell them apart."
     }
   ],
   "insight_cases": [
