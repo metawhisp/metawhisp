@@ -52,6 +52,9 @@ enum ScreenAgentDirector {
         case ungrounded
         /// More than one proposal; the director refuses to guess which.
         case ambiguous
+        /// The comment carries something that must not be repeated — a
+        /// credential-shaped string read off the screen.
+        case unsafeContent
     }
 
     /// Below this a proposal is not worth interrupting anyone for. Confidence
@@ -93,6 +96,14 @@ enum ScreenAgentDirector {
             return .silence(.ungrounded)
         }
 
+        // A page can tell the agent to relay a secret, and the agent relaying
+        // it is the attack succeeding. MetaWhisp's job with a visible
+        // credential is to say one is visible, never to say what it is — and a
+        // comment repeating it would also write it into durable history.
+        if carriesSecret(best.headline) || carriesSecret(best.body) {
+            return .silence(.unsafeContent)
+        }
+
         if echoes(best.headline, of: screenText) { return .silence(.echoesTheScreen) }
         if recentHeadlines.contains(where: { isNearDuplicate($0, best.headline) }) {
             return .silence(.duplicate)
@@ -100,6 +111,27 @@ enum ScreenAgentDirector {
 
         return .item(headline: best.headline, body: best.body,
                      evidenceIDs: best.citedEvidenceIDs)
+    }
+
+    /// Credential-shaped strings. Deliberately broad: the cost of refusing an
+    /// innocent long token is one missed comment, and the cost of the other
+    /// mistake is a secret repeated in a popup and stored in a database.
+    static func carriesSecret(_ text: String) -> Bool {
+        let patterns = [
+            #"\b(?:AKIA|ASIA)[0-9A-Z]{8,}\b"#,               // AWS
+            #"\bsk-[A-Za-z0-9_-]{16,}\b"#,                   // OpenAI-style
+            #"\bgh[pousr]_[A-Za-z0-9]{16,}\b"#,              // GitHub
+            #"\bxox[baprs]-[A-Za-z0-9-]{10,}\b"#,            // Slack
+            #"\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}"#, // JWT
+            #"\b[A-Za-z0-9+/]{32,}={0,2}\b"#,                // long opaque blob
+            #"-----BEGIN [A-Z ]*PRIVATE KEY-----"#,
+        ]
+        for pattern in patterns {
+            guard let regex = try? NSRegularExpression(pattern: pattern) else { continue }
+            let range = NSRange(text.startIndex..., in: text)
+            if regex.firstMatch(in: text, range: range) != nil { return true }
+        }
+        return false
     }
 
     /// A comment that is already on screen verbatim tells the user nothing they
