@@ -21,11 +21,18 @@ enum ScreenAgentCandidateAdapter {
         ocrText: String,
         history: [InsightInvestigator.Snapshot] = [],
         retrieved: [InsightInvestigator.RetrievedRef] = [],
-        visualFacts: [ScreenAgentVisionResponse.VisualFact] = []
+        visualFacts: [ScreenAgentVisionResponse.VisualFact] = [],
+        now: Date = Date()
     ) -> (evidence: ScreenAgentEvidence, ids: [String]) {
         var refs: [ScreenAgentEvidence.Ref] = [
             .init(id: evidenceID, contextID: contextID, text: ocrText)
         ]
+        // The one fact the runtime knows that no screen shows: what year it
+        // is. Without it, "the invite says 2025 — it's 2026" died as
+        // ungrounded, because the correct year existed nowhere in evidence.
+        // Year only: a full date would let "25" ground an invented count.
+        let year = Calendar.current.component(.year, from: now)
+        refs.append(.init(id: "d0", contextID: contextID, text: "current year: \(year)"))
         for (index, snapshot) in history.prefix(400).enumerated() {
             refs.append(.init(id: "h\(index)", contextID: contextID, text: snapshot.ocr))
         }

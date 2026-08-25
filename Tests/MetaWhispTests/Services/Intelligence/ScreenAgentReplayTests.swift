@@ -124,10 +124,13 @@ final class ScreenAgentReplayTests: XCTestCase {
         let deck = try loadDeck()
         var failures: [String] = []
 
+        // Fixed clock: the deck's goldens must not rot when the year turns.
+        let deckNow = Date(timeIntervalSince1970: 1_787_000_000)   // 2026
         for testCase in deck.cases {
-            let evidence = ScreenAgentEvidence([
-                .init(id: "e1", contextID: UUID(), text: testCase.screen),
-            ])
+            // Evidence through the production adapter too — the runtime issues
+            // the refs (screen + date), fixtures only choose what to cite.
+            let (evidence, _) = ScreenAgentCandidateAdapter.evidence(
+                contextID: UUID(), ocrText: testCase.screen, now: deckNow)
             // Through the production bridge, exactly like a live insight —
             // anchors, quote and referent all derived, never hand-authored.
             // Hand-built candidates validated only their fixture quote, so the
@@ -215,7 +218,8 @@ final class ScreenAgentReplayTests: XCTestCase {
                 InsightInvestigator.RetrievedRef(id: "m\($0.offset)", text: $0.element)
             }
             let (evidence, ids) = ScreenAgentCandidateAdapter.evidence(
-                contextID: UUID(), ocrText: testCase.screen, retrieved: retrieved)
+                contextID: UUID(), ocrText: testCase.screen, retrieved: retrieved,
+                now: Date(timeIntervalSince1970: 1_787_000_000))
             let candidate = ScreenAgentCandidateAdapter.candidate(from: insight, citing: ids)
             let decision = ScreenAgentDirector.decide(
                 candidates: [candidate], evidence: evidence,
