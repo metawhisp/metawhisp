@@ -192,10 +192,10 @@ extension ScreenAgentDeliveryTests {
     @MainActor
     func testARunIsJournaledFromStartToOutcome() throws {
         let (service, container) = try makeService()
-        let ctxID = UUID()
-        service.beginRun(contextID: ctxID, trigger: "contextAccepted",
-                         deadlineAt: Date().addingTimeInterval(10))
-        service.completeRun(contextID: ctxID, outcomeReason: "echoesTheScreen",
+        let runID = try XCTUnwrap(service.beginRun(
+            contextID: UUID(), trigger: "contextAccepted",
+            deadlineAt: Date().addingTimeInterval(10)))
+        service.completeRun(runID: runID, outcomeReason: "echoesTheScreen",
                             evidenceRefs: ["e1", "d0"], modelRoute: "pro")
 
         let runs = try ModelContext(container).fetch(FetchDescriptor<ScreenAgentRun>())
@@ -240,6 +240,90 @@ extension ScreenAgentDeliveryTests {
         XCTAssertEqual(records.count, 1)
         XCTAssertEqual(records.first?.deliveryOutcome, "suppressed")
         XCTAssertEqual(records.first?.outcomeReason, "paused")
+        XCTAssertNotNil(records.first?.terminalAt)
+    }
+
+    /// A crash mid-run must not leave the journal claiming an analysis is
+    /// still going three relaunches later.
+    @MainActor
+    func testAStaleRunningRowIsReconciledOnTheNextBegin() throws {
+        let (service, container) = try makeService()
+        let stale = try XCTUnwrap(service.beginRun(
+            contextID: UUID(), trigger: "contextAccepted",
+            deadlineAt: Date().addingTimeInterval(-5)))   // already past deadline
+        _ = service.beginRun(contextID: UUID(), trigger: "contextAccepted",
+                             deadlineAt: Date().addingTimeInterval(10))
+
+        let ctx = ModelContext(container)
+        let rows = try ctx.fetch(FetchDescriptor<ScreenAgentRun>())
+        let staleRow = rows.first { $0.id == stale }
+        XCTAssertEqual(staleRow?.status, "abandoned")
+        XCTAssertNotNil(staleRow?.completedAt)
+    }
+
+    /// The watchdog marks only a row still running; a real completion that
+    /// already landed — or lands after — is the truer outcome and wins.
+    @MainActor
+    func testExpireOnlyTouchesARunningRowAndCompletionOverwritesIt() throws {
+        let (service, container) = try makeService()
+        let runID = try XCTUnwrap(service.beginRun(
+            contextID: UUID(), trigger: "contextAccepted",
+            deadlineAt: Date().addingTimeInterval(10)))
+
+        service.expireRun(runID: runID)
+        var rows = try ModelContext(container).fetch(FetchDescriptor<ScreenAgentRun>())
+        XCTAssertEqual(rows.first?.status, "expired")
+
+        service.completeRun(runID: runID, outcomeReason: "item")
+        rows = try ModelContext(container).fetch(FetchDescriptor<ScreenAgentRun>())
+        XCTAssertEqual(rows.first?.status, "completed", "the late truth outranks the timeout")
+
+        service.expireRun(runID: runID)
+        rows = try ModelContext(container).fetch(FetchDescriptor<ScreenAgentRun>())
+        XCTAssertEqual(rows.first?.status, "completed", "expire must not resurrect a closed run")
+    }
+
+    /// A retried run's attempt is still an event — silence in the table was
+    /// the journal lying by omission.
+    @MainActor
+    func testASecondDeliveryAttemptLeavesARecord() throws {
+        let (service, container) = try makeService()
+        let runID = UUID()
+        XCTAssertNotNil(service.deliver(makeItem(runID: runID), preflight: preflight()))
+        XCTAssertNil(service.deliver(makeItem(runID: runID), preflight: preflight()))
+
+        let records = try ModelContext(container)
+            .fetch(FetchDescriptor<ScreenAgentDeliveryRecord>())
+        XCTAssertEqual(records.count, 2)
+        XCTAssertTrue(records.contains { $0.outcomeReason == "duplicateRun" })
+    }
+
+    /// An announcement the user SAW must exist in the journal too.
+    @MainActor
+    func testAnAnnouncementIsJournaled() throws {
+        let (service, container) = try makeService()
+        XCTAssertNotNil(service.announce(makeItem()))
+
+        let ctx = ModelContext(container)
+        let runs = try ctx.fetch(FetchDescriptor<ScreenAgentRun>())
+        XCTAssertEqual(runs.first?.trigger, "taskFulfillment")
+        XCTAssertEqual(runs.first?.status, "completed")
+        let records = try ctx.fetch(FetchDescriptor<ScreenAgentDeliveryRecord>())
+        XCTAssertEqual(records.first?.deliveryOutcome, "presented")
+        XCTAssertNotNil(records.first?.presentedAt)
+    }
+
+    /// The interaction ends the presentation's lifecycle.
+    @MainActor
+    func testAnInteractionTerminalizesTheDeliveryRecord() throws {
+        let (service, container) = try makeService()
+        let item = makeItem()
+        XCTAssertNotNil(service.deliver(item, preflight: preflight()))
+        service.confirmPresented(itemID: item.id)
+        service.recordInteraction(.timedOut, itemID: item.id)
+
+        let records = try ModelContext(container)
+            .fetch(FetchDescriptor<ScreenAgentDeliveryRecord>())
         XCTAssertNotNil(records.first?.terminalAt)
     }
 }

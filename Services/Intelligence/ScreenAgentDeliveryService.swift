@@ -103,6 +103,14 @@ final class ScreenAgentDeliveryService {
             if try !context.fetch(existing).isEmpty {
                 NSLog("[ScreenAgentDelivery] run %@ already produced an item — not duplicating",
                       runID.uuidString)
+                // The attempt still happened; an event with no row is the
+                // journal lying by omission (Codex). Terminal on arrival.
+                let dup = ScreenAgentDeliveryRecord(itemID: item.id, runID: runID)
+                dup.deliveryOutcome = "suppressed"
+                dup.outcomeReason = "duplicateRun"
+                dup.terminalAt = Date()
+                context.insert(dup)
+                try? context.save()
                 return nil
             }
         } catch {
@@ -165,11 +173,18 @@ final class ScreenAgentDeliveryService {
         var descriptor = FetchDescriptor<ScreenAgentItem>(predicate: #Predicate { $0.id == itemID })
         descriptor.fetchLimit = 1
         guard let item = (try? context.fetch(descriptor))?.first else { return }
+        // First confirmation wins: a duplicate confirm was overwriting the
+        // original presentation time — and with it the pacing clock (Codex).
+        guard item.deliveredAt == nil else { return }
         item.deliveryOutcome = ScreenAgentDelivery.Outcome.presented.rawValue
         item.deliveredAt = Date()
-        if let record = latestDeliveryRecord(itemID: itemID, in: context) {
+        if let record = latestDeliveryRecord(itemID: itemID, in: context),
+           record.presentedAt == nil {
             record.deliveryOutcome = "presented"
             record.presentedAt = Date()
+        } else if latestDeliveryRecord(itemID: itemID, in: context) == nil {
+            NSLog("[ScreenAgentDelivery] presented item %@ has no delivery record",
+                  itemID.uuidString)
         }
         do {
             try context.save()
@@ -216,6 +231,10 @@ final class ScreenAgentDeliveryService {
            record.interactionOutcome == nil {
             record.interactionOutcome = interaction.rawValue
             record.interactionAt = Date()
+            // The interaction is what ends a presentation's lifecycle — a
+            // presented row with no terminal moment reads as still on screen
+            // forever (Codex).
+            record.terminalAt = Date()
         }
         do {
             try context.save()
@@ -229,39 +248,79 @@ final class ScreenAgentDeliveryService {
     /// One row per analysis run, silences included. «Why did it speak at 15:04
     /// and not at 15:02» is answerable only if the runs that said nothing
     /// exist somewhere too.
-    func beginRun(contextID: UUID, trigger: String, deadlineAt: Date) {
+    ///
+    /// Returns the run row's own ID — the caller closes the run with it.
+    /// Closing by non-unique contextID let overlapping runs close each other
+    /// with the wrong outcome (Codex). The row joins to items and deliveries
+    /// via `contextID` (their `runID` is the analysis identity — the context —
+    /// because a minted UUID would not survive a relaunch mid-run and the
+    /// idempotency check would go inert).
+    @discardableResult
+    func beginRun(contextID: UUID, trigger: String, deadlineAt: Date) -> UUID? {
         let context = ModelContext(container)
-        context.insert(ScreenAgentRun(
-            contextID: contextID, trigger: trigger, deadlineAt: deadlineAt))
+        // Crash reconciliation, done lazily: a run the process died inside
+        // stays "running" forever otherwise — the journal claiming an analysis
+        // is still going three relaunches later is the journal lying (Codex).
+        let now = Date()
+        let stalePred = #Predicate<ScreenAgentRun> {
+            $0.status == "running" && $0.deadlineAt < now
+        }
+        if let stale = try? context.fetch(FetchDescriptor<ScreenAgentRun>(predicate: stalePred)) {
+            for run in stale {
+                run.status = "abandoned"
+                run.completedAt = now
+            }
+        }
+        let run = ScreenAgentRun(
+            contextID: contextID, trigger: trigger, deadlineAt: deadlineAt)
+        context.insert(run)
         do {
             try context.save()
         } catch {
             NSLog("[ScreenAgentRun] could not journal run start: %@", error.localizedDescription)
+            return nil
         }
+        return run.id
     }
 
-    /// Close the journal row for this context's running analysis. Reason codes
-    /// only — "item" when something was shown, the director's silence reason
-    /// otherwise. The evidence refs are the allowlist IDs the decision cited,
-    /// preserved past the run (they used to be discarded with it).
-    func completeRun(contextID: UUID, outcomeReason: String,
+    /// Close the journal row by its own ID. Reason codes only — "item" when
+    /// something was shown, the director's silence reason otherwise. The
+    /// evidence refs are the allowlist IDs the decision cited, preserved past
+    /// the run (they used to be discarded with it). Writes final truth even
+    /// over a watchdog's "expired": the run really did end this way, late.
+    func completeRun(runID: UUID, outcomeReason: String,
                      evidenceRefs: [String] = [], modelRoute: String = "") {
         let context = ModelContext(container)
         var descriptor = FetchDescriptor<ScreenAgentRun>(
-            predicate: #Predicate { $0.contextID == contextID && $0.status == "running" },
-            sortBy: [SortDescriptor(\.startedAt, order: .reverse)])
+            predicate: #Predicate { $0.id == runID })
         descriptor.fetchLimit = 1
         guard let run = (try? context.fetch(descriptor))?.first else { return }
         run.status = "completed"
         run.completedAt = Date()
         run.outcomeReason = outcomeReason
         run.setEvidenceRefs(evidenceRefs)
-        run.modelRoute = modelRoute
+        // Empty means "not measured", and not-measured must not erase a
+        // measurement recorded earlier.
+        if !modelRoute.isEmpty { run.modelRoute = modelRoute }
         do {
             try context.save()
         } catch {
             NSLog("[ScreenAgentRun] could not journal run outcome: %@", error.localizedDescription)
         }
+    }
+
+    /// The watchdog's verdict: the run overstayed its deadline. Only a row
+    /// still "running" is marked — a completion that already landed is truer
+    /// than the timeout that raced it.
+    func expireRun(runID: UUID) {
+        let context = ModelContext(container)
+        var descriptor = FetchDescriptor<ScreenAgentRun>(
+            predicate: #Predicate { $0.id == runID && $0.status == "running" })
+        descriptor.fetchLimit = 1
+        guard let run = (try? context.fetch(descriptor))?.first else { return }
+        run.status = "expired"
+        run.completedAt = Date()
+        try? context.save()
     }
 
     /// Newest first, for the Inbox.
@@ -349,6 +408,20 @@ final class ScreenAgentDeliveryService {
         item.deliveryOutcome = ScreenAgentDelivery.Outcome.presented.rawValue
         item.deliveredAt = Date()
         context.insert(item)
+        // The journal covers announcements too: a card the user SAW with no
+        // run and no delivery row was the delivery table claiming it never
+        // happened (Codex). The fulfillment check is the analysis; it
+        // completed the moment the mutation did.
+        let run = ScreenAgentRun(
+            contextID: runID, trigger: "taskFulfillment", deadlineAt: Date())
+        run.status = "completed"
+        run.completedAt = Date()
+        run.outcomeReason = "item"
+        context.insert(run)
+        let record = ScreenAgentDeliveryRecord(itemID: item.id, runID: runID)
+        record.deliveryOutcome = "presented"
+        record.presentedAt = Date()
+        context.insert(record)
         do {
             try context.save()
         } catch {

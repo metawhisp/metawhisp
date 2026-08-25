@@ -224,7 +224,55 @@ enum MetaWhispSchemaV5: VersionedSchema {
     static var versionIdentifier = Schema.Version(5, 0, 0)
 
     static var models: [any PersistentModel.Type] {
-        MetaWhispSchemaV3.models + [ScreenAgentItem.self]
+        MetaWhispSchemaV3.models + [MetaWhispSchemaV5.ScreenAgentItem.self]
+    }
+
+    /// FROZEN V5 shape of `ScreenAgentItem` — V4 plus the ITER-070 feedback
+    /// fields and the semantic signature. Nested with the same type name so
+    /// the entity name matches the store. Never edit this copy.
+    ///
+    /// V5 used to reference the LIVE model, so the migration proof migrated
+    /// from whatever the model looked like today — a future field change
+    /// would mutate the test's "V5" source too, and the test would pass while
+    /// a genuinely shipped V5 store failed (Codex).
+    @Model
+    final class ScreenAgentItem {
+        @Attribute(.unique) var id: UUID
+        var runID: UUID
+        var createdAt: Date
+        var headline: String
+        var body: String
+        var sourceApp: String
+        var sourceWindowTitle: String
+        var capturedAt: Date
+        var visitID: UUID?
+        var visitGeneration: Int
+        var evidenceContextIDsJSON: String
+        var deliveryOutcome: String
+        var deliveredAt: Date?
+        var suppressionReason: String?
+        var interaction: String
+        var interactedAt: Date?
+        var feedbackReason: String?
+        var feedbackAt: Date?
+        var semanticSignature: String = ""
+
+        init(runID: UUID, headline: String, body: String, sourceApp: String,
+             sourceWindowTitle: String, capturedAt: Date) {
+            self.id = UUID()
+            self.runID = runID
+            self.createdAt = Date()
+            self.headline = headline
+            self.body = body
+            self.sourceApp = sourceApp
+            self.sourceWindowTitle = sourceWindowTitle
+            self.capturedAt = capturedAt
+            self.visitGeneration = 0
+            self.evidenceContextIDsJSON = "[]"
+            self.deliveryOutcome = "pending"
+            self.interaction = "none"
+            self.semanticSignature = ""
+        }
     }
 }
 
@@ -235,8 +283,11 @@ enum MetaWhispSchemaV6: VersionedSchema {
     static var versionIdentifier = Schema.Version(6, 0, 0)
 
     static var models: [any PersistentModel.Type] {
-        MetaWhispSchemaV5.models
-            + [ScreenAgentRun.self, ScreenAgentDeliveryRecord.self]
+        // From V3 + the LIVE item, not from V5 — V5 now pins its frozen copy,
+        // and inheriting it here would make production fetch a stranger class
+        // under the same entity name.
+        MetaWhispSchemaV3.models
+            + [ScreenAgentItem.self, ScreenAgentRun.self, ScreenAgentDeliveryRecord.self]
     }
 }
 

@@ -180,14 +180,19 @@ final class ScreenAgentVisionTests: XCTestCase {
     func testTheHappyPathReturnsFacts() async {
         let cache = ScreenAgentFrameCache()
         cache.store(contextID: ctxA, jpeg: Data([1]), generation: 1)
+        // The server's ID is deliberately hostile-shaped: identifiers are
+        // minted locally, because a fact ID travels into the evidence
+        // allowlist and is persisted in the run journal — a server could put
+        // screen-derived text in that field.
         let transport = FakeTransport(
             respondWith: ctxA,
-            facts: [.init(evidenceID: "v1", statement: "Company field is empty")])
+            facts: [.init(evidenceID: "Payroll: Alice €12,000",
+                          statement: "Company field is empty")])
         let client = ScreenAgentVisionClient(transport: transport, cache: cache)
         let outcome = await client.analyzeCurrentFrame(
             contextID: ctxA, visualConsentGranted: { true }, isStillCurrent: { true })
         XCTAssertEqual(outcome,
-                       .facts([.init(evidenceID: "v1", statement: "Company field is empty")]))
+                       .facts([.init(evidenceID: "v0", statement: "Company field is empty")]))
         XCTAssertEqual(transport.calls, 1)
     }
 

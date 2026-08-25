@@ -91,6 +91,13 @@ final class ScreenAgentVisionClient {
               response.frameHash == frame.contentHash,
               cache.holds(contextID: contextID, contentHash: frame.contentHash),
               visualConsentGranted(), isStillCurrent() else { return .stale }
-        return .facts(response.facts)
+        // The server's fact IDs are replaced with locally-minted opaque ones:
+        // an ID travels into the evidence allowlist and is PERSISTED in the
+        // run journal, and a server (or anything between) could put
+        // screen-derived text in that field (Codex). Statements are content
+        // and stay; identifiers are ours to issue.
+        return .facts(response.facts.enumerated().map {
+            .init(evidenceID: "v\($0.offset)", statement: $0.element.statement)
+        })
     }
 }

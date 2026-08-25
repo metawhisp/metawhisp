@@ -115,7 +115,7 @@ final class SchemaMigrationTests: XCTestCase {
             let cfg = ModelConfiguration(schema: v5Schema, url: storeURL)
             let container = try ModelContainer(for: v5Schema, configurations: [cfg])
             let ctx = ModelContext(container)
-            let item = ScreenAgentItem(
+            let item = MetaWhispSchemaV5.ScreenAgentItem(
                 runID: UUID(), headline: "Presentation due at 16:00",
                 body: "Sam is waiting on it.", sourceApp: "Mail",
                 sourceWindowTitle: "Inbox", capturedAt: Date())
@@ -155,6 +155,19 @@ final class SchemaMigrationTests: XCTestCase {
         XCTAssertFalse(props.contains("embedding"), "V1 is the PRE-embedding shape — never add fields to the frozen copy")
         for expected in ["id", "appName", "contextSummary", "currentActivity", "startedAt", "endedAt", "createdAt"] {
             XCTAssertTrue(props.contains(expected), "frozen V1 lost field \(expected)")
+        }
+    }
+
+    /// The frozen V5 item shape: V4 plus feedback fields and the signature —
+    /// and nothing that lands after V5. Pins the migration SOURCE.
+    func testFrozenV5ItemShapeIsStable() throws {
+        let v5Schema = Schema(versionedSchema: MetaWhispSchemaV5.self)
+        let entity = v5Schema.entities.first { $0.name == "ScreenAgentItem" }
+        XCTAssertNotNil(entity)
+        let props = Set(entity!.properties.map(\.name))
+        for expected in ["id", "runID", "headline", "body", "capturedAt",
+                         "feedbackReason", "feedbackAt", "semanticSignature"] {
+            XCTAssertTrue(props.contains(expected), "frozen V5 lost field \(expected)")
         }
     }
 

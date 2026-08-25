@@ -117,6 +117,10 @@ final class ProactiveContextService: ObservableObject {
     /// user moves to during a slow model call.
     private var runQueue = ScreenAgentRunQueue<ScreenContext>()
 
+    /// The journal row of the analysis currently in flight, so the deadline
+    /// watchdog can mark it expired without guessing by contextID.
+    private var currentRunHandle: UUID?
+
     func onNewContext(_ ctx: ScreenContext) {
         Task { @MainActor [weak self] in
             guard let self else { return }
@@ -145,6 +149,12 @@ final class ProactiveContextService: ObservableObject {
                 nanoseconds: UInt64(ScreenAgentTimingPolicy.endToEndDeadline * 1_000_000_000))
             guard !Task.isCancelled, let self else { return }
             NSLog("[Proactive] run past deadline — releasing the queue")
+            // The journal hears about the timeout too — only a row still
+            // "running" is marked, and a late real completion overwrites it
+            // with the truer outcome.
+            if let handle = self.currentRunHandle {
+                AppDelegate.shared?.screenAgentDelivery?.expireRun(runID: handle)
+            }
             await self.settleQueue(finishing: permit)
         }
         await evaluateAndSurface(ctx: ctx)
@@ -211,15 +221,32 @@ final class ProactiveContextService: ObservableObject {
         // ── The run journal (plan §4) ────────────────────────────────
         // Every analysis run leaves a row, silences included. Preflight
         // rejections above never started an analysis and stay unjournaled.
+        // The row is closed by its own ID — closing by non-unique contextID
+        // let overlapping runs close each other with the wrong outcome.
         let journal = AppDelegate.shared?.screenAgentDelivery
-        journal?.beginRun(
+        let runHandle = journal?.beginRun(
             contextID: ctx.id, trigger: "contextAccepted",
             deadlineAt: Date().addingTimeInterval(ScreenAgentTimingPolicy.endToEndDeadline))
+        currentRunHandle = runHandle
         var runOutcome = "abandoned"
         var runEvidence: [String] = []
         defer {
-            journal?.completeRun(contextID: ctx.id, outcomeReason: runOutcome,
-                                 evidenceRefs: runEvidence)
+            // Only clear our own handle — a watchdog-promoted successor may
+            // already own the slot by the time this run's defer fires.
+            if currentRunHandle == runHandle { currentRunHandle = nil }
+            if let runHandle {
+                journal?.completeRun(runID: runHandle, outcomeReason: runOutcome,
+                                     evidenceRefs: runEvidence)
+            }
+        }
+
+        // The watchdog's successor lands while the previous evaluation still
+        // owns the assistant; its re-entrancy guard would return nil and this
+        // run would be journaled "noProposal" — an invented decision about an
+        // analysis that never ran (Codex).
+        if insightAssistant?.isEvaluating == true {
+            runOutcome = "assistantBusy"
+            return
         }
 
         // ── Activity summary (last hour) ─────────────────────────────
