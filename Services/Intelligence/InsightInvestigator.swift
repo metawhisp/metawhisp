@@ -164,6 +164,33 @@ enum InsightInvestigator {
         return "[\(s.app) — \(s.window)]\n" + String(s.ocr.prefix(fullTextChars))
     }
 
+    /// One ref per retrieved RECORD, not per search. The executor's JSON used
+    /// to ride into the evidence allowlist whole — keys, "count" and UUIDs
+    /// included — so an invented "8" could ground against `"count": 8`, an
+    /// empty result read as evidence, and a grounded claim could not say which
+    /// record grounded it (Codex).
+    static func recordRefs(prefix: String, result: String) -> [RetrievedRef] {
+        guard let data = result.data(using: .utf8),
+              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let items = object["items"] as? [[String: Any]] else {
+            // Not our executor's shape — keep the old single-ref behavior
+            // rather than silently discarding what the model was shown.
+            return [RetrievedRef(id: "\(prefix)0", text: result)]
+        }
+        // Human-facing fields only; scaffolding must not become quotable text.
+        let fields = ["headline", "description", "content", "assignee", "dueAt"]
+        var refs: [RetrievedRef] = []
+        for item in items {
+            let text = fields
+                .compactMap { item[$0] as? String }
+                .filter { !$0.isEmpty }
+                .joined(separator: " — ")
+            guard !text.isEmpty else { continue }
+            refs.append(RetrievedRef(id: "\(prefix)\(refs.count)", text: text))
+        }
+        return refs
+    }
+
     // MARK: - The loop
 
     /// Read-only bridge to the user's store. Injected so the loop stays pure
@@ -271,7 +298,7 @@ enum InsightInvestigator {
                 // An error result reaches the model as feedback but never the
                 // evidence allowlist — a failed search proves nothing.
                 if !result.hasPrefix("Error") {
-                    retrieved.append(.init(id: "t\(retrieved.count)", text: result))
+                    retrieved.append(contentsOf: recordRefs(prefix: "t", result: result))
                 }
                 appendToolExchange(&messages, turn: turn, tool: tool, callId: callId, result: result)
 
@@ -292,7 +319,7 @@ enum InsightInvestigator {
                 // An error result reaches the model as feedback but never the
                 // evidence allowlist — a failed search proves nothing.
                 if !result.hasPrefix("Error") {
-                    retrieved.append(.init(id: "m\(retrieved.count)", text: result))
+                    retrieved.append(contentsOf: recordRefs(prefix: "m", result: result))
                 }
                 appendToolExchange(&messages, turn: turn, tool: tool, callId: callId, result: result)
 

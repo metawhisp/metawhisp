@@ -271,4 +271,88 @@ final class InsightInvestigatorTests: XCTestCase {
         })
         XCTAssertEqual(outcome, .none(reason: "no_advice"))
     }
+
+    // MARK: - ITER-069 follow-up (Codex): one ref per retrieved RECORD
+
+    func test_recordRefs_splitsJSONItemsIntoIndividualRefs() {
+        let json = #"{"items":[{"id":"AAAA-1111","description":"Send deck to Sam","assignee":"Alex"},"#
+            + #"{"id":"BBBB-2222","description":"Pay hosting invoice","dueAt":"2026-09-01T10:00:00Z"}],"count":2}"#
+        let refs = I.recordRefs(prefix: "t", result: json)
+        XCTAssertEqual(refs.count, 2)
+        XCTAssertEqual(refs[0].id, "t0")
+        XCTAssertEqual(refs[1].id, "t1")
+        XCTAssertTrue(refs[0].text.contains("Send deck to Sam"))
+        XCTAssertTrue(refs[0].text.contains("Alex"))
+        XCTAssertTrue(refs[1].text.contains("2026-09-01"))
+        // Scaffolding must not become quotable text: no JSON keys, no UUIDs.
+        for ref in refs {
+            XCTAssertFalse(ref.text.contains("AAAA"))
+            XCTAssertFalse(ref.text.contains("BBBB"))
+            XCTAssertFalse(ref.text.localizedCaseInsensitiveContains("count"))
+            XCTAssertFalse(ref.text.contains("items"))
+        }
+    }
+
+    func test_recordRefs_emptySearchResultIsNotEvidence() {
+        // Before the split, {"items":[],"count":0} rode into the allowlist as a
+        // ref — an empty search grounded nothing yet looked like it could.
+        XCTAssertEqual(I.recordRefs(prefix: "t", result: #"{"items":[],"count":0}"#), [])
+    }
+
+    func test_recordRefs_nonJSONFallsBackToSingleRef() {
+        let refs = I.recordRefs(prefix: "m", result: "plain text result")
+        XCTAssertEqual(refs, [I.RetrievedRef(id: "m0", text: "plain text result")])
+    }
+
+    func test_recordRefs_memoryFieldsJoined() {
+        let json = #"{"items":[{"id":"CCCC-3333","headline":"Pricing decision","content":"Pro tier stays at $49"}],"count":1}"#
+        let refs = I.recordRefs(prefix: "m", result: json)
+        XCTAssertEqual(refs.count, 1)
+        XCTAssertTrue(refs[0].text.contains("Pricing decision"))
+        XCTAssertTrue(refs[0].text.contains("$49"))
+    }
+
+    func test_retrieval_countFieldCannotGroundAnInventedNumber() {
+        // The scaffolding vulnerability end to end: a claim's anchor "8" must
+        // not validate against the executor's "count": 8 — no record says 8.
+        let json = #"{"items":[{"id":"DDDD-4444","description":"Review pull request"}],"count":8}"#
+        let refs = I.recordRefs(prefix: "t", result: json)
+        let (evidence, ids) = ScreenAgentCandidateAdapter.evidence(
+            contextID: UUID(), ocrText: "unrelated screen", retrieved: refs)
+        XCTAssertEqual(evidence.validate(citedIDs: ids, quotes: ["8"]),
+                       .quoteNotInSource)
+    }
+
+    func test_loop_taskSearchProducesPerRecordRefs() async {
+        let snaps = [snap(5, "Mail", "Inbox", "deck feedback thread")]
+        var rounds = 0
+        let outcome = await I.run(snapshots: snaps, userPrompt: "ctx", transport: { _, _ in
+            rounds += 1
+            switch rounds {
+            case 1:
+                return I.ModelTurn(text: "", toolName: "search_tasks",
+                                   toolArgs: ["query": "deck"], toolArgsRaw: "{}", toolCallId: "c1")
+            case 2:
+                return I.ModelTurn(text: "", toolName: "search_screen_history", toolArgs: [:],
+                                   toolArgsRaw: "{}", toolCallId: "c2")
+            case 3:
+                return I.ModelTurn(text: "", toolName: "get_screen_text", toolArgs: ["id": 0],
+                                   toolArgsRaw: "{}", toolCallId: "c3")
+            default:
+                return I.ModelTurn(text: "", toolName: "provide_advice",
+                                   toolArgs: ["advice": "You promised Sam the deck — the thread is open",
+                                              "category": "productivity", "source_app": "Mail",
+                                              "confidence": 0.8],
+                                   toolArgsRaw: "{}", toolCallId: "c4")
+            }
+        }, searchTasks: { _ in
+            #"{"items":[{"id":"EEEE-5555","description":"Send deck to Sam"},"#
+                + #"{"id":"FFFF-6666","description":"Book flights"}],"count":2}"#
+        })
+        guard case let .advice(_, retrieved) = outcome else {
+            return XCTFail("expected advice, got \(outcome)")
+        }
+        XCTAssertEqual(retrieved.map(\.id), ["t0", "t1"])
+        XCTAssertEqual(retrieved[0].text, "Send deck to Sam")
+    }
 }
