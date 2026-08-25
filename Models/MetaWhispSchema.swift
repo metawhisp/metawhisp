@@ -291,13 +291,28 @@ enum MetaWhispSchemaV6: VersionedSchema {
     }
 }
 
+/// Visit-wiring step 2 — the durable visit row. Additive entity, no live
+/// shape changes, so no new frozen copy is needed; built from V3 + live
+/// models like V6 (inheriting a version that pins a frozen copy would ship
+/// the frozen stranger class to production — the V6 lesson).
+enum MetaWhispSchemaV7: VersionedSchema {
+    static var versionIdentifier = Schema.Version(7, 0, 0)
+
+    static var models: [any PersistentModel.Type] {
+        MetaWhispSchemaV3.models
+            + [ScreenAgentItem.self, ScreenAgentRun.self, ScreenAgentDeliveryRecord.self,
+               ContextVisitRecord.self]
+    }
+}
+
 /// Migration plan for the live store: V1 → V2 (ScreenObservation.embedding) →
 /// V3 (TaskItem.relevanceScore). All lightweight (additive optional columns),
 /// verified by `SchemaMigrationTests`.
 enum MetaWhispMigrationPlan: SchemaMigrationPlan {
     static var schemas: [any VersionedSchema.Type] {
         [MetaWhispSchemaV1.self, MetaWhispSchemaV2.self, MetaWhispSchemaV3.self,
-         MetaWhispSchemaV4.self, MetaWhispSchemaV5.self, MetaWhispSchemaV6.self]
+         MetaWhispSchemaV4.self, MetaWhispSchemaV5.self, MetaWhispSchemaV6.self,
+         MetaWhispSchemaV7.self]
     }
     static var stages: [MigrationStage] {
         [
@@ -320,6 +335,10 @@ enum MetaWhispMigrationPlan: SchemaMigrationPlan {
             MigrationStage.lightweight(
                 fromVersion: MetaWhispSchemaV5.self,
                 toVersion: MetaWhispSchemaV6.self
+            ),
+            MigrationStage.lightweight(
+                fromVersion: MetaWhispSchemaV6.self,
+                toVersion: MetaWhispSchemaV7.self
             ),
         ]
     }

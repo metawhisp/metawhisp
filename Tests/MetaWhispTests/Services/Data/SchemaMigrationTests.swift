@@ -51,7 +51,7 @@ final class SchemaMigrationTests: XCTestCase {
         }
 
         // 2. Reopen the SAME file under the latest schema + the migration plan.
-        let latestSchema = Schema(versionedSchema: MetaWhispSchemaV6.self)
+        let latestSchema = Schema(versionedSchema: MetaWhispSchemaV7.self)
         let cfg2 = ModelConfiguration(schema: latestSchema, url: storeURL)
         let container2 = try ModelContainer(
             for: latestSchema, migrationPlan: MetaWhispMigrationPlan.self, configurations: [cfg2])
@@ -88,7 +88,7 @@ final class SchemaMigrationTests: XCTestCase {
             try ctx.save()
         }
 
-        let latestSchema = Schema(versionedSchema: MetaWhispSchemaV6.self)
+        let latestSchema = Schema(versionedSchema: MetaWhispSchemaV7.self)
         let cfg = ModelConfiguration(schema: latestSchema, url: storeURL)
         let container = try ModelContainer(
             for: latestSchema, migrationPlan: MetaWhispMigrationPlan.self, configurations: [cfg])
@@ -100,7 +100,7 @@ final class SchemaMigrationTests: XCTestCase {
     }
 
     func testFreshStoreCreatesUnderV3() throws {
-        let latestSchema = Schema(versionedSchema: MetaWhispSchemaV6.self)
+        let latestSchema = Schema(versionedSchema: MetaWhispSchemaV7.self)
         let cfg = ModelConfiguration(schema: latestSchema, url: storeURL)
         XCTAssertNoThrow(try ModelContainer(
             for: latestSchema, migrationPlan: MetaWhispMigrationPlan.self, configurations: [cfg]))
@@ -123,7 +123,7 @@ final class SchemaMigrationTests: XCTestCase {
             try ctx.save()
         }
 
-        let latestSchema = Schema(versionedSchema: MetaWhispSchemaV6.self)
+        let latestSchema = Schema(versionedSchema: MetaWhispSchemaV7.self)
         let cfg = ModelConfiguration(schema: latestSchema, url: storeURL)
         let container = try ModelContainer(
             for: latestSchema, migrationPlan: MetaWhispMigrationPlan.self, configurations: [cfg])
@@ -156,6 +156,42 @@ final class SchemaMigrationTests: XCTestCase {
         for expected in ["id", "appName", "contextSummary", "currentActivity", "startedAt", "endedAt", "createdAt"] {
             XCTAssertTrue(props.contains(expected), "frozen V1 lost field \(expected)")
         }
+    }
+
+    /// The previous shipped version must open under the new one — every bump.
+    func testV6StoreMigratesToV7WithJournalIntactAndVisitsEmpty() throws {
+        do {
+            let v6Schema = Schema(versionedSchema: MetaWhispSchemaV6.self)
+            let cfg = ModelConfiguration(schema: v6Schema, url: storeURL)
+            let container = try ModelContainer(for: v6Schema, configurations: [cfg])
+            let ctx = ModelContext(container)
+            ctx.insert(ScreenAgentItem(
+                runID: UUID(), headline: "Presentation due at 16:00",
+                body: "Sam is waiting.", sourceApp: "Mail",
+                sourceWindowTitle: "Inbox", capturedAt: Date()))
+            let run = ScreenAgentRun(contextID: UUID(), trigger: "contextAccepted",
+                                     deadlineAt: Date())
+            ctx.insert(run)
+            ctx.insert(ScreenAgentDeliveryRecord(itemID: UUID(), runID: run.id))
+            try ctx.save()
+        }
+
+        let latestSchema = Schema(versionedSchema: MetaWhispSchemaV7.self)
+        let cfg = ModelConfiguration(schema: latestSchema, url: storeURL)
+        let container = try ModelContainer(
+            for: latestSchema, migrationPlan: MetaWhispMigrationPlan.self, configurations: [cfg])
+        let ctx = ModelContext(container)
+
+        XCTAssertEqual(try ctx.fetch(FetchDescriptor<ScreenAgentItem>()).count, 1)
+        XCTAssertEqual(try ctx.fetch(FetchDescriptor<ScreenAgentRun>()).count, 1)
+        XCTAssertEqual(try ctx.fetch(FetchDescriptor<ScreenAgentDeliveryRecord>()).count, 1)
+
+        XCTAssertEqual(try ctx.fetch(FetchDescriptor<ContextVisitRecord>()).count, 0)
+        let visit = ContextVisitRecord(
+            id: UUID(), generation: 0, bundleID: "com.apple.mail", appName: "Mail",
+            rawTitle: "Inbox", normalizedTitle: "inbox", startedAt: Date())
+        ctx.insert(visit)
+        XCTAssertNoThrow(try ctx.save())
     }
 
     /// The frozen V5 item shape: V4 plus feedback fields and the signature —
@@ -199,7 +235,7 @@ final class SchemaMigrationTests: XCTestCase {
             throw XCTSkip("Set MW_REAL_STORE_COPY to a copy of the real store to run this proof")
         }
         let url = URL(fileURLWithPath: path)
-        let latestSchema = Schema(versionedSchema: MetaWhispSchemaV6.self)
+        let latestSchema = Schema(versionedSchema: MetaWhispSchemaV7.self)
         let cfg = ModelConfiguration(schema: latestSchema, url: url)
         let container = try ModelContainer(
             for: latestSchema, migrationPlan: MetaWhispMigrationPlan.self, configurations: [cfg])
@@ -242,7 +278,7 @@ extension SchemaMigrationTests {
         }
 
         // Reopen it the way the shipped app will.
-        let latest = Schema(versionedSchema: MetaWhispSchemaV6.self)
+        let latest = Schema(versionedSchema: MetaWhispSchemaV7.self)
         let container = try ModelContainer(
             for: latest, migrationPlan: MetaWhispMigrationPlan.self,
             configurations: [ModelConfiguration(schema: latest, url: storeURL)])
@@ -300,7 +336,7 @@ extension SchemaMigrationTests {
             try ctx.save()
         }
 
-        let latest = Schema(versionedSchema: MetaWhispSchemaV6.self)
+        let latest = Schema(versionedSchema: MetaWhispSchemaV7.self)
         let container = try ModelContainer(
             for: latest, migrationPlan: MetaWhispMigrationPlan.self,
             configurations: [ModelConfiguration(schema: latest, url: storeURL)])
