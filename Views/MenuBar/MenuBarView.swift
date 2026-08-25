@@ -426,6 +426,30 @@ struct MenuBarView: View {
 
     private var footer: some View {
         HStack(spacing: 4) {
+            // ITER-067 follow-up — a keyboard route to the newest comment. The
+            // popup deliberately never takes focus, which also means it can
+            // never be reached with the keyboard; this is the way in that does
+            // not depend on catching a card in six seconds.
+            Button {
+                if let newest = AppDelegate.shared?.screenAgentDelivery?
+                    .recentItems(limit: 1).first {
+                    AppDelegate.shared?.openScreenAgentInbox(selecting: newest.id)
+                } else {
+                    AppDelegate.shared?.openMainWindow(tab: .chat)
+                }
+            } label: {
+                HStack(spacing: 5) {
+                    Image(systemName: "tray").font(.system(size: 10, weight: .regular))
+                    Text("INBOX").font(MW.label).tracking(1.0)
+                }
+                .frame(maxWidth: .infinity)
+                .foregroundStyle(MW.textMuted)
+                .padding(.horizontal, 12).padding(.vertical, 6)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(HoverButtonStyle(radius: MW.rSmall))
+            .accessibilityLabel("Open the newest Screen Agent comment")
+
             Button { openMainWindow() } label: {
                 HStack(spacing: 5) {
                     Image(systemName: "gearshape").font(.system(size: 10, weight: .regular))

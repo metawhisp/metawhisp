@@ -51,6 +51,17 @@ enum ScreenRetention {
             observations = try ctx.fetchCount(FetchDescriptor<ScreenObservation>(predicate: pred))
             if observations > 0 { try ctx.delete(model: ScreenObservation.self, where: pred) }
         }
+        // ITER-067 follow-up (Codex) — Screen Agent comments carry capture
+        // metadata (window titles, headlines quoting the screen), so they age
+        // out on the same clock as the raw OCR they were derived from. Without
+        // this they were the one screen-derived artifact retention never
+        // touched.
+        if let cut = cutoff(now: now, days: rawDays) {
+            let pred = #Predicate<ScreenAgentItem> { $0.createdAt < cut }
+            let items = try ctx.fetchCount(FetchDescriptor<ScreenAgentItem>(predicate: pred))
+            if items > 0 { try ctx.delete(model: ScreenAgentItem.self, where: pred) }
+            observations += items
+        }
         if contexts + observations > 0 { try ctx.save() }
         return (contexts, observations)
     }
@@ -94,9 +105,14 @@ enum ScreenRetention {
         let memoryIds = doomedMemories.map(\.id)
         if contexts > 0 { try ctx.delete(model: ScreenContext.self) }
         if observations > 0 { try ctx.delete(model: ScreenObservation.self) }
+        // ITER-067 follow-up (Codex) — «Delete screen history» has to cover the
+        // Screen Agent's comments too: they quote the screen and carry window
+        // titles, so leaving them behind quietly broke the one-click promise.
+        let agentItems = try ctx.fetchCount(FetchDescriptor<ScreenAgentItem>())
+        if agentItems > 0 { try ctx.delete(model: ScreenAgentItem.self) }
         for row in doomedTasks { ctx.delete(row) }
         for row in doomedMemories { ctx.delete(row) }
-        if contexts + observations + taskIds.count + memoryIds.count > 0 { try ctx.save() }
+        if contexts + observations + agentItems + taskIds.count + memoryIds.count > 0 { try ctx.save() }
         return DeleteAllResult(contexts: contexts, observations: observations,
                                taskIds: taskIds, memoryIds: memoryIds)
     }
