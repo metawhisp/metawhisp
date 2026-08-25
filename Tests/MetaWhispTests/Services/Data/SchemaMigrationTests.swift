@@ -164,11 +164,16 @@ final class SchemaMigrationTests: XCTestCase {
         let v5Schema = Schema(versionedSchema: MetaWhispSchemaV5.self)
         let entity = v5Schema.entities.first { $0.name == "ScreenAgentItem" }
         XCTAssertNotNil(entity)
+        // Full-set equality, not a sample: a partial pin let a frozen field
+        // vanish while the test stayed green (Codex).
         let props = Set(entity!.properties.map(\.name))
-        for expected in ["id", "runID", "headline", "body", "capturedAt",
-                         "feedbackReason", "feedbackAt", "semanticSignature"] {
-            XCTAssertTrue(props.contains(expected), "frozen V5 lost field \(expected)")
-        }
+        XCTAssertEqual(props, [
+            "id", "runID", "createdAt", "headline", "body", "sourceApp",
+            "sourceWindowTitle", "capturedAt", "visitID", "visitGeneration",
+            "evidenceContextIDsJSON", "deliveryOutcome", "deliveredAt",
+            "suppressionReason", "interaction", "interactedAt",
+            "feedbackReason", "feedbackAt", "semanticSignature",
+        ])
     }
 
     /// Same for the frozen pre-relevanceScore TaskItem shape referenced by V1+V2.

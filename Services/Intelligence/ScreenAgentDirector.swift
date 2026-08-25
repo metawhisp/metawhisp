@@ -164,6 +164,13 @@ enum ScreenAgentDirector {
             || !InsightReferent.namesSomethingSpecific(best.body) {
             return .silence(.echoesTheScreen)
         }
+        // The user's own verdict outranks bookkeeping: a rejected idea that
+        // resurfaces is `userRejected`, not a duplicate that happens to also
+        // have been rejected — production supplies both signals for the same
+        // item, and dedup running first buried the stronger reason (Codex).
+        if wasRejected(best.headline, rejectedSignatures: rejectedSignatures) {
+            return .silence(.userRejected)
+        }
         // Two names for two failures: `duplicate` is the same words again,
         // `semanticDuplicate` is the same idea rephrased. The taxonomy existed
         // but the second reason was never returned, so every reword was filed
@@ -175,11 +182,6 @@ enum ScreenAgentDirector {
         }
         if recentHeadlines.contains(where: { isNearDuplicate($0, best.headline) }) {
             return .silence(.semanticDuplicate)
-        }
-        // The user has already said this class of comment was wrong or already
-        // handled. Saying it again in other words is the thing they objected to.
-        if wasRejected(best.headline, rejectedSignatures: rejectedSignatures) {
-            return .silence(.userRejected)
         }
 
         return .item(headline: best.headline, body: best.body,
@@ -220,8 +222,25 @@ enum ScreenAgentDirector {
         ("закрыта", "открыта"), ("включена", "выключена"),
     ]
 
-    static func contradictsScreen(_ claim: String, screen: String,
+    /// "not enabled" IS "disabled": fold negated polarity words into their
+    /// opposites before comparing, or a fact saying "Submit is not enabled"
+    /// reads as supporting a claim that Submit is enabled (Codex).
+    static func foldNegatedPolarity(_ text: String) -> String {
+        var folded = ScreenAgentEvidence.normalize(text)
+        for (a, b) in polarityPairs {
+            for (word, opposite) in [(a, b), (b, a)] {
+                folded = folded.replacingOccurrences(
+                    of: #"\b(?:not|isn't|не)\s+\#(word)\b"#,
+                    with: opposite, options: .regularExpression)
+            }
+        }
+        return folded
+    }
+
+    static func contradictsScreen(_ claim: String, screen rawScreen: String,
                                   anchors: [String] = []) -> Bool {
+        let claim = foldNegatedPolarity(claim)
+        let screen = foldNegatedPolarity(rawScreen)
         let claimWords = Set(tokenize(claim))
         let screenTokens = tokenize(screen)
         let screenWords = Set(screenTokens)

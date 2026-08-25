@@ -276,11 +276,12 @@ extension ScreenAgentDeliveryTests {
 
         service.completeRun(runID: runID, outcomeReason: "item")
         rows = try ModelContext(container).fetch(FetchDescriptor<ScreenAgentRun>())
-        XCTAssertEqual(rows.first?.status, "completed", "the late truth outranks the timeout")
+        XCTAssertEqual(rows.first?.status, "completedLate",
+                       "the late truth outranks the timeout — and keeps the violation queryable")
 
         service.expireRun(runID: runID)
         rows = try ModelContext(container).fetch(FetchDescriptor<ScreenAgentRun>())
-        XCTAssertEqual(rows.first?.status, "completed", "expire must not resurrect a closed run")
+        XCTAssertEqual(rows.first?.status, "completedLate", "expire must not resurrect a closed run")
     }
 
     /// A retried run's attempt is still an event — silence in the table was
@@ -298,17 +299,27 @@ extension ScreenAgentDeliveryTests {
         XCTAssertTrue(records.contains { $0.outcomeReason == "duplicateRun" })
     }
 
-    /// An announcement the user SAW must exist in the journal too.
+    /// An announcement is journaled — but "presented" only becomes true after
+    /// the caller pushes the popup and confirms, exactly like every delivery:
+    /// a quit between the two must not leave history claiming a card the user
+    /// never saw.
     @MainActor
-    func testAnAnnouncementIsJournaled() throws {
+    func testAnAnnouncementIsJournaledAndPendingUntilConfirmed() throws {
         let (service, container) = try makeService()
-        XCTAssertNotNil(service.announce(makeItem()))
+        let item = makeItem()
+        XCTAssertNotNil(service.announce(item))
 
-        let ctx = ModelContext(container)
+        var ctx = ModelContext(container)
         let runs = try ctx.fetch(FetchDescriptor<ScreenAgentRun>())
         XCTAssertEqual(runs.first?.trigger, "taskFulfillment")
         XCTAssertEqual(runs.first?.status, "completed")
-        let records = try ctx.fetch(FetchDescriptor<ScreenAgentDeliveryRecord>())
+        var records = try ctx.fetch(FetchDescriptor<ScreenAgentDeliveryRecord>())
+        XCTAssertEqual(records.first?.deliveryOutcome, "pending")
+        XCTAssertNil(records.first?.presentedAt)
+
+        service.confirmPresented(itemID: item.id)
+        ctx = ModelContext(container)
+        records = try ctx.fetch(FetchDescriptor<ScreenAgentDeliveryRecord>())
         XCTAssertEqual(records.first?.deliveryOutcome, "presented")
         XCTAssertNotNil(records.first?.presentedAt)
     }

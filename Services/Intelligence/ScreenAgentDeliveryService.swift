@@ -80,6 +80,28 @@ final class ScreenAgentDeliveryService {
 
     init(container: ModelContainer) {
         self.container = container
+        // Crash reconciliation must not depend on the next analysis ever
+        // starting: with the feature disabled after a crash, beginRun never
+        // runs and a "running" row would sit there for the whole retention
+        // window (Codex). Once at startup covers that path.
+        Task { @MainActor [weak self] in self?.reconcileStaleRuns() }
+    }
+
+    /// Any run past its deadline and still "running" was interrupted — by a
+    /// crash, a kill, or a quit — and nobody is coming back to close it.
+    private func reconcileStaleRuns() {
+        let context = ModelContext(container)
+        let now = Date()
+        let stalePred = #Predicate<ScreenAgentRun> {
+            $0.status == "running" && $0.deadlineAt < now
+        }
+        guard let stale = try? context.fetch(FetchDescriptor<ScreenAgentRun>(predicate: stalePred)),
+              !stale.isEmpty else { return }
+        for run in stale {
+            run.status = "abandoned"
+            run.completedAt = now
+        }
+        try? context.save()
     }
 
     /// Save the item, decide, record the outcome. Returns the item when it
@@ -100,12 +122,14 @@ final class ScreenAgentDeliveryService {
         )
         existing.fetchLimit = 1
         do {
-            if try !context.fetch(existing).isEmpty {
+            if let kept = try context.fetch(existing).first {
                 NSLog("[ScreenAgentDelivery] run %@ already produced an item — not duplicating",
                       runID.uuidString)
                 // The attempt still happened; an event with no row is the
-                // journal lying by omission (Codex). Terminal on arrival.
-                let dup = ScreenAgentDeliveryRecord(itemID: item.id, runID: runID)
+                // journal lying by omission. It points at the item that WAS
+                // kept — the transient duplicate is never inserted, and a
+                // record naming it would be an orphan (Codex).
+                let dup = ScreenAgentDeliveryRecord(itemID: kept.id, runID: runID)
                 dup.deliveryOutcome = "suppressed"
                 dup.outcomeReason = "duplicateRun"
                 dup.terminalAt = Date()
@@ -295,7 +319,11 @@ final class ScreenAgentDeliveryService {
             predicate: #Predicate { $0.id == runID })
         descriptor.fetchLimit = 1
         guard let run = (try? context.fetch(descriptor))?.first else { return }
-        run.status = "completed"
+        // A completion that lands after the watchdog's verdict is the truer
+        // outcome — but the deadline violation is a fact too, and overwriting
+        // "expired" with a plain "completed" erased it (Codex). One word
+        // keeps both truths queryable.
+        run.status = run.status == "expired" ? "completedLate" : "completed"
         run.completedAt = Date()
         run.outcomeReason = outcomeReason
         run.setEvidenceRefs(evidenceRefs)
@@ -405,23 +433,24 @@ final class ScreenAgentDeliveryService {
         existing.fetchLimit = 1
         if let already = try? context.fetch(existing), !already.isEmpty { return nil }
 
-        item.deliveryOutcome = ScreenAgentDelivery.Outcome.presented.rawValue
-        item.deliveredAt = Date()
+        // Pending, not presented: the caller pushes the popup AFTER this
+        // returns, and a quit in between would leave durable history claiming
+        // the user saw a card that never appeared (Codex) — the exact
+        // generated-versus-presented sin deliver() already refuses.
+        // `confirmPresented` is what makes it true, same as everywhere.
+        item.deliveryOutcome = ScreenAgentDelivery.Outcome.pending.rawValue
         context.insert(item)
-        // The journal covers announcements too: a card the user SAW with no
-        // run and no delivery row was the delivery table claiming it never
-        // happened (Codex). The fulfillment check is the analysis; it
-        // completed the moment the mutation did.
+        // The journal covers announcements too: a card with no run and no
+        // delivery row was the delivery table claiming it never happened.
+        // The fulfillment check is the analysis; it completed with the
+        // mutation.
         let run = ScreenAgentRun(
             contextID: runID, trigger: "taskFulfillment", deadlineAt: Date())
         run.status = "completed"
         run.completedAt = Date()
         run.outcomeReason = "item"
         context.insert(run)
-        let record = ScreenAgentDeliveryRecord(itemID: item.id, runID: runID)
-        record.deliveryOutcome = "presented"
-        record.presentedAt = Date()
-        context.insert(record)
+        context.insert(ScreenAgentDeliveryRecord(itemID: item.id, runID: runID))
         do {
             try context.save()
         } catch {

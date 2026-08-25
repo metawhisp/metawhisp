@@ -460,6 +460,10 @@ final class RealtimeScreenReactor: ObservableObject {
             screenAgentItemID: itemID
         )
         MWNotificationStack.shared.push(note)
+        // Only now has the user had a chance to see it — announce() keeps the
+        // item pending precisely so a quit before this line cannot leave
+        // history claiming a presentation that never happened.
+        delivery.confirmPresented(itemID: itemID)
     }
 
         /// Last N dismissed tasks — injected into the prompt as negative examples

@@ -117,9 +117,12 @@ final class ProactiveContextService: ObservableObject {
     /// user moves to during a slow model call.
     private var runQueue = ScreenAgentRunQueue<ScreenContext>()
 
-    /// The journal row of the analysis currently in flight, so the deadline
-    /// watchdog can mark it expired without guessing by contextID.
-    private var currentRunHandle: UUID?
+    /// One run's journal handle, shared between the run and ITS watchdog and
+    /// nobody else. A service-level field here let a cancelled run's watchdog
+    /// read the successor's handle and expire the wrong row (Codex).
+    final class RunHandleBox {
+        var id: UUID?
+    }
 
     func onNewContext(_ ctx: ScreenContext) {
         Task { @MainActor [weak self] in
@@ -144,6 +147,7 @@ final class ProactiveContextService: ObservableObject {
     private func drive(_ ctx: ScreenContext,
                        permit: ScreenAgentRunQueue<ScreenContext>.RunPermit) async {
         isRunning = true
+        let handleBox = RunHandleBox()
         let watchdog = Task { @MainActor [weak self] in
             try? await Task.sleep(
                 nanoseconds: UInt64(ScreenAgentTimingPolicy.endToEndDeadline * 1_000_000_000))
@@ -151,13 +155,13 @@ final class ProactiveContextService: ObservableObject {
             NSLog("[Proactive] run past deadline — releasing the queue")
             // The journal hears about the timeout too — only a row still
             // "running" is marked, and a late real completion overwrites it
-            // with the truer outcome.
-            if let handle = self.currentRunHandle {
+            // as `completedLate`. The box belongs to THIS run alone.
+            if let handle = handleBox.id {
                 AppDelegate.shared?.screenAgentDelivery?.expireRun(runID: handle)
             }
             await self.settleQueue(finishing: permit)
         }
-        await evaluateAndSurface(ctx: ctx)
+        await evaluateAndSurface(ctx: ctx, runHandleBox: handleBox)
         watchdog.cancel()
         await settleQueue(finishing: permit)
     }
@@ -182,7 +186,8 @@ final class ProactiveContextService: ObservableObject {
 
     // MARK: - Pipeline
 
-    private func evaluateAndSurface(ctx: ScreenContext) async {
+    private func evaluateAndSurface(ctx: ScreenContext,
+                                    runHandleBox: RunHandleBox = RunHandleBox()) async {
         // ITER-064A.9 — snapshot before any await, checked again after the model
         // call: the user can delete their screen history mid-flight.
         let epoch = purgeEpoch
@@ -227,13 +232,10 @@ final class ProactiveContextService: ObservableObject {
         let runHandle = journal?.beginRun(
             contextID: ctx.id, trigger: "contextAccepted",
             deadlineAt: Date().addingTimeInterval(ScreenAgentTimingPolicy.endToEndDeadline))
-        currentRunHandle = runHandle
+        runHandleBox.id = runHandle
         var runOutcome = "abandoned"
         var runEvidence: [String] = []
         defer {
-            // Only clear our own handle — a watchdog-promoted successor may
-            // already own the slot by the time this run's defer fires.
-            if currentRunHandle == runHandle { currentRunHandle = nil }
             if let runHandle {
                 journal?.completeRun(runID: runHandle, outcomeReason: runOutcome,
                                      evidenceRefs: runEvidence)
@@ -371,7 +373,10 @@ final class ProactiveContextService: ObservableObject {
                 // attempt, not a fact about the idea; the user's own verdicts
                 // (duplicate, userRejected) do stay remembered.
                 switch reason {
-                case .duplicate, .userRejected: break
+                // semanticDuplicate is the reworded half of what `duplicate`
+                // used to mean — the taxonomy split must not change WHICH
+                // silences stay remembered (Codex caught the drift).
+                case .duplicate, .semanticDuplicate, .userRejected: break
                 default: assistant.retract(insight)
                 }
             }
