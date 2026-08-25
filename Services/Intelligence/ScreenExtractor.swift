@@ -105,8 +105,15 @@ final class ScreenExtractor: ObservableObject {
             return
         }
 
-        // Group into visits.
-        let visits = collapseIntoVisits(contexts)
+        // ITER-071.2 — visits come from the canonical table the live agent
+        // writes, not from app/time reconstruction. Batch and realtime now
+        // describe ONE reality. (Rows not covered by any canonical visit —
+        // pre-cutover history still inside the window — take the legacy
+        // collapse explicitly, so nothing is dropped silently.)
+        let visitRecords = (try? ctx.fetch(FetchDescriptor<ContextVisitRecord>(
+            predicate: #Predicate { $0.lastObservedAt >= since },
+            sortBy: [SortDescriptor(\.startedAt, order: .forward)]))) ?? []
+        let visits = canonicalVisits(for: contexts, records: visitRecords)
         guard !visits.isEmpty else { lastRun = Date(); return }
         // ITER-071 — the newest N are processed, and the checkpoint used to
         // jump past the rest anyway, so a busy hour silently lost its earlier
@@ -348,8 +355,48 @@ final class ScreenExtractor: ObservableObject {
         let lastContextId: UUID?
     }
 
+    /// ITER-071.2 — build Visit structures from the canonical table the live
+    /// agent writes. The rule US-071-3 exists for: batch analysis consumes the
+    /// same immutable visit identity as realtime and never rebuilds visits
+    /// from app name plus five-minute gaps. Contexts not covered by any
+    /// canonical visit (pre-cutover rows still inside the window) take the
+    /// legacy collapse explicitly — processed, never silently dropped.
+    nonisolated func canonicalVisits(
+        for contexts: [ScreenContext],
+        records: [ContextVisitRecord]
+    ) -> [Visit] {
+        let byID = Dictionary(contexts.map { ($0.id, $0) },
+                              uniquingKeysWith: { first, _ in first })
+        var covered = Set<UUID>()
+        var visits: [Visit] = []
+        for record in records.sorted(by: { $0.startedAt < $1.startedAt }) {
+            let frames = record.frameIDs
+                .compactMap { byID[$0] }
+                .sorted { $0.timestamp < $1.timestamp }
+            guard !frames.isEmpty else { continue }
+            frames.forEach { covered.insert($0.id) }
+            var ocr = ""
+            for frame in frames where !frame.ocrText.isEmpty && ocr.count < ocrPreviewChars {
+                if !ocr.isEmpty { ocr += " " }
+                ocr += frame.ocrText.replacingOccurrences(of: "\n", with: " ")
+            }
+            visits.append(Visit(
+                appName: record.appName,
+                windowTitle: record.rawTitle,
+                startedAt: record.startedAt,
+                endedAt: record.endedAt ?? record.lastObservedAt,
+                ocrPreview: String(ocr.prefix(ocrPreviewChars)),
+                lastContextId: frames.last?.id))
+        }
+        let uncovered = contexts.filter { !covered.contains($0.id) }
+        let legacy = collapseIntoVisits(uncovered)
+        return (visits + legacy).sorted { $0.startedAt < $1.startedAt }
+    }
+
     /// Internal (not private) so `ScreenExtractorVisitGroupingTests` can pin
     /// the boundary rule, matching the convention the other extractors use.
+    /// Post-071.2 this is the LEGACY fallback for pre-cutover rows only —
+    /// production grouping is `canonicalVisits`.
     nonisolated func collapseIntoVisits(_ contexts: [ScreenContext]) -> [Visit] {
         var visits: [Visit] = []
         var currentApp: String? = nil
