@@ -389,8 +389,11 @@ final class ProactiveContextService: ObservableObject {
             proactiveItems: nil
         )
         MWNotificationStack.shared.push(note)
-        NSLog("[Proactive] ✅ surfaced insight in %@ (%d chars, item %@)",
-              ctx.appName, insight.body.count, itemID.uuidString)
+        // DoD §8 — settled-context→card latency, measurable from the log:
+        // grep "latency=" and compute the percentile instead of guessing.
+        NSLog("[Proactive] ✅ surfaced insight in %@ (%d chars, item %@, latency=%.1fs)",
+              ctx.appName, insight.body.count, itemID.uuidString,
+              Date().timeIntervalSince(ctx.timestamp))
     }
 
     /// Headlines the user was actually shown recently. Rewording an idea does

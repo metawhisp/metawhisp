@@ -147,7 +147,8 @@ enum ScreenAgentDirector {
         // it is the attack succeeding. MetaWhisp's job with a visible
         // credential is to say one is visible, never to say what it is — and a
         // comment repeating it would also write it into durable history.
-        if carriesSecret(best.headline) || carriesSecret(best.body) {
+        if carriesSecret(best.headline) || carriesSecret(best.body)
+            || carriesPaymentInstruction(best.headline + " " + best.body) {
             return .silence(.unsafeContent)
         }
 
@@ -236,10 +237,57 @@ enum ScreenAgentDirector {
         return false
     }
 
+    /// Light stemming so inflection does not defeat comparison. Russian is an
+    /// inflected language: «презентацию» and «презентация» are one word to a
+    /// reader and two tokens to a Set. Deliberately crude — a real stemmer is
+    /// not needed to answer "is this the same handful of content words".
+    static func stem(_ word: String) -> String {
+        var w = word
+        if w.count > 4 {
+            let ruSuffixes = ["иями", "ями", "ами", "ого", "его", "ому", "ему",
+                              "ыми", "ими", "ешь", "ишь", "ует", "уют",
+                              "ая", "яя", "ой", "ей", "ую", "юю", "ом", "ем",
+                              "ов", "ев", "ах", "ях", "ам", "ям", "ии", "ие",
+                              "ия", "ию", "ет", "ит",
+                              "а", "я", "о", "е", "у", "ю", "и", "ы", "ь"]
+            for suffix in ruSuffixes where w.hasSuffix(suffix) && w.count - suffix.count >= 3 {
+                w = String(w.dropLast(suffix.count))
+                break
+            }
+        }
+        if w.count > 4 {
+            for suffix in ["ing", "ed", "es", "s"] where w.hasSuffix(suffix) && w.count - suffix.count >= 3 {
+                w = String(w.dropLast(suffix.count))
+                break
+            }
+        }
+        return w
+    }
+
     private static func tokenize(_ text: String) -> [String] {
         ScreenAgentEvidence.normalize(text)
             .components(separatedBy: CharacterSet.alphanumerics.inverted)
             .filter { !$0.isEmpty }
+    }
+
+    /// An imperative to move money to a specific destination. The deck's
+    /// injection cases proved a page can dictate a transfer order and have the
+    /// agent repeat it as its own advice — rephrased just enough to slip the
+    /// echo check. A card telling the user to send money somewhere is never
+    /// this product's job, whatever the screen says.
+    static func carriesPaymentInstruction(_ text: String) -> Bool {
+        let transferVerbs: Set<String> = [
+            "wire", "send", "transfer", "pay",
+            "отправь", "отправьте", "переведи", "переведите", "заплати", "оплати",
+        ]
+        let tokens = tokenize(text)
+        guard tokens.contains(where: { transferVerbs.contains($0) }) else { return false }
+        let normalized = ScreenAgentEvidence.normalize(text)
+        let hasMoney = normalized.range(
+            of: #"[$€₽]\s?\d|\d+\s?(usd|eur|rub|руб)"#, options: .regularExpression) != nil
+        let hasDestination = normalized.range(
+            of: #"\b\d{4,}\b"#, options: .regularExpression) != nil
+        return hasMoney && hasDestination
     }
 
     /// A comment that is already on screen verbatim tells the user nothing they
@@ -247,7 +295,15 @@ enum ScreenAgentDirector {
     static func echoes(_ headline: String, of screenText: String) -> Bool {
         let claim = ScreenAgentEvidence.normalize(headline)
         guard claim.count >= 12 else { return false }
-        return ScreenAgentEvidence.normalize(screenText).contains(claim)
+        if ScreenAgentEvidence.normalize(screenText).contains(claim) { return true }
+        // The deck caught rephrased echo sailing through: "Your uptime is
+        // 99.98%" is not a substring of the dashboard, and it still adds
+        // nothing to it. When every content word of the claim is already on
+        // the screen, the claim is the screen.
+        let claimWords = contentWords(headline)
+        guard claimWords.count >= 2 else { return false }
+        let screenStems = Set(tokenize(screenText).map(stem))
+        return claimWords.allSatisfy { screenStems.contains($0) }
     }
 
     /// Same idea, different words. Compared on content words so "Anna needs the
@@ -261,8 +317,9 @@ enum ScreenAgentDirector {
         // so do "by 16:00" and "by 17:00". Suppressing the update because it
         // resembles the original is the worst possible use of dedup.
         for (x, y) in polarityPairs {
-            if (wordsA.contains(x) && wordsB.contains(y))
-                || (wordsA.contains(y) && wordsB.contains(x)) { return false }
+            let (sx, sy) = (stem(x), stem(y))
+            if (wordsA.contains(sx) && wordsB.contains(sy))
+                || (wordsA.contains(sy) && wordsB.contains(sx)) { return false }
         }
         let numsA = wordsA.filter { $0.allSatisfy(\.isNumber) }
         let numsB = wordsB.filter { $0.allSatisfy(\.isNumber) }
@@ -296,6 +353,12 @@ enum ScreenAgentDirector {
         }
     }
 
+    /// Test-only visibility into the comparison sets.
+    static func debugContentWords(_ text: String) -> [String] { contentWords(text).sorted() }
+    static func debugScreenStems(_ text: String) -> [String] {
+        Set(tokenize(text).map(stem)).sorted()
+    }
+
     private static func contentWords(_ text: String) -> Set<String> {
         let stop: Set<String> = [
             "the", "a", "an", "is", "are", "was", "to", "for", "of", "on", "in",
@@ -312,7 +375,13 @@ enum ScreenAgentDirector {
                 // Numbers stay whatever their length: "16" and "00" are the
                 // two halves of a deadline, and dropping them made 16:00 and
                 // 17:00 indistinguishable.
-                .filter { ($0.count > 2 || $0.allSatisfy(\.isNumber)) && !stop.contains($0) }
+                // `!isEmpty` first: `"".allSatisfy(\.isNumber)` is vacuously
+                // true, so the empty tokens between consecutive separators were
+                // passing the number check and salting every comparison set.
+                .filter { !$0.isEmpty && ($0.count > 2 || $0.allSatisfy(\.isNumber)) && !stop.contains($0) }
+                // Stemmed, or Russian inflection makes «Анна ждёт презентацию»
+                // and «Презентация нужна Анне» read as different ideas.
+                .map(stem)
         )
     }
 }

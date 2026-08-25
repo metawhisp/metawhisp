@@ -33,6 +33,7 @@ final class ScreenAgentReplayTests: XCTestCase {
         let headline: String
         let body: String
         let confidence: Double
+        let retrieved: [String]?
         let expect: String
         let reason: String?
         let why: String
@@ -51,6 +52,7 @@ final class ScreenAgentReplayTests: XCTestCase {
 
     private struct Candidate: Decodable {
         let headline: String
+        let body: String?
         let confidence: Double
         let cited: [String]
         let quote: String?
@@ -99,7 +101,7 @@ final class ScreenAgentReplayTests: XCTestCase {
             let candidates = testCase.candidates.map {
                 ScreenAgentDirector.Candidate(
                     headline: $0.headline,
-                    body: "",
+                    body: $0.body ?? "",
                     citedEvidenceIDs: $0.cited,
                     quote: $0.quote,
                     confidence: $0.confidence,
@@ -174,8 +176,11 @@ final class ScreenAgentReplayTests: XCTestCase {
                 sourceApp: "Test",
                 confidence: testCase.confidence
             )
+            let retrieved = (testCase.retrieved ?? []).enumerated().map {
+                InsightInvestigator.RetrievedRef(id: "m\($0.offset)", text: $0.element)
+            }
             let (evidence, ids) = ScreenAgentCandidateAdapter.evidence(
-                contextID: UUID(), ocrText: testCase.screen)
+                contextID: UUID(), ocrText: testCase.screen, retrieved: retrieved)
             let candidate = ScreenAgentCandidateAdapter.candidate(from: insight, citing: ids)
             let decision = ScreenAgentDirector.decide(
                 candidates: [candidate], evidence: evidence,
