@@ -223,6 +223,10 @@ final class ScreenExtractor: ObservableObject {
             // 2. Persist memories — linked back to the visit's ScreenContext.
             let existingMems = fetchRecentMemoryContents(in: ctx, limit: 100)
             var newMemories: [UserMemory] = []
+            // Facts accepted in THIS response count as existing too: the
+            // comparison used a snapshot taken before the loop, so one answer
+            // containing the same sentence twice inserted it twice.
+            var acceptedThisPass: [String] = []
             for memJson in (parsed.memories ?? []) where Self.isValidVisitIndex(memJson.visitIndex, count: trimmed.count) {
                 let v = trimmed[memJson.visitIndex]
                 let wordCount = memJson.content.split(separator: " ").count
@@ -230,9 +234,17 @@ final class ScreenExtractor: ObservableObject {
                 guard ["system", "interesting"].contains(memJson.category) else { continue }
                 // Dedup against existing memories (exact content match — LLM's own semantic dedup is in prompt).
                 let trimmedContent = memJson.content.trimmingCharacters(in: .whitespacesAndNewlines)
-                if existingMems.contains(where: { $0.caseInsensitiveCompare(trimmedContent) == .orderedSame }) {
-                    continue
-                }
+                // Exact text, anywhere in the store — not just the recent
+                // window. The live store holds three identical copies of
+                // "User conducts SEO analysis for sigmabrowser.com" because a
+                // bounded recent list had scrolled past the earlier ones.
+                if Self.memoryExists(exactly: trimmedContent, in: ctx) { continue }
+                // Same fact, different sentence. Reuses the director's own
+                // near-duplicate rule — stemmed content words, so Russian
+                // inflection and reordering do not create a second copy.
+                if (existingMems + acceptedThisPass).contains(where: {
+                    ScreenAgentDirector.isNearDuplicate($0, trimmedContent)
+                }) { continue }
                 let confidence = memJson.confidence ?? 0.7
                 guard confidence >= 0.6 else { continue }
                 let mem = UserMemory(
@@ -251,6 +263,7 @@ final class ScreenExtractor: ObservableObject {
                 mem.needsReview = true
                 ctx.insert(mem)
                 newMemories.append(mem)
+                acceptedThisPass.append(trimmedContent)
             }
             let memCount = newMemories.count
 
@@ -722,6 +735,16 @@ final class ScreenExtractor: ObservableObject {
     }
 
     // MARK: - Dedup helpers (cheap Swift-side check against last N entries)
+
+    /// Exact-text existence across the WHOLE store, dismissed rows included.
+    /// A bounded recent list is not a dedup index: three identical copies of
+    /// the same sentence are in the live store because the earlier ones had
+    /// scrolled out of the window by the time the fact came round again.
+    nonisolated static func memoryExists(exactly content: String, in ctx: ModelContext) -> Bool {
+        var desc = FetchDescriptor<UserMemory>(predicate: #Predicate { $0.content == content })
+        desc.fetchLimit = 1
+        return ((try? ctx.fetch(desc))?.isEmpty == false)
+    }
 
     /// INCLUDES dismissed rows, matching what tasks already do below: a fact
     /// the user threw away must not come back an hour later. Discarding a

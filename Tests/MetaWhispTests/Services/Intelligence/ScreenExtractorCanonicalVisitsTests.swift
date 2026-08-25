@@ -137,6 +137,36 @@ final class ScreenExtractorCanonicalVisitsTests: XCTestCase {
         }
     }
 
+    // MARK: - one fact, one row
+
+    /// The live store holds three identical copies of the same sentence and
+    /// several rewordings of it. Both paths are closed by the rule the
+    /// director already uses for headlines.
+    func testTheSameFactInDifferentWordsIsOneFact() {
+        let pairs = [
+            ("User tracks launches in Linear", "User uses Linear to track launches"),
+            ("User conducts SEO analysis for sigmabrowser.com",
+             "User does SEO analysis for sigmabrowser.com"),
+            ("Пользователь готовит презентацию к запуску",
+             "Пользователь готовит презентацию для запуска"),
+        ]
+        for (a, b) in pairs {
+            XCTAssertTrue(ScreenAgentDirector.isNearDuplicate(a, b),
+                          "«\(a)» and «\(b)» are the same fact")
+        }
+    }
+
+    /// And genuinely different facts stay separate — a dedup that swallows
+    /// everything is worse than none.
+    func testDifferentFactsAreNotMerged() {
+        XCTAssertFalse(ScreenAgentDirector.isNearDuplicate(
+            "User tracks launches in Linear",
+            "User pays for Linear with the company card"))
+        XCTAssertFalse(ScreenAgentDirector.isNearDuplicate(
+            "User conducts SEO audits for Atomic Wallet",
+            "User conducts SEO analysis for sigmabrowser.com"))
+    }
+
     /// A record whose frames were all retention-pruned contributes nothing —
     /// and must not crash or fabricate an empty visit.
     func testARecordWithNoLiveFramesIsSkipped() {
