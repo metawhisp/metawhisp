@@ -162,6 +162,17 @@ final class ScreenContextService: ObservableObject {
                     ) { [weak self] _ in
                         Task { [weak self] in
                             await self?.checkCallContextInstant()
+                            // ITER-065 settle, finally wired — Omi-style
+                            // event-driven capture. The user landed on a
+                            // window; give it 750 ms to stop being a blur of
+                            // switching, then capture NOW instead of waiting
+                            // for the 30-second poll. If they have already
+                            // moved on, the front window at settle time is the
+                            // one that gets captured — which is the point.
+                            // The change mark dedupes against the poll.
+                            try? await Task.sleep(
+                                for: .seconds(ScreenAgentTimingPolicy.settleSeconds))
+                            await self?.captureIfChanged()
                         }
                     }
             }

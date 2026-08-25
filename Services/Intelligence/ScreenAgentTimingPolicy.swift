@@ -26,9 +26,13 @@ enum ScreenAgentTimingPolicy {
     /// than delivered.
     static let endToEndDeadline: TimeInterval = 10
 
-    /// Oldest capture a comment may still be delivered about. The proactive
-    /// pipeline legitimately takes tens of seconds — investigation rounds are
-    /// slow — but past two minutes "about what you are looking at" is no
-    /// longer true no matter what the window title says.
-    static let maxResultAgeSeconds: TimeInterval = 120
+    /// Oldest capture a comment may still be delivered about.
+    ///
+    /// Staleness is primarily the context-ID check — switching windows retires
+    /// a run instantly. This age cap is the backstop for the cases where the
+    /// ID cannot move (sleep, lock). It must comfortably exceed the
+    /// investigator's real latency: five rounds at up to 45 seconds each meant
+    /// a two-minute cap was silencing runs the user was still sitting in front
+    /// of, on the very screen the comment was about.
+    static let maxResultAgeSeconds: TimeInterval = 600
 }
