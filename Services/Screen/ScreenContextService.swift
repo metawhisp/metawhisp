@@ -555,6 +555,9 @@ final class ScreenContextService: ObservableObject {
         if case .unchanged = tickProposal {
             visitCoordinator.commit(tickProposal, contentHash: lastCommittedToken,
                                     at: visitClock.now)
+            // The window may have been nudged since the visit opened: move the
+            // baseline with it, or a slow drag eventually looks like a jump.
+            visitCoordinator.refreshFrame(tickIdentity.frame)
             touchDurableVisitIfStale()
             return
         }
@@ -825,6 +828,10 @@ final class ScreenContextService: ObservableObject {
     /// ITER-065.8 — this is what tells two windows of one app apart. Without it
     /// the capture had no way to know which of them the user was reading, so it
     /// took all of them and merged the text.
+    /// Legacy reader, still used to pick the window inside the screenshot.
+    /// Rejects degenerate rectangles for the same reason the identity reader
+    /// does: a zero rect never overlaps itself, so it would have made every
+    /// poll a fresh capture (Codex).
     private func focusedWindowBounds(pid: pid_t) -> CGRect? {
         let appElement = AXUIElementCreateApplication(pid)
         var focused: CFTypeRef?
@@ -843,7 +850,8 @@ final class ScreenContextService: ObservableObject {
         guard AXValueGetValue(positionValue as! AXValue, .cgPoint, &origin),
               AXValueGetValue(sizeValue as! AXValue, .cgSize, &size)
         else { return nil }
-        return CGRect(origin: origin, size: size)
+        let rect = CGRect(origin: origin, size: size)
+        return (rect.width < 1 || rect.height < 1) ? nil : rect
     }
 
     private func getActiveWindowTitle(pid: pid_t) -> String? {

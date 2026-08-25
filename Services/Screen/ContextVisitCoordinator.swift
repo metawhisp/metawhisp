@@ -163,6 +163,21 @@ struct ContextVisitCoordinator {
         }
     }
 
+    /// Move the stored frame to where the window is now, without ending the
+    /// visit. A quiet tick left the baseline where the visit STARTED, so a
+    /// window dragged in small steps compared each new position against an
+    /// ever-older one and eventually crossed the threshold from nothing the
+    /// user did (Codex).
+    mutating func refreshFrame(_ frame: CGRect?) {
+        guard let frame, let existing = current else { return }
+        current = ContextVisit(
+            id: existing.id, generation: existing.generation,
+            bundleID: existing.bundleID, appName: existing.appName,
+            normalizedTitle: existing.normalizedTitle, rawTitle: existing.rawTitle,
+            windowID: existing.windowID, displayID: existing.displayID,
+            frame: frame, startedAt: existing.startedAt)
+    }
+
     /// Whether work started for this exact visit and generation may still be
     /// used. Every await in the agent path is expected to re-ask.
     ///
@@ -195,17 +210,27 @@ struct ContextVisitCoordinator {
         if let known = visit.windowID, let incoming = sighting.windowID {
             return known == incoming
         }
-        // The frame decides when both sides have one. Two mail windows both
-        // called "Inbox" sit in different places — treating them as one visit
-        // attributes one conversation's text to the other. And a page that
-        // renames its own tab has not moved, so the visit continues.
+        // The frame REFINES the title rule; it does not replace it.
+        //
+        // Letting geometry override the title meant a browser switching from
+        // "Inbox" to "Docs" without moving read as the same unchanged window
+        // and could never reach a capture again — the old text stayed current
+        // indefinitely (Codex). The normalizer already strips the cosmetic
+        // churn (spinners, counters, clocks); a title that survives it is a
+        // different document and deserves a look.
+        guard visit.windowID == sighting.windowID,
+              visit.normalizedTitle == normalized else { return false }
+        // Same app, same title — the case where two windows are genuinely
+        // indistinguishable by name. Two mail windows both called "Inbox" sit
+        // in different places, and merging them attributes one conversation's
+        // text to the other.
         if let known = visit.frame, let incoming = sighting.frame {
             return Self.framesOverlapEnough(known, incoming)
         }
         // A frame that appeared or stopped being readable is not by itself a
         // different window: that asymmetry is what turned window IDs into a
-        // capture storm. Fall back to the title rule.
-        return visit.windowID == sighting.windowID && visit.normalizedTitle == normalized
+        // capture storm.
+        return true
     }
 
     /// Two frames describe the same window when they mostly cover each other.

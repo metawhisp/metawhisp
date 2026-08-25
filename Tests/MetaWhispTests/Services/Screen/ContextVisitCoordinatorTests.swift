@@ -47,19 +47,50 @@ final class ContextVisitCoordinatorTests: XCTestCase {
         XCTAssertNotEqual(first.id, second.id)
     }
 
-    /// And the opposite: a page that renames its own tab is still one window,
-    /// so the visit continues instead of shattering into fragments.
+    /// A title that survives normalization is a different document, and the
+    /// window not having moved does not change that.
     ///
-    /// The tick carries the LAST COMMITTED hash — production cannot know a new
-    /// one before it captures — so the honest expectation is `.unchanged`: the
-    /// same window, no new capture bought by a renamed tab.
-    func testAWindowThatRenamesItselfDoesNotStartANewVisit() {
+    /// This is the rule the frame must NOT override: letting geometry decide
+    /// meant a browser going from "Inbox" to "Docs" in place read as unchanged
+    /// and could never be looked at again — the old text stayed current
+    /// forever. Cosmetic churn is the normalizer's job, not the frame's.
+    func testATitleChangeStillOpensAVisitEvenWhenTheWindowHasNotMoved() {
         var c = ContextVisitCoordinator()
         let frame = CGRect(x: 0, y: 0, width: 800, height: 600)
-        _ = land(&c, window("Inbox", frame: frame), at: at(0))
-        XCTAssertEqual(land(&c, window("Inbox (3 unread)", frame: frame), at: at(2)),
-                       .unchanged,
-                       "a renamed tab is the same window and buys no capture")
+        guard let first = visit(land(&c, window("Inbox", frame: frame), at: at(0)))
+        else { return XCTFail() }
+        guard case .opened(let second) = land(&c, window("Docs", frame: frame), at: at(2))
+        else { return XCTFail("a different document deserves a look") }
+        XCTAssertNotEqual(first.id, second.id)
+    }
+
+    /// And the frame's actual job: the same title in a different place is a
+    /// different window.
+    func testTheFrameOnlyRefinesTheTitleRule() {
+        var c = ContextVisitCoordinator()
+        let here = CGRect(x: 0, y: 0, width: 800, height: 600)
+        let there = CGRect(x: 900, y: 0, width: 800, height: 600)
+        _ = land(&c, window("Inbox", frame: here), at: at(0))
+        guard case .opened = land(&c, window("Inbox", frame: there), at: at(2))
+        else { return XCTFail("same name, different place, different window") }
+    }
+
+    /// A slow drag must not eventually look like a jump: the baseline moves
+    /// with the window on quiet ticks.
+    func testTheFrameBaselineFollowsASlowDrag() {
+        var c = ContextVisitCoordinator()
+        var x: CGFloat = 0
+        _ = land(&c, window("Inbox", frame: CGRect(x: x, y: 0, width: 800, height: 600)), at: at(0))
+        // Four steps of 190px. Against a frozen baseline the third would open
+        // a new visit; against a refreshed one every step stays quiet.
+        for step in 1 ... 4 {
+            x += 190
+            let f = CGRect(x: x, y: 0, width: 800, height: 600)
+            let p = c.propose(window("Inbox", frame: f), at: at(Double(step)), wallClock: wall)
+            XCTAssertEqual(p, .unchanged, "step \(step) is a nudge, not a new window")
+            c.commit(p, contentHash: 1, at: at(Double(step)))
+            c.refreshFrame(f)
+        }
     }
 
     /// A window nudged a few pixels is the same window, not a new one.
