@@ -282,6 +282,10 @@ final class ScreenContextService: ObservableObject {
         /// only — never fed back into coordinator sightings (nil/non-nil
         /// asymmetry in window matching would open a new visit every tick).
         let windowID: Int?
+        /// Where that window sat. Unlike the system window ID this is readable
+        /// both before and after the capture, so it can decide identity
+        /// without the asymmetry.
+        let windowFrame: CGRect?
     }
 
     /// Apps that should never be captured (privacy-sensitive).
@@ -522,9 +526,14 @@ final class ScreenContextService: ObservableObject {
         // gap past 300s ends the visit and the same window is news again.
         // The shadow ran clean on real usage before this cutover: zero
         // divergences, one open visit, healthy closures.
+        // Step 4 — the window's own frame, read beside its title so both sides
+        // of the comparison have it or neither does. Two windows of one app
+        // with the same title sit in different places; a page that renames its
+        // own tab has not moved.
         let tickProposal = visitCoordinator.propose(
             .init(bundleID: bundleID, appName: appName, rawTitle: windowTitle,
-                  windowID: nil, displayID: nil, contentHash: lastCommittedToken),
+                  windowID: nil, displayID: nil, contentHash: lastCommittedToken,
+                  frame: focusedWindowBounds(pid: frontApp.processIdentifier)),
             at: visitClock.now, wallClock: Date())
         if case .unchanged = tickProposal {
             visitCoordinator.commit(tickProposal, contentHash: lastCommittedToken,
@@ -558,7 +567,8 @@ final class ScreenContextService: ObservableObject {
             let proposal = visitCoordinator.propose(
                 .init(bundleID: snapshot.bundleID, appName: snapshot.appName,
                       rawTitle: snapshot.windowTitle,
-                      windowID: nil, displayID: nil, contentHash: token),
+                      windowID: nil, displayID: nil, contentHash: token,
+                      frame: snapshot.windowFrame),
                 at: visitClock.now, wallClock: Date())
 
             // Persist first — it is what decides this cycle's outcome.
@@ -643,7 +653,8 @@ final class ScreenContextService: ObservableObject {
             windowTitle: boundTitle,
             ocrText: ocrText,
             bundleID: bundleID,
-            windowID: shot.windowID
+            windowID: shot.windowID,
+            windowFrame: focusedWindowBounds(pid: frontApp.processIdentifier)
         )
 
         NSLog("[ScreenContext] Captured: %@ — %@ (%d chars OCR)",

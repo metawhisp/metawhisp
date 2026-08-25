@@ -25,6 +25,68 @@ final class ContextVisitCoordinatorTests: XCTestCase {
               rawTitle: title, windowID: windowID, displayID: displayID, contentHash: hash)
     }
 
+    // MARK: - identity by the window's own frame (step 4)
+
+    private func window(_ title: String, frame: CGRect?, hash: Int = 1)
+    -> ContextVisitCoordinator.Sighting {
+        .init(bundleID: "com.apple.Safari", appName: "Safari", rawTitle: title,
+              windowID: nil, displayID: nil, contentHash: hash, frame: frame)
+    }
+
+    /// Two windows of one app can carry the SAME title — two mail windows both
+    /// called "Inbox". Treating them as one visit attributes the text of one
+    /// conversation to the other.
+    func testTwoWindowsWithTheSameTitleAreTwoVisits() {
+        var c = ContextVisitCoordinator()
+        let left = CGRect(x: 0, y: 0, width: 800, height: 600)
+        let right = CGRect(x: 900, y: 0, width: 800, height: 600)
+        guard let first = visit(land(&c, window("Inbox", frame: left), at: at(0)))
+        else { return XCTFail() }
+        guard case .opened(let second) = land(&c, window("Inbox", frame: right, hash: 2), at: at(2))
+        else { return XCTFail("a different window on screen is a different visit") }
+        XCTAssertNotEqual(first.id, second.id)
+    }
+
+    /// And the opposite: a page that renames its own tab is still one window,
+    /// so the visit continues instead of shattering into fragments.
+    func testAWindowThatRenamesItselfStaysOneVisit() {
+        var c = ContextVisitCoordinator()
+        let frame = CGRect(x: 0, y: 0, width: 800, height: 600)
+        guard let first = visit(land(&c, window("Inbox", frame: frame), at: at(0)))
+        else { return XCTFail() }
+        guard case .changed(let same) = land(
+            &c, window("Inbox (3 unread)", frame: frame, hash: 2), at: at(2))
+        else { return XCTFail("the same window with a new title is the same visit") }
+        XCTAssertEqual(first.id, same.id)
+        XCTAssertEqual(same.generation, 1)
+    }
+
+    /// A window nudged a few pixels is the same window, not a new one.
+    func testASmallMoveDoesNotStartANewVisit() {
+        var c = ContextVisitCoordinator()
+        let a = CGRect(x: 0, y: 0, width: 800, height: 600)
+        let b = CGRect(x: 12, y: 8, width: 800, height: 600)
+        guard let first = visit(land(&c, window("Inbox", frame: a), at: at(0)))
+        else { return XCTFail() }
+        guard case .changed(let same) = land(&c, window("Inbox", frame: b, hash: 2), at: at(2))
+        else { return XCTFail("a nudged window is the same window") }
+        XCTAssertEqual(first.id, same.id)
+    }
+
+    /// Frames are unavailable for some apps. Then the old rule applies, and —
+    /// this is the part that caused a capture storm before — a frame appearing
+    /// or vanishing must not by itself mean "different window".
+    func testAMissingFrameFallsBackToTheTitleRule() {
+        var c = ContextVisitCoordinator()
+        let frame = CGRect(x: 0, y: 0, width: 800, height: 600)
+        _ = land(&c, window("Inbox", frame: frame), at: at(0))
+        XCTAssertEqual(land(&c, window("Inbox", frame: nil), at: at(2)), .unchanged,
+                       "a frame that stopped being readable is not a new window")
+        _ = land(&c, window("Docs", frame: nil, hash: 5), at: at(4))
+        XCTAssertEqual(land(&c, window("Docs", frame: frame, hash: 5), at: at(6)), .unchanged,
+                       "a frame that became readable is not a new window either")
+    }
+
     private func figma(hash: Int = 9) -> ContextVisitCoordinator.Sighting {
         .init(bundleID: "com.figma.Desktop", appName: "Figma",
               rawTitle: "Board", windowID: 22, displayID: 1, contentHash: hash)

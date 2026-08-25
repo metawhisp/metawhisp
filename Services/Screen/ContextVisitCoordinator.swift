@@ -1,3 +1,4 @@
+import CoreGraphics
 import Foundation
 
 /// One stretch of time the user spent looking at one window.
@@ -26,7 +27,27 @@ struct ContextVisit: Equatable {
     let rawTitle: String
     let windowID: UInt32?
     let displayID: UInt32?
+    /// Where the window sits on screen. The system's window identity is behind
+    /// a private API; its frame is not, and it answers the same two questions:
+    /// two windows of one app with the same title are in different places, and
+    /// a window that renames its own tab stays in the same place.
+    let frame: CGRect?
     let startedAt: Date
+
+    init(id: UUID, generation: Int, bundleID: String, appName: String,
+         normalizedTitle: String?, rawTitle: String, windowID: UInt32?,
+         displayID: UInt32?, frame: CGRect? = nil, startedAt: Date) {
+        self.id = id
+        self.generation = generation
+        self.bundleID = bundleID
+        self.appName = appName
+        self.normalizedTitle = normalizedTitle
+        self.rawTitle = rawTitle
+        self.windowID = windowID
+        self.displayID = displayID
+        self.frame = frame
+        self.startedAt = startedAt
+    }
 }
 
 /// Turns a stream of "what is in front right now" observations into visits.
@@ -46,6 +67,10 @@ struct ContextVisitCoordinator {
         /// window still report that its content moved — a new message in an
         /// open channel changes nothing about the title.
         var contentHash: Int
+        /// The focused window's frame, when Accessibility gives one. Read at
+        /// the same moment as the title, so both sides of a comparison have it
+        /// or neither does — the asymmetry that made window IDs unusable here.
+        var frame: CGRect? = nil
     }
 
     /// What a sighting *would* mean. Nothing is recorded until `commit`.
@@ -99,6 +124,7 @@ struct ContextVisitCoordinator {
                 rawTitle: sighting.rawTitle,
                 windowID: sighting.windowID,
                 displayID: sighting.displayID,
+                frame: sighting.frame,
                 startedAt: wallClock
             ))
         }
@@ -114,6 +140,9 @@ struct ContextVisitCoordinator {
             rawTitle: sighting.rawTitle,
             windowID: existing.windowID,
             displayID: sighting.displayID,
+            // The frame follows the window: a nudge or a resize during a visit
+            // updates it without ending the visit.
+            frame: sighting.frame ?? existing.frame,
             startedAt: existing.startedAt
         ))
     }
@@ -166,6 +195,30 @@ struct ContextVisitCoordinator {
         if let known = visit.windowID, let incoming = sighting.windowID {
             return known == incoming
         }
+        // The frame decides when both sides have one. Two mail windows both
+        // called "Inbox" sit in different places — treating them as one visit
+        // attributes one conversation's text to the other. And a page that
+        // renames its own tab has not moved, so the visit continues.
+        if let known = visit.frame, let incoming = sighting.frame {
+            return Self.framesOverlapEnough(known, incoming)
+        }
+        // A frame that appeared or stopped being readable is not by itself a
+        // different window: that asymmetry is what turned window IDs into a
+        // capture storm. Fall back to the title rule.
         return visit.windowID == sighting.windowID && visit.normalizedTitle == normalized
+    }
+
+    /// Two frames describe the same window when they mostly cover each other.
+    /// A nudge or a small resize keeps the visit; moving a window to the other
+    /// half of the screen does not.
+    static func framesOverlapEnough(_ a: CGRect, _ b: CGRect,
+                                    minimumOverlap: Double = 0.6) -> Bool {
+        let intersection = a.intersection(b)
+        guard !intersection.isNull, intersection.width > 0, intersection.height > 0
+        else { return false }
+        let overlap = Double(intersection.width * intersection.height)
+        let union = Double(a.width * a.height + b.width * b.height) - overlap
+        guard union > 0 else { return false }
+        return overlap / union >= minimumOverlap
     }
 }
