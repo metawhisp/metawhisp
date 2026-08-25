@@ -136,4 +136,26 @@ final class ScreenAgentRunQueueTests: XCTestCase {
         guard case .startNow(let next, _) = q.finish(a, at: soon) else { return XCTFail() }
         XCTAssertEqual(next, token(2))
     }
+
+    /// The watchdog pattern: a stuck run is finished FOR it at the deadline,
+    /// the pending context starts, and when the stuck call finally returns its
+    /// permit is a stranger — the queue neither double-finishes nor stops the
+    /// run the watchdog started.
+    func testAWatchdogCanReleaseAStuckRunAndTheLateFinishIsAStranger() {
+        var q = ScreenAgentRunQueue<String>()
+        let stuck = start(&q, 1)
+        _ = q.submit(token(2), at: t0)
+
+        // Deadline passes; the watchdog finishes on the stuck run's behalf.
+        let atDeadline = t0.addingTimeInterval(ScreenAgentTimingPolicy.endToEndDeadline)
+        guard case .startNow(let next, _) = q.finish(stuck, at: atDeadline) else {
+            return XCTFail("the pending context must start when the watchdog releases the queue")
+        }
+        XCTAssertEqual(next, token(2))
+        XCTAssertTrue(q.isRunning)
+
+        // The stuck model call eventually returns and reports in.
+        XCTAssertEqual(q.finish(stuck, at: atDeadline.addingTimeInterval(30)), .idle)
+        XCTAssertTrue(q.isRunning, "a stale completion must not stop the successor run")
+    }
 }

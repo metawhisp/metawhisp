@@ -128,18 +128,45 @@ final class ProactiveContextService: ObservableObject {
 
     /// Run one context, then whatever was newest while it ran. Depth is
     /// bounded: the queue holds at most one pending context.
+    ///
+    /// The deadline is enforced over the ACTIVE call too, not only the queue:
+    /// a stuck transport used to own the runner for its full timeout, so the
+    /// screens the user moved to meanwhile sat pending far past any deadline.
+    /// The watchdog finishes the run's queue slot at the deadline; the late
+    /// completion then reports in with a stranger's permit and is ignored.
+    /// The late RESULT may still surface — but only through the same guards
+    /// every result passes (still the accepted screen, purge epoch, toggles),
+    /// which is freshness by identity, not by clock.
     private func drive(_ ctx: ScreenContext,
                        permit: ScreenAgentRunQueue<ScreenContext>.RunPermit) async {
         isRunning = true
+        let watchdog = Task { @MainActor [weak self] in
+            try? await Task.sleep(
+                nanoseconds: UInt64(ScreenAgentTimingPolicy.endToEndDeadline * 1_000_000_000))
+            guard !Task.isCancelled, let self else { return }
+            NSLog("[Proactive] run past deadline — releasing the queue")
+            await self.settleQueue(finishing: permit)
+        }
         await evaluateAndSurface(ctx: ctx)
+        watchdog.cancel()
+        await settleQueue(finishing: permit)
+    }
+
+    /// One place decides what a finished (or expired) run means for the queue.
+    /// Both the normal completion and the watchdog land here; the permit makes
+    /// the second arrival a no-op, so they cannot double-start or double-stop.
+    private func settleQueue(
+        finishing permit: ScreenAgentRunQueue<ScreenContext>.RunPermit) async {
         switch runQueue.finish(permit, at: Date()) {
         case .startNow(let next, let nextPermit):
             await drive(next, permit: nextPermit)
         case .expired(let dropped):
-            isRunning = false
+            isRunning = runQueue.isRunning
             NSLog("[Proactive] pending context expired unshown (%@)", dropped.appName)
         default:
-            isRunning = false
+            // A stale watchdog or late completion must not stop a successor
+            // run the other party already started.
+            isRunning = runQueue.isRunning
         }
     }
 
