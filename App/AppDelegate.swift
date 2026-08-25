@@ -93,6 +93,36 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     /// The comment a click asked to open, read by the Inbox when it appears.
     private(set) var pendingScreenAgentItemID: UUID?
 
+    /// ITER-072 — what the Screen Agent is doing, assembled from the pieces
+    /// that decide it. The feature's normal state is silence, so without this
+    /// a broken one and a working one look identical.
+    @MainActor
+    func screenAgentHealth() -> ScreenAgentHealth {
+        let settings = AppSettings.shared
+        let policy = ScreenContextPolicy.effective(
+            alwaysExcluded: [],
+            mode: settings.screenContextMode,
+            appList: settings.screenContextAppList
+        )
+        let frontApp = NSWorkspace.shared.frontmostApplication
+        let appName = frontApp?.localizedName
+        let allowed = ScreenContextPolicy.isCaptureAllowed(
+            appName: appName ?? "",
+            bundleID: frontApp?.bundleIdentifier ?? "",
+            blacklist: policy.blacklist,
+            whitelist: policy.whitelist
+        )
+        return ScreenAgentHealth.evaluate(
+            featureEnabled: settings.proactiveEnabled && settings.screenContextEnabled,
+            paused: settings.screenAgentPaused,
+            hasPermission: CGPreflightScreenCaptureAccess(),
+            allowlistIsActiveAndEmpty: policy.whitelist?.isEmpty == true,
+            currentAppAllowed: allowed,
+            currentApp: appName,
+            captureOutcome: screenContext.lastCaptureOutcome
+        )
+    }
+
     @MainActor
     func consumePendingScreenAgentItem() -> UUID? {
         defer { pendingScreenAgentItemID = nil }

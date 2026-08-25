@@ -72,6 +72,8 @@ CRITICAL_SUITES=(
     InsightReferentTests
     ScreenAgentReplayTests
     ScreenAgentFeedbackTests
+    ScreenExtractorVisitGroupingTests
+    ScreenAgentHealthTests
     ActiveAppCaptureFilterTests
     CaptureHighWaterMarkTests
     ScreenContextFanoutTests

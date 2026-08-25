@@ -108,7 +108,18 @@ final class ScreenExtractor: ObservableObject {
         // Group into visits.
         let visits = collapseIntoVisits(contexts)
         guard !visits.isEmpty else { lastRun = Date(); return }
+        // ITER-071 — the newest N are processed, and the checkpoint used to
+        // jump past the rest anyway, so a busy hour silently lost its earlier
+        // visits forever. Keep the checkpoint at the oldest visit that is
+        // actually going to be looked at, and let the next pass pick up what
+        // was left behind.
         let trimmed = Array(visits.suffix(maxVisitsPerBatch))
+        let droppedCount = visits.count - trimmed.count
+        let checkpointFloor: Date? = droppedCount > 0 ? trimmed.first?.startedAt : nil
+        if droppedCount > 0 {
+            NSLog("[ScreenExtractor] %d visits deferred to the next pass (batch cap %d)",
+                  droppedCount, maxVisitsPerBatch)
+        }
 
         let prompt = buildPrompt(visits: trimmed)
 
@@ -286,8 +297,18 @@ final class ScreenExtractor: ObservableObject {
                 newTasks.append(task)
             }
 
-            try? ctx.save()
-            lastRun = Date()   // review fix — stamp done only on a successful pass
+            do {
+                try ctx.save()
+            } catch {
+                // ITER-071 — this was `try?` followed by an unconditional
+                // checkpoint, so a failed write was recorded as an hour
+                // successfully processed and its observations were gone.
+                NSLog("[ScreenExtractor] ❌ save failed (%@) — leaving the window unprocessed",
+                      error.localizedDescription)
+                return
+            }
+            // Only past what was actually looked at.
+            lastRun = checkpointFloor ?? Date()
             NSLog("[ScreenExtractor] ✅ %d observations, %d memories, %d tasks from %d visits",
                   obsCount, memCount, newTasks.count, trimmed.count)
 
@@ -309,7 +330,7 @@ final class ScreenExtractor: ObservableObject {
     // MARK: - Visit collapsing
 
     /// A "visit" = consecutive ScreenContexts on the same app within gap threshold.
-    private struct Visit {
+    struct Visit {
         let appName: String
         let windowTitle: String?
         let startedAt: Date
@@ -318,12 +339,15 @@ final class ScreenExtractor: ObservableObject {
         let lastContextId: UUID?
     }
 
-    private func collapseIntoVisits(_ contexts: [ScreenContext]) -> [Visit] {
+    /// Internal (not private) so `ScreenExtractorVisitGroupingTests` can pin
+    /// the boundary rule, matching the convention the other extractors use.
+    nonisolated func collapseIntoVisits(_ contexts: [ScreenContext]) -> [Visit] {
         var visits: [Visit] = []
         var currentApp: String? = nil
         var currentStart: Date? = nil
         var currentEnd: Date? = nil
         var currentWindowTitle: String? = nil
+        var currentNormalizedTitle: String? = nil
         var currentOcrBuilder = ""
         var currentLastId: UUID? = nil
         var lastTime: Date? = nil
@@ -344,16 +368,28 @@ final class ScreenExtractor: ObservableObject {
             currentStart = nil
             currentEnd = nil
             currentWindowTitle = nil
+            currentNormalizedTitle = nil
             currentOcrBuilder = ""
             currentLastId = nil
         }
 
         for c in contexts {
             let gap = lastTime.map { c.timestamp.timeIntervalSince($0) } ?? 0
-            let isNewVisit = c.appName != currentApp || gap > visitGapSeconds
+            // ITER-071 — a different WINDOW is a different visit, not just a
+            // different app. Grouping by app alone merged two browser tabs or
+            // two Slack channels into one stretch, and then attached the last
+            // window's title to OCR accumulated across all of them — so a fact
+            // from one conversation could be attributed to another. Cosmetic
+            // title churn is normalized away first, or a ticking clock in a
+            // title would shatter one visit into dozens.
+            let normalized = WindowTitleNormalizer.normalize(c.windowTitle)
+            let isNewVisit = c.appName != currentApp
+                || normalized != currentNormalizedTitle
+                || gap > visitGapSeconds
             if isNewVisit {
                 flush()
                 currentApp = c.appName
+                currentNormalizedTitle = normalized
                 currentStart = c.timestamp
             }
             currentEnd = c.timestamp

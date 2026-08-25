@@ -20,6 +20,7 @@ struct ScreenAgentInboxView: View {
     @State private var items: [ScreenAgentItem] = []
     @State private var selectedID: UUID?
     @FocusState private var focusedID: UUID?
+    @State private var health: ScreenAgentHealth?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -30,6 +31,30 @@ struct ScreenAgentInboxView: View {
             .labelsHidden()
             .padding(.horizontal, 16)
             .padding(.vertical, 10)
+
+            // ITER-072 — the status belongs here, where the user is when they
+            // start wondering why nothing has arrived.
+            if let health, health.isSilentlyIdle {
+                HStack(alignment: .top, spacing: 8) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.orange)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(health.summary)
+                            .font(.system(size: 11, weight: .medium))
+                        if let action = health.action {
+                            Text(action)
+                                .font(.system(size: 10))
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                    Spacer(minLength: 0)
+                }
+                .padding(.horizontal, 16)
+                .padding(.vertical, 10)
+                .background(Color.orange.opacity(0.08))
+                .accessibilityElement(children: .combine)
+            }
 
             Divider()
 
@@ -191,7 +216,9 @@ struct ScreenAgentInboxView: View {
         VStack(spacing: 6) {
             Text(filter == .new ? "Nothing new" : "Nothing here")
                 .font(.system(size: 13, weight: .medium))
-            Text("Comments from the Screen Agent collect here, including the ones it held back.")
+            Text(health?.isSilentlyIdle == true
+                 ? (health?.action ?? "")
+                 : "Comments from the Screen Agent collect here, including the ones it held back.")
                 .font(.system(size: 11))
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
@@ -219,6 +246,7 @@ struct ScreenAgentInboxView: View {
 
     private func reload() {
         items = AppDelegate.shared?.screenAgentDelivery?.recentItems() ?? []
+        health = AppDelegate.shared?.screenAgentHealth()
         if let pending = AppDelegate.shared?.consumePendingScreenAgentItem() {
             selectedID = pending
             filter = .all
