@@ -52,8 +52,11 @@ enum ScreenAgentCandidateAdapter {
         // body claiming an invented deadline is as wrong as a headline doing
         // it, and a body naming the referent is as specific as a headline
         // naming it (Codex P0: specificity judged on the headline alone
-        // rejected insights whose detail lived in the body).
-        let claim = title + " " + insight.body
+        // rejected insights whose detail lived in the body). When the headline
+        // is empty the title already IS the body — joining them doubled the
+        // text, and the second copy's capitalized first word read as a proper
+        // noun, walking a nameless card past the vagueness check.
+        let claim = title == insight.body ? title : title + " " + insight.body
         return .init(
             headline: title,
             body: insight.body,

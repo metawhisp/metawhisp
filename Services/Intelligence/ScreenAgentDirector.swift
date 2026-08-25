@@ -118,19 +118,21 @@ enum ScreenAgentDirector {
         guard best.confidence >= minimumConfidence else { return .silence(.lowConfidence) }
         guard best.namesReferent else { return .silence(.tooVague) }
 
+        // ITER-069 — a claim about layout, color, or control state needs an
+        // analyzed frame behind it. Checked BEFORE grounding: needsVision is
+        // the one silence that triggers a retry with eyes, and a spatial claim
+        // dying as `ungrounded` first meant the vision call it was asking for
+        // could never happen. The retry re-decides with nothing else relaxed,
+        // so an ungrounded spatial claim still dies — after the look.
+        if best.visualEvidenceIDs.isEmpty,
+           ScreenAgentSpatialClaimGuard.makesSpatialClaim(best.headline + " " + best.body) {
+            return .silence(.needsVision)
+        }
+
         let quotes = (best.quote.map { [$0] } ?? []) + best.anchors
         if let rejection = evidence.validate(citedIDs: best.citedEvidenceIDs, quotes: quotes) {
             NSLog("[ScreenAgentDirector] suppressed — %@", String(describing: rejection))
             return .silence(.ungrounded)
-        }
-
-        // ITER-069 — a claim about layout, color, or control state needs an
-        // analyzed frame behind it. The prompts used to ask flat OCR about
-        // disabled buttons and fields on the right, and the model answered the
-        // only way it could: by inventing.
-        if best.visualEvidenceIDs.isEmpty,
-           ScreenAgentSpatialClaimGuard.makesSpatialClaim(best.headline + " " + best.body) {
-            return .silence(.needsVision)
         }
 
         // A claim that reverses what the screen says is a fabrication with a
@@ -154,13 +156,25 @@ enum ScreenAgentDirector {
 
         // An echo with a body that adds something is not an echo — restating
         // the visible headline is how a comment introduces the context its
-        // body explains. Silence only when there is nothing beyond the screen.
+        // body explains. But "adds something" means names something: a filler
+        // body like "everything looks healthy" is new words, not new meaning,
+        // and it was rescuing pure echoes.
         if echoes(best.headline, of: screenText),
-           best.body.isEmpty || echoes(best.body, of: screenText) {
+           best.body.isEmpty || echoes(best.body, of: screenText)
+            || !InsightReferent.namesSomethingSpecific(best.body) {
             return .silence(.echoesTheScreen)
         }
-        if recentHeadlines.contains(where: { isNearDuplicate($0, best.headline) }) {
+        // Two names for two failures: `duplicate` is the same words again,
+        // `semanticDuplicate` is the same idea rephrased. The taxonomy existed
+        // but the second reason was never returned, so every reword was filed
+        // as a literal repeat and the distinction told nobody anything.
+        if recentHeadlines.contains(where: {
+            ScreenAgentEvidence.normalize($0) == ScreenAgentEvidence.normalize(best.headline)
+        }) {
             return .silence(.duplicate)
+        }
+        if recentHeadlines.contains(where: { isNearDuplicate($0, best.headline) }) {
+            return .silence(.semanticDuplicate)
         }
         // The user has already said this class of comment was wrong or already
         // handled. Saying it again in other words is the thing they objected to.
@@ -201,6 +215,9 @@ enum ScreenAgentDirector {
         ("passed", "failed"), ("succeeded", "failed"), ("enabled", "disabled"),
         ("approved", "rejected"), ("online", "offline"),
         ("connected", "disconnected"),
+        // The product ships in Russian too, and «задача снова открыта» after
+        // «задача закрыта» is the same changed-outcome news as passed/failed.
+        ("закрыта", "открыта"), ("включена", "выключена"),
     ]
 
     static func contradictsScreen(_ claim: String, screen: String,
@@ -241,6 +258,12 @@ enum ScreenAgentDirector {
     /// inflected language: «презентацию» and «презентация» are one word to a
     /// reader and two tokens to a Set. Deliberately crude — a real stemmer is
     /// not needed to answer "is this the same handful of content words".
+    ///
+    /// A stem shorter than four characters merges unrelated words: «почта» and
+    /// «почти» both reached «почт», "notes" lost "es" and became "not". A
+    /// missed merge weakens dedup by one case; a false merge silences a real
+    /// card — so short words stay whole, and single-letter Russian endings
+    /// come off only when five letters remain to tell words apart.
     static func stem(_ word: String) -> String {
         var w = word
         if w.count > 4 {
@@ -250,13 +273,14 @@ enum ScreenAgentDirector {
                               "ов", "ев", "ах", "ях", "ам", "ям", "ии", "ие",
                               "ия", "ию", "ет", "ит",
                               "а", "я", "о", "е", "у", "ю", "и", "ы", "ь"]
-            for suffix in ruSuffixes where w.hasSuffix(suffix) && w.count - suffix.count >= 3 {
+            for suffix in ruSuffixes
+            where w.hasSuffix(suffix) && w.count - suffix.count >= (suffix.count == 1 ? 5 : 4) {
                 w = String(w.dropLast(suffix.count))
                 break
             }
         }
         if w.count > 4 {
-            for suffix in ["ing", "ed", "es", "s"] where w.hasSuffix(suffix) && w.count - suffix.count >= 3 {
+            for suffix in ["ing", "ed", "es", "s"] where w.hasSuffix(suffix) && w.count - suffix.count >= 4 {
                 w = String(w.dropLast(suffix.count))
                 break
             }
@@ -275,18 +299,31 @@ enum ScreenAgentDirector {
     /// agent repeat it as its own advice — rephrased just enough to slip the
     /// echo check. A card telling the user to send money somewhere is never
     /// this product's job, whatever the screen says.
+    ///
+    /// The destination must sit behind a direction marker (to / на / по /
+    /// account / кошелёк / IBAN …): "pay $500 to account 7741" is an order,
+    /// "invoice #4021 is $500 over budget" is bookkeeping, and the bare-number
+    /// rule could not tell them apart in either direction — it flagged the
+    /// invoice and waved through IBANs, phone numbers and ENS names, none of
+    /// which start with a digit-run word boundary.
     static func carriesPaymentInstruction(_ text: String) -> Bool {
         let transferVerbs: Set<String> = [
             "wire", "send", "transfer", "pay",
-            "отправь", "отправьте", "переведи", "переведите", "заплати", "оплати",
+            "отправь", "отправьте", "переведи", "переведите",
+            "заплати", "заплатите", "оплати", "оплатите",
         ]
         let tokens = tokenize(text)
         guard tokens.contains(where: { transferVerbs.contains($0) }) else { return false }
         let normalized = ScreenAgentEvidence.normalize(text)
         let hasMoney = normalized.range(
-            of: #"[$€₽]\s?\d|\d+\s?(usd|eur|rub|руб)"#, options: .regularExpression) != nil
+            of: #"[$€₽]\s?\d|\d+\s?(usd|eur|rub|руб)|\b(usd|eur|rub)\s?\d"#,
+            options: .regularExpression) != nil
+        let marker = #"\b(?:to|into|на|по|account|acc|счёт|счет|кошел[её]к|wallet|iban|карту|карта|реквизитам|адрес)\b"#
+        let intermediate = #"(?:[\s:#№]{0,3}\b(?:iban|account|счёт|счет|кошел[её]к|wallet|карту|карта|реквизитам)\b)?"#
+        let destination = #"(?:[a-z]{2}\d{2}[a-z0-9]{6,}|[a-z0-9-]{3,}\.eth|\+?\d[\d\s()\-]{6,}\d|\d{4,}[\d-]*)"#
         let hasDestination = normalized.range(
-            of: #"\b\d{4,}\b"#, options: .regularExpression) != nil
+            of: marker + intermediate + #"[\s:#№]{0,3}"# + destination,
+            options: .regularExpression) != nil
         return hasMoney && hasDestination
     }
 
@@ -360,10 +397,12 @@ enum ScreenAgentDirector {
     }
 
     private static func contentWords(_ text: String) -> Set<String> {
+        // "не" is deliberately NOT a stop word: negation is meaning. Dropping
+        // it made «SSO не входит в Team» an echo of a screen saying SSO does.
         let stop: Set<String> = [
             "the", "a", "an", "is", "are", "was", "to", "for", "of", "on", "in",
             "at", "by", "and", "or", "it", "this", "that", "you", "your",
-            "и", "в", "на", "с", "по", "к", "у", "не", "что", "это",
+            "и", "в", "на", "с", "по", "к", "у", "что", "это",
             // Codex asked what dedup does to a German or Spanish headline:
             // fillers polluted the sets and weakened it. Same list shape.
             "der", "die", "das", "und", "ist", "für", "von", "mit", "auf", "ein", "eine",

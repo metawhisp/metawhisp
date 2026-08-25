@@ -37,6 +37,13 @@ final class ScreenAgentReplayTests: XCTestCase {
         let expect: String
         let reason: String?
         let why: String
+        let caseClass: Int
+
+        enum CodingKeys: String, CodingKey {
+            case id, locale, screen, headline, body, confidence, retrieved,
+                 expect, reason, why
+            case caseClass = "class"
+        }
     }
 
     private struct Case: Decodable {
@@ -48,6 +55,12 @@ final class ScreenAgentReplayTests: XCTestCase {
         let expect: String
         let reason: String?
         let why: String
+        let caseClass: Int
+
+        enum CodingKeys: String, CodingKey {
+            case id, locale, screen, candidates, recent, expect, reason, why
+            case caseClass = "class"
+        }
     }
 
     private struct Candidate: Decodable {
@@ -89,6 +102,23 @@ final class ScreenAgentReplayTests: XCTestCase {
                       "a case nobody can explain cannot be argued with when it fails")
     }
 
+    /// ITER-064 §5 — the release gate is the full 60-case catalog with its
+    /// class distribution, not "some cases exist". A quietly reduced deck used
+    /// to stay green; this is what makes removing coverage a red build.
+    func testTheCatalogMeetsThePlannedDistribution() throws {
+        let deck = try loadDeck()
+        let all = deck.cases.map(\.caseClass) + (deck.insight_cases ?? []).map(\.caseClass)
+        XCTAssertGreaterThanOrEqual(all.count, 60, "the catalog is 60 cases, executable, no fewer")
+
+        let targets = [1: 15, 2: 12, 3: 10, 4: 8, 5: 6, 6: 5, 7: 4]
+        for (caseClass, minimum) in targets.sorted(by: { $0.key < $1.key }) {
+            let count = all.filter { $0 == caseClass }.count
+            XCTAssertGreaterThanOrEqual(
+                count, minimum,
+                "class \(caseClass) needs \(minimum) cases per the plan's distribution, has \(count)")
+        }
+    }
+
     /// Every case, through the real director and the real guards.
     func testEveryCaseDecidesTheWayItShould() throws {
         let deck = try loadDeck()
@@ -98,15 +128,20 @@ final class ScreenAgentReplayTests: XCTestCase {
             let evidence = ScreenAgentEvidence([
                 .init(id: "e1", contextID: UUID(), text: testCase.screen),
             ])
+            // Through the production bridge, exactly like a live insight —
+            // anchors, quote and referent all derived, never hand-authored.
+            // Hand-built candidates validated only their fixture quote, so the
+            // deck was blessing claims production would silence as ungrounded.
             let candidates = testCase.candidates.map {
-                ScreenAgentDirector.Candidate(
-                    headline: $0.headline,
-                    body: $0.body ?? "",
-                    citedEvidenceIDs: $0.cited,
-                    quote: $0.quote,
-                    confidence: $0.confidence,
-                    namesReferent: InsightReferent.namesSomethingSpecific($0.headline)
-                )
+                ScreenAgentCandidateAdapter.candidate(
+                    from: ExtractedInsight(
+                        body: $0.body ?? "",
+                        headline: $0.headline,
+                        reasoning: nil,
+                        category: "other",
+                        sourceApp: "Test",
+                        confidence: $0.confidence),
+                    citing: $0.cited)
             }
             let decision = ScreenAgentDirector.decide(
                 candidates: candidates,

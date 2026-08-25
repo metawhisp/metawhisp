@@ -93,11 +93,19 @@ final class ScreenAgentDirectorTests: XCTestCase {
         XCTAssertEqual(decide([candidate(confidence: 0.4)]), .silence(.lowConfidence))
     }
 
-    /// Rewording does not make it new.
+    /// Rewording does not make it new — and the taxonomy names it: a literal
+    /// repeat is `duplicate`, the same idea rephrased is `semanticDuplicate`.
     func testTheSameIdeaInDifferentWordsIsSilenced() {
         XCTAssertEqual(
             decide([candidate(headline: "Anna is waiting for the deck by 16:00")],
                    recent: ["The deck is due to Anna at 16:00"]),
+            .silence(.semanticDuplicate))
+    }
+
+    func testTheExactSameHeadlineIsALiteralDuplicate() {
+        XCTAssertEqual(
+            decide([candidate(headline: "Anna is waiting for the deck by 16:00")],
+                   recent: ["Anna is waiting for the deck by 16:00"]),
             .silence(.duplicate))
     }
 
