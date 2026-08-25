@@ -53,6 +53,19 @@ final class ScreenAgentItem {
     var interaction: String
     var interactedAt: Date?
 
+    /// ITER-070 — what the user said was wrong with it, when they said so.
+    ///
+    /// Kept apart from `interaction` on purpose. Closing a popup because you
+    /// are busy is not criticism, and a product that reads it as criticism
+    /// learns the wrong lesson from its most common event.
+    var feedbackReason: String?
+    var feedbackAt: Date?
+
+    /// Content words of the headline, for suppressing the same idea in
+    /// different words. Computed once at creation so a later comparison does
+    /// not have to re-derive it for every candidate.
+    var semanticSignature: String
+
     init(
         runID: UUID,
         headline: String,
@@ -78,6 +91,7 @@ final class ScreenAgentItem {
             (try? String(data: JSONEncoder().encode(evidenceContextIDs), encoding: .utf8) ?? "[]") ?? "[]"
         self.deliveryOutcome = ScreenAgentDelivery.Outcome.pending.rawValue
         self.interaction = ScreenAgentDelivery.Interaction.none.rawValue
+        self.semanticSignature = ScreenAgentDirector.semanticSignature(of: headline)
     }
 
     var evidenceContextIDs: [UUID] {
@@ -89,6 +103,38 @@ final class ScreenAgentItem {
 /// The lifecycle vocabulary. Kept as strings in the store so a future value
 /// cannot make an existing row unreadable.
 enum ScreenAgentDelivery {
+
+    /// What the user says is wrong with a comment.
+    ///
+    /// Each one means something different about what to change, which is the
+    /// whole reason for asking. A single thumbs-down would say "worse" without
+    /// saying "worse how", and the fix for a wrong claim is nothing like the
+    /// fix for a correct one that arrived at a bad moment.
+    enum Feedback: String, CaseIterable {
+        /// The claim is not true. The most serious one: it means grounding let
+        /// something through.
+        case wrong
+        /// True, but the user already knew. Nothing was added.
+        case obvious
+        /// Was true about a screen the user had already left.
+        case outdated
+        /// Already said, already handled.
+        case repeated
+        /// Fine in itself, wrong moment or too often. Says nothing about
+        /// whether the content was correct.
+        case tooIntrusive
+
+        /// What the user reads when choosing.
+        var label: String {
+            switch self {
+            case .wrong: return "Not true"
+            case .obvious: return "I knew that"
+            case .outdated: return "Too late"
+            case .repeated: return "Already said this"
+            case .tooIntrusive: return "Bad moment"
+            }
+        }
+    }
 
     /// What happened to the attempt to show this.
     enum Outcome: String, CaseIterable {

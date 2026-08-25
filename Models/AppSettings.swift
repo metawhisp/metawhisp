@@ -149,6 +149,10 @@ final class AppSettings: ObservableObject {
     /// losing the Inbox with it. Suppressed comments are still recorded and
     /// still readable afterwards; they simply do not interrupt.
     @AppStorage("screenAgentPaused") var screenAgentPaused: Bool = false
+
+    /// ITER-070 — how often the Screen Agent may interrupt, as one choice
+    /// instead of several unrelated intervals scattered through Settings.
+    @AppStorage("screenAgentPacing") var screenAgentPacing: String = ScreenAgentPacing.balanced.rawValue
     /// Minimum gap between chip surfaces. Lower = more useful but more intrusive.
     /// Default 5 min balances usefulness against annoyance.
     // 2026-08-08 — 5 → 10 min: reference-parity cadence (its analysis interval

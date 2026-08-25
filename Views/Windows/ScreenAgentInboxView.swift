@@ -108,6 +108,18 @@ struct ScreenAgentInboxView: View {
                 Button("Dismiss") { mark(item, .dismissed) }
                     .buttonStyle(.link)
                     .font(.system(size: 11))
+                Spacer(minLength: 0)
+                // Explicit and separate from closing. Each reason moves a
+                // different thing, which is the only reason to ask at all.
+                Menu("Not helpful") {
+                    ForEach(ScreenAgentDelivery.Feedback.allCases, id: \.rawValue) { reason in
+                        Button(reason.label) { giveFeedback(item, reason) }
+                    }
+                }
+                .menuStyle(.borderlessButton)
+                .fixedSize()
+                .font(.system(size: 11))
+                .accessibilityLabel("Say what was wrong with this comment")
             }
             .padding(.top, 2)
         }
@@ -145,6 +157,9 @@ struct ScreenAgentInboxView: View {
             case .featureOff: text = "held — feature was off"
             default: text = "held"
             }
+        } else if let given = item.feedbackReason,
+                  let reason = ScreenAgentDelivery.Feedback(rawValue: given) {
+            text = "you said: \(reason.label.lowercased())"
         } else if item.interaction == ScreenAgentDelivery.Interaction.later.rawValue {
             text = "later"
         } else {
@@ -218,6 +233,12 @@ struct ScreenAgentInboxView: View {
             object: ScreenAgentThreadAnchor(item: item)
         )
         NotificationCenter.default.post(name: .screenAgentShowChatPane, object: nil)
+        reload()
+    }
+
+    private func giveFeedback(_ item: ScreenAgentItem,
+                              _ reason: ScreenAgentDelivery.Feedback) {
+        AppDelegate.shared?.screenAgentDelivery?.recordFeedback(reason, itemID: item.id)
         reload()
     }
 

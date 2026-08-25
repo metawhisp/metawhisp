@@ -55,6 +55,10 @@ enum ScreenAgentDirector {
         /// The comment carries something that must not be repeated — a
         /// credential-shaped string read off the screen.
         case unsafeContent
+        /// The same idea in different words, inside the suppression window.
+        case semanticDuplicate
+        /// The user said this class of comment was wrong or unwanted.
+        case userRejected
     }
 
     /// Below this a proposal is not worth interrupting anyone for. Confidence
@@ -74,7 +78,8 @@ enum ScreenAgentDirector {
         candidates: [Candidate],
         evidence: ScreenAgentEvidence,
         screenText: String,
-        recentHeadlines: [String]
+        recentHeadlines: [String],
+        rejectedSignatures: [String] = []
     ) -> Decision {
         guard !candidates.isEmpty else { return .silence(.nothingToSay) }
 
@@ -107,6 +112,11 @@ enum ScreenAgentDirector {
         if echoes(best.headline, of: screenText) { return .silence(.echoesTheScreen) }
         if recentHeadlines.contains(where: { isNearDuplicate($0, best.headline) }) {
             return .silence(.duplicate)
+        }
+        // The user has already said this class of comment was wrong or already
+        // handled. Saying it again in other words is the thing they objected to.
+        if wasRejected(best.headline, rejectedSignatures: rejectedSignatures) {
+            return .silence(.userRejected)
         }
 
         return .item(headline: best.headline, body: best.body,
@@ -151,6 +161,30 @@ enum ScreenAgentDirector {
         let shared = wordsA.intersection(wordsB).count
         let smaller = min(wordsA.count, wordsB.count)
         return Double(shared) / Double(smaller) >= 0.6
+    }
+
+    /// A stable fingerprint of what a comment is about, so the same idea in
+    /// different words can be recognised later without keeping the words.
+    static func semanticSignature(of headline: String) -> String {
+        contentWords(headline).sorted().joined(separator: " ")
+    }
+
+    /// Whether a proposal repeats something the user has already rejected.
+    ///
+    /// `wrong` and `repeated` are about the claim, so the same claim stays
+    /// blocked. `tooIntrusive` is about timing and says nothing about the
+    /// content, so it must not silence the same idea forever — it feeds pacing
+    /// instead.
+    static func wasRejected(_ headline: String,
+                            rejectedSignatures: [String]) -> Bool {
+        let signature = Set(contentWords(headline))
+        guard !signature.isEmpty else { return false }
+        return rejectedSignatures.contains { previous in
+            let old = Set(previous.components(separatedBy: " ").filter { !$0.isEmpty })
+            guard !old.isEmpty else { return false }
+            let shared = signature.intersection(old).count
+            return Double(shared) / Double(min(signature.count, old.count)) >= 0.6
+        }
     }
 
     private static func contentWords(_ text: String) -> Set<String> {

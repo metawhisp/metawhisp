@@ -1436,9 +1436,34 @@ struct MainSettingsView: View {
     /// Screen Context on (feeds on its ScreenContext pipeline) + Pro (needs embeddings).
     private var proactiveSection: some View {
         VStack(alignment: .leading, spacing: MW.sp10) {
-            toggleRow("Proactive Chip", isOn: $settings.proactiveEnabled)
+            toggleRow("Screen Agent", isOn: $settings.proactiveEnabled)
             if settings.proactiveEnabled {
-                Text("While you're typing in Slack, Mail, Notion, or similar apps, MetaWhisp silently surfaces 2-3 relevant memories, past decisions, and waiting-on tasks as a peripheral chip. Never a notification — no sound, no interrupt.")
+                // ITER-070 — the old copy promised a peripheral chip showing
+                // 2-3 memories and "never a notification". The app has not
+                // behaved that way for a long time, and copy describing a
+                // feature that no longer exists is worse than none.
+                Text("MetaWhisp watches the apps you allow and occasionally says one specific thing — a deadline someone is waiting on, a mistake on screen, a conflict with something you decided earlier. Most of the time it says nothing, which is the point. Comments collect in MetaChat → Inbox, including the ones it held back.")
+                    .font(MW.monoSm).foregroundStyle(MW.textMuted)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                GlassDivider()
+
+                // One choice, in plain language, instead of intervals in three
+                // different places.
+                Text("How often").font(MW.mono).foregroundStyle(MW.textSecondary)
+                Picker("", selection: $settings.screenAgentPacing) {
+                    ForEach(ScreenAgentPacing.allCases) { mode in
+                        Text(mode.label).tag(mode.rawValue)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                Text((ScreenAgentPacing(rawValue: settings.screenAgentPacing) ?? .balanced).explanation)
+                    .font(MW.monoSm).foregroundStyle(MW.textMuted)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                toggleRow("Pause for now", isOn: $settings.screenAgentPaused)
+                Text("Stops the interruptions without turning the feature off — held comments still collect in the Inbox.")
                     .font(MW.monoSm).foregroundStyle(MW.textMuted)
                     .fixedSize(horizontal: false, vertical: true)
                 if !settings.screenContextEnabled {

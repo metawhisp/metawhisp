@@ -189,6 +189,53 @@ final class ScreenAgentDeliveryService {
     }
 
     /// Newest first, for the Inbox.
+    /// Record what the user said was wrong, and act on it where the reason
+    /// says to.
+    ///
+    /// `tooIntrusive` moves pacing and nothing else: the user complained about
+    /// the moment, not the claim, and silencing the claim would be answering a
+    /// question they did not ask.
+    func recordFeedback(_ feedback: ScreenAgentDelivery.Feedback, itemID: UUID) {
+        let context = ModelContext(container)
+        var descriptor = FetchDescriptor<ScreenAgentItem>(predicate: #Predicate { $0.id == itemID })
+        descriptor.fetchLimit = 1
+        guard let item = (try? context.fetch(descriptor))?.first else { return }
+        item.feedbackReason = feedback.rawValue
+        item.feedbackAt = Date()
+        do {
+            try context.save()
+        } catch {
+            NSLog("[ScreenAgentDelivery] could not record feedback: %@", error.localizedDescription)
+            return
+        }
+        if feedback == .tooIntrusive {
+            let current = ScreenAgentPacing(rawValue: AppSettings.shared.screenAgentPacing) ?? .balanced
+            AppSettings.shared.screenAgentPacing = current.quieter.rawValue
+            NSLog("[ScreenAgentDelivery] bad moment — pacing now %@", current.quieter.rawValue)
+        }
+    }
+
+    /// Signatures of ideas the user said were untrue or already handled, inside
+    /// the current pacing window. `tooIntrusive` is deliberately absent: it was
+    /// about timing, and blocking the content would answer a complaint nobody
+    /// made.
+    func rejectedSignatures() -> [String] {
+        let pacing = ScreenAgentPacing(rawValue: AppSettings.shared.screenAgentPacing) ?? .balanced
+        let cutoff = Date().addingTimeInterval(-pacing.duplicateWindowSeconds)
+        let blocking = [ScreenAgentDelivery.Feedback.wrong.rawValue,
+                        ScreenAgentDelivery.Feedback.repeated.rawValue,
+                        ScreenAgentDelivery.Feedback.obvious.rawValue]
+        let descriptor = FetchDescriptor<ScreenAgentItem>(
+            predicate: #Predicate { item in
+                item.feedbackAt != nil && item.feedbackAt! > cutoff
+            }
+        )
+        let rows = (try? ModelContext(container).fetch(descriptor)) ?? []
+        return rows
+            .filter { blocking.contains($0.feedbackReason ?? "") }
+            .map(\.semanticSignature)
+    }
+
     /// Newest first. The cap used to be 100 with no way past it, so a comment
     /// older than that stayed in the database and vanished from every filter —
     /// durable in name only.

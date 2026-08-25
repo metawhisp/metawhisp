@@ -201,7 +201,9 @@ final class ProactiveContextService: ObservableObject {
             candidates: [candidate],
             evidence: evidence,
             screenText: ctx.ocrText,
-            recentHeadlines: recentDeliveredHeadlines()
+            recentHeadlines: recentDeliveredHeadlines(),
+            rejectedSignatures: AppDelegate.shared?.screenAgentDelivery?
+                .rejectedSignatures() ?? []
         )
         guard case .item(let directedHeadline, let directedBody, _) = decision else {
             if case .silence(let reason) = decision {
@@ -255,7 +257,9 @@ final class ProactiveContextService: ObservableObject {
             visitIsStillCurrent: epoch == purgeEpoch
                 && AppDelegate.shared?.screenContext.lastAcceptedContextID == ctx.id,
             secondsSinceLastPresented: delivery.secondsSinceLastPresented,
-            minimumSecondsBetween: TimeInterval(max(60, settings.proactiveCooldownMinutes * 60)),
+            // ITER-070 — one plain-language choice governs this now.
+            minimumSecondsBetween: (ScreenAgentPacing(rawValue: settings.screenAgentPacing)
+                ?? .balanced).minimumSecondsBetween,
             popupSlotsFree: MWNotificationStack.shared.freeSlots
         )
 
