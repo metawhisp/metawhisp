@@ -110,7 +110,7 @@ final class MCPSnapshotService {
 
         // Pull memories (non-dismissed). Cap at 500 to keep JSON ≤ ~1 MB.
         var memDesc = FetchDescriptor<UserMemory>(
-            predicate: #Predicate { !$0.isDismissed },
+            predicate: #Predicate { !$0.isDismissed && !$0.needsReview },
             sortBy: [SortDescriptor(\.createdAt, order: .reverse)]
         )
         memDesc.fetchLimit = 500

@@ -221,6 +221,25 @@ final class SchemaMigrationTests: XCTestCase {
                        "a fact the user already lived with is not suddenly unconfirmed")
     }
 
+    /// The frozen pre-review memory shape, pinned as a full property set the
+    /// way V5 is: without it a future edit to the frozen copy silently changes
+    /// what V1-V7 claim the store looked like, and the migration proof then
+    /// migrates from a shape that never shipped (Codex).
+    func testFrozenMemoryShapeIsStable() throws {
+        let v7Schema = Schema(versionedSchema: MetaWhispSchemaV7.self)
+        let entity = v7Schema.entities.first { $0.name == "UserMemory" }
+        XCTAssertNotNil(entity, "the frozen copy must keep the entity name the store uses")
+        let props = Set(entity!.properties.map(\.name))
+        XCTAssertFalse(props.contains("needsReview"),
+                       "V7 is the PRE-review shape — never add fields to the frozen copy")
+        XCTAssertEqual(props, [
+            "id", "content", "category", "sourceApp", "windowTitle", "confidence",
+            "contextSummary", "isDismissed", "conversationId", "screenContextId",
+            "sourceFile", "createdAt", "updatedAt", "embedding", "headline",
+            "reasoning", "tagsCSV", "kind", "subject", "characterization", "project",
+        ])
+    }
+
     /// The frozen V5 item shape: V4 plus feedback fields and the signature —
     /// and nothing that lands after V5. Pins the migration SOURCE.
     func testFrozenV5ItemShapeIsStable() throws {

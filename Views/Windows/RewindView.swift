@@ -329,7 +329,7 @@ struct RewindView: View {
     private func fetchMemories(screenContextId: UUID?) -> [UserMemory] {
         guard let sid = screenContextId else { return [] }
         var desc = FetchDescriptor<UserMemory>(
-            predicate: #Predicate { $0.screenContextId == sid && !$0.isDismissed },
+            predicate: #Predicate { $0.screenContextId == sid && !$0.isDismissed && !$0.needsReview },
             sortBy: [SortDescriptor(\.createdAt, order: .forward)]
         )
         desc.fetchLimit = 20

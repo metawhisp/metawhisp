@@ -119,6 +119,11 @@ final class EmbeddingService: ObservableObject {
     /// Embed freshly-inserted memories in background. Graceful fail: nil embedding
     /// just means the row falls back to string matching in MetaChat.
     nonisolated func embedMemoriesInBackground(_ memories: [UserMemory], in ctx: ModelContext) {
+        // ITER-071.6 — an unconfirmed proposal is not sent to the embedding
+        // endpoint: it may hold something the user would never have approved
+        // leaving the machine, and nothing ranks it before confirmation
+        // anyway. Confirming embeds it through the backfill.
+        let memories = memories.filter { !$0.needsReview }
         guard !memories.isEmpty else { return }
         Task { @MainActor [weak self] in
             guard let self else { return }
@@ -249,7 +254,9 @@ final class EmbeddingService: ObservableObject {
 
         // Fetch memories missing embedding.
         let memDesc = FetchDescriptor<UserMemory>(
-            predicate: #Predicate<UserMemory> { !$0.isDismissed && $0.embedding == nil }
+            predicate: #Predicate<UserMemory> {
+                !$0.isDismissed && !$0.needsReview && $0.embedding == nil
+            }
         )
         let memories = (try? ctx.fetch(memDesc)) ?? []
 

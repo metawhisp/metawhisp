@@ -453,7 +453,7 @@ private struct TodayStatsCard: View {
     private var liveConvs: [Conversation]
 
     /// Live memories — non-dismissed only.
-    @Query(filter: #Predicate<UserMemory> { !$0.isDismissed })
+    @Query(filter: #Predicate<UserMemory> { !$0.isDismissed && !$0.needsReview })
     private var liveMemories: [UserMemory]
 
     /// Live completed tasks (any time). Filtered to "completed today" via

@@ -160,7 +160,7 @@ final class ObsidianExporter: ObservableObject {
         var mDesc = FetchDescriptor<UserMemory>()
         mDesc.fetchLimit = 500
         let memories = ((try? ctx.fetch(mDesc)) ?? [])
-            .filter { $0.conversationId == id && !$0.isDismissed }
+            .filter { $0.conversationId == id && !$0.isDismissed && !$0.needsReview }
         let memoriesInline = memories.map { mem -> String in
             if let s = mem.subject, !s.isEmpty,
                let c = mem.characterization, !c.isEmpty {
@@ -241,7 +241,7 @@ final class ObsidianExporter: ObservableObject {
         var mDesc = FetchDescriptor<UserMemory>()
         mDesc.fetchLimit = 500
         let memoriesInline = ((try? ctx.fetch(mDesc)) ?? [])
-            .filter { $0.conversationId == conv.id && !$0.isDismissed }
+            .filter { $0.conversationId == conv.id && !$0.isDismissed && !$0.needsReview }
             .map { mem -> String in
                 if let s = mem.subject, !s.isEmpty,
                    let c = mem.characterization, !c.isEmpty {
@@ -400,6 +400,9 @@ final class ObsidianExporter: ObservableObject {
         let desc = FetchDescriptor<UserMemory>(predicate: #Predicate { $0.id == id })
         guard let mem = (try? ctx.fetch(desc))?.first else { return }
         guard !mem.isDismissed else { return }
+        // ITER-071.6 — an unconfirmed proposal must not reach the vault: it is
+        // read by other tools as an established fact about the user.
+        guard !mem.needsReview else { return }
 
         if isInsightTagged(mem) {
             exportInsightMemory(mem)
@@ -518,7 +521,7 @@ final class ObsidianExporter: ObservableObject {
         var mDesc = FetchDescriptor<UserMemory>(sortBy: [SortDescriptor(\.createdAt, order: .forward)])
         mDesc.fetchLimit = 10_000
         let mems = (try? ctx.fetch(mDesc)) ?? []
-        for mem in mems where !mem.isDismissed {
+        for mem in mems where !mem.isDismissed && !mem.needsReview {
             if isInsightTagged(mem) {
                 exportInsightMemory(mem)
                 s.insights += 1

@@ -165,11 +165,31 @@ final class MemoryExtractor: ObservableObject {
                 return .completed
             }
 
+            // Saying it out loud IS the confirmation: when a fact matches a
+            // proposal the screen made earlier, confirm that row instead of
+            // inserting a second copy of the same sentence.
+            var pending = fetchPendingProposals()
             var insertedMemories: [UserMemory] = []
+            var confirmedCount = 0
             for mem in memories where mem.confidence >= minConfidence {
+                let text = mem.content.trimmingCharacters(in: .whitespacesAndNewlines)
+                if let idx = pending.firstIndex(where: {
+                    $0.content.trimmingCharacters(in: .whitespacesAndNewlines)
+                        .caseInsensitiveCompare(text) == .orderedSame
+                }) {
+                    let proposal = pending.remove(at: idx)
+                    proposal.needsReview = false
+                    proposal.updatedAt = Date()
+                    confirmedCount += 1
+                    continue
+                }
                 ctx.insert(mem)
                 insertedMemories.append(mem)
                 if insertedMemories.count >= maxPerExtraction { break }
+            }
+            if confirmedCount > 0 {
+                NSLog("[MemoryExtractor] %d screen proposals confirmed by the user saying them",
+                      confirmedCount)
             }
             // SB-1: a swallowed save (try?) would return .completed and let the
             // queue drop the conversation though nothing persisted — the exact
@@ -441,12 +461,29 @@ final class MemoryExtractor: ObservableObject {
 
     // MARK: - Fetch helpers
 
-    /// All non-dismissed memories.
+    /// Confirmed memories only — this list tells the model "you already know
+    /// this, do not repeat it". A pending screen proposal is NOT known: if it
+    /// were in here, the user saying the same thing out loud would be
+    /// suppressed as a duplicate while the proposal sat unconfirmed, and the
+    /// assistant would keep forgetting something it had been told twice
+    /// (Codex).
     private func fetchExistingMemories(limit: Int = 1000) -> [UserMemory] {
         guard let container = modelContainer else { return [] }
         let ctx = ModelContext(container)
         var desc = FetchDescriptor<UserMemory>(
-            predicate: #Predicate { !$0.isDismissed },
+            predicate: #Predicate { !$0.isDismissed && !$0.needsReview },
+            sortBy: [SortDescriptor(\.createdAt, order: .reverse)]
+        )
+        desc.fetchLimit = limit
+        return (try? ctx.fetch(desc)) ?? []
+    }
+
+    /// Pending screen proposals, for the confirm-by-saying-it path.
+    private func fetchPendingProposals(limit: Int = 500) -> [UserMemory] {
+        guard let container = modelContainer else { return [] }
+        let ctx = ModelContext(container)
+        var desc = FetchDescriptor<UserMemory>(
+            predicate: #Predicate { !$0.isDismissed && $0.needsReview },
             sortBy: [SortDescriptor(\.createdAt, order: .reverse)]
         )
         desc.fetchLimit = limit
