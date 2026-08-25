@@ -75,11 +75,6 @@ final class ScreenContextService: ObservableObject {
     /// separate visual consent; capacity one; memory only.
     let frameCache = ScreenAgentFrameCache()
 
-    /// The image behind the snapshot currently being persisted. Held only
-    /// between capture and persist so the cache can be keyed to the stored
-    /// row's ID, then released — snapshots themselves must not retain pixels,
-    /// twenty of them sit in `recentContexts`.
-
     /// Fires after each newly-persisted ScreenContext (one per captured window change).
     /// Used by `RealtimeScreenReactor` (ITER-006) to do per-window LLM task checks with its
     /// own debounce/rate-limit. Hook layered on top of the polling loop — no extra timers.
@@ -98,6 +93,15 @@ final class ScreenContextService: ObservableObject {
         let appName: String
         let windowTitle: String
         let ocrText: String
+        /// ITER-065 wiring, step 1 — the identity the visit coordinator needs.
+        /// Computed at capture time and carried WITH the snapshot: the user
+        /// can switch windows during the OCR awaits, and identity read after
+        /// the await describes a different window than the one captured.
+        let bundleID: String
+        /// The exact SCWindow that was read, when one was chosen. Provenance
+        /// only — never fed back into coordinator sightings (nil/non-nil
+        /// asymmetry in window matching would open a new visit every tick).
+        let windowID: Int?
     }
 
     /// Apps that should never be captured (privacy-sensitive).
@@ -396,10 +400,11 @@ final class ScreenContextService: ObservableObject {
         // capture mark advanced so the window was never retried, and the agent
         // was woken for a frame nobody had managed to read. A failure is now a
         // failure.
-        guard let image = await captureScreenshot(frontPID: frontApp.processIdentifier) else {
+        guard let shot = await captureScreenshot(frontPID: frontApp.processIdentifier) else {
             lastCaptureOutcome = .captureFailed
             return nil
         }
+        let image = shot.image
 
         // The frame rides WITH its snapshot, never through shared state: a
         // field here let a voice capture overwrite a poll capture mid-OCR and
@@ -416,7 +421,9 @@ final class ScreenContextService: ObservableObject {
             timestamp: Date(),
             appName: appName,
             windowTitle: windowTitle,
-            ocrText: ocrText
+            ocrText: ocrText,
+            bundleID: bundleID,
+            windowID: shot.windowID
         )
 
         NSLog("[ScreenContext] Captured: %@ — %@ (%d chars OCR)",
@@ -426,7 +433,7 @@ final class ScreenContextService: ObservableObject {
     }
 
     /// Capture a screenshot of the screen using ScreenCaptureKit.
-    private func captureScreenshot(frontPID: pid_t) async -> CGImage? {
+    private func captureScreenshot(frontPID: pid_t) async -> (image: CGImage, windowID: Int)? {
         guard #available(macOS 14.0, *) else { return nil }
 
         guard CGPreflightScreenCaptureAccess() else {
@@ -478,10 +485,11 @@ final class ScreenContextService: ObservableObject {
             config.pixelFormat = kCVPixelFormatType_32BGRA
             config.showsCursor = false
 
-            return try await SCScreenshotManager.captureImage(
+            let image = try await SCScreenshotManager.captureImage(
                 contentFilter: filter,
                 configuration: config
             )
+            return (image, chosenID)
         } catch {
             NSLog("[ScreenContext] Screenshot failed: %@", error.localizedDescription)
             lastCaptureOutcome = .captureFailed
