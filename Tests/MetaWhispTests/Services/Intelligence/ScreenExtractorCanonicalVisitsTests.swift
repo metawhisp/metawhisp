@@ -20,7 +20,9 @@ final class ScreenExtractorCanonicalVisitsTests: XCTestCase {
                         frames: [UUID]) -> ContextVisitRecord {
         let r = ContextVisitRecord(
             id: id, generation: generation, bundleID: "test.\(app)", appName: app,
-            rawTitle: title, normalizedTitle: title.lowercased(),
+            // The production normalizer, not a hand-rolled lowercase: the
+            // fixture must describe what the writer actually stores.
+            rawTitle: title, normalizedTitle: WindowTitleNormalizer.normalize(title),
             startedAt: Date(timeIntervalSince1970: t))
         for f in frames { r.appendFrameID(f) }
         return r
@@ -80,6 +82,33 @@ final class ScreenExtractorCanonicalVisitsTests: XCTestCase {
             records: [record(app: "Mail", title: "Inbox", startedAt: 100, frames: [c1.id])])
         XCTAssertEqual(visits.count, 2)
         XCTAssertEqual(visits.first?.appName, "Xcode", "ordered by start, nothing lost")
+    }
+
+    /// The honesty rule: a slice reports the time it actually saw. A visit
+    /// that began before this hour, with one frame inside it, must not claim
+    /// the earlier minutes — the day report sums these.
+    func testASliceReportsOnlyTheTimeItSaw() {
+        let seen = context("Docs", "Draft", "draft v2", at: 10_005)
+        let r = record(app: "Docs", title: "Draft", startedAt: 9_950, frames: [UUID(), seen.id])
+        r.lastObservedAt = Date(timeIntervalSince1970: 10_005)
+        let visits = ScreenExtractor().canonicalVisits(for: [seen], records: [r])
+        XCTAssertEqual(visits.count, 1)
+        XCTAssertEqual(visits.first?.startedAt, seen.timestamp,
+                       "the fifteen minutes before this page began were not observed here")
+        XCTAssertEqual(visits.first?.endedAt, seen.timestamp)
+    }
+
+    /// The frame list holds 32; a longer visit drops its oldest ids. Those
+    /// rows must stay part of the visit, not reappear as a second one.
+    func testAVisitLongerThanTheFrameCapStaysOneVisit() {
+        let frames = (0 ..< 40).map { context("Mail", "Inbox", "msg \($0)", at: 1000 + Double($0) * 30) }
+        let r = record(app: "Mail", title: "Inbox", startedAt: 1000,
+                       frames: Array(frames.suffix(32).map(\.id)))
+        r.lastObservedAt = Date(timeIntervalSince1970: 1000 + 39 * 30)
+        let visits = ScreenExtractor().canonicalVisits(for: frames, records: [r])
+        XCTAssertEqual(visits.count, 1,
+                       "the evicted frames belong to this visit, not to a second one")
+        XCTAssertEqual(visits.first?.startedAt, frames.first?.timestamp)
     }
 
     /// A record whose frames were all retention-pruned contributes nothing —

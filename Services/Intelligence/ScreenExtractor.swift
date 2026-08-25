@@ -110,9 +110,20 @@ final class ScreenExtractor: ObservableObject {
         // describe ONE reality. (Rows not covered by any canonical visit —
         // pre-cutover history still inside the window — take the legacy
         // collapse explicitly, so nothing is dropped silently.)
-        let visitRecords = (try? ctx.fetch(FetchDescriptor<ContextVisitRecord>(
-            predicate: #Predicate { $0.lastObservedAt >= since },
-            sortBy: [SortDescriptor(\.startedAt, order: .forward)]))) ?? []
+        let visitRecords: [ContextVisitRecord]
+        do {
+            visitRecords = try ctx.fetch(FetchDescriptor<ContextVisitRecord>(
+                predicate: #Predicate { $0.lastObservedAt >= since },
+                sortBy: [SortDescriptor(\.startedAt, order: .forward)]))
+        } catch {
+            // A failed read is not "there are no visits": treating it that way
+            // declared every live row pre-cutover, ran legacy grouping on it,
+            // and advanced the checkpoint past the hour (Codex). Leave the
+            // window unprocessed and try again next pass.
+            NSLog("[ScreenExtractor] visit read failed (%@) — leaving the window unprocessed",
+                  error.localizedDescription)
+            return
+        }
         let visits = canonicalVisits(for: contexts, records: visitRecords)
         guard !visits.isEmpty else { lastRun = Date(); return }
         // ITER-071 — the newest N are processed, and the checkpoint used to
@@ -374,10 +385,22 @@ final class ScreenExtractor: ObservableObject {
         var covered = Set<UUID>()
         var visits: [Visit] = []
         for record in records.sorted(by: { $0.startedAt < $1.startedAt }) {
-            let frames = record.frameIDs
-                .compactMap { byID[$0] }
-                .sorted { $0.timestamp < $1.timestamp }
-            guard !frames.isEmpty else { continue }
+            let listed = Set(record.frameIDs)
+            let observedUntil = record.endedAt ?? record.lastObservedAt
+            // Listed frames, PLUS any row that falls inside this visit's own
+            // observed window for the same window identity: the frame list is
+            // a bounded 32, so a long visit's oldest frames drop off it — and
+            // without this they resurfaced as a second, legacy visit for the
+            // very same stretch, and the model was handed the same window
+            // twice (Codex).
+            let frames = contexts.filter { c in
+                if listed.contains(c.id) { return true }
+                guard c.appName == record.appName,
+                      c.timestamp >= record.startedAt, c.timestamp <= observedUntil
+                else { return false }
+                return WindowTitleNormalizer.normalize(c.windowTitle) == record.normalizedTitle
+            }.sorted { $0.timestamp < $1.timestamp }
+            guard let first = frames.first, let last = frames.last else { continue }
             frames.forEach { covered.insert($0.id) }
             var ocr = ""
             for frame in frames where !frame.ocrText.isEmpty && ocr.count < ocrPreviewChars {
@@ -387,10 +410,15 @@ final class ScreenExtractor: ObservableObject {
             visits.append(Visit(
                 appName: record.appName,
                 windowTitle: record.rawTitle,
-                startedAt: record.startedAt,
-                endedAt: record.endedAt ?? record.lastObservedAt,
+                // The slice describes what THIS page actually saw. Taking the
+                // record's own start and end would credit the visit with time
+                // no frame in this batch witnessed — a visit that began at
+                // 09:50 with one frame at 10:05 claimed fifteen minutes of
+                // work nobody observed, and the day report adds those up.
+                startedAt: first.timestamp,
+                endedAt: last.timestamp,
                 ocrPreview: String(ocr.prefix(ocrPreviewChars)),
-                lastContextId: frames.last?.id))
+                lastContextId: last.id))
         }
         let uncovered = contexts.filter { !covered.contains($0.id) }
         let legacy = collapseIntoVisits(uncovered)
