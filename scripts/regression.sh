@@ -78,7 +78,7 @@ CRITICAL_SUITES=(
     ScreenExtractorVisitGroupingTests
     ScreenAgentHealthTests
     ActiveAppCaptureFilterTests
-    CaptureHighWaterMarkTests
+    ContextVisitRecordTests
     ScreenContextFanoutTests
     ScreenExtractorVisitIndexTests
     ScreenRetentionTests

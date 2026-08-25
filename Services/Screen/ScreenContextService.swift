@@ -29,12 +29,9 @@ final class ScreenContextService: ObservableObject {
         lastContext = nil
         // ITER-069 — a purge kills the cached frame with everything else.
         frameCache.invalidateAll()
-        // ITER-064A.7 — the mark says "this window is already in history". After
-        // a purge that is no longer true for any window, and a capture dropped
-        // by the epoch fence never advanced it either. Leaving it set meant a
-        // window the user was still sitting on could never be captured again.
-        captureMark = CaptureHighWaterMark()
-        // The shadow forgets with it — a purged visit must not stay current.
+        // ITER-064A.7 lesson, carried over: after a purge no window is "already
+        // in history" — the coordinator forgets, so the screen the user is
+        // sitting on stays capturable.
         visitCoordinator.invalidateAll()
         lastCommittedToken = 0
         // Codex P0 — a context queued across the purge boundary could still
@@ -46,24 +43,18 @@ final class ScreenContextService: ObservableObject {
     }
 
     private var monitorTask: Task<Void, Never>?
-    /// ITER-064A.3 — advanced only by an accepted frame, so a failed capture
-    /// stays eligible for the next poll.
-    private var captureMark = CaptureHighWaterMark()
 
-    /// ITER-065 wiring, step 3 — the visit coordinator, in SHADOW: it observes
-    /// every decision the mark makes and logs where it would have decided
-    /// differently (ids and proposal kinds only, never titles or OCR). The
-    /// mark stays authoritative until the shadow has real-usage evidence.
-    /// Sightings carry windowID/displayID = nil ALWAYS: the nil/non-nil
-    /// asymmetry in window matching would otherwise open a visit every tick.
+    /// ITER-065 — the visit coordinator decides what counts as a change.
+    /// ITER-064A.3's rule carries over: state advances only on an accepted
+    /// frame (commit is gated by consumesWindowTurn), so a failed capture
+    /// stays eligible for the next poll. Sightings carry windowID/displayID
+    /// = nil ALWAYS: the nil/non-nil asymmetry in window matching would
+    /// otherwise open a visit every tick.
     private var visitCoordinator = ContextVisitCoordinator()
     private let visitClock = ContinuousClock()
     /// Interim in-process change token (FNV-1a of the accepted OCR) until the
     /// content-fingerprint iteration. Never comparable across launches.
     private var lastCommittedToken = 0
-    /// One divergence log per transition, not one per tick: a >300s pause
-    /// otherwise logs the same expected gap-expiry ~120×/hour (Codex).
-    private var loggedQuietDivergence = false
     /// Throttle for durable keep-alive touches on quiet ticks — retention
     /// must not delete a visit the user is still sitting in (Codex).
     private var lastQuietDurableTouch: Date?
@@ -510,26 +501,19 @@ final class ScreenContextService: ObservableObject {
             onCallContext?(currentCall)
         }
 
-        // Only capture if app or window changed
-        guard captureMark.hasChanged(appName: appName, windowTitle: windowTitle) else {
-            // Shadow: the same tick through the coordinator. An unchanged
-            // window keeps the visit alive — the keep-alive the mark never
-            // had, and the reason a long read must not expire mid-dwell.
-            let proposal = visitCoordinator.propose(
-                .init(bundleID: bundleID, appName: appName, rawTitle: windowTitle,
-                      windowID: nil, displayID: nil, contentHash: lastCommittedToken),
-                at: visitClock.now, wallClock: Date())
-            if case .unchanged = proposal {
-                visitCoordinator.commit(proposal, contentHash: lastCommittedToken,
-                                        at: visitClock.now)
-                touchDurableVisitIfStale()
-            } else if !loggedQuietDivergence {
-                // Expected after any >300s pause (the mark has no time
-                // dimension); said once per transition, not once per tick.
-                NSLog("[VisitShadow] diverged on quiet tick: mark=unchanged shadow=%@",
-                      String(describing: proposal).hasPrefix("opened") ? "opened" : "changed")
-                loggedQuietDivergence = true
-            }
+        // Visit-wiring step 6 — the coordinator IS the decision now. An
+        // unchanged window keeps its visit alive and consumes no capture; a
+        // gap past 300s ends the visit and the same window is news again.
+        // The shadow ran clean on real usage before this cutover: zero
+        // divergences, one open visit, healthy closures.
+        let tickProposal = visitCoordinator.propose(
+            .init(bundleID: bundleID, appName: appName, rawTitle: windowTitle,
+                  windowID: nil, displayID: nil, contentHash: lastCommittedToken),
+            at: visitClock.now, wallClock: Date())
+        if case .unchanged = tickProposal {
+            visitCoordinator.commit(tickProposal, contentHash: lastCommittedToken,
+                                    at: visitClock.now)
+            touchDurableVisitIfStale()
             return
         }
 
@@ -572,13 +556,8 @@ final class ScreenContextService: ObservableObject {
             // that could not be stored leaves the window eligible for the next
             // poll instead of being marked as already in history.
             if lastCaptureOutcome.consumesWindowTurn {
-                captureMark.accept(appName: snapshot.appName, windowTitle: snapshot.windowTitle)
-                if case .unchanged = proposal {
-                    NSLog("[VisitShadow] diverged on accept: mark=changed shadow=unchanged")
-                }
                 visitCoordinator.commit(proposal, contentHash: token, at: visitClock.now)
                 lastCommittedToken = token
-                loggedQuietDivergence = false
             }
         }
     }
