@@ -687,12 +687,15 @@ final class ScreenExtractor: ObservableObject {
 
     // MARK: - Dedup helpers (cheap Swift-side check against last N entries)
 
+    /// INCLUDES dismissed rows, matching what tasks already do below: a fact
+    /// the user threw away must not come back an hour later. Discarding a
+    /// screen proposal is a verdict, and re-proposing it is the product
+    /// arguing with the user once per hour, forever.
     private func fetchRecentMemoryContents(in ctx: ModelContext, limit: Int) -> [String] {
         var desc = FetchDescriptor<UserMemory>(
-            predicate: #Predicate { !$0.isDismissed },
             sortBy: [SortDescriptor(\.createdAt, order: .reverse)]
         )
-        desc.fetchLimit = limit
+        desc.fetchLimit = limit * 2
         return ((try? ctx.fetch(desc)) ?? []).map { $0.content }
     }
 
