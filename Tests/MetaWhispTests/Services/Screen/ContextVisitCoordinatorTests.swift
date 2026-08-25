@@ -49,16 +49,17 @@ final class ContextVisitCoordinatorTests: XCTestCase {
 
     /// And the opposite: a page that renames its own tab is still one window,
     /// so the visit continues instead of shattering into fragments.
-    func testAWindowThatRenamesItselfStaysOneVisit() {
+    ///
+    /// The tick carries the LAST COMMITTED hash — production cannot know a new
+    /// one before it captures — so the honest expectation is `.unchanged`: the
+    /// same window, no new capture bought by a renamed tab.
+    func testAWindowThatRenamesItselfDoesNotStartANewVisit() {
         var c = ContextVisitCoordinator()
         let frame = CGRect(x: 0, y: 0, width: 800, height: 600)
-        guard let first = visit(land(&c, window("Inbox", frame: frame), at: at(0)))
-        else { return XCTFail() }
-        guard case .changed(let same) = land(
-            &c, window("Inbox (3 unread)", frame: frame, hash: 2), at: at(2))
-        else { return XCTFail("the same window with a new title is the same visit") }
-        XCTAssertEqual(first.id, same.id)
-        XCTAssertEqual(same.generation, 1)
+        _ = land(&c, window("Inbox", frame: frame), at: at(0))
+        XCTAssertEqual(land(&c, window("Inbox (3 unread)", frame: frame), at: at(2)),
+                       .unchanged,
+                       "a renamed tab is the same window and buys no capture")
     }
 
     /// A window nudged a few pixels is the same window, not a new one.
@@ -66,11 +67,33 @@ final class ContextVisitCoordinatorTests: XCTestCase {
         var c = ContextVisitCoordinator()
         let a = CGRect(x: 0, y: 0, width: 800, height: 600)
         let b = CGRect(x: 12, y: 8, width: 800, height: 600)
-        guard let first = visit(land(&c, window("Inbox", frame: a), at: at(0)))
-        else { return XCTFail() }
-        guard case .changed(let same) = land(&c, window("Inbox", frame: b, hash: 2), at: at(2))
-        else { return XCTFail("a nudged window is the same window") }
-        XCTAssertEqual(first.id, same.id)
+        _ = land(&c, window("Inbox", frame: a), at: at(0))
+        XCTAssertEqual(land(&c, window("Inbox", frame: b), at: at(2)), .unchanged,
+                       "a nudged window is the same window")
+    }
+
+    /// The storm case named by review: a window whose frame reads as empty
+    /// must not differ from everything forever. Production maps a degenerate
+    /// rectangle to nil, so this pins the coordinator half — nil on one side
+    /// keeps the title rule and stays quiet.
+    func testADegenerateFrameDoesNotCaptureEveryTick() {
+        var c = ContextVisitCoordinator()
+        _ = land(&c, window("Inbox", frame: nil), at: at(0))
+        XCTAssertEqual(land(&c, window("Inbox", frame: nil), at: at(2)), .unchanged)
+        XCTAssertEqual(land(&c, window("Inbox", frame: nil), at: at(4)), .unchanged)
+    }
+
+    /// Tiling: full screen to half is a real layout change and opens a visit
+    /// once — but staying in the new layout must then be quiet.
+    func testALayoutChangeCapturesOnceAndThenSettles() {
+        var c = ContextVisitCoordinator()
+        let full = CGRect(x: 0, y: 0, width: 1728, height: 1117)
+        let half = CGRect(x: 0, y: 0, width: 864, height: 1117)
+        _ = land(&c, window("Docs", frame: full), at: at(0))
+        guard case .opened = land(&c, window("Docs", frame: half), at: at(2))
+        else { return XCTFail("a half-screen tile is a different geometry") }
+        XCTAssertEqual(land(&c, window("Docs", frame: half), at: at(4)), .unchanged,
+                       "staying in the new layout must not capture again")
     }
 
     /// Frames are unavailable for some apps. Then the old rule applies, and —

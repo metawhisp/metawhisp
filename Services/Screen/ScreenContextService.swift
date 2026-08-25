@@ -215,8 +215,23 @@ final class ScreenContextService: ObservableObject {
             let openPred = #Predicate<ContextVisitRecord> { $0.endedAt == nil }
             if let open = try? ctx.fetch(FetchDescriptor<ContextVisitRecord>(predicate: openPred)) {
                 for row in open {
-                    let sameWindow = row.bundleID == visit.bundleID
-                        && row.normalizedTitle == visit.normalizedTitle
+                    // Same identity rule as the coordinator, decided from the
+                    // visit being replaced rather than re-derived from the row:
+                    // two windows of one app can share a title, and calling
+                    // that an expired gap gets both the duration and the
+                    // reason wrong (Codex). `currentVisit` is the coordinator's
+                    // visit at this moment — commit happens after the save —
+                    // so it is exactly the one this proposal replaces, frame
+                    // and all.
+                    let sameWindow: Bool = {
+                        guard row.bundleID == visit.bundleID else { return false }
+                        if let previous = currentVisit, previous.id == row.id {
+                            if let a = previous.frame, let b = visit.frame {
+                                return ContextVisitCoordinator.framesOverlapEnough(a, b)
+                            }
+                        }
+                        return row.normalizedTitle == visit.normalizedTitle
+                    }()
                     // A visit ends when it was last SEEN, never at the moment
                     // the next one opens: stop at noon, come back at two, and
                     // closing at "now" hands the earlier app two hours it was
@@ -530,10 +545,12 @@ final class ScreenContextService: ObservableObject {
         // of the comparison have it or neither does. Two windows of one app
         // with the same title sit in different places; a page that renames its
         // own tab has not moved.
+        let tickIdentity = focusedWindowIdentity(pid: frontApp.processIdentifier)
         let tickProposal = visitCoordinator.propose(
-            .init(bundleID: bundleID, appName: appName, rawTitle: windowTitle,
+            .init(bundleID: bundleID, appName: appName,
+                  rawTitle: tickIdentity.title ?? windowTitle,
                   windowID: nil, displayID: nil, contentHash: lastCommittedToken,
-                  frame: focusedWindowBounds(pid: frontApp.processIdentifier)),
+                  frame: tickIdentity.frame),
             at: visitClock.now, wallClock: Date())
         if case .unchanged = tickProposal {
             visitCoordinator.commit(tickProposal, contentHash: lastCommittedToken,
@@ -620,7 +637,8 @@ final class ScreenContextService: ObservableObject {
             blacklist: blacklist, whitelist: whitelist
         ) else { return nil }
 
-        let windowTitle = getActiveWindowTitle(pid: frontApp.processIdentifier) ?? ""
+        let identity = focusedWindowIdentity(pid: frontApp.processIdentifier)
+        let windowTitle = identity.title ?? ""
 
         // ITER-065.6 — a failed grab used to return a snapshot carrying the app
         // name, the window title and an empty OCR string, which is exactly what
@@ -654,7 +672,10 @@ final class ScreenContextService: ObservableObject {
             ocrText: ocrText,
             bundleID: bundleID,
             windowID: shot.windowID,
-            windowFrame: focusedWindowBounds(pid: frontApp.processIdentifier)
+            // From the SAME lookup as the title above: read separately, focus
+            // can move between them and pair one window's name with another's
+            // geometry.
+            windowFrame: identity.frame
         )
 
         NSLog("[ScreenContext] Captured: %@ — %@ (%d chars OCR)",
@@ -826,15 +847,53 @@ final class ScreenContextService: ObservableObject {
     }
 
     private func getActiveWindowTitle(pid: pid_t) -> String? {
+        focusedWindowIdentity(pid: pid).title
+    }
+
+    /// Title and frame of the focused window, read from ONE lookup.
+    ///
+    /// Two separate lookups are not atomic: focus can move from one window of
+    /// an app to another between them, and the result is window A's title
+    /// stamped on window B's frame — which, now that the frame decides
+    /// identity, binds a visit to the wrong window (Codex).
+    ///
+    /// The messaging timeout matters as much: these are synchronous IPC calls
+    /// into another process on the main actor, and an unresponsive app would
+    /// otherwise hang the capture loop for the system default.
+    private func focusedWindowIdentity(pid: pid_t) -> (title: String?, frame: CGRect?) {
         let appElement = AXUIElementCreateApplication(pid)
-        var focusedWindow: CFTypeRef?
-        let result = AXUIElementCopyAttributeValue(appElement, kAXFocusedWindowAttribute as CFString, &focusedWindow)
-        guard result == .success, let window = focusedWindow else { return nil }
+        AXUIElementSetMessagingTimeout(appElement, Float(Self.axTimeoutSeconds))
+        var focused: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(
+            appElement, kAXFocusedWindowAttribute as CFString, &focused) == .success,
+            let windowRef = focused else { return (nil, nil) }
+        let window = windowRef as! AXUIElement
 
         var titleValue: CFTypeRef?
-        let titleResult = AXUIElementCopyAttributeValue(window as! AXUIElement, kAXTitleAttribute as CFString, &titleValue)
-        guard titleResult == .success, let title = titleValue as? String else { return nil }
+        let title = AXUIElementCopyAttributeValue(
+            window, kAXTitleAttribute as CFString, &titleValue) == .success
+            ? titleValue as? String : nil
 
-        return title
+        var positionValue: CFTypeRef?
+        var sizeValue: CFTypeRef?
+        var frame: CGRect?
+        if AXUIElementCopyAttributeValue(window, kAXPositionAttribute as CFString, &positionValue) == .success,
+           AXUIElementCopyAttributeValue(window, kAXSizeAttribute as CFString, &sizeValue) == .success {
+            var origin = CGPoint.zero
+            var size = CGSize.zero
+            if AXValueGetValue(positionValue as! AXValue, .cgPoint, &origin),
+               AXValueGetValue(sizeValue as! AXValue, .cgSize, &size) {
+                frame = CGRect(origin: origin, size: size)
+            }
+        }
+        // An empty or degenerate rectangle is not an identity signal. Left as
+        // one it would differ from every other frame forever, and the tick
+        // would capture the same window every thirty seconds (Codex).
+        if let f = frame, f.width < 1 || f.height < 1 { frame = nil }
+        return (title, frame)
     }
+
+    /// Long enough for a busy app, short enough that a hung one cannot stall
+    /// the capture loop.
+    static let axTimeoutSeconds: Double = 0.5
 }
