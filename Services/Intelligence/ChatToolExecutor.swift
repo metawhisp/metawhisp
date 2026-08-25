@@ -606,11 +606,26 @@ final class ChatToolExecutor: ObservableObject {
                 "snippet": Self.matchSnippet(in: r.ocrText, query: query),
             ]
         }
+        // ITER-071 §6 — what the record does NOT cover, in the answer's own
+        // terms. Without it a handful of observed minutes reads as the whole
+        // afternoon, and the user builds on a day the app never saw.
+        var coverageDesc = FetchDescriptor<ScreenContext>(
+            predicate: #Predicate { $0.timestamp >= cutoff },
+            sortBy: [SortDescriptor(\.timestamp, order: .forward)]
+        )
+        coverageDesc.fetchLimit = 20_000
+        coverageDesc.propertiesToFetch = [\.timestamp]
+        let stamps = ((try? ctx.fetch(coverageDesc)) ?? []).map(\.timestamp)
+        let coverage = ScreenCoverage.report(from: cutoff, to: Date(), samples: stamps)
+
         return ExecResult(ok: true, summary: jsonString([
             "activities": activities,
             "screen_texts": screenTexts,
             "count": activities.count + screenTexts.count,
             "window_days": days,
+            "coverage": ScreenCoverage.honestyLine(
+                coverage, captureEnabled: AppSettings.shared.screenContextEnabled),
+            "observed_fraction": Int((coverage.observedFraction * 100).rounded()),
         ]), auditId: nil)
     }
 
