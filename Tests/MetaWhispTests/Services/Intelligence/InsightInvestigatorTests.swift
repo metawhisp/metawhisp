@@ -304,6 +304,27 @@ final class InsightInvestigatorTests: XCTestCase {
         XCTAssertEqual(refs, [I.RetrievedRef(id: "m0", text: "plain text result")])
     }
 
+    func test_recordRefs_malformedEnvelopeDoesNotResurrectScaffolding() {
+        // Codex: {"items":null,"count":18} took the non-JSON fallback and rode
+        // in whole — "18 overdue tasks" grounded against the scaffolding count.
+        // Parseable JSON with a broken envelope is a broken result, not prose.
+        XCTAssertEqual(I.recordRefs(prefix: "t", result: #"{"items":null,"count":18}"#), [])
+        XCTAssertEqual(I.recordRefs(prefix: "t", result: #"{"count":18}"#), [])
+        XCTAssertEqual(I.recordRefs(prefix: "t", result: #"{"items":"oops","count":2}"#), [])
+        XCTAssertEqual(I.recordRefs(prefix: "t", result: #"[1,2,3]"#), [])
+    }
+
+    func test_recordRefs_numericAndBoolFieldsSurviveAsText() {
+        // Codex: a record whose description arrived as a number vanished from
+        // evidence entirely while the model had seen it — silencing an honest
+        // claim about it as "ungrounded".
+        let json = #"{"items":[{"id":"GGGG-7777","description":42,"assignee":"Ada"}],"count":1}"#
+        let refs = I.recordRefs(prefix: "t", result: json)
+        XCTAssertEqual(refs.count, 1)
+        XCTAssertTrue(refs[0].text.contains("42"))
+        XCTAssertTrue(refs[0].text.contains("Ada"))
+    }
+
     func test_recordRefs_memoryFieldsJoined() {
         let json = #"{"items":[{"id":"CCCC-3333","headline":"Pricing decision","content":"Pro tier stays at $49"}],"count":1}"#
         let refs = I.recordRefs(prefix: "m", result: json)

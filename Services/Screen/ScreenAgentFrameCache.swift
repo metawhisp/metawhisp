@@ -51,6 +51,13 @@ final class ScreenAgentFrameCache {
         return frame
     }
 
+    /// Whether this exact frame — same context, same bytes — is still the one
+    /// the cache holds. The post-await check: an invalidation or replacement
+    /// mid-flight must win over a faithful echo of the question.
+    func holds(contextID: UUID, contentHash: String) -> Bool {
+        frame?.contextID == contextID && frame?.contentHash == contentHash
+    }
+
     /// Purge, consent revoked, feature off, lock, quit.
     func invalidateAll() {
         frame = nil

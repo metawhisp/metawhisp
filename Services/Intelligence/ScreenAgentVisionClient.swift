@@ -83,10 +83,13 @@ final class ScreenAgentVisionClient {
         // Same-frame proof, both directions: the answer names the question it
         // is answering — visit ID, generation and frame hash all echoed back
         // (ITER-069 §4) — and the world has not moved on meanwhile. Consent is
-        // re-checked because revoking it mid-call must discard the result.
+        // re-checked because revoking it mid-call must discard the result, and
+        // the CACHE is re-checked because a faithful echo of the question
+        // proves nothing if the frame was invalidated while the model looked.
         guard response.contextID == contextID,
               response.generation == frame.generation,
               response.frameHash == frame.contentHash,
+              cache.holds(contextID: contextID, contentHash: frame.contentHash),
               visualConsentGranted(), isStillCurrent() else { return .stale }
         return .facts(response.facts)
     }

@@ -300,7 +300,12 @@ final class ProactiveContextService: ObservableObject {
                     history: history, visualFacts: facts)
                 var seeingCandidate = ScreenAgentCandidateAdapter.candidate(
                     from: insight, citing: seeingIDs)
-                seeingCandidate.visualEvidenceIDs = facts.map(\.evidenceID)
+                // Only the facts that are ABOUT the claim license it — an
+                // unrelated observation must leave needsVision standing.
+                seeingCandidate.visualEvidenceIDs = ScreenAgentCandidateAdapter
+                    .supportingVisualIDs(
+                        facts: facts,
+                        claim: seeingCandidate.headline + " " + seeingCandidate.body)
                 decision = ScreenAgentDirector.decide(
                     candidates: [seeingCandidate],
                     evidence: seeingEvidence,

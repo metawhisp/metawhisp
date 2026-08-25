@@ -126,6 +126,33 @@ final class ScreenAgentVisionTests: XCTestCase {
         XCTAssertEqual(outcome, .stale)
     }
 
+    /// Codex: toggling the feature off (which invalidates the cache) and back
+    /// on before the reply left every local check green — the client compared
+    /// the echo against the frame it captured, not against the cache that was
+    /// wiped mid-flight. Invalidation must win over a faithful echo.
+    func testCacheInvalidationMidCallDiscardsTheAnswer() async {
+        let cache = ScreenAgentFrameCache()
+        cache.store(contextID: ctxA, jpeg: Data([1]), generation: 1)
+        let transport = FakeTransport(respondWith: ctxA, onAnalyze: { cache.invalidateAll() })
+        let client = ScreenAgentVisionClient(transport: transport, cache: cache)
+        let outcome = await client.analyzeCurrentFrame(
+            contextID: ctxA, visualConsentGranted: { true }, isStillCurrent: { true })
+        XCTAssertEqual(outcome, .stale)
+    }
+
+    func testAFrameReplacedMidCallDiscardsTheAnswer() async {
+        let cache = ScreenAgentFrameCache()
+        cache.store(contextID: ctxA, jpeg: Data([1]), generation: 1)
+        let ctxB = self.ctxB
+        let transport = FakeTransport(respondWith: ctxA, onAnalyze: {
+            cache.store(contextID: ctxB, jpeg: Data([2]), generation: 2)
+        })
+        let client = ScreenAgentVisionClient(transport: transport, cache: cache)
+        let outcome = await client.analyzeCurrentFrame(
+            contextID: ctxA, visualConsentGranted: { true }, isStillCurrent: { true })
+        XCTAssertEqual(outcome, .stale)
+    }
+
     /// Spec case 2: the user left the screen before the answer arrived.
     func testLeavingTheScreenMidCallDiscardsTheAnswer() async {
         let cache = ScreenAgentFrameCache()
@@ -162,6 +189,95 @@ final class ScreenAgentVisionTests: XCTestCase {
         XCTAssertEqual(outcome,
                        .facts([.init(evidenceID: "v1", statement: "Company field is empty")]))
         XCTAssertEqual(transport.calls, 1)
+    }
+
+    // MARK: - fact relevance
+
+    /// Codex: any non-empty fact list bypassed needsVision wholesale — vision
+    /// saying "Logo is blue" unlocked "Submit is disabled". Only facts about
+    /// the claim's own subject may license it.
+    func testAnUnrelatedVisualFactDoesNotLicenseASpatialClaim() {
+        let facts: [ScreenAgentVisionResponse.VisualFact] = [
+            .init(evidenceID: "v1", statement: "Logo is blue"),
+            .init(evidenceID: "v2", statement: "Submit button is greyed out"),
+        ]
+        let ids = ScreenAgentCandidateAdapter.supportingVisualIDs(
+            facts: facts, claim: "Submit is disabled because Company is empty")
+        XCTAssertEqual(ids, ["v2"], "only the fact about Submit speaks to the claim")
+
+        XCTAssertEqual(
+            ScreenAgentCandidateAdapter.supportingVisualIDs(
+                facts: [.init(evidenceID: "v1", statement: "Logo is blue")],
+                claim: "Submit is disabled because Company is empty"),
+            [], "an unrelated observation leaves needsVision standing")
+    }
+
+    // MARK: - the production wire contract
+
+    /// Codex P2: the fake transport echoes automatically, so a regression that
+    /// stopped ENCODING the fields — or mapped a missing server echo back to
+    /// the request's values — left every test green. This pins the real
+    /// encoder and the real decoder's missing-echo mapping.
+    func testTheWireCarriesTheTripleAndAMissingEchoCannotMatch() async throws {
+        StubURLProtocol.reply = #"{"context_id":"\#(ctxA.uuidString)","facts":[]}"#
+        defer { StubURLProtocol.reset() }
+
+        let transport = ScreenAgentProVisionTransport(
+            licenseKey: { "test-key" },
+            session: {
+                let config = URLSessionConfiguration.ephemeral
+                config.protocolClasses = [StubURLProtocol.self]
+                return URLSession(configuration: config)
+            }())
+        let response = try await transport.analyze(ScreenAgentVisionRequest(
+            contextID: ctxA, jpeg: Data([1, 2, 3]), generation: 9, frameHash: "cafe01"))
+
+        // The request body carried all three fields.
+        let sent = try XCTUnwrap(StubURLProtocol.capturedBody)
+        let payload = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: sent) as? [String: Any])
+        XCTAssertEqual(payload["context_id"] as? String, ctxA.uuidString)
+        XCTAssertEqual(payload["generation"] as? Int, 9)
+        XCTAssertEqual(payload["frame_hash"] as? String, "cafe01")
+
+        // The server did not echo — the mapping must be unmatchable, never
+        // the request's own values reflected back.
+        XCTAssertEqual(response.generation, -1)
+        XCTAssertEqual(response.frameHash, "")
+    }
+
+    private final class StubURLProtocol: URLProtocol {
+        nonisolated(unsafe) static var reply = ""
+        nonisolated(unsafe) static var capturedBody: Data?
+
+        static func reset() { reply = ""; capturedBody = nil }
+
+        override class func canInit(with request: URLRequest) -> Bool { true }
+        override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+
+        override func startLoading() {
+            Self.capturedBody = request.httpBody ?? request.httpBodyStream.map { stream in
+                stream.open()
+                defer { stream.close() }
+                var data = Data()
+                let size = 65536
+                let buffer = UnsafeMutablePointer<UInt8>.allocate(capacity: size)
+                defer { buffer.deallocate() }
+                while stream.hasBytesAvailable {
+                    let read = stream.read(buffer, maxLength: size)
+                    guard read > 0 else { break }
+                    data.append(buffer, count: read)
+                }
+                return data
+            }
+            let response = HTTPURLResponse(
+                url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!
+            client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+            client?.urlProtocol(self, didLoad: Self.reply.data(using: .utf8)!)
+            client?.urlProtocolDidFinishLoading(self)
+        }
+
+        override func stopLoading() {}
     }
 
     // MARK: - fake transport

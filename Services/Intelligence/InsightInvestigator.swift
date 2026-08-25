@@ -171,18 +171,30 @@ enum InsightInvestigator {
     /// record grounded it (Codex).
     static func recordRefs(prefix: String, result: String) -> [RetrievedRef] {
         guard let data = result.data(using: .utf8),
-              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let items = object["items"] as? [[String: Any]] else {
-            // Not our executor's shape — keep the old single-ref behavior
-            // rather than silently discarding what the model was shown.
+              let parsed = try? JSONSerialization.jsonObject(with: data) else {
+            // Not JSON at all — a different executor's prose. Keep the old
+            // single-ref behavior rather than discarding what the model saw.
             return [RetrievedRef(id: "\(prefix)0", text: result)]
         }
-        // Human-facing fields only; scaffolding must not become quotable text.
+        // Parseable JSON with a broken envelope is a broken result, not
+        // prose: falling back to the raw string here handed the scaffolding
+        // ("count": 18, keys, UUIDs) right back to the grounding check.
+        guard let object = parsed as? [String: Any],
+              let items = object["items"] as? [[String: Any]] else { return [] }
+        // Human-facing fields only; scaffolding must not become quotable
+        // text. Numbers and bools are text too — a description that arrived
+        // as 42 is still the record the model was shown.
         let fields = ["headline", "description", "content", "assignee", "dueAt"]
         var refs: [RetrievedRef] = []
         for item in items {
             let text = fields
-                .compactMap { item[$0] as? String }
+                .compactMap { field -> String? in
+                    switch item[field] {
+                    case let s as String: return s
+                    case let n as NSNumber: return n.stringValue
+                    default: return nil
+                    }
+                }
                 .filter { !$0.isEmpty }
                 .joined(separator: " — ")
             guard !text.isEmpty else { continue }

@@ -390,6 +390,12 @@ enum ScreenAgentDirector {
         }
     }
 
+    /// Whether two texts speak about any of the same things, on the same
+    /// stemmed content words every other comparison here uses.
+    static func sharesContent(_ a: String, _ b: String) -> Bool {
+        !contentWords(a).intersection(contentWords(b)).isEmpty
+    }
+
     /// Test-only visibility into the comparison sets.
     static func debugContentWords(_ text: String) -> [String] { contentWords(text).sorted() }
     static func debugScreenStems(_ text: String) -> [String] {

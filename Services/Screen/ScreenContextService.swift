@@ -29,7 +29,6 @@ final class ScreenContextService: ObservableObject {
         lastContext = nil
         // ITER-069 — a purge kills the cached frame with everything else.
         frameCache.invalidateAll()
-        pendingFrame = nil
         // ITER-064A.7 — the mark says "this window is already in history". After
         // a purge that is no longer true for any window, and a capture dropped
         // by the epoch fence never advanced it either. Leaving it set meant a
@@ -80,7 +79,6 @@ final class ScreenContextService: ObservableObject {
     /// between capture and persist so the cache can be keyed to the stored
     /// row's ID, then released — snapshots themselves must not retain pixels,
     /// twenty of them sit in `recentContexts`.
-    private var pendingFrame: CGImage?
 
     /// Fires after each newly-persisted ScreenContext (one per captured window change).
     /// Used by `RealtimeScreenReactor` (ITER-006) to do per-window LLM task checks with its
@@ -233,7 +231,6 @@ final class ScreenContextService: ObservableObject {
         // could still read: stopping capture stops its products too.
         captureEpoch += 1
         frameCache.invalidateAll()
-        pendingFrame = nil
         NSLog("[ScreenContext] Monitoring stopped")
     }
 
@@ -259,10 +256,13 @@ final class ScreenContextService: ObservableObject {
         // AUD-021 — apply the user's blacklist/whitelist here too (not only the
         // default password-app list), so an excluded app isn't captured on demand.
         let policy = currentPolicy()
+        // The voice path reads the screen, it does not feed vision — the
+        // frame is dropped here, not parked in shared state for some other
+        // flow's persist to misattribute.
         return await captureActiveWindow(
             blacklist: policy.blacklist,
             whitelist: policy.whitelist
-        )
+        )?.snapshot
     }
 
     // MARK: - Private
@@ -332,7 +332,8 @@ final class ScreenContextService: ObservableObject {
 
         // ITER-053.1 purge fence — snapshot before the capture/OCR awaits.
         let epoch = captureEpoch
-        if let snapshot = await captureActiveWindow(blacklist: blacklist, whitelist: whitelist) {
+        if let capture = await captureActiveWindow(blacklist: blacklist, whitelist: whitelist) {
+            let snapshot = capture.snapshot
             // The user hit «Delete screen history» while this capture was in
             // flight — discard it rather than re-adding pre-delete OCR.
             // Codex P0 — and re-check the switches: they can flip during the
@@ -346,7 +347,7 @@ final class ScreenContextService: ObservableObject {
                 recentContexts.removeFirst()
             }
             // Persist first — it is what decides this cycle's outcome.
-            persistContext(snapshot)
+            persistContext(snapshot, frame: capture.frame)
 
             // ITER-064A.3 — consume the change from the window the frame
             // actually came from: the user may have switched during the await.
@@ -376,7 +377,7 @@ final class ScreenContextService: ObservableObject {
     private func captureActiveWindow(
         blacklist: Set<String>,
         whitelist: Set<String>?
-    ) async -> ScreenContextSnapshot? {
+    ) async -> (snapshot: ScreenContextSnapshot, frame: CGImage?)? {
         guard let frontApp = NSWorkspace.shared.frontmostApplication else { return nil }
         let appName = frontApp.localizedName ?? "Unknown"
         let bundleID = frontApp.bundleIdentifier ?? ""
@@ -400,7 +401,11 @@ final class ScreenContextService: ObservableObject {
             return nil
         }
 
-        pendingFrame = AppSettings.shared.screenAgentVisualConsent ? image : nil
+        // The frame rides WITH its snapshot, never through shared state: a
+        // field here let a voice capture overwrite a poll capture mid-OCR and
+        // bind screen B's pixels to screen A's row — and let a full-res image
+        // outlive the flow that captured it (Codex P1 ×2).
+        let frame = AppSettings.shared.screenAgentVisualConsent ? image : nil
 
         // Run OCR on the screenshot (on-device via Vision framework)
         // ITER-065.5 — Vision runs off the main thread now; the flat text
@@ -417,7 +422,7 @@ final class ScreenContextService: ObservableObject {
         NSLog("[ScreenContext] Captured: %@ — %@ (%d chars OCR)",
               appName, String(windowTitle.prefix(40)), ocrText.count)
 
-        return snapshot
+        return (snapshot, frame)
     }
 
     /// Capture a screenshot of the screen using ScreenCaptureKit.
@@ -486,7 +491,7 @@ final class ScreenContextService: ObservableObject {
 
     /// Perform OCR using Apple Vision framework (fully on-device).
 
-    private func persistContext(_ snapshot: ScreenContextSnapshot) {
+    private func persistContext(_ snapshot: ScreenContextSnapshot, frame: CGImage?) {
         guard let container = modelContainer else { return }
         let ctx = ModelContext(container)
         let record = ScreenContext(
@@ -514,14 +519,14 @@ final class ScreenContextService: ObservableObject {
         lastAcceptedContextID = record.id
 
         // ITER-069 — under visual consent, keep one downscaled frame for the
-        // vision boundary, keyed to the row it describes. The full-size image
-        // is released either way.
-        if let frame = pendingFrame,
+        // vision boundary, keyed to the row it describes. Consent is re-read
+        // here because it can flip during the OCR await; the full-size image
+        // dies with this flow's locals either way.
+        if let frame,
            AppSettings.shared.screenAgentVisualConsent,
            let jpeg = ScreenFrameEncoder.downscaledJPEG(from: frame) {
             frameCache.store(contextID: record.id, jpeg: jpeg, generation: captureEpoch)
         }
-        pendingFrame = nil
 
         // Fire realtime hook for ITER-006 reactor (per-window LLM task check).
         // Callback handles its own guards/debounce — we just pass every persisted row.

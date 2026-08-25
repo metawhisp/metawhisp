@@ -13,6 +13,10 @@ struct ScreenAgentProVisionTransport: ScreenAgentVisionTransport {
     /// app runs.
     let licenseKey: @MainActor () -> String?
 
+    /// Injectable so the wire contract — what is actually encoded and how a
+    /// missing echo decodes — can be pinned by a test, not just the fakes.
+    var session: URLSession = .shared
+
     struct TransportError: Error {}
 
     func analyze(_ request: ScreenAgentVisionRequest) async throws -> ScreenAgentVisionResponse {
@@ -29,7 +33,7 @@ struct ScreenAgentProVisionTransport: ScreenAgentVisionTransport {
             generation: request.generation,
             frame_hash: request.frameHash))
 
-        let (data, response) = try await URLSession.shared.data(for: urlRequest)
+        let (data, response) = try await session.data(for: urlRequest)
         guard (response as? HTTPURLResponse)?.statusCode == 200 else { throw TransportError() }
 
         let reply = try JSONDecoder().decode(Reply.self, from: data)

@@ -49,6 +49,18 @@ enum ScreenAgentCandidateAdapter {
         return (ScreenAgentEvidence(refs), refs.map(\.id))
     }
 
+    /// Only facts that speak about what the claim speaks about may license
+    /// it. Vision returning "Logo is blue" used to unlock "Submit is
+    /// disabled": any non-empty fact list bypassed needsVision wholesale,
+    /// whatever the facts were about (Codex P1).
+    static func supportingVisualIDs(
+        facts: [ScreenAgentVisionResponse.VisualFact],
+        claim: String
+    ) -> [String] {
+        facts.filter { ScreenAgentDirector.sharesContent($0.statement, claim) }
+            .map(\.evidenceID)
+    }
+
     static func candidate(
         from insight: ExtractedInsight,
         citing ids: [String] = [evidenceID]
