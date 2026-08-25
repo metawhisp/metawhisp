@@ -72,6 +72,7 @@ CRITICAL_SUITES=(
     InsightReferentTests
     ScreenAgentSpatialClaimGuardTests
     ScreenAgentVisionTests
+    ScreenAgentRetrievalTests
     ScreenAgentReplayTests
     ScreenAgentFeedbackTests
     ScreenExtractorVisitGroupingTests

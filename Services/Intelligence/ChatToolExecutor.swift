@@ -533,6 +533,16 @@ final class ChatToolExecutor: ObservableObject {
     /// Keyword ranking v1 — plugs into semantic automatically once observations
     /// get embeddings (053.4 full).
     private func searchScreenHistory(_ args: [String: String]) async -> ExecResult {
+        // ITER-069 §5 — the master toggle governs the stored OCR too. With
+        // Screen Context off, months of already-captured screen text were
+        // still searchable and still fed into model prompts: off meant "stop
+        // capturing", not "stop using what was captured", and nothing told the
+        // user about the difference.
+        guard AppSettings.shared.screenContextEnabled else {
+            return ExecResult(ok: false,
+                              summary: "Screen history is unavailable — Screen Context is turned off.",
+                              auditId: nil)
+        }
         guard let container = modelContainer else { return ExecResult(ok: false, summary: "no db", auditId: nil) }
         let query = args["query"]?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         guard !query.isEmpty else { return ExecResult(ok: false, summary: "Empty query", auditId: nil) }

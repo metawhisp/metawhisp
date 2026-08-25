@@ -9,6 +9,34 @@ import XCTest
 @MainActor
 final class ScreenHistorySearchToolTests: XCTestCase {
 
+    /// ITER-069 — the tool now refuses to read stored OCR when the master
+    /// toggle is off, so these behavioral tests must run with it on, the way a
+    /// user who has screen history at all has it.
+    private var priorToggle = false
+
+    override func setUp() async throws {
+        try await super.setUp()
+        priorToggle = await MainActor.run { AppSettings.shared.screenContextEnabled }
+        await MainActor.run { AppSettings.shared.screenContextEnabled = true }
+    }
+
+    override func tearDown() async throws {
+        let restore = priorToggle
+        await MainActor.run { AppSettings.shared.screenContextEnabled = restore }
+        try await super.tearDown()
+    }
+
+    func test_search_masterOffBlocksStoredOCR() async throws {
+        await MainActor.run { AppSettings.shared.screenContextEnabled = false }
+        let (executor, _) = try await MainActor.run { try makeExecutor() }
+        let result = await executor.executeReadOnly(
+            .init(id: nil, tool: "searchScreenHistory", args: ["query": "anything"]))
+        XCTAssertFalse(result.ok,
+                       "off must mean the stored text too, not just future captures")
+        XCTAssertTrue(result.summary.contains("turned off"))
+    }
+
+
     private func makeExecutor() throws -> (ChatToolExecutor, ModelContext) {
         let schema = Schema([
             HistoryItem.self, ScreenContext.self, AdviceItem.self, UserMemory.self,

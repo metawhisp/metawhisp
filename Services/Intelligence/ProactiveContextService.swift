@@ -191,14 +191,31 @@ final class ProactiveContextService: ObservableObject {
         // INVESTIGATE with tools instead of echoing the current frame.
         let insight: ExtractedInsight?
         let history = fetchHistorySnapshots(now: now)
-        insight = await assistant.evaluate(
+        // ITER-069 §5 — the investigator may reach into the user's own store,
+        // read-only, one call per kind, through the same executor MetaChat
+        // already trusts with its privacy filters. Nothing here may mutate.
+        let toolExecutor = AppDelegate.shared?.chatService.toolExecutor
+        let evaluation = await assistant.evaluate(
             appName: ctx.appName,
             windowTitle: ctx.windowTitle.isEmpty ? nil : ctx.windowTitle,
             ocr: ctx.ocrText,
             activitySummary: activitySummary,
             licenseKey: licenseKey,
-            history: history
+            history: history,
+            searchTasks: toolExecutor.map { executor in
+                { query in
+                    (await executor.executeReadOnly(
+                        .init(id: nil, tool: "searchTasks", args: ["query": query, "limit": "8"]))).summary
+                }
+            },
+            searchMemories: toolExecutor.map { executor in
+                { query in
+                    (await executor.executeReadOnly(
+                        .init(id: nil, tool: "searchMemories", args: ["query": query, "limit": "8"]))).summary
+                }
+            }
         )
+        insight = evaluation?.insight
 
         guard let insight else { return }
 
@@ -218,7 +235,8 @@ final class ProactiveContextService: ObservableObject {
         // insight wholesale as "ungrounded": the claim was true, the runtime
         // had simply thrown away where it came from.
         let (evidence, evidenceIDs) = ScreenAgentCandidateAdapter.evidence(
-            contextID: ctx.id, ocrText: ctx.ocrText, history: history)
+            contextID: ctx.id, ocrText: ctx.ocrText, history: history,
+            retrieved: evaluation?.retrieved ?? [])
         let candidate = ScreenAgentCandidateAdapter.candidate(from: insight, citing: evidenceIDs)
         var decision = ScreenAgentDirector.decide(
             candidates: [candidate],

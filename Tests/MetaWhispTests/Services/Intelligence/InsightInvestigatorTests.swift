@@ -99,7 +99,7 @@ final class InsightInvestigatorTests: XCTestCase {
                                    toolArgsRaw: "{}", toolCallId: "c3")
             }
         })
-        guard case let .advice(insight) = outcome else {
+        guard case let .advice(insight, _) = outcome else {
             return XCTFail("expected advice, got \(outcome)")
         }
         XCTAssertEqual(insight.confidence, 0.9)

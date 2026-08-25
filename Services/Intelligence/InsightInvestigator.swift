@@ -52,8 +52,17 @@ enum InsightInvestigator {
     /// script the conversation.
     typealias Transport = (_ messages: [[String: Any]], _ tools: [[String: Any]]) async throws -> ModelTurn
 
+    /// One record pulled from the user's own store during investigation.
+    /// ITER-069 — these ride back to the caller so retrieved claims can be
+    /// grounded: without them, a comment citing a stored requirement was
+    /// silenced as ungrounded because the evidence allowlist never saw it.
+    struct RetrievedRef: Equatable {
+        let id: String
+        let text: String
+    }
+
     enum Outcome: Equatable {
-        case advice(ExtractedInsight)
+        case advice(ExtractedInsight, retrieved: [RetrievedRef])
         case none(reason: String)
     }
 
@@ -103,6 +112,19 @@ enum InsightInvestigator {
                     "source_app": ["type": "string", "description": "App where the context was observed."],
                     "confidence": ["type": "number", "description": "0.60-1.00. Calibrate: 0.90+ = preventing a clear mistake; 0.75-0.89 = highly relevant non-obvious tip; 0.60-0.74 = useful but the user might already know."],
                  ], required: ["advice", "category", "source_app", "confidence"]),
+            // ITER-069 — descriptions ported from the shipped MetaChat tool
+            // schemas (same store, same meaning), scoped down to the proactive
+            // budget: one call each.
+            tool("search_tasks",
+                 "Find the user's OPEN tasks matching a free-text query. Returns top matches with description, assignee, due date. ONE call per run: use it when the screen may relate to something the user already committed to.",
+                 [
+                    "query": ["type": "string", "description": "Free-text query (person name, project, action verb, etc.)."],
+                 ], required: ["query"]),
+            tool("search_memories",
+                 "Find the user's saved facts, decisions and requirements matching a free-text query. ONE call per run: use it when the screen may conflict with or fulfil something the user decided earlier.",
+                 [
+                    "query": ["type": "string", "description": "Free-text query (topic, requirement, decision, person)."],
+                 ], required: ["query"]),
             tool("no_advice",
                  "Nothing worth surfacing after investigation. This ends the analysis — the correct outcome for MOST runs.",
                  ["context_summary": ["type": "string", "description": "One line: what the user is doing."]], required: []),
@@ -144,8 +166,15 @@ enum InsightInvestigator {
 
     // MARK: - The loop
 
+    /// Read-only bridge to the user's store. Injected so the loop stays pure
+    /// and the privacy/owner filters stay where they already live —
+    /// `ChatToolExecutor` — instead of growing a second copy here.
+    typealias StoreSearch = @MainActor (_ query: String) async -> String
+
     static func run(snapshots: [Snapshot], systemUnused: Void = (), userPrompt: String,
-                    now: Date = Date(), transport: Transport) async -> Outcome {
+                    now: Date = Date(), transport: Transport,
+                    searchTasks: StoreSearch? = nil,
+                    searchMemories: StoreSearch? = nil) async -> Outcome {
         var messages: [[String: Any]] = [["role": "user", "content": userPrompt]]
         let tools = toolSchemas()
         // Codex 2026-08-10 — the investigation is a CONTRACT, not a suggestion:
@@ -153,6 +182,12 @@ enum InsightInvestigator {
         // reproduce the exact screen-echo card this loop exists to prevent.
         var didSearch = false
         var didConfirmRead = false
+        // ITER-069 §5 — one store lookup per kind per run. The chat loop may
+        // browse; a proactive run buys exactly one connection to the user's
+        // tasks and one to their memories, or it stops.
+        var usedTaskSearch = false
+        var usedMemorySearch = false
+        var retrieved: [RetrievedRef] = []
 
         for round in 1 ... maxRounds {
             let turn: ModelTurn
@@ -194,7 +229,7 @@ enum InsightInvestigator {
                     sourceApp: (turn.toolArgs["source_app"] as? String) ?? "",
                     confidence: confidence
                 )
-                return .advice(insight)
+                return .advice(insight, retrieved: retrieved)
 
             case "no_advice":
                 return .none(reason: (turn.toolArgs["context_summary"] as? String) ?? "no_advice")
@@ -217,6 +252,40 @@ enum InsightInvestigator {
                 // Only a SUCCESSFUL read counts as confirmation — an error
                 // ("no record with id=…") must not unlock advice.
                 if !result.hasPrefix("Error") { didConfirmRead = true }
+                appendToolExchange(&messages, turn: turn, tool: tool, callId: callId, result: result)
+
+            case "search_tasks":
+                guard let searchTasks else {
+                    appendToolExchange(&messages, turn: turn, tool: tool, callId: callId,
+                                       result: "Error: task search is not available in this run.")
+                    continue
+                }
+                guard !usedTaskSearch else {
+                    appendToolExchange(&messages, turn: turn, tool: tool, callId: callId,
+                                       result: "Rejected: one task search per run. Use what you have or call no_advice.")
+                    continue
+                }
+                usedTaskSearch = true
+                let query = (turn.toolArgs["query"] as? String) ?? ""
+                let result = await searchTasks(query)
+                retrieved.append(.init(id: "t\(retrieved.count)", text: result))
+                appendToolExchange(&messages, turn: turn, tool: tool, callId: callId, result: result)
+
+            case "search_memories":
+                guard let searchMemories else {
+                    appendToolExchange(&messages, turn: turn, tool: tool, callId: callId,
+                                       result: "Error: memory search is not available in this run.")
+                    continue
+                }
+                guard !usedMemorySearch else {
+                    appendToolExchange(&messages, turn: turn, tool: tool, callId: callId,
+                                       result: "Rejected: one memory search per run. Use what you have or call no_advice.")
+                    continue
+                }
+                usedMemorySearch = true
+                let query = (turn.toolArgs["query"] as? String) ?? ""
+                let result = await searchMemories(query)
+                retrieved.append(.init(id: "m\(retrieved.count)", text: result))
                 appendToolExchange(&messages, turn: turn, tool: tool, callId: callId, result: result)
 
             default:

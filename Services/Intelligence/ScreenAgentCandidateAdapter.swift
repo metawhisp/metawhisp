@@ -20,6 +20,7 @@ enum ScreenAgentCandidateAdapter {
         contextID: UUID,
         ocrText: String,
         history: [InsightInvestigator.Snapshot] = [],
+        retrieved: [InsightInvestigator.RetrievedRef] = [],
         visualFacts: [ScreenAgentVisionResponse.VisualFact] = []
     ) -> (evidence: ScreenAgentEvidence, ids: [String]) {
         var refs: [ScreenAgentEvidence.Ref] = [
@@ -27,6 +28,11 @@ enum ScreenAgentCandidateAdapter {
         ]
         for (index, snapshot) in history.prefix(400).enumerated() {
             refs.append(.init(id: "h\(index)", contextID: contextID, text: snapshot.ocr))
+        }
+        // ITER-069 — what the investigator pulled from the user's own store.
+        // A claim grounded in a stored requirement or task is grounded.
+        for ref in retrieved {
+            refs.append(.init(id: ref.id, contextID: contextID, text: ref.text))
         }
         // ITER-069 — what the vision model verified about this exact frame.
         // Server-issued IDs; the model never mints its own.

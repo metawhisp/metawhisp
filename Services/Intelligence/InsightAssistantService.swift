@@ -62,14 +62,24 @@ final class InsightAssistantService: ObservableObject {
     /// Single evaluation tick. Returns the insight to surface, or `nil`
     /// when there's nothing worth showing (LLM said `no_advice`, parse
     /// failed, confidence below threshold, or duplicate).
+    /// ITER-069 — what evaluate() found, and where it found it. Retrieved
+    /// records ride along so the caller can put them in the evidence allowlist:
+    /// a claim grounded in the user's own stored requirement is grounded.
+    struct Evaluation {
+        let insight: ExtractedInsight
+        let retrieved: [InsightInvestigator.RetrievedRef]
+    }
+
     func evaluate(
         appName: String,
         windowTitle: String?,
         ocr: String,
         activitySummary: String,
         licenseKey: String,
-        history: [InsightInvestigator.Snapshot] = []
-    ) async -> ExtractedInsight? {
+        history: [InsightInvestigator.Snapshot] = [],
+        searchTasks: InsightInvestigator.StoreSearch? = nil,
+        searchMemories: InsightInvestigator.StoreSearch? = nil
+    ) async -> Evaluation? {
         guard !isEvaluating else { return nil }
         isEvaluating = true
         defer { isEvaluating = false }
@@ -116,9 +126,13 @@ final class InsightAssistantService: ObservableObject {
                     messages: messages, tools: tools, licenseKey: licenseKey
                 )
             }
-            switch await InsightInvestigator.run(snapshots: history, userPrompt: userPrompt, transport: transport) {
-            case let .advice(insight):
-                return acceptCandidate(insight)
+            switch await InsightInvestigator.run(snapshots: history, userPrompt: userPrompt,
+                                                 transport: transport,
+                                                 searchTasks: searchTasks,
+                                                 searchMemories: searchMemories) {
+            case let .advice(insight, retrieved):
+                guard let accepted = acceptCandidate(insight) else { return nil }
+                return Evaluation(insight: accepted, retrieved: retrieved)
             case let .none(reason):
                 NSLog("[Insight] investigation → no advice: %@", String(reason.prefix(120)))
                 return nil
@@ -139,7 +153,8 @@ final class InsightAssistantService: ObservableObject {
 
         switch InsightOutputParser.parse(jsonString: raw) {
         case let .provideInsight(insight):
-            return acceptCandidate(insight)
+            // Non-investigator path retrieves nothing.
+            return acceptCandidate(insight).map { Evaluation(insight: $0, retrieved: []) }
 
         case let .noInsight(reason):
             NSLog("[Insight] no advice: %@", reason)
