@@ -163,6 +163,67 @@ enum MetaWhispSchemaV4: VersionedSchema {
     static var versionIdentifier = Schema.Version(4, 0, 0)
 
     static var models: [any PersistentModel.Type] {
+        MetaWhispSchemaV3.models + [MetaWhispSchemaV4.ScreenAgentItem.self]
+    }
+
+    /// FROZEN V4 shape of `ScreenAgentItem` — the on-disk layout BEFORE
+    /// ITER-070 added feedback and the semantic signature. Nested with the same
+    /// type name so the entity name matches the store. Never edit this copy.
+    ///
+    /// This exists because those three fields were once added to the live model
+    /// without a version bump. The store still had this shape, SwiftData
+    /// refused to open it, and the app spent eleven minutes in a temporary
+    /// in-memory session where nothing the user did was saved.
+    @Model
+    final class ScreenAgentItem {
+        @Attribute(.unique) var id: UUID
+        var runID: UUID
+        var createdAt: Date
+        var headline: String
+        var body: String
+        var sourceApp: String
+        var sourceWindowTitle: String
+        var capturedAt: Date
+        var visitID: UUID?
+        var visitGeneration: Int
+        var evidenceContextIDsJSON: String
+        var deliveryOutcome: String
+        var deliveredAt: Date?
+        var suppressionReason: String?
+        var interaction: String
+        var interactedAt: Date?
+
+        init(runID: UUID, headline: String, body: String, sourceApp: String,
+             sourceWindowTitle: String, capturedAt: Date) {
+            self.id = UUID()
+            self.runID = runID
+            self.createdAt = Date()
+            self.headline = headline
+            self.body = body
+            self.sourceApp = sourceApp
+            self.sourceWindowTitle = sourceWindowTitle
+            self.capturedAt = capturedAt
+            self.visitGeneration = 0
+            self.evidenceContextIDsJSON = "[]"
+            self.deliveryOutcome = "pending"
+            self.interaction = "none"
+        }
+    }
+}
+
+/// ITER-070 — V5. Adding `feedbackReason`, `feedbackAt` and
+/// `semanticSignature` to `ScreenAgentItem` was a schema change, and shipping
+/// it inside V4 was not: the store on disk still had the V4 shape, SwiftData
+/// refused to open it, and the app fell into a temporary in-memory session
+/// where nothing the user did was saved. It failed loudly and correctly — into
+/// the degraded path with the store preserved — but it failed.
+///
+/// The lesson is the version number, not the fields: any change to a shipped
+/// model's shape needs a new version and a stage, however small it looks.
+enum MetaWhispSchemaV5: VersionedSchema {
+    static var versionIdentifier = Schema.Version(5, 0, 0)
+
+    static var models: [any PersistentModel.Type] {
         MetaWhispSchemaV3.models + [ScreenAgentItem.self]
     }
 }
@@ -172,7 +233,7 @@ enum MetaWhispSchemaV4: VersionedSchema {
 /// verified by `SchemaMigrationTests`.
 enum MetaWhispMigrationPlan: SchemaMigrationPlan {
     static var schemas: [any VersionedSchema.Type] {
-        [MetaWhispSchemaV1.self, MetaWhispSchemaV2.self, MetaWhispSchemaV3.self, MetaWhispSchemaV4.self]
+        [MetaWhispSchemaV1.self, MetaWhispSchemaV2.self, MetaWhispSchemaV3.self, MetaWhispSchemaV4.self, MetaWhispSchemaV5.self]
     }
     static var stages: [MigrationStage] {
         [
@@ -187,6 +248,10 @@ enum MetaWhispMigrationPlan: SchemaMigrationPlan {
             MigrationStage.lightweight(
                 fromVersion: MetaWhispSchemaV3.self,
                 toVersion: MetaWhispSchemaV4.self
+            ),
+            MigrationStage.lightweight(
+                fromVersion: MetaWhispSchemaV4.self,
+                toVersion: MetaWhispSchemaV5.self
             ),
         ]
     }

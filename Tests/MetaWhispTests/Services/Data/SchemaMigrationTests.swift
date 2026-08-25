@@ -51,7 +51,7 @@ final class SchemaMigrationTests: XCTestCase {
         }
 
         // 2. Reopen the SAME file under the latest schema + the migration plan.
-        let latestSchema = Schema(versionedSchema: MetaWhispSchemaV4.self)
+        let latestSchema = Schema(versionedSchema: MetaWhispSchemaV5.self)
         let cfg2 = ModelConfiguration(schema: latestSchema, url: storeURL)
         let container2 = try ModelContainer(
             for: latestSchema, migrationPlan: MetaWhispMigrationPlan.self, configurations: [cfg2])
@@ -88,7 +88,7 @@ final class SchemaMigrationTests: XCTestCase {
             try ctx.save()
         }
 
-        let latestSchema = Schema(versionedSchema: MetaWhispSchemaV4.self)
+        let latestSchema = Schema(versionedSchema: MetaWhispSchemaV5.self)
         let cfg = ModelConfiguration(schema: latestSchema, url: storeURL)
         let container = try ModelContainer(
             for: latestSchema, migrationPlan: MetaWhispMigrationPlan.self, configurations: [cfg])
@@ -100,7 +100,7 @@ final class SchemaMigrationTests: XCTestCase {
     }
 
     func testFreshStoreCreatesUnderV3() throws {
-        let latestSchema = Schema(versionedSchema: MetaWhispSchemaV4.self)
+        let latestSchema = Schema(versionedSchema: MetaWhispSchemaV5.self)
         let cfg = ModelConfiguration(schema: latestSchema, url: storeURL)
         XCTAssertNoThrow(try ModelContainer(
             for: latestSchema, migrationPlan: MetaWhispMigrationPlan.self, configurations: [cfg]))
@@ -142,7 +142,7 @@ final class SchemaMigrationTests: XCTestCase {
             throw XCTSkip("Set MW_REAL_STORE_COPY to a copy of the real store to run this proof")
         }
         let url = URL(fileURLWithPath: path)
-        let latestSchema = Schema(versionedSchema: MetaWhispSchemaV4.self)
+        let latestSchema = Schema(versionedSchema: MetaWhispSchemaV5.self)
         let cfg = ModelConfiguration(schema: latestSchema, url: url)
         let container = try ModelContainer(
             for: latestSchema, migrationPlan: MetaWhispMigrationPlan.self, configurations: [cfg])
@@ -185,7 +185,7 @@ extension SchemaMigrationTests {
         }
 
         // Reopen it the way the shipped app will.
-        let latest = Schema(versionedSchema: MetaWhispSchemaV4.self)
+        let latest = Schema(versionedSchema: MetaWhispSchemaV5.self)
         let container = try ModelContainer(
             for: latest, migrationPlan: MetaWhispMigrationPlan.self,
             configurations: [ModelConfiguration(schema: latest, url: storeURL)])
@@ -207,5 +207,53 @@ extension SchemaMigrationTests {
         ctx.insert(item)
         try ctx.save()
         XCTAssertEqual(try ctx.fetch(FetchDescriptor<ScreenAgentItem>()).count, 1)
+    }
+}
+
+extension SchemaMigrationTests {
+
+    /// The failure this exists to stop, learned the hard way on 2026-08-25.
+    ///
+    /// Three properties were added to a shipped model without a new schema
+    /// version. SwiftData refused to open the store, the app fell into a
+    /// temporary in-memory session, and for eleven minutes nothing the user did
+    /// was saved. It failed loudly and preserved the store, which is the system
+    /// working — but only after the damage window had already opened.
+    ///
+    /// The guard is not "did I remember the fields". It is: whatever the latest
+    /// schema currently declares, a store written by the previous shipped
+    /// version must still open under it.
+    func test_aV4StoreOpensUnderTheLatestSchema() throws {
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("mw-v4-to-latest-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let storeURL = dir.appendingPathComponent("store.sqlite")
+
+        do {
+            let v4 = Schema(versionedSchema: MetaWhispSchemaV4.self)
+            let container = try ModelContainer(
+                for: v4, configurations: [ModelConfiguration(schema: v4, url: storeURL)])
+            let ctx = ModelContext(container)
+            ctx.insert(MetaWhispSchemaV4.ScreenAgentItem(
+                runID: UUID(), headline: "Anna needs the deck by 16:00", body: "",
+                sourceApp: "Slack", sourceWindowTitle: "#launch", capturedAt: Date()))
+            ctx.insert(HistoryItem(text: "a dictation the user would hate to lose",
+                                   language: "en", audioDuration: 3, processingTime: 1))
+            try ctx.save()
+        }
+
+        let latest = Schema(versionedSchema: MetaWhispSchemaV5.self)
+        let container = try ModelContainer(
+            for: latest, migrationPlan: MetaWhispMigrationPlan.self,
+            configurations: [ModelConfiguration(schema: latest, url: storeURL)])
+        let ctx = ModelContext(container)
+
+        XCTAssertEqual(try ctx.fetch(FetchDescriptor<HistoryItem>()).count, 1,
+                       "a store one version behind must open, not send the app to the "
+                       + "in-memory fallback where the user's work stops being saved")
+        let items = try ctx.fetch(FetchDescriptor<ScreenAgentItem>())
+        XCTAssertEqual(items.count, 1)
+        XCTAssertNil(items.first?.feedbackReason, "the added field starts empty")
     }
 }

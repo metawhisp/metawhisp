@@ -64,7 +64,7 @@ final class ScreenAgentItem {
     /// Content words of the headline, for suppressing the same idea in
     /// different words. Computed once at creation so a later comparison does
     /// not have to re-derive it for every candidate.
-    var semanticSignature: String
+    var semanticSignature: String = ""
 
     init(
         runID: UUID,
