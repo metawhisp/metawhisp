@@ -97,6 +97,16 @@ final class ScreenContextService: ObservableObject {
     /// ID of the most recently accepted screen row.
     private(set) var lastAcceptedContextID: UUID?
 
+    /// Visit-wiring step 5 — which visit each recent screen row belongs to,
+    /// so an item born from a context can carry its visit without every
+    /// consumer's signature changing. Bounded; consumers read immediately
+    /// after persist.
+    private var recentVisitByContext: [UUID: (id: UUID, generation: Int)] = [:]
+
+    func visitIdentity(for contextID: UUID) -> (id: UUID, generation: Int)? {
+        recentVisitByContext[contextID]
+    }
+
     /// ITER-069 — the one frame vision may look at. Populated only under the
     /// separate visual consent; capacity one; memory only.
     let frameCache = ScreenAgentFrameCache()
@@ -660,6 +670,16 @@ final class ScreenContextService: ObservableObject {
             Self.upsertVisitRecord(
                 proposal: visitProposal, acceptedContextID: record.id,
                 captureState: "captured", token: visitToken, in: ctx)
+            // Step 5 — remember which visit this row belongs to, for the
+            // items born from it. Burst-cleared, not LRU: lookups happen
+            // right after persist, staleness has no value here.
+            if case .opened(let visit) = visitProposal {
+                if recentVisitByContext.count > 64 { recentVisitByContext.removeAll() }
+                recentVisitByContext[record.id] = (visit.id, visit.generation)
+            } else if case .changed(let visit) = visitProposal {
+                if recentVisitByContext.count > 64 { recentVisitByContext.removeAll() }
+                recentVisitByContext[record.id] = (visit.id, visit.generation)
+            }
         }
         do {
             try ctx.save()

@@ -410,6 +410,9 @@ final class ProactiveContextService: ObservableObject {
         let bodyText: String = (titleText == directedBody) ? "" : directedBody
 
         guard let delivery = AppDelegate.shared?.screenAgentDelivery else { return }
+        // Visit-wiring step 5 — the card carries the visit it was born from.
+        // These fields have sat nil/0 on every production item since V4.
+        let visit = AppDelegate.shared?.screenContext.visitIdentity(for: ctx.id)
         let item = ScreenAgentItem(
             runID: runID,
             headline: titleText,
@@ -417,6 +420,8 @@ final class ProactiveContextService: ObservableObject {
             sourceApp: ctx.appName,
             sourceWindowTitle: ctx.windowTitle,
             capturedAt: ctx.timestamp,
+            visitID: visit?.id,
+            visitGeneration: visit?.generation ?? 0,
             evidenceContextIDs: [ctx.id]
         )
 
