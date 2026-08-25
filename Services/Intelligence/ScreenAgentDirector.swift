@@ -32,6 +32,11 @@ enum ScreenAgentDirector {
         /// Each must exist in the cited evidence, not just the first one: a
         /// headline naming a real time and an invented count used to pass.
         var anchors: [String] = []
+        /// ITER-069 — evidence refs that came from an actual analyzed frame.
+        /// Spatial and visual vocabulary is deliverable only when this is
+        /// non-empty: flat OCR cannot see a disabled button, and claiming one
+        /// from text is inventing.
+        var visualEvidenceIDs: [String] = []
     }
 
     enum Decision: Equatable {
@@ -63,6 +68,9 @@ enum ScreenAgentDirector {
         case semanticDuplicate
         /// The user said this class of comment was wrong or unwanted.
         case userRejected
+        /// The claim describes layout, color, or control state, and no frame
+        /// was analyzed to support it. Only eyes get to say "disabled".
+        case needsVision
     }
 
     /// Below this a proposal is not worth interrupting anyone for. Confidence
@@ -104,6 +112,15 @@ enum ScreenAgentDirector {
         if let rejection = evidence.validate(citedIDs: best.citedEvidenceIDs, quotes: quotes) {
             NSLog("[ScreenAgentDirector] suppressed — %@", String(describing: rejection))
             return .silence(.ungrounded)
+        }
+
+        // ITER-069 — a claim about layout, color, or control state needs an
+        // analyzed frame behind it. The prompts used to ask flat OCR about
+        // disabled buttons and fields on the right, and the model answered the
+        // only way it could: by inventing.
+        if best.visualEvidenceIDs.isEmpty,
+           ScreenAgentSpatialClaimGuard.makesSpatialClaim(best.headline + " " + best.body) {
+            return .silence(.needsVision)
         }
 
         // A claim that reverses what the screen says is a fabrication with a

@@ -1462,6 +1462,17 @@ struct MainSettingsView: View {
                     .font(MW.monoSm).foregroundStyle(MW.textMuted)
                     .fixedSize(horizontal: false, vertical: true)
 
+                GlassDivider()
+
+                // ITER-069 — its own consent, never bundled. Agreeing to cloud
+                // text is not agreeing to screenshots.
+                toggleRow("Visual mode", isOn: $settings.screenAgentVisualConsent)
+                Text(settings.screenAgentVisualConsent
+                     ? "Visual enabled — one downscaled image of the allowed, focused window may be sent to the cloud vision model when text alone cannot answer. Never stored, never logged."
+                     : "Text only — MetaWhisp reads recognized text and will not claim things only eyes can verify (a disabled button, a highlighted field).")
+                    .font(MW.monoSm).foregroundStyle(MW.textMuted)
+                    .fixedSize(horizontal: false, vertical: true)
+
                 toggleRow("Pause for now", isOn: $settings.screenAgentPaused)
                 Text("Stops the interruptions without turning the feature off — held comments still collect in the Inbox.")
                     .font(MW.monoSm).foregroundStyle(MW.textMuted)

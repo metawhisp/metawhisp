@@ -1367,6 +1367,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
 
     /// Watch for intelligence feature toggles and react in realtime.
     private func observeIntelligenceSettings() {
+        var lastVisualConsent = AppSettings.shared.screenAgentVisualConsent
         var lastScreenContext = AppSettings.shared.screenContextEnabled
         var lastAdvice = AppSettings.shared.adviceEnabled
         var lastMeeting = AppSettings.shared.meetingRecordingEnabled
@@ -1377,6 +1378,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
                 guard let self else { return }
                 let newScreenContext = AppSettings.shared.screenContextEnabled
                 let newAdvice = AppSettings.shared.adviceEnabled
+
+                // ITER-069 — revoking visual consent empties the frame cache
+                // immediately; a frame captured under consent does not outlive
+                // the consent it was captured under.
+                let newVisualConsent = AppSettings.shared.screenAgentVisualConsent
+                if newVisualConsent != lastVisualConsent {
+                    lastVisualConsent = newVisualConsent
+                    if !newVisualConsent {
+                        Task { @MainActor in self.screenContext.frameCache.invalidateAll() }
+                    }
+                }
 
                 if newScreenContext != lastScreenContext {
                     lastScreenContext = newScreenContext

@@ -153,6 +153,12 @@ final class AppSettings: ObservableObject {
     /// ITER-070 — how often the Screen Agent may interrupt, as one choice
     /// instead of several unrelated intervals scattered through Settings.
     @AppStorage("screenAgentPacing") var screenAgentPacing: String = ScreenAgentPacing.balanced.rawValue
+
+    /// ITER-069 — permission to send ONE downscaled image of an allowed,
+    /// focused window to the cloud vision model. Deliberately separate from
+    /// every other consent: agreeing to cloud text is not agreeing to
+    /// screenshots, and this stays off until the user says otherwise.
+    @AppStorage("screenAgentVisualConsent") var screenAgentVisualConsent: Bool = false
     /// Minimum gap between chip surfaces. Lower = more useful but more intrusive.
     /// Default 5 min balances usefulness against annoyance.
     // 2026-08-08 — 5 → 10 min: reference-parity cadence (its analysis interval

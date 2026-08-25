@@ -27,6 +27,9 @@ final class ScreenContextService: ObservableObject {
         captureEpoch += 1
         recentContexts.removeAll()
         lastContext = nil
+        // ITER-069 — a purge kills the cached frame with everything else.
+        frameCache.invalidateAll()
+        pendingFrame = nil
         // ITER-064A.7 — the mark says "this window is already in history". After
         // a purge that is no longer true for any window, and a capture dropped
         // by the epoch fence never advanced it either. Leaving it set meant a
@@ -68,6 +71,16 @@ final class ScreenContextService: ObservableObject {
 
     /// ID of the most recently accepted screen row.
     private(set) var lastAcceptedContextID: UUID?
+
+    /// ITER-069 — the one frame vision may look at. Populated only under the
+    /// separate visual consent; capacity one; memory only.
+    let frameCache = ScreenAgentFrameCache()
+
+    /// The image behind the snapshot currently being persisted. Held only
+    /// between capture and persist so the cache can be keyed to the stored
+    /// row's ID, then released — snapshots themselves must not retain pixels,
+    /// twenty of them sit in `recentContexts`.
+    private var pendingFrame: CGImage?
 
     /// Fires after each newly-persisted ScreenContext (one per captured window change).
     /// Used by `RealtimeScreenReactor` (ITER-006) to do per-window LLM task checks with its
@@ -356,6 +369,8 @@ final class ScreenContextService: ObservableObject {
             return nil
         }
 
+        pendingFrame = AppSettings.shared.screenAgentVisualConsent ? image : nil
+
         // Run OCR on the screenshot (on-device via Vision framework)
         // ITER-065.5 — Vision runs off the main thread now; the flat text
         // it produces is byte-identical to what this line used to return.
@@ -466,6 +481,16 @@ final class ScreenContextService: ObservableObject {
         // knows. Read at the last moment before interrupting, so a comment
         // about a window they have already left can be recognised as such.
         lastAcceptedContextID = record.id
+
+        // ITER-069 — under visual consent, keep one downscaled frame for the
+        // vision boundary, keyed to the row it describes. The full-size image
+        // is released either way.
+        if let frame = pendingFrame,
+           AppSettings.shared.screenAgentVisualConsent,
+           let jpeg = ScreenFrameEncoder.downscaledJPEG(from: frame) {
+            frameCache.store(contextID: record.id, jpeg: jpeg)
+        }
+        pendingFrame = nil
 
         // Fire realtime hook for ITER-006 reactor (per-window LLM task check).
         // Callback handles its own guards/debounce — we just pass every persisted row.
