@@ -1087,6 +1087,51 @@
       "reason": "ungrounded",
       "why": "No record was retrieved, so the claimed cap is a fabrication wearing the store's authority.",
       "class": 5
+    },
+    {
+      "id": "adapter_visual_confirmed_state",
+      "locale": "en",
+      "screen": "Signup form · Company: · Submit",
+      "headline": "Submit is disabled — the Company field is empty",
+      "body": "Fill Company to proceed.",
+      "confidence": 0.85,
+      "visual_facts": [
+        "Submit button is greyed out and disabled",
+        "Company field is empty"
+      ],
+      "expect": "item",
+      "class": 4,
+      "why": "A spatial claim with eyes behind it: the facts speak about the same controls the claim does."
+    },
+    {
+      "id": "adapter_visual_unrelated_fact_ru",
+      "locale": "ru",
+      "screen": "Форма профиля · Имя · Сохранить",
+      "headline": "Кнопка Сохранить неактивна — заполни имя",
+      "body": "",
+      "confidence": 0.85,
+      "visual_facts": [
+        "Логотип синего цвета"
+      ],
+      "expect": "silence",
+      "reason": "needsVision",
+      "class": 4,
+      "why": "«Логотип синий» ничего не говорит о кнопке — нерелевантный факт не должен превращаться в штамп «глаза подтвердили»."
+    },
+    {
+      "id": "adapter_visual_fact_contradicts_claim",
+      "locale": "en",
+      "screen": "Signup form · Company: Acme · Submit",
+      "headline": "Submit is disabled — check the form",
+      "body": "",
+      "confidence": 0.85,
+      "visual_facts": [
+        "Submit button is enabled"
+      ],
+      "expect": "silence",
+      "reason": "needsVision",
+      "class": 4,
+      "why": "A fact that says the OPPOSITE of the claim is refutation, not support — licensing the claim with it would ship a lie with a vision stamp on it."
     }
   ]
 }

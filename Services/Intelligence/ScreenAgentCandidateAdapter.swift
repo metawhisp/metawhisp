@@ -57,8 +57,14 @@ enum ScreenAgentCandidateAdapter {
         facts: [ScreenAgentVisionResponse.VisualFact],
         claim: String
     ) -> [String] {
-        facts.filter { ScreenAgentDirector.sharesContent($0.statement, claim) }
-            .map(\.evidenceID)
+        facts.filter { fact in
+            ScreenAgentDirector.sharesContent(fact.statement, claim)
+                // A fact stating the OPPOSITE is refutation, not support —
+                // "Submit is enabled" must not license "Submit is disabled"
+                // just because they share a subject (deck case).
+                && !ScreenAgentDirector.contradictsScreen(claim, screen: fact.statement)
+        }
+        .map(\.evidenceID)
     }
 
     static func candidate(

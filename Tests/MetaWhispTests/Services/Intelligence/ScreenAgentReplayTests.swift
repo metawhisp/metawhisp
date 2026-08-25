@@ -34,6 +34,8 @@ final class ScreenAgentReplayTests: XCTestCase {
         let body: String
         let confidence: Double
         let retrieved: [String]?
+        /// ITER-069.9 — what vision verified about the frame, when it ran.
+        let visual_facts: [String]?
         let expect: String
         let reason: String?
         let why: String
@@ -41,7 +43,7 @@ final class ScreenAgentReplayTests: XCTestCase {
 
         enum CodingKeys: String, CodingKey {
             case id, locale, screen, headline, body, confidence, retrieved,
-                 expect, reason, why
+                 visual_facts, expect, reason, why
             case caseClass = "class"
         }
     }
@@ -217,10 +219,20 @@ final class ScreenAgentReplayTests: XCTestCase {
             let retrieved = (testCase.retrieved ?? []).enumerated().map {
                 InsightInvestigator.RetrievedRef(id: "m\($0.offset)", text: $0.element)
             }
+            // ITER-069.9 — the vision path, exactly as production runs it:
+            // server-shaped facts into evidence, and only the facts that are
+            // ABOUT the claim may license its spatial vocabulary.
+            let visualFacts = (testCase.visual_facts ?? []).enumerated().map {
+                ScreenAgentVisionResponse.VisualFact(
+                    evidenceID: "v\($0.offset)", statement: $0.element)
+            }
             let (evidence, ids) = ScreenAgentCandidateAdapter.evidence(
                 contextID: UUID(), ocrText: testCase.screen, retrieved: retrieved,
+                visualFacts: visualFacts,
                 now: Date(timeIntervalSince1970: 1_787_000_000))
-            let candidate = ScreenAgentCandidateAdapter.candidate(from: insight, citing: ids)
+            var candidate = ScreenAgentCandidateAdapter.candidate(from: insight, citing: ids)
+            candidate.visualEvidenceIDs = ScreenAgentCandidateAdapter.supportingVisualIDs(
+                facts: visualFacts, claim: candidate.headline + " " + candidate.body)
             let decision = ScreenAgentDirector.decide(
                 candidates: [candidate], evidence: evidence,
                 screenText: testCase.screen, recentHeadlines: [])
