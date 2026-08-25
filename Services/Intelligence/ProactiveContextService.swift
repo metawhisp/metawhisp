@@ -172,6 +172,44 @@ final class ProactiveContextService: ObservableObject {
 
         guard let insight else { return }
 
+        // ITER-066 — the director decides, not the producer. Everything above
+        // this line proposes; nothing above it may interrupt the user.
+        //
+        // The insight path predates evidence refs, so the runtime issues one
+        // reference for the screen this run is about and the claim is checked
+        // against it. That is narrower than the full allowlist ITER-066
+        // describes, and deliberately so: it catches the failure that actually
+        // shipped — a comment asserting something the current screen does not
+        // say — rather than pretending a richer contract exists.
+        let evidence = ScreenAgentEvidence([
+            .init(id: "e1", contextID: ctx.id, text: ctx.ocrText)
+        ])
+        let candidate = ScreenAgentDirector.Candidate(
+            headline: insight.headline?.trimmingCharacters(in: .whitespacesAndNewlines) ?? insight.body,
+            body: insight.body,
+            citedEvidenceIDs: ["e1"],
+            // The prompt does not ask for a quote, so the strongest thing the
+            // comment names stands in for one: if it says 16:00 or a filename,
+            // that had better be on the screen it claims to be about.
+            quote: InsightReferent.strongestAnchor(
+                insight.headline ?? insight.body),
+            confidence: Double(insight.confidence),
+            namesReferent: InsightReferent.namesSomethingSpecific(
+                insight.headline ?? insight.body)
+        )
+        let decision = ScreenAgentDirector.decide(
+            candidates: [candidate],
+            evidence: evidence,
+            screenText: ctx.ocrText,
+            recentHeadlines: recentDeliveredHeadlines()
+        )
+        guard case .item(let directedHeadline, let directedBody, _) = decision else {
+            if case .silence(let reason) = decision {
+                NSLog("[Proactive] silent — %@", reason.rawValue)
+            }
+            return
+        }
+
         // ITER-064A.9 — the screen rows this insight was derived from may have
         // been deleted while the model was thinking. Drop it rather than saving
         // a memory the user can no longer trace to any source.
@@ -189,9 +227,8 @@ final class ProactiveContextService: ObservableObject {
         // bypassed the quiet-hours and pacing every other notification
         // respects, clicking it did nothing, and nothing recorded that it had
         // ever happened.
-        let title = insight.headline?.trimmingCharacters(in: .whitespacesAndNewlines)
-        let titleText = (title?.isEmpty == false) ? title! : insight.body
-        let bodyText: String = (titleText == insight.body) ? "" : insight.body
+        let titleText = directedHeadline
+        let bodyText: String = (titleText == directedBody) ? "" : directedBody
 
         guard let delivery = AppDelegate.shared?.screenAgentDelivery else { return }
         let item = ScreenAgentItem(
@@ -252,6 +289,15 @@ final class ProactiveContextService: ObservableObject {
         MWNotificationStack.shared.push(note)
         NSLog("[Proactive] ✅ surfaced insight in %@ (%d chars, item %@)",
               ctx.appName, insight.body.count, itemID.uuidString)
+    }
+
+    /// Headlines the user was actually shown recently. Rewording an idea does
+    /// not make it new, and the old edit-distance dedup only caught it when the
+    /// words barely changed.
+    private func recentDeliveredHeadlines(limit: Int = 20) -> [String] {
+        AppDelegate.shared?.screenAgentDelivery?
+            .recentItems(limit: limit)
+            .map(\.headline) ?? []
     }
 
     // MARK: - Activity summary
