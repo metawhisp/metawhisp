@@ -960,6 +960,29 @@
       "reason": "lowConfidence",
       "why": "Zero confidence is the model saying it does not believe itself; the floor holds at the degenerate boundary.",
       "class": 7
+    },
+    {
+      "id": "silence_user_already_rejected_ru",
+      "locale": "ru",
+      "screen": "Документы · Договор: дедлайн 18:00, пятница",
+      "rejected": [
+        "Проверь дедлайн по договору — 18:00 пятница"
+      ],
+      "candidates": [
+        {
+          "headline": "Дедлайн договора в 18:00 — пятница близко",
+          "body": "",
+          "confidence": 0.85,
+          "cited": [
+            "e1"
+          ],
+          "quote": "18:00"
+        }
+      ],
+      "expect": "silence",
+      "reason": "userRejected",
+      "class": 1,
+      "why": "Пользователь уже сказал, что этот комментарий не нужен — та же мысль другими словами и есть то, на что он жаловался."
     }
   ],
   "insight_cases": [

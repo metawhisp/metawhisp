@@ -54,13 +54,17 @@ final class ScreenAgentReplayTests: XCTestCase {
         let screen: String
         let candidates: [Candidate]
         let recent: [String]?
+        /// ITER-070 — headlines the user rejected as wrong/repeated. The
+        /// runner derives signatures the way feedback recording does.
+        let rejected: [String]?
         let expect: String
         let reason: String?
         let why: String
         let caseClass: Int
 
         enum CodingKeys: String, CodingKey {
-            case id, locale, screen, candidates, recent, expect, reason, why
+            case id, locale, screen, candidates, recent, rejected, expect,
+                 reason, why
             case caseClass = "class"
         }
     }
@@ -152,7 +156,9 @@ final class ScreenAgentReplayTests: XCTestCase {
                 candidates: candidates,
                 evidence: evidence,
                 screenText: testCase.screen,
-                recentHeadlines: testCase.recent ?? []
+                recentHeadlines: testCase.recent ?? [],
+                rejectedSignatures: (testCase.rejected ?? [])
+                    .map(ScreenAgentDirector.semanticSignature(of:))
             )
 
             switch (testCase.expect, decision) {
