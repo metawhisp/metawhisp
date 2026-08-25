@@ -170,6 +170,39 @@ final class ContextVisitRecordTests: XCTestCase {
         XCTAssertEqual(closed.endedAt, later)
     }
 
+    /// A surviving visit must not point at rows that aged out: "open the
+    /// source" would lead nowhere.
+    func testRetentionTrimsFrameIDsWhoseRowsAreGone() throws {
+        let container = try ModelContainer(
+            for: ContextVisitRecord.self, ScreenContext.self, ScreenObservation.self,
+            ScreenAgentItem.self, ScreenAgentRun.self, ScreenAgentDeliveryRecord.self,
+            TaskItem.self, UserMemory.self,
+            configurations: ModelConfiguration(isStoredInMemoryOnly: true))
+        let ctx = ModelContext(container)
+
+        let old = ScreenContext(appName: "Mail", windowTitle: "Inbox", ocrText: "old")
+        old.timestamp = Date(timeIntervalSince1970: 1000)
+        let fresh = ScreenContext(appName: "Mail", windowTitle: "Inbox", ocrText: "fresh")
+        fresh.timestamp = Date()
+        ctx.insert(old); ctx.insert(fresh)
+
+        let row = ContextVisitRecord(
+            id: UUID(), generation: 0, bundleID: "com.apple.mail", appName: "Mail",
+            rawTitle: "Inbox", normalizedTitle: "Inbox",
+            startedAt: Date(timeIntervalSince1970: 1000))
+        row.appendFrameID(old.id)
+        row.appendFrameID(fresh.id)
+        row.lastObservedAt = Date()
+        ctx.insert(row)
+        try ctx.save()
+
+        _ = try ScreenRetention.prune(in: ctx, rawDays: 1, observationDays: 180)
+
+        let kept = try XCTUnwrap(ctx.fetch(FetchDescriptor<ContextVisitRecord>()).first)
+        XCTAssertEqual(kept.frameIDs, [fresh.id],
+                       "the aged-out frame must not stay in the list as a dead link")
+    }
+
     func testFrameIDsAreBounded() throws {
         let ctx = try makeContext()
         let v = visit()

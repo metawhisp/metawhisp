@@ -80,6 +80,23 @@ enum ScreenRetention {
             let visits = try ctx.fetchCount(
                 FetchDescriptor<ContextVisitRecord>(predicate: visitPred))
             if visits > 0 { try ctx.delete(model: ContextVisitRecord.self, where: visitPred) }
+            // A surviving visit can still point at frames that just aged out:
+            // the two age on different clocks (a long visit outlives its
+            // oldest rows). A dangling id is a promise the app cannot keep —
+            // "open the source" leads nowhere — so the list is trimmed to the
+            // frames that still exist.
+            let keptPred = #Predicate<ContextVisitRecord> { $0.startedAt < cut }
+            let kept = (try? ctx.fetch(FetchDescriptor<ContextVisitRecord>(predicate: keptPred))) ?? []
+            for row in kept {
+                let ids = row.frameIDs
+                guard !ids.isEmpty else { continue }
+                let alive = ids.filter { id in
+                    var d = FetchDescriptor<ScreenContext>(predicate: #Predicate { $0.id == id })
+                    d.fetchLimit = 1
+                    return (try? ctx.fetch(d))?.isEmpty == false
+                }
+                if alive.count != ids.count { row.setFrameIDs(alive) }
+            }
             observations += runs + recs + visits
         }
         if contexts + observations > 0 { try ctx.save() }

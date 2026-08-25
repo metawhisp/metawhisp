@@ -85,6 +85,15 @@ final class ContextVisitRecord {
         return (try? JSONDecoder().decode([UUID].self, from: data)) ?? []
     }
 
+    /// Replace the frame list — used by retention when rows it points at have
+    /// aged out, so "open the source" never leads to a row that is gone.
+    func setFrameIDs(_ ids: [UUID]) {
+        let bounded = ids.count > Self.maxFrameIDs
+            ? Array(ids.suffix(Self.maxFrameIDs)) : ids
+        frameIDsJSON =
+            (try? String(data: JSONEncoder().encode(bounded), encoding: .utf8) ?? "[]") ?? "[]"
+    }
+
     /// Append an accepted frame, keeping the newest `maxFrameIDs`.
     func appendFrameID(_ frameID: UUID) {
         var ids = frameIDs
