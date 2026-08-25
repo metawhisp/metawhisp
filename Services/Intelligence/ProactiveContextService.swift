@@ -220,7 +220,7 @@ final class ProactiveContextService: ObservableObject {
         let (evidence, evidenceIDs) = ScreenAgentCandidateAdapter.evidence(
             contextID: ctx.id, ocrText: ctx.ocrText, history: history)
         let candidate = ScreenAgentCandidateAdapter.candidate(from: insight, citing: evidenceIDs)
-        let decision = ScreenAgentDirector.decide(
+        var decision = ScreenAgentDirector.decide(
             candidates: [candidate],
             evidence: evidence,
             screenText: ctx.ocrText,
@@ -228,6 +228,38 @@ final class ProactiveContextService: ObservableObject {
             rejectedSignatures: AppDelegate.shared?.screenAgentDelivery?
                 .rejectedSignatures() ?? []
         )
+
+        // ITER-069 — the one vision call, spent exactly where the spec says:
+        // text produced a concrete claim that only eyes can verify. Consent is
+        // read live, the frame must be the same generation, and the answer is
+        // judged by the same director with nothing else relaxed.
+        if case .silence(.needsVision) = decision,
+           settings.screenAgentVisualConsent,
+           let visionClient = AppDelegate.shared?.screenAgentVision {
+            let outcome = await visionClient.analyzeCurrentFrame(
+                contextID: ctx.id,
+                visualConsentGranted: { AppSettings.shared.screenAgentVisualConsent },
+                isStillCurrent: { [weak self] in
+                    self?.purgeEpoch == epoch
+                        && AppDelegate.shared?.screenContext.lastAcceptedContextID == ctx.id
+                })
+            if case .facts(let facts) = outcome, !facts.isEmpty {
+                let (seeingEvidence, seeingIDs) = ScreenAgentCandidateAdapter.evidence(
+                    contextID: ctx.id, ocrText: ctx.ocrText,
+                    history: history, visualFacts: facts)
+                var seeingCandidate = ScreenAgentCandidateAdapter.candidate(
+                    from: insight, citing: seeingIDs)
+                seeingCandidate.visualEvidenceIDs = facts.map(\.evidenceID)
+                decision = ScreenAgentDirector.decide(
+                    candidates: [seeingCandidate],
+                    evidence: seeingEvidence,
+                    screenText: ctx.ocrText,
+                    recentHeadlines: recentDeliveredHeadlines(),
+                    rejectedSignatures: AppDelegate.shared?.screenAgentDelivery?
+                        .rejectedSignatures() ?? []
+                )
+            }
+        }
         guard case .item(let directedHeadline, let directedBody, _) = decision else {
             if case .silence(let reason) = decision {
                 NSLog("[Proactive] silent — %@", reason.rawValue)

@@ -77,6 +77,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     /// store is available.
     private(set) var screenAgentDelivery: ScreenAgentDeliveryService?
 
+    /// ITER-069 — the vision boundary: injected production transport, frame
+    /// cache owned by capture, one call per run.
+    private(set) var screenAgentVision: ScreenAgentVisionClient?
+
     /// Open the Inbox on a specific comment. Wired in ITER-068 to the MetaChat
     /// surface; for now it brings the window forward so a clicked card leads
     /// somewhere instead of vanishing.
@@ -997,6 +1001,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         // Realtime task reactor (ITER-006): fire LLM task classifier on each new ScreenContext.
         // Self-gated by settings toggle + debounce — wiring is fire-and-forget.
         screenAgentDelivery = ScreenAgentDeliveryService(container: historyService.modelContainer)
+        screenAgentVision = ScreenAgentVisionClient(
+            transport: ScreenAgentProVisionTransport(
+                licenseKey: { LicenseService.shared.licenseKey }),
+            cache: screenContext.frameCache)
         realtimeScreenReactor.configure(modelContainer: historyService.modelContainer)
         realtimeScreenReactor.meetingRecorder = meetingRecorder
         screenContext.onContextPersisted = { [weak self] ctx in

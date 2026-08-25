@@ -19,13 +19,19 @@ enum ScreenAgentCandidateAdapter {
     static func evidence(
         contextID: UUID,
         ocrText: String,
-        history: [InsightInvestigator.Snapshot] = []
+        history: [InsightInvestigator.Snapshot] = [],
+        visualFacts: [ScreenAgentVisionResponse.VisualFact] = []
     ) -> (evidence: ScreenAgentEvidence, ids: [String]) {
         var refs: [ScreenAgentEvidence.Ref] = [
             .init(id: evidenceID, contextID: contextID, text: ocrText)
         ]
         for (index, snapshot) in history.prefix(400).enumerated() {
             refs.append(.init(id: "h\(index)", contextID: contextID, text: snapshot.ocr))
+        }
+        // ITER-069 — what the vision model verified about this exact frame.
+        // Server-issued IDs; the model never mints its own.
+        for fact in visualFacts {
+            refs.append(.init(id: fact.evidenceID, contextID: contextID, text: fact.statement))
         }
         return (ScreenAgentEvidence(refs), refs.map(\.id))
     }
