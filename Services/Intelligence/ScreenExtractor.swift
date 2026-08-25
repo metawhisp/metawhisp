@@ -251,6 +251,15 @@ final class ScreenExtractor: ObservableObject {
                     continue
                 }
                 let evidence = taskJson.evidence?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                // ITER-066 — the quote must occur in the preview the model was
+                // shown. The preview is exactly its input, so a quote that is
+                // not in it was not read off the screen, it was made up.
+                guard ScreenAgentEvidence.normalize(v.ocrPreview)
+                    .contains(ScreenAgentEvidence.normalize(evidence)) else {
+                    NSLog("[ScreenExtractor] Task evidence not in visit OCR, skipping: %@",
+                          String(trimmedDesc.prefix(60)))
+                    continue
+                }
                 guard evidence.count >= TaskExtractionFilters.minEvidenceChars else {
                     NSLog("[ScreenExtractor] Evidence too weak (%d chars), skipping: %@",
                           evidence.count, String(trimmedDesc.prefix(60)))

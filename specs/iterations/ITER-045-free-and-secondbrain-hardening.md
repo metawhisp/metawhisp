@@ -218,6 +218,50 @@ JSON doesn't block retries; toggling a Second Brain feature takes effect immedia
 - Iter4: deleted file absent from RAG after scan (SB-4); 100 notes, first 40 done → scan continues from 41 (SB-5);
   broken weekly JSON → retry not blocked 6 days (SB-6).
 
+## Review Iter 1 (Fable, 2026-06-09, commit 2c44cae) — ПРИНЯТО с хвостами
+
+FREE-1..4 реально закрыты: настоящая загрузка модели + auto-load + гейт на «loaded» (не «on disk»),
+SecureField + валидация ключа через /models (ключ сохраняется только после успеха), `noAPIKey`-ошибка,
+verify-on-disk перед `.done`. Гейт NEXT централизован в контейнере (страницей не обойти). Pro-активация
+mid-onboarding разблокирует реактивно (activate() → engine="cloud" → path .cloud → isPro ✓ — проверено
+по LicenseService.swift:93–95). Чистая `OnboardingReadiness` + 3 тест-файла — ок.
+
+Хвосты (Iter 1.1):
+- [ ] **FREE-6 (P2). Provider mismatch в онбординге.** Cloud-таб обещает «OpenAI-compatible key», но
+  валидация идёт в дефолтный провайдер `groq` (`AppSettings.swift:25`); ключ OpenAI `sk-…` падает с
+  «Key didn't validate». Фикс: автодетект префикса (`sk-`→openai, `gsk_`→groq) или переключатель
+  провайдера на табе; выставлять `cloudTranscriptionProvider` соответственно.
+- [ ] **FREE-7 (P2/P3). Флаг не знает, КАКАЯ модель загружена.** `$phase`-sink гардится
+  `!engine.isModelLoaded` (`AppDelegate.swift:449–450`): скачал Tiny (авто-загрузился) → скачал Large
+  (selectedModel=large) → Large не загружается, `whisperModelLoaded=true` для Tiny, NEXT проходит,
+  диктовка идёт на Tiny. Смена `selectedModel` в Settings (`MainSettingsView.swift:342`) тоже не
+  перезагружает модель (pre-existing). Фикс: трекать `loadedModelId`, reload при несовпадении.
+- [ ] **FREE-8 (P3). Заблокированный NEXT без объяснения.** Только opacity 0.4 + disabled; добавить
+  подпись «Download a model or verify a key to continue». Также окно «✓ на карточке, но NEXT ещё
+  заблокирован», пока модель грузится после `.done` — показать «Loading model…».
+- [ ] **FREE-9 (P3, решение продукта).** Нет escape hatch: без модели/ключа/Pro пользователь жёстко
+  заперт на странице 2 (нет «Set up later»). Если осознанно — зафиксировать здесь; нет — добавить выход.
+- [ ] **FREE-10 (nit).** `OnboardingReadiness.Path.pro` недостижим (path выводится только из
+  transcriptionEngine; Pro всегда приходит как .cloud) — убрать или замаппить. `cloudKeyValidated` не
+  сбрасывается при редактировании ключа после успешной верификации (✓ остаётся до нового VERIFY).
+
+Верификация: ревью статическое (Linux-песочница — macOS-билд не прогнать); «442 passed» из коммита
+не перепроверен — прогнать `swift test` локально перед релизом.
+
+## Review Iter 1.1 (Fable, 2026-06-10, commit b4757cc) — ПРИНЯТО
+
+FREE-6 ✓ (detectProvider по префиксу + выравнивание провайдера, тесты), FREE-7 ✓ (сделано лучше
+запрошенного: `loadedWhisperModelId` вместо bool + reload при смене модели в Settings — закрыт и
+pre-existing баг), FREE-8 ✓, FREE-9 ✓ («set up later», задокументированное продуктовое решение),
+FREE-10 ✓ (сброс ✓ при правке ключа, мёртвый `.pro` удалён вместе с тестом). Отметить чекбоксы
+Iter 1.1 выше — код сделан, спека отстаёт.
+
+Новое замечание:
+- [ ] **N1 (P3, продуктовое).** `init()`/`activate()`/теперь и `verify()` принудительно переключают
+  Pro-пользователя с ondevice на cloud — выбор on-device (приватность) не переживает перезапуск.
+  Pre-existing (init), b4757cc усилил для консистентности. Фикс: одноразовый
+  `didAutoSwitchToCloudForPro`-флаг вместо переключения при каждой верификации.
+
 ## Risks / rollback
 
 - **LIC-1** is the riskiest: tightening Pro gating can lock out legitimate offline Pro users. Mitigate with a

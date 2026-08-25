@@ -172,6 +172,56 @@ final class ScreenAgentDirectorTests: XCTestCase {
         XCTAssertFalse(ScreenAgentDirector.carriesSecret("A credential is visible in Terminal"))
     }
 
+    /// Codex's required first replay case, as a direct unit test: a claim that
+    /// reverses what the screen says carries a genuine anchor and is still a
+    /// fabrication. "4021" is really there; "failed" is the lie.
+    func testAClaimReversingTheScreenIsSilenced() {
+        let screen = "CI: Build 4021 passed on main"
+        let ev = ScreenAgentEvidence([.init(id: "e1", contextID: UUID(), text: screen)])
+        let c = ScreenAgentDirector.Candidate(
+            headline: "Build 4021 failed", body: "", citedEvidenceIDs: ["e1"],
+            quote: "4021", confidence: 0.97, namesReferent: true)
+        XCTAssertEqual(
+            ScreenAgentDirector.decide(candidates: [c], evidence: ev,
+                                       screenText: screen, recentHeadlines: []),
+            .silence(.ungrounded))
+    }
+
+    /// Matching polarity is not a contradiction — a failing build may genuinely
+    /// be worth mentioning.
+    func testMatchingPolarityStillSpeaks() {
+        let screen = "CI reports: build 4021 has failed on main"
+        let ev = ScreenAgentEvidence([.init(id: "e1", contextID: UUID(), text: screen)])
+        let c = ScreenAgentDirector.Candidate(
+            headline: "Build 4021 failed on CI", body: "", citedEvidenceIDs: ["e1"],
+            quote: "4021", confidence: 0.9, namesReferent: true)
+        guard case .item = ScreenAgentDirector.decide(
+            candidates: [c], evidence: ev, screenText: screen, recentHeadlines: [])
+        else { return XCTFail("a true failure report must not be silenced") }
+    }
+
+    /// A CI page listing both passes and failures decides nothing.
+    func testAScreenShowingBothPolaritiesIsNotAContradiction() {
+        XCTAssertFalse(ScreenAgentDirector.contradictsScreen(
+            "Build 4021 failed", screen: "4020 passed, 4021 failed, 4022 passed"))
+    }
+
+    /// A real time plus an invented count: the first anchor being true must not
+    /// carry the second.
+    func testEveryAnchorMustHoldNotJustTheFirst() {
+        let screen = "review on ScreenContextService.swift — 2 unresolved comments — due 16:00"
+        let ev = ScreenAgentEvidence([.init(id: "e1", contextID: UUID(), text: screen)])
+        let c = ScreenAgentDirector.Candidate(
+            headline: "ScreenContextService.swift has 13 unresolved comments, due 16:00",
+            body: "", citedEvidenceIDs: ["e1"], quote: "16:00",
+            confidence: 0.9, namesReferent: true,
+            anchors: ["16:00", "13"])
+        XCTAssertEqual(
+            ScreenAgentDirector.decide(candidates: [c], evidence: ev,
+                                       screenText: screen, recentHeadlines: []),
+            .silence(.ungrounded))
+    }
+
     // MARK: helpers
 
     func testNearDuplicateIgnoresFillerWords() {

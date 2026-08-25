@@ -202,6 +202,16 @@ final class RealtimeScreenReactor: ObservableObject {
 
             // Evidence gate — LLM must cite verbatim OCR proof.
             let evidence = parsed.evidence?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            // ITER-066 — and the proof has to actually occur in the screen it
+            // claims to prove. Length alone let a fabricated 20-character quote
+            // create a task; the stronger normalized-substring rule existed in
+            // TaskFulfillment all along and never guarded creation.
+            guard ScreenAgentEvidence.normalize(context.ocrText)
+                .contains(ScreenAgentEvidence.normalize(evidence)) else {
+                NSLog("[RealtimeReactor] Evidence quote not present in OCR, skipping: %@",
+                      String(trimmedDesc.prefix(60)))
+                return
+            }
             guard evidence.count >= TaskExtractionFilters.minEvidenceChars else {
                 NSLog("[RealtimeReactor] Evidence too weak (%d chars), skipping: %@",
                       evidence.count, String(trimmedDesc.prefix(60)))

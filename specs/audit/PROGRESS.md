@@ -178,3 +178,45 @@ Added 2026-06-07: report-only current-code review is recorded in
 - Application source edits: none
 - Main risk cluster: silent skips/stale side effects across extraction,
   MetaChat mutations, Obsidian, MCP, file RAG and Apple Notes state
+
+## Full Project Code Review Addendum
+
+Added 2026-07-09: report-only current-code review is recorded in
+`specs/audit/FULL-PROJECT-CODE-REVIEW-2026-07-09.md`.
+
+- Proven current-code findings: `14`
+- Priorities: `4 critical`, `8 major`, `2 minor`
+- Application source edits: none
+- Build/test execution: not run; `specs/HANDOFF.md` forbids `swift build` /
+  `swift test` without explicit user request
+- Main risk clusters: privacy-contract mismatch for screen/file context,
+  durable logs with private content, auth deep-link without state, Pro
+  transcription prompt in URL query, local-LLM-over-cloud fallback policy,
+  swallowed saves around user-visible state, and release/repo hygiene
+
+## Feature-by-Feature Review Addendum
+
+Added 2026-08-16: report-only feature and product-block review is recorded in
+specs/audit/FEATURE-BLOCK-BY-BLOCK-REVIEW-2026-08-16.md.
+
+- Covered: 29 product blocks, 192 Swift source files, and 93 XCTest files.
+- Active findings: 3 critical, 11 major, 3 minor.
+- Static syntax parse: passed for app, MCP target, and tests.
+- Build/test execution: not run; specs/HANDOFF.md requires explicit user authorization for swift build / swift test.
+- Application source edits: none.
+- Current fix order: privacy/auth/cloud-data boundaries, data preservation, integration correctness, then release/repository enforcement.
+
+## Screen-Aware Agent Quality Review Addendum
+
+Added 2026-08-23: report-only comparison and current-code review is recorded in
+`specs/audit/SCREEN-AWARE-AGENT-QUALITY-REVIEW-2026-08-23.md`.
+
+- Reference baseline: fresh public snapshot from 2026-08-23; external names and local clone paths are omitted from the report.
+- MetaWhisp baseline: `a4bf18ded608d9d1efa7e6dcb0df3f73900097ce`.
+- Findings: `7 P0`, `7 P1`, `1 P2`.
+- Main root cause: multiple partial screen-intelligence loops share OCR but not one visit identity, grounding contract, decision authority, delivery lifecycle or evaluation harness.
+- Highest-priority fixes: stale-context fences and newest-context coalescing, faithful focused-window capture, evidence refs, unified delivery, fail-closed whitelist and replay benchmark.
+- Deliverables: comparison matrix, current/target Mermaid diagrams, six architecture decisions, five user stories, six implementation iterations, NFRs and 22 corner cases.
+- Owner-readable behavior, UI proposal, seven primary acceptance tests and plain-language outcomes for all 22 corner cases: `specs/audit/SCREEN-AGENT-PLAIN-LANGUAGE-SPEC-RU-2026-08-23.md`.
+- Application source edits: none.
+- Build/test execution: not run; project rules require explicit user authorization.

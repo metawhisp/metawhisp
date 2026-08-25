@@ -60,18 +60,42 @@ struct ScreenAgentEvidence {
         guard let quote, !quote.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             return nil
         }
-        let needle = Self.normalize(quote)
-        // A one- or two-character "quote" substring-matches almost any screen,
-        // so it evidences nothing while looking like it does. Short but real
-        // quotes — a time, a name — still clear this.
-        guard needle.count >= Self.minimumQuoteCharacters else { return .quoteNotInSource }
-        let found = cited.contains { Self.normalize($0.text).contains(needle) }
-        return found ? nil : .quoteNotInSource
+        return check([quote], against: cited)
     }
 
-    /// Below this a quote cannot be told apart from a coincidence. Deliberately
-    /// low: "16:00" is exactly the kind of specific thing worth quoting.
-    static let minimumQuoteCharacters = 3
+    /// Every quote must be present, not just the first one found. A headline
+    /// naming a real time and an invented count used to pass because only the
+    /// strongest anchor was checked.
+    func validate(citedIDs: [String], quotes: [String]) -> Rejection? {
+        guard !citedIDs.isEmpty else { return .noEvidence }
+        var cited: [Ref] = []
+        for id in citedIDs {
+            guard let ref = refs[id] else { return .unknownReference(id) }
+            cited.append(ref)
+        }
+        let real = quotes.filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+        guard !real.isEmpty else { return nil }
+        return check(real, against: cited)
+    }
+
+    private func check(_ quotes: [String], against cited: [Ref]) -> Rejection? {
+        let haystacks = cited.map { Self.normalize($0.text) }
+        for quote in quotes {
+            let needle = Self.normalize(quote)
+            // A one- or two-character "quote" substring-matches almost any
+            // screen, so it evidences nothing while looking like it does.
+            // Short but real quotes — a time, a name — still clear this.
+            guard needle.count >= Self.minimumQuoteCharacters else { return .quoteNotInSource }
+            guard haystacks.contains(where: { $0.contains(needle) }) else { return .quoteNotInSource }
+        }
+        return nil
+    }
+
+    /// Below this a quote cannot be told apart from a coincidence. Two, not
+    /// three: auto-extracted anchors include two-digit counts — "13 unresolved
+    /// comments" — and a threshold that drops them cannot catch an invented
+    /// count. A single character substring-matches everything and stays out.
+    static let minimumQuoteCharacters = 2
 
     /// Lowercased, whitespace-collapsed. OCR spacing is not stable enough to
     /// compare literally, and being strict about it would reject real quotes.

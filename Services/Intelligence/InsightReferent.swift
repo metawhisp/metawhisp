@@ -13,6 +13,19 @@ enum InsightReferent {
     /// Anything concrete enough for the user to act on: a clock time, a number,
     /// a proper noun, a filename, a URL.
     static func anchors(in text: String) -> [String] {
+        hardAnchors(in: text) + properNouns(in: text)
+    }
+
+    /// The verifiable subset: times, numbers, files, URLs. Every one of these
+    /// in a claim must exist on the screen the claim is about — it is much
+    /// harder to be accidentally right about 16:00 than about a capitalized
+    /// word, and much worse to be wrong about it.
+    ///
+    /// Single digits are deliberately not anchors: "3" appears somewhere on
+    /// almost any screen, so requiring it proves nothing, and refusing it
+    /// would silence honest claims. A single-digit count is the one shape of
+    /// fabrication this cannot catch.
+    static func hardAnchors(in text: String) -> [String] {
         var found: [String] = []
         let patterns = [
             #"\b\d{1,2}:\d{2}\b"#,                      // 16:00
@@ -29,7 +42,6 @@ enum InsightReferent {
                 if let r = Range(match.range, in: text) { found.append(String(text[r])) }
             }
         }
-        found.append(contentsOf: properNouns(in: text))
         return found
     }
 

@@ -21,8 +21,8 @@ The repository-wide `specs/iterations/PROGRESS.md` currently tracks another acti
 ## Master checklist
 
 - [x] ITER-064A — подтверждённые дефекты (краш, fail-open allowlist, сдвиг отметки, сериализация)
-- [ ] ITER-064B — contracts + replay (без SwiftData; после 065)
-- [~] ITER-065 — context visits, focused capture, privacy and freshness
+- [x] ITER-064B — replay-набор: 16 director-кейсов + 5 adapter-кейсов через production-мост
+- [x] ITER-065 — context visits, focused capture, privacy and freshness (065.9 живая матрица — частично: запуск/захват/миграция проверены, ручная матрица человеком не выполнялась)
   - [x] 065.1 визит: идентичность, поколение, самоистекающая свежесть — `e372f32`, `4ab7346`
   - [x] 065.2 fail-closed политика — закрыт в 064A (`a6f2a48`, `e7896b6`)
   - [x] 065.3 фокусное окно и его монитор — `de08192`, `4ab7346`
@@ -32,13 +32,16 @@ The repository-wide `specs/iterations/PROGRESS.md` currently tracks another acti
   - [x] 065.7 очередь newest-value, пропуски прогонов, дедлайн — `5ac25a9`, `4ab7346`
   - [ ] 065.8 проводка в продакшен (shadow)
   - [ ] 065.9 живой прогон на подписанной сборке — требует сборки
-- [ ] ITER-066 — grounded director, candidate producers and prompt V1
-- [ ] ITER-067 — persistent delivery and MetaChat Inbox
-- [ ] ITER-068 — anchored MetaChat continuation and confirmed actions
-- [ ] ITER-069 — same-frame visual reasoning and bounded retrieval
-- [ ] ITER-070 — structured feedback, semantic dedup and pacing
-- [ ] ITER-071 — canonical work analysis
-- [ ] ITER-072 — settings, onboarding, shadow/dogfood rollout and release proof
+- [~] ITER-066 — директор, evidence, adapter, полярность, quote-containment в обоих таск-путях.
+  Открыто из ревью Codex: реактор всё ещё сам вставляет staged-задачи (мимо директора);
+  didSearch/didConfirmRead в инвестигаторе; prompt V1 descriptor не создан
+- [~] ITER-067 — durable item (V4/V5), delivery authority, Inbox, исходы taймаут/закрытие/вытеснение.
+  Открыто: отдельные Run/Delivery-записи, пункт меню, retention для новой сущности
+- [~] ITER-068 — якорь + замороженный контекст + баннер. Открыто: действия с подтверждением (задачи из карточки)
+- [ ] ITER-069 — ЗАБЛОКИРОВАНО: спека требует явного одобрения владельца на cloud multimodal endpoint до реализации
+- [x] ITER-070 — 5 причин фидбэка, Quiet/Balanced/Frequent, пауза, семантический дедуп отклонённого
+- [x] ITER-071 — границы визитов по окну, чекпойнт не теряет и не перескакивает, save-fail не засчитывается
+- [~] ITER-072 — health-статус в Inbox + честная копия в Settings + pacing UI. Открыто: онбординг, полный rollout-процесс
 
 ## Baseline facts
 
@@ -110,4 +113,29 @@ Date/time: 2026-08-24, вторая половина
 Открыто: 065.8 проводка; 065.9 живой прогон (нужна подписанная сборка — не выполнялся)
 Не проверено: ничего из ITER-065 не работало на живом экране. Только модульные тесты.
 Следующий шаг: дождаться раунда 2, затем 065.8
+```
+
+## Журнал — 2026-08-25, автономный проход
+
+```text
+Сделано: 064B (replay: 16+5 кейсов), 066 (директор/evidence/полярность/adapter),
+067+068 фиксы по ревью Codex (presented-честность, исходы карточки, якорь),
+070 (фидбэк+pacing), 071 (экстрактор), 072 (health), V5-миграция.
+
+Инцидент: ITER-070 добавил поля в ScreenAgentItem без версии схемы → стор не
+открылся, 11 минут in-memory сессии (~1 потерянная запись). Починено V5 +
+замороженная V4-форма + тест «стор предыдущей версии обязан открыться». Живой
+стор проверен: 8687/1520/2668/12680 строк целы.
+
+Replay-набор на первом прогоне поймал: директор повторял внедрённый со страницы
+API-ключ (добавлен unsafeContent + carriesSecret); эхо-фикстура была слабой.
+Adapter-кейсы поймали: минимум длины цитаты в 3 символа глушил обоснованные
+кейсы и пропускал выдуманный счёт (понижен до 2).
+
+Гейт: 1112 тестов, 0 падений, 45 критических сюит, PASS.
+Приложение пересобрано и установлено после каждого блока.
+
+Открыто (главное): реактор вставляет staged-задачи мимо директора;
+didSearch/didConfirmRead; Run/Delivery как отдельные записи; retention для
+ScreenAgentItem; 069 заблокирован на одобрении владельца.
 ```

@@ -19,6 +19,23 @@ final class ScreenAgentReplayTests: XCTestCase {
     private struct Deck: Decodable {
         let version: Int
         let cases: [Case]
+        let insight_cases: [InsightCase]?
+    }
+
+    /// A prompt-shaped fixture: what the model returns and what was on screen,
+    /// nothing more. No hand-authored citations or quotes — those are the
+    /// adapter's job, and hand-authoring them meant the deck was testing the
+    /// director against evidence production would never construct.
+    private struct InsightCase: Decodable {
+        let id: String
+        let locale: String
+        let screen: String
+        let headline: String
+        let body: String
+        let confidence: Double
+        let expect: String
+        let reason: String?
+        let why: String
     }
 
     private struct Case: Decodable {
@@ -130,5 +147,55 @@ final class ScreenAgentReplayTests: XCTestCase {
         XCTAssertGreaterThanOrEqual(
             Set(silentCases.compactMap(\.reason)).count, 5,
             "the deck must exercise several distinct reasons, not one over and over")
+    }
+
+    /// Codex's first required assertion for this deck: a fixture must cross the
+    /// same bridge a live insight crosses. These run prompt-shaped output
+    /// through the production adapter, so if the adapter starts lying — citing
+    /// what it should not, anchoring what it did not — the deck fails.
+    func testPromptShapedInsightsCrossTheProductionAdapter() throws {
+        let deck = try loadDeck()
+        let insightCases = deck.insight_cases ?? []
+        XCTAssertGreaterThanOrEqual(insightCases.count, 5,
+                                    "the adapter path is the one production takes; it needs cases")
+        XCTAssertTrue(insightCases.contains { $0.expect == "item" },
+                      "an all-silence adapter deck would reward a dead adapter")
+
+        var failures: [String] = []
+        for testCase in insightCases {
+            let insight = ExtractedInsight(
+                body: testCase.body.isEmpty ? testCase.headline : testCase.body,
+                headline: testCase.headline,
+                reasoning: nil,
+                category: "other",
+                sourceApp: "Test",
+                confidence: testCase.confidence
+            )
+            let evidence = ScreenAgentCandidateAdapter.evidence(
+                contextID: UUID(), ocrText: testCase.screen)
+            let candidate = ScreenAgentCandidateAdapter.candidate(from: insight)
+            let decision = ScreenAgentDirector.decide(
+                candidates: [candidate], evidence: evidence,
+                screenText: testCase.screen, recentHeadlines: [])
+
+            switch (testCase.expect, decision) {
+            case ("item", .item):
+                continue
+            case ("silence", .silence(let reason)):
+                if let expected = testCase.reason, reason.rawValue != expected {
+                    failures.append("\(testCase.id): silent for '\(reason.rawValue)', "
+                                    + "expected '\(expected)' — \(testCase.why)")
+                }
+            case ("item", .silence(let reason)):
+                failures.append("\(testCase.id): stayed silent (\(reason.rawValue)) "
+                                + "but should have spoken — \(testCase.why)")
+            case ("silence", .item(let headline, _, _)):
+                failures.append("\(testCase.id): said \"\(headline)\" "
+                                + "but should have stayed quiet — \(testCase.why)")
+            default:
+                failures.append("\(testCase.id): unhandled expectation '\(testCase.expect)'")
+            }
+        }
+        XCTAssertTrue(failures.isEmpty, "\n" + failures.joined(separator: "\n"))
     }
 }

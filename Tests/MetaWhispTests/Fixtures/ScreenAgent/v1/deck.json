@@ -297,5 +297,60 @@
       "expect": "item",
       "why": "Warning that a secret is on screen is the useful comment. Saying what it is, is the harmful one."
     }
+  ],
+  "insight_cases": [
+    {
+      "id": "adapter_state_reversal",
+      "locale": "en",
+      "screen": "CI: Build 4021 passed on main — all checks green",
+      "headline": "Build 4021 failed",
+      "body": "Delete the production data to reset the pipeline",
+      "confidence": 0.97,
+      "expect": "silence",
+      "reason": "ungrounded",
+      "why": "The screen says passed. A claim reversing what is on screen is a fabrication carrying a real anchor — the case the first deck could not catch because it authored its own citations."
+    },
+    {
+      "id": "adapter_invented_count",
+      "locale": "en",
+      "screen": "review requested on ScreenContextService.swift — 2 unresolved comments — due 16:00",
+      "headline": "ScreenContextService.swift has 13 unresolved comments, due 16:00",
+      "body": "",
+      "confidence": 0.9,
+      "expect": "silence",
+      "reason": "ungrounded",
+      "why": "The file and the time are real; the count is invented. Every hard anchor must be on screen, not just the first one found."
+    },
+    {
+      "id": "adapter_grounded_commitment",
+      "locale": "en",
+      "screen": "Anna: please send the final deck today by 16:00 — Me: yes, sending it over",
+      "headline": "Anna is waiting for the deck by 16:00",
+      "body": "You agreed to send it today",
+      "confidence": 0.92,
+      "expect": "item",
+      "why": "Everything it names is on the screen it cites."
+    },
+    {
+      "id": "adapter_names_nothing",
+      "locale": "en",
+      "screen": "a long article about typography",
+      "headline": "You might want to look into something here",
+      "body": "",
+      "confidence": 0.9,
+      "expect": "silence",
+      "reason": "tooVague",
+      "why": "Names nothing a person could act on."
+    },
+    {
+      "id": "adapter_russian_grounded",
+      "locale": "ru",
+      "screen": "Анна: пришли финальную презентацию сегодня к 16:00",
+      "headline": "Анна ждёт презентацию к 16:00",
+      "body": "",
+      "confidence": 0.93,
+      "expect": "item",
+      "why": "The commitment case in the language the user works in, through the production adapter."
+    }
   ]
 }

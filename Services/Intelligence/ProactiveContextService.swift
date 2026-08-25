@@ -181,22 +181,10 @@ final class ProactiveContextService: ObservableObject {
         // describes, and deliberately so: it catches the failure that actually
         // shipped — a comment asserting something the current screen does not
         // say — rather than pretending a richer contract exists.
-        let evidence = ScreenAgentEvidence([
-            .init(id: "e1", contextID: ctx.id, text: ctx.ocrText)
-        ])
-        let candidate = ScreenAgentDirector.Candidate(
-            headline: insight.headline?.trimmingCharacters(in: .whitespacesAndNewlines) ?? insight.body,
-            body: insight.body,
-            citedEvidenceIDs: ["e1"],
-            // The prompt does not ask for a quote, so the strongest thing the
-            // comment names stands in for one: if it says 16:00 or a filename,
-            // that had better be on the screen it claims to be about.
-            quote: InsightReferent.strongestAnchor(
-                insight.headline ?? insight.body),
-            confidence: Double(insight.confidence),
-            namesReferent: InsightReferent.namesSomethingSpecific(
-                insight.headline ?? insight.body)
-        )
+        // ITER-066 — production and the replay deck share this adapter, so a
+        // fixture exercises the exact bridge a live insight crosses.
+        let evidence = ScreenAgentCandidateAdapter.evidence(contextID: ctx.id, ocrText: ctx.ocrText)
+        let candidate = ScreenAgentCandidateAdapter.candidate(from: insight)
         let decision = ScreenAgentDirector.decide(
             candidates: [candidate],
             evidence: evidence,

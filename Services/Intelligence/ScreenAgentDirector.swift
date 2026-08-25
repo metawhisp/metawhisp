@@ -28,6 +28,10 @@ enum ScreenAgentDirector {
         /// Whether the claim names something specific — a person, a file, a
         /// time, a field. A comment that names nothing cannot be acted on.
         var namesReferent: Bool
+        /// Every verifiable thing the claim names — times, numbers, files.
+        /// Each must exist in the cited evidence, not just the first one: a
+        /// headline naming a real time and an invented count used to pass.
+        var anchors: [String] = []
     }
 
     enum Decision: Equatable {
@@ -96,8 +100,18 @@ enum ScreenAgentDirector {
         guard best.confidence >= minimumConfidence else { return .silence(.lowConfidence) }
         guard best.namesReferent else { return .silence(.tooVague) }
 
-        if let rejection = evidence.validate(citedIDs: best.citedEvidenceIDs, quote: best.quote) {
+        let quotes = (best.quote.map { [$0] } ?? []) + best.anchors
+        if let rejection = evidence.validate(citedIDs: best.citedEvidenceIDs, quotes: quotes) {
             NSLog("[ScreenAgentDirector] suppressed — %@", String(describing: rejection))
+            return .silence(.ungrounded)
+        }
+
+        // A claim that reverses what the screen says is a fabrication with a
+        // real anchor in it: "Build 4021 failed" over a screen that says 4021
+        // passed cites a genuine number and lies about its state. The word the
+        // claim uses is absent, its opposite is present — that is not a
+        // paraphrase, it is a reversal.
+        if contradictsScreen(best.headline + " " + best.body, screen: screenText) {
             return .silence(.ungrounded)
         }
 
@@ -140,6 +154,31 @@ enum ScreenAgentDirector {
             guard let regex = try? NSRegularExpression(pattern: pattern) else { continue }
             let range = NSRange(text.startIndex..., in: text)
             if regex.firstMatch(in: text, range: range) != nil { return true }
+        }
+        return false
+    }
+
+    /// State words that come in opposing pairs. The list is short and boring on
+    /// purpose: each pair has to be unambiguous enough that the claim using one
+    /// while the screen shows the other can only be a reversal. Everyday words
+    /// like "open"/"closed" are too common to mean anything here.
+    static let polarityPairs: [(String, String)] = [
+        ("passed", "failed"), ("succeeded", "failed"), ("enabled", "disabled"),
+        ("approved", "rejected"), ("online", "offline"),
+        ("connected", "disconnected"),
+    ]
+
+    static func contradictsScreen(_ claim: String, screen: String) -> Bool {
+        let claimWords = Set(ScreenAgentEvidence.normalize(claim)
+            .components(separatedBy: CharacterSet.alphanumerics.inverted))
+        let screenWords = Set(ScreenAgentEvidence.normalize(screen)
+            .components(separatedBy: CharacterSet.alphanumerics.inverted))
+        for (a, b) in polarityPairs {
+            // Both directions; and only when the claim's word is absent from
+            // the screen while its opposite is present. A screen showing both
+            // (a CI page listing passes and failures) decides nothing.
+            if claimWords.contains(a), !screenWords.contains(a), screenWords.contains(b) { return true }
+            if claimWords.contains(b), !screenWords.contains(b), screenWords.contains(a) { return true }
         }
         return false
     }
