@@ -199,6 +199,12 @@ final class ProactiveContextService: ObservableObject {
         let runID = ctx.id
         // ── Hard gates ────────────────────────────────────────────────
         guard settings.proactiveEnabled, settings.screenContextEnabled else { return }
+        // Codex P0 — the fanout defers through unstructured tasks, so a
+        // context can arrive here AFTER «Delete screen history» ran between
+        // dispatch and start. Its OCR describes rows that no longer exist and
+        // must not reach a model. After a purge there is no accepted screen,
+        // so the identity check refuses exactly the smuggled context.
+        guard AppDelegate.shared?.screenContext.lastAcceptedContextID == ctx.id else { return }
         // ITER-070 follow-up (Codex) — one pacing choice governs the cost gate
         // too. The legacy cooldown sat in front of the delivery gate, so
         // "Frequent" was silently overridden by whatever the old slider said.

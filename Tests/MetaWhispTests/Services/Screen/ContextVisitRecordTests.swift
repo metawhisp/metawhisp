@@ -101,6 +101,29 @@ final class ContextVisitRecordTests: XCTestCase {
         XCTAssertEqual(rows.first?.invalidationReason, "startup_reconcile")
     }
 
+    /// The mark can accept what the coordinator calls unchanged (spinner
+    /// glyph in the title, identical content). The row still belongs to the
+    /// ongoing visit and must not go unstamped.
+    func testAnUnchangedProposalStillStampsTheOngoingVisit() throws {
+        let ctx = try makeContext()
+        let v = visit(title: "Inbox")
+        let frame1 = UUID(), frame2 = UUID()
+        ScreenContextService.upsertVisitRecord(
+            proposal: .opened(v), acceptedContextID: frame1,
+            captureState: "captured", token: 1, in: ctx)
+        ScreenContextService.upsertVisitRecord(
+            proposal: .unchanged, currentVisit: v, acceptedContextID: frame2,
+            captureState: "captured", token: 1, in: ctx)
+        try ctx.save()
+
+        let rows = try ctx.fetch(FetchDescriptor<ContextVisitRecord>())
+        XCTAssertEqual(rows.count, 1)
+        XCTAssertEqual(rows.first?.frameIDs, [frame1, frame2],
+                       "the unchanged frame still belongs to this visit")
+        XCTAssertEqual(rows.first?.latestScreenContextID, frame2)
+        XCTAssertEqual(rows.first?.generation, 0, "unchanged must not bump the generation")
+    }
+
     func testFrameIDsAreBounded() throws {
         let ctx = try makeContext()
         let v = visit()

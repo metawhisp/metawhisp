@@ -37,6 +37,12 @@ final class ScreenContextService: ObservableObject {
         // The shadow forgets with it — a purged visit must not stay current.
         visitCoordinator.invalidateAll()
         lastCommittedToken = 0
+        // Codex P0 — a context queued across the purge boundary could still
+        // pass the "is this the accepted screen" check and send deleted OCR
+        // to analysis. After a purge there IS no accepted screen.
+        lastAcceptedContextID = nil
+        recentVisitByContext.removeAll()
+        recentVisitOrder.removeAll()
     }
 
     private var monitorTask: Task<Void, Never>?
@@ -55,6 +61,12 @@ final class ScreenContextService: ObservableObject {
     /// Interim in-process change token (FNV-1a of the accepted OCR) until the
     /// content-fingerprint iteration. Never comparable across launches.
     private var lastCommittedToken = 0
+    /// One divergence log per transition, not one per tick: a >300s pause
+    /// otherwise logs the same expected gap-expiry ~120×/hour (Codex).
+    private var loggedQuietDivergence = false
+    /// Throttle for durable keep-alive touches on quiet ticks — retention
+    /// must not delete a visit the user is still sitting in (Codex).
+    private var lastQuietDurableTouch: Date?
 
     /// Deterministic across the process, unlike `hashValue` (per-process
     /// seeded): FNV-1a over UTF-8.
@@ -102,9 +114,23 @@ final class ScreenContextService: ObservableObject {
     /// consumer's signature changing. Bounded; consumers read immediately
     /// after persist.
     private var recentVisitByContext: [UUID: (id: UUID, generation: Int)] = [:]
+    private var recentVisitOrder: [UUID] = []
 
     func visitIdentity(for contextID: UUID) -> (id: UUID, generation: Int)? {
         recentVisitByContext[contextID]
+    }
+
+    /// FIFO eviction — a burst clear was erasing identities that in-flight
+    /// model runs still needed (Codex).
+    private func rememberVisit(_ identity: (id: UUID, generation: Int),
+                               for contextID: UUID) {
+        if recentVisitByContext[contextID] == nil {
+            recentVisitOrder.append(contextID)
+            if recentVisitOrder.count > 64 {
+                recentVisitByContext.removeValue(forKey: recentVisitOrder.removeFirst())
+            }
+        }
+        recentVisitByContext[contextID] = identity
     }
 
     /// ITER-069 — the one frame vision may look at. Populated only under the
@@ -127,13 +153,33 @@ final class ScreenContextService: ObservableObject {
         Self.reconcileOpenVisits(in: ctx)
     }
 
+    /// A quiet hour still counts as being there: bump the open visit's
+    /// durable lastObservedAt at most once an hour, or a dashboard the user
+    /// stares at for eight days gets retention-deleted as eight days old.
+    private func touchDurableVisitIfStale() {
+        let now = Date()
+        if let last = lastQuietDurableTouch, now.timeIntervalSince(last) < 3600 { return }
+        guard let container = modelContainer,
+              let visitID = visitCoordinator.current?.id else { return }
+        lastQuietDurableTouch = now
+        let ctx = ModelContext(container)
+        var descriptor = FetchDescriptor<ContextVisitRecord>(
+            predicate: #Predicate { $0.id == visitID })
+        descriptor.fetchLimit = 1
+        guard let row = (try? ctx.fetch(descriptor))?.first else { return }
+        row.lastObservedAt = now
+        try? ctx.save()
+    }
+
     /// Close visit rows a dead process left open. Reason code only.
     static func reconcileOpenVisits(in ctx: ModelContext, now: Date = Date()) {
         let openPred = #Predicate<ContextVisitRecord> { $0.endedAt == nil }
         guard let open = try? ctx.fetch(FetchDescriptor<ContextVisitRecord>(predicate: openPred)),
               !open.isEmpty else { return }
         for row in open {
-            row.endedAt = now
+            // Close at the last REAL observation — closing at relaunch time
+            // fabricated hours of activity across the downtime (Codex).
+            row.endedAt = row.lastObservedAt
             row.invalidationReason = "startup_reconcile"
         }
         try? ctx.save()
@@ -145,6 +191,7 @@ final class ScreenContextService: ObservableObject {
     /// expired, a different one means the user switched.
     static func upsertVisitRecord(
         proposal: ContextVisitCoordinator.Proposal,
+        currentVisit: ContextVisit? = nil,
         acceptedContextID: UUID,
         captureState: String,
         token: Int,
@@ -153,6 +200,19 @@ final class ScreenContextService: ObservableObject {
     ) {
         switch proposal {
         case .unchanged:
+            // The mark can accept what the coordinator calls unchanged (a
+            // spinner glyph in the title, identical content). The row still
+            // belongs to the ONGOING visit — it must not go unstamped (Codex).
+            guard let currentVisit else { return }
+            let visitID = currentVisit.id
+            var descriptor = FetchDescriptor<ContextVisitRecord>(
+                predicate: #Predicate { $0.id == visitID })
+            descriptor.fetchLimit = 1
+            guard let row = (try? ctx.fetch(descriptor))?.first else { return }
+            row.lastObservedAt = now
+            row.captureState = captureState
+            row.latestScreenContextID = acceptedContextID
+            row.appendFrameID(acceptedContextID)
             return
         case .opened(let visit):
             let openPred = #Predicate<ContextVisitRecord> { $0.endedAt == nil }
@@ -462,9 +522,13 @@ final class ScreenContextService: ObservableObject {
             if case .unchanged = proposal {
                 visitCoordinator.commit(proposal, contentHash: lastCommittedToken,
                                         at: visitClock.now)
-            } else {
+                touchDurableVisitIfStale()
+            } else if !loggedQuietDivergence {
+                // Expected after any >300s pause (the mark has no time
+                // dimension); said once per transition, not once per tick.
                 NSLog("[VisitShadow] diverged on quiet tick: mark=unchanged shadow=%@",
                       String(describing: proposal).hasPrefix("opened") ? "opened" : "changed")
+                loggedQuietDivergence = true
             }
             return
         }
@@ -514,6 +578,7 @@ final class ScreenContextService: ObservableObject {
                 }
                 visitCoordinator.commit(proposal, contentHash: token, at: visitClock.now)
                 lastCommittedToken = token
+                loggedQuietDivergence = false
             }
         }
     }
@@ -559,6 +624,8 @@ final class ScreenContextService: ObservableObject {
             return nil
         }
         let image = shot.image
+        // Prefer the identity read from the window that was actually captured.
+        let boundTitle = shot.windowTitle.flatMap { $0.isEmpty ? nil : $0 } ?? windowTitle
 
         // The frame rides WITH its snapshot, never through shared state: a
         // field here let a voice capture overwrite a poll capture mid-OCR and
@@ -574,7 +641,7 @@ final class ScreenContextService: ObservableObject {
         let snapshot = ScreenContextSnapshot(
             timestamp: Date(),
             appName: appName,
-            windowTitle: windowTitle,
+            windowTitle: boundTitle,
             ocrText: ocrText,
             bundleID: bundleID,
             windowID: shot.windowID
@@ -587,7 +654,7 @@ final class ScreenContextService: ObservableObject {
     }
 
     /// Capture a screenshot of the screen using ScreenCaptureKit.
-    private func captureScreenshot(frontPID: pid_t) async -> (image: CGImage, windowID: Int)? {
+    private func captureScreenshot(frontPID: pid_t) async -> (image: CGImage, windowID: Int, windowTitle: String?)? {
         guard #available(macOS 14.0, *) else { return nil }
 
         guard CGPreflightScreenCaptureAccess() else {
@@ -643,7 +710,10 @@ final class ScreenContextService: ObservableObject {
                 contentFilter: filter,
                 configuration: config
             )
-            return (image, chosenID)
+            // The chosen window's OWN title: the AX title was sampled before
+            // the SCShareableContent await, and focus can move between two
+            // windows of one app in that gap — pixels from B labelled A.
+            return (image, chosenID, window.title)
         } catch {
             NSLog("[ScreenContext] Screenshot failed: %@", error.localizedDescription)
             lastCaptureOutcome = .captureFailed
@@ -666,19 +736,18 @@ final class ScreenContextService: ObservableObject {
         ctx.insert(record)
         // Visit-wiring step 4 — the durable visit row rides the SAME save as
         // the screen row it describes: both land or neither does.
+        var visitIdentity: (id: UUID, generation: Int)?
         if let visitProposal {
             Self.upsertVisitRecord(
-                proposal: visitProposal, acceptedContextID: record.id,
+                proposal: visitProposal,
+                currentVisit: visitCoordinator.current,
+                acceptedContextID: record.id,
                 captureState: "captured", token: visitToken, in: ctx)
-            // Step 5 — remember which visit this row belongs to, for the
-            // items born from it. Burst-cleared, not LRU: lookups happen
-            // right after persist, staleness has no value here.
-            if case .opened(let visit) = visitProposal {
-                if recentVisitByContext.count > 64 { recentVisitByContext.removeAll() }
-                recentVisitByContext[record.id] = (visit.id, visit.generation)
-            } else if case .changed(let visit) = visitProposal {
-                if recentVisitByContext.count > 64 { recentVisitByContext.removeAll() }
-                recentVisitByContext[record.id] = (visit.id, visit.generation)
+            switch visitProposal {
+            case .opened(let visit), .changed(let visit):
+                visitIdentity = (visit.id, visit.generation)
+            case .unchanged:
+                visitIdentity = visitCoordinator.current.map { ($0.id, $0.generation) }
             }
         }
         do {
@@ -694,6 +763,11 @@ final class ScreenContextService: ObservableObject {
         }
 
         lastCaptureOutcome = .captured(ocrCharacters: snapshot.ocrText.count)
+        // Step 5, after the save only — a failed save must not mutate the map
+        // (a ghost mapping for a row that never landed, Codex).
+        if let visitIdentity {
+            rememberVisit(visitIdentity, for: record.id)
+        }
         // ITER-067 — the screen the user is on right now, as far as capture
         // knows. Read at the last moment before interrupting, so a comment
         // about a window they have already left can be recognised as such.
