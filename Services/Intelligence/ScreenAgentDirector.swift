@@ -101,10 +101,20 @@ enum ScreenAgentDirector {
         // Two proposals of equal standing mean the producers disagree, and
         // picking by array order is how the wrong one gets shown.
         if ranked.count > 1, let second = ranked.dropFirst().first,
-           abs(best.confidence - second.confidence) < 0.05 {
+           // The tolerance is for floating point, not policy: 0.95 − 0.90 is
+           // 0.04999… in doubles, and without it the exact boundary — a winner
+           // by the full margin — fell into "ambiguous".
+           (0.05 - abs(best.confidence - second.confidence)) > 1e-9 {
             return .silence(.ambiguous)
         }
 
+        // Ported case class from the reference deck: malformed confidence.
+        // NaN already failed the floor by comparison rules, but +infinity and
+        // 9.9 sailed over it — a broken number is not extreme sureness, it is
+        // a malformed answer, and malformed answers do not interrupt people.
+        guard best.confidence.isFinite, best.confidence <= 1.0 else {
+            return .silence(.lowConfidence)
+        }
         guard best.confidence >= minimumConfidence else { return .silence(.lowConfidence) }
         guard best.namesReferent else { return .silence(.tooVague) }
 
@@ -291,6 +301,10 @@ enum ScreenAgentDirector {
             "the", "a", "an", "is", "are", "was", "to", "for", "of", "on", "in",
             "at", "by", "and", "or", "it", "this", "that", "you", "your",
             "и", "в", "на", "с", "по", "к", "у", "не", "что", "это",
+            // Codex asked what dedup does to a German or Spanish headline:
+            // fillers polluted the sets and weakened it. Same list shape.
+            "der", "die", "das", "und", "ist", "für", "von", "mit", "auf", "ein", "eine",
+            "el", "la", "los", "las", "de", "en", "es", "un", "una", "por", "para", "con", "que",
         ]
         return Set(
             ScreenAgentEvidence.normalize(text)

@@ -296,6 +296,122 @@
       ],
       "expect": "item",
       "why": "Warning that a secret is on screen is the useful comment. Saying what it is, is the harmful one."
+    },
+    {
+      "id": "silence_malformed_confidence",
+      "locale": "en",
+      "screen": "Anna: send the deck today by 16:00",
+      "candidates": [
+        {
+          "headline": "Anna needs the deck by 16:00",
+          "confidence": 9.9,
+          "cited": [
+            "e1"
+          ],
+          "quote": "16:00"
+        }
+      ],
+      "expect": "silence",
+      "reason": "lowConfidence",
+      "why": "Ported case class from the reference deck: a broken number is a malformed answer, not extreme sureness."
+    },
+    {
+      "id": "notify_exact_ambiguity_boundary",
+      "locale": "en",
+      "screen": "Anna: send the deck today by 16:00. Build 4021 failed on main.",
+      "candidates": [
+        {
+          "headline": "Anna needs the deck by 16:00",
+          "confidence": 0.95,
+          "cited": [
+            "e1"
+          ],
+          "quote": "16:00"
+        },
+        {
+          "headline": "Build 4021 failed on main",
+          "confidence": 0.9,
+          "cited": [
+            "e1"
+          ],
+          "quote": "4021"
+        }
+      ],
+      "expect": "item",
+      "why": "Exactly 0.05 apart is the boundary: a winner by the full margin is a winner, or the tie rule silences everything."
+    },
+    {
+      "id": "referent_file_build_failure",
+      "locale": "en",
+      "screen": "CI: build failed in StreamingResampler.swift on branch fix/audio — assertion line 88",
+      "candidates": [
+        {
+          "headline": "Build failing in StreamingResampler.swift on fix/audio",
+          "confidence": 0.9,
+          "cited": [
+            "e1"
+          ],
+          "quote": "StreamingResampler.swift"
+        }
+      ],
+      "expect": "item",
+      "why": "Reference referent class: the file and branch are the identifier, copied as spelled."
+    },
+    {
+      "id": "referent_person_request",
+      "locale": "ru",
+      "screen": "Павел: можешь глянуть мой PR до вечера? Это блокирует релиз",
+      "candidates": [
+        {
+          "headline": "Павел просит глянуть его PR до вечера",
+          "confidence": 0.9,
+          "cited": [
+            "e1"
+          ],
+          "quote": "Павел"
+        }
+      ],
+      "expect": "item",
+      "why": "Reference referent class: the person who asked is the identifier."
+    },
+    {
+      "id": "referent_no_identifier",
+      "locale": "en",
+      "screen": "several windows, a dashboard, an inbox",
+      "candidates": [
+        {
+          "headline": "A document needs review",
+          "confidence": 0.9,
+          "cited": [
+            "e1"
+          ],
+          "quote": null
+        }
+      ],
+      "expect": "silence",
+      "reason": "tooVague",
+      "why": "Reference: 'document needs review' identifies nothing; a message the user cannot connect to one specific thing is not worth an interruption."
+    },
+    {
+      "id": "dedup_german_filler_does_not_defeat_it",
+      "locale": "de",
+      "screen": "Anna: schick das Deck heute bis 16:00",
+      "candidates": [
+        {
+          "headline": "Anna wartet auf das Deck bis 16:00",
+          "confidence": 0.92,
+          "cited": [
+            "e1"
+          ],
+          "quote": "16:00"
+        }
+      ],
+      "recent": [
+        "Das Deck ist für Anna bis 16:00 fällig"
+      ],
+      "expect": "silence",
+      "reason": "duplicate",
+      "why": "Codex: German fillers polluted the word sets and let a reworded repeat through."
     }
   ],
   "insight_cases": [

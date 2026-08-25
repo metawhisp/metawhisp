@@ -45,17 +45,39 @@ enum InsightReferent {
         return found
     }
 
-    /// Capitalized words that are not simply the start of a sentence. Crude on
+    /// Sentence starters that are capitalized by grammar, not because they
+    /// name anyone. The first word of a headline is where a Russian or English
+    /// name most naturally sits — "Павел просит…", "Anna is waiting…" — so
+    /// skipping position zero wholesale was throwing away the most common
+    /// referent position; the deck caught it silencing a named request.
+    private static let sentenceStarters: Set<String> = [
+        "the", "this", "that", "these", "those", "you", "your", "a", "an", "it", "we",
+        "check", "reply", "update", "consider", "send", "review", "add", "verify",
+        "open", "close", "fix", "try", "use", "make", "please", "remember", "look",
+        "возможно", "проверь", "проверьте", "ответь", "ответьте", "отправь", "обнови",
+        "добавь", "исправь", "открой", "стоит", "нужно", "кажется", "похоже",
+        "ты", "вы", "это", "не", "давай", "помни", "посмотри",
+        // Vague pronouns gesture, they do not name. "Something may need your
+        // attention" is the canonical comment that teaches people to stop
+        // reading the feature.
+        "something", "someone", "somebody", "anything", "nothing", "everything",
+        "there", "here", "maybe", "perhaps",
+        "что-то", "кто-то", "ничего", "всё", "все", "возможно",
+    ]
+
+    /// Capitalized words that read as names rather than as grammar. Crude on
     /// purpose: it is a hint that something specific is named, not a parser.
     static func properNouns(in text: String) -> [String] {
         let words = text.components(separatedBy: CharacterSet.whitespacesAndNewlines)
         var out: [String] = []
         for (index, raw) in words.enumerated() {
             let word = raw.trimmingCharacters(in: .punctuationCharacters)
-            guard word.count > 2, index > 0 else { continue }
+            guard word.count > 2 else { continue }
             guard let first = word.unicodeScalars.first, CharacterSet.uppercaseLetters.contains(first)
             else { continue }
             guard word != word.uppercased() || word.count <= 5 else { continue }  // skip SHOUTING
+            // Position zero counts unless it is capitalized by grammar alone.
+            if index == 0, sentenceStarters.contains(word.lowercased()) { continue }
             out.append(word)
         }
         return out
