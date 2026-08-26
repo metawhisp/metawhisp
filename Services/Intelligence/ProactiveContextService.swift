@@ -241,10 +241,16 @@ final class ProactiveContextService: ObservableObject {
         runHandleBox.id = runHandle
         var runOutcome = "abandoned"
         var runEvidence: [String] = []
+        // Which rule sheet this run actually used. The row opens before the
+        // route is chosen — history is fetched further down — so this stays
+        // empty until the assistant reports back, and empty means "not
+        // measured", never "the default one" (Codex).
+        var runPromptVersion = ""
         defer {
             if let runHandle {
                 journal?.completeRun(runID: runHandle, outcomeReason: runOutcome,
-                                     evidenceRefs: runEvidence)
+                                     evidenceRefs: runEvidence,
+                                     promptVersion: runPromptVersion)
             }
         }
 
@@ -295,6 +301,7 @@ final class ProactiveContextService: ObservableObject {
             }
         )
         insight = evaluation?.insight
+        runPromptVersion = evaluation?.promptVersion ?? ""
 
         guard let insight else {
             runOutcome = "noProposal"

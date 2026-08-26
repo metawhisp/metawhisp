@@ -42,9 +42,18 @@ struct PromptDescriptor {
 /// record which text produced it.
 enum ScreenAgentPrompts {
 
-    /// The rule sheet that decides whether the agent speaks at all.
+    /// The rule sheet that decides whether the agent speaks at all — the
+    /// single-pass route, taken only when there is no screen history to dig
+    /// through.
     static let insight = PromptDescriptor(
         name: "insight", version: 1, text: InsightPrompts.systemPrompt)
+    /// The route production actually takes. With history in hand the assistant
+    /// investigates with tools under a different rule sheet, and signing the
+    /// single-pass text for both meant an edit to the real prompt left every
+    /// run holding the old signature (Codex).
+    static let insightInvestigation = PromptDescriptor(
+        name: "insight-investigation", version: 1,
+        text: InsightPrompts.investigationSystemPrompt)
     /// The single-window task classifier.
     static let task = PromptDescriptor(
         name: "task", version: 1, text: RealtimeScreenReactor.systemPrompt)

@@ -362,6 +362,44 @@ extension ScreenAgentDeliveryTests {
                        "the signature is a pure function of the text")
     }
 
+    /// The run that actually happens is the investigation: with screen history
+    /// in hand the assistant sends `investigationSystemPrompt`, and that is the
+    /// text whose wording decides whether the agent speaks. Signing the
+    /// single-pass prompt for both routes meant editing the real production
+    /// prompt changed behaviour while every run kept the old signature, so
+    /// "after which prompt edit did it get worse?" answered confidently and
+    /// wrongly (Codex).
+    func testTheInvestigationPromptIsSignedApartFromTheSinglePass() {
+        XCTAssertNotEqual(ScreenAgentPrompts.insightInvestigation.version,
+                          ScreenAgentPrompts.insight.version,
+                          "two different texts cannot share one identity")
+        XCTAssertTrue(
+            ScreenAgentPrompts.insightInvestigation.version.hasPrefix("insight-investigation.v"))
+    }
+
+    /// A run opens before its route is known — history is fetched after the row
+    /// exists — so the true prompt identity can only be recorded at completion.
+    /// An unmeasured route must not erase a measured one, the same rule
+    /// `modelRoute` already follows.
+    @MainActor
+    func testCompletingARunCorrectsThePromptItRecorded() throws {
+        let (service, container) = try makeService()
+        let runID = try XCTUnwrap(
+            service.beginRun(contextID: UUID(), trigger: "contextAccepted",
+                             deadlineAt: Date().addingTimeInterval(10)))
+        service.completeRun(runID: runID, outcomeReason: "advice",
+                            promptVersion: ScreenAgentPrompts.insightInvestigation.version)
+        var run = try XCTUnwrap(
+            ModelContext(container).fetch(FetchDescriptor<ScreenAgentRun>()).first)
+        XCTAssertEqual(run.promptVersion, ScreenAgentPrompts.insightInvestigation.version)
+
+        service.completeRun(runID: runID, outcomeReason: "advice")
+        run = try XCTUnwrap(
+            ModelContext(container).fetch(FetchDescriptor<ScreenAgentRun>()).first)
+        XCTAssertEqual(run.promptVersion, ScreenAgentPrompts.insightInvestigation.version,
+                       "not-measured must not overwrite a measurement")
+    }
+
     /// The interaction ends the presentation's lifecycle.
     @MainActor
     func testAnInteractionTerminalizesTheDeliveryRecord() throws {

@@ -68,6 +68,10 @@ final class InsightAssistantService: ObservableObject {
     struct Evaluation {
         let insight: ExtractedInsight
         let retrieved: [InsightInvestigator.RetrievedRef]
+        /// Which rule sheet produced this. There are two routes and they use
+        /// different texts; recording one identity for both made the journal's
+        /// "which prompt edit changed the behaviour" query wrong (Codex).
+        let promptVersion: String
     }
 
     func evaluate(
@@ -132,7 +136,8 @@ final class InsightAssistantService: ObservableObject {
                                                  searchMemories: searchMemories) {
             case let .advice(insight, retrieved):
                 guard let accepted = acceptCandidate(insight) else { return nil }
-                return Evaluation(insight: accepted, retrieved: retrieved)
+                return Evaluation(insight: accepted, retrieved: retrieved,
+                                  promptVersion: ScreenAgentPrompts.insightInvestigation.version)
             case let .none(reason):
                 NSLog("[Insight] investigation → no advice: %@", String(reason.prefix(120)))
                 return nil
@@ -154,7 +159,10 @@ final class InsightAssistantService: ObservableObject {
         switch InsightOutputParser.parse(jsonString: raw) {
         case let .provideInsight(insight):
             // Non-investigator path retrieves nothing.
-            return acceptCandidate(insight).map { Evaluation(insight: $0, retrieved: []) }
+            return acceptCandidate(insight).map {
+                Evaluation(insight: $0, retrieved: [],
+                           promptVersion: ScreenAgentPrompts.insight.version)
+            }
 
         case let .noInsight(reason):
             NSLog("[Insight] no advice: %@", reason)

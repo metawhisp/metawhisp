@@ -315,7 +315,8 @@ final class ScreenAgentDeliveryService {
     /// the run (they used to be discarded with it). Writes final truth even
     /// over a watchdog's "expired": the run really did end this way, late.
     func completeRun(runID: UUID, outcomeReason: String,
-                     evidenceRefs: [String] = [], modelRoute: String = "") {
+                     evidenceRefs: [String] = [], modelRoute: String = "",
+                     promptVersion: String = "") {
         let context = ModelContext(container)
         var descriptor = FetchDescriptor<ScreenAgentRun>(
             predicate: #Predicate { $0.id == runID })
@@ -332,6 +333,10 @@ final class ScreenAgentDeliveryService {
         // Empty means "not measured", and not-measured must not erase a
         // measurement recorded earlier.
         if !modelRoute.isEmpty { run.modelRoute = modelRoute }
+        // The route is chosen after the row opens, so the prompt identity
+        // written at `beginRun` is a guess. The one that actually produced this
+        // run overwrites it — and, like `modelRoute`, silence does not.
+        if !promptVersion.isEmpty { run.promptVersion = promptVersion }
         do {
             try context.save()
         } catch {
