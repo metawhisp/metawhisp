@@ -24,11 +24,26 @@ struct ScreenAgentInboxView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            Picker("", selection: $filter) {
-                ForEach(Filter.allCases) { Text($0.rawValue).tag($0) }
+            // The house filter bar, not the system segmented control: that one
+            // paints itself with the OS accent, which is blue on a Mac and has
+            // nothing to do with this app's monochrome palette.
+            HStack(spacing: 8) {
+                ForEach(Filter.allCases) { option in
+                    let isActive = filter == option
+                    Text(option.rawValue.uppercased())
+                        .font(MW.label)
+                        .tracking(0.8)
+                        .foregroundStyle(isActive ? MW.textPrimary : MW.textMuted)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 4)
+                        .background(isActive ? MW.elevated : .clear)
+                        .overlay(Rectangle().stroke(isActive ? MW.borderLight : MW.border,
+                                                    lineWidth: MW.hairline))
+                        .contentShape(Rectangle())
+                        .onTapGesture { filter = option }
+                }
+                Spacer(minLength: 0)
             }
-            .pickerStyle(.segmented)
-            .labelsHidden()
             .padding(.horizontal, 16)
             .padding(.vertical, 10)
 
@@ -124,15 +139,20 @@ struct ScreenAgentInboxView: View {
             }
 
             HStack(spacing: 10) {
+                // `.link` is system blue by definition. The primary action
+                // carries the app accent, the rest are quiet text.
                 Button("Ask MetaWhisp") { ask(item) }
-                    .buttonStyle(.link)
+                    .buttonStyle(.plain)
                     .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(MW.accent)
                 Button("Later") { mark(item, .later) }
-                    .buttonStyle(.link)
+                    .buttonStyle(.plain)
                     .font(.system(size: 11))
+                    .foregroundStyle(MW.textSecondary)
                 Button("Dismiss") { mark(item, .dismissed) }
-                    .buttonStyle(.link)
+                    .buttonStyle(.plain)
                     .font(.system(size: 11))
+                    .foregroundStyle(MW.textMuted)
                 Spacer(minLength: 0)
                 // Explicit and separate from closing. Each reason moves a
                 // different thing, which is the only reason to ask at all.
@@ -156,7 +176,7 @@ struct ScreenAgentInboxView: View {
             // A visible focus ring, not just a tint: keyboard users need to see
             // where they are.
             if focusedID == item.id {
-                Rectangle().fill(Color.accentColor).frame(width: 3)
+                Rectangle().fill(MW.accent).frame(width: 3)
             }
         }
         .contentShape(Rectangle())
@@ -197,8 +217,8 @@ struct ScreenAgentInboxView: View {
     }
 
     private func highlight(_ item: ScreenAgentItem) -> Color {
-        if focusedID == item.id { return Color.accentColor.opacity(0.12) }
-        if item.id == selectedID { return Color.accentColor.opacity(0.08) }
+        if focusedID == item.id { return MW.selectFill }
+        if item.id == selectedID { return MW.subtle }
         return .clear
     }
 
