@@ -189,13 +189,25 @@ enum InsightPrompts {
         windowTitle: String?,
         ocr: String,
         activitySummary: String,
-        previousInsights: [String]
+        previousInsights: [String],
+        context: InsightContextPack = InsightContextPack()
     ) -> String {
         var lines: [String] = []
         lines.append("CURRENT APP: \(appName).")
         if let t = windowTitle?.trimmingCharacters(in: .whitespacesAndNewlines),
            !t.isEmpty {
             lines.append("Window: \"\(t)\".")
+        }
+
+        // The user's own open work goes in BEFORE the screen. The model had
+        // tools to go looking for this and never used them once in thirty-six
+        // shipped comments; the reference implementation does not ask its model
+        // to look either — it puts the facts in the prompt. Data only: the
+        // workflow that says what to do with them lives in the system prompt.
+        let contextBlock = context.bounded().promptBlock()
+        if !contextBlock.isEmpty {
+            lines.append("")
+            lines.append(contextBlock)
         }
 
         let truncatedOCR = String(ocr.prefix(maxOCRChars))

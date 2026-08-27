@@ -57,6 +57,12 @@ final class InsightAssistantService: ObservableObject {
     /// in case some other path calls us re-entrantly.
     private(set) var isEvaluating: Bool = false
 
+    /// Injected records, in the shape the evidence allowlist speaks.
+    private func injectedRefs(from context: InsightContextPack)
+        -> [InsightInvestigator.RetrievedRef] {
+        context.bounded().allEntries.map { .init(id: $0.id, text: $0.text) }
+    }
+
     /// What the last `evaluate` cost and did. Read by the caller straight after
     /// the call and written to the run's metrics row.
     ///
@@ -90,7 +96,8 @@ final class InsightAssistantService: ObservableObject {
         licenseKey: String,
         history: [InsightInvestigator.Snapshot] = [],
         searchTasks: InsightInvestigator.StoreSearch? = nil,
-        searchMemories: InsightInvestigator.StoreSearch? = nil
+        searchMemories: InsightInvestigator.StoreSearch? = nil,
+        context: InsightContextPack = InsightContextPack()
     ) async -> Evaluation? {
         guard !isEvaluating else { return nil }
         isEvaluating = true
@@ -136,7 +143,8 @@ final class InsightAssistantService: ObservableObject {
             windowTitle: windowTitle,
             ocr: ocr,
             activitySummary: activitySummary,
-            previousInsights: recentInsights.map { $0.body }
+            previousInsights: recentInsights.map { $0.body },
+            context: context
         )
 
         // ITER-027.6 — INVESTIGATION path (the content fix for «бесполезные
@@ -159,7 +167,12 @@ final class InsightAssistantService: ObservableObject {
                                                  searchMemories: searchMemories) {
             case let .advice(insight, retrieved):
                 guard let accepted = acceptCandidate(insight) else { return nil }
-                return Evaluation(insight: accepted, retrieved: retrieved,
+                // A record placed in the prompt is as citable as one the model
+                // fetched: without this the grounding check meets a claim about
+                // a real open task, finds no matching evidence, and kills the
+                // comment as ungrounded.
+                let cited = injectedRefs(from: context) + retrieved
+                return Evaluation(insight: accepted, retrieved: cited,
                                   promptVersion: ScreenAgentPrompts.insightInvestigation.version)
             case let .none(reason):
                 NSLog("[Insight] investigation → no advice: %@", String(reason.prefix(120)))
@@ -183,7 +196,7 @@ final class InsightAssistantService: ObservableObject {
         case let .provideInsight(insight):
             // Non-investigator path retrieves nothing.
             return acceptCandidate(insight).map {
-                Evaluation(insight: $0, retrieved: [],
+                Evaluation(insight: $0, retrieved: injectedRefs(from: context),
                            promptVersion: ScreenAgentPrompts.insight.version)
             }
 

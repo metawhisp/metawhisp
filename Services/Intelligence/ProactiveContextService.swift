@@ -124,6 +124,50 @@ final class ProactiveContextService: ObservableObject {
         var id: UUID?
     }
 
+
+    /// The user's own open work, assembled for the prompt.
+    ///
+    /// Ported filter: rejected and unconfirmed rows stay out of prompts. A fact
+    /// the user has not agreed to is not something to reason from, and shipping
+    /// one back at them as if it were established is how a guess becomes a
+    /// quote.
+    private func buildContextPack() -> InsightContextPack {
+        guard let container = modelContainer else { return InsightContextPack() }
+        let context = ModelContext(container)
+        var pack = InsightContextPack()
+
+        var taskDescriptor = FetchDescriptor<TaskItem>(
+            predicate: #Predicate { !$0.isDismissed && !$0.completed },
+            sortBy: [SortDescriptor(\.createdAt, order: .reverse)])
+        taskDescriptor.fetchLimit = InsightContextPack.maxTasks * 2
+        let tasks = (try? context.fetch(taskDescriptor))?
+            .filter { $0.status != "staged" && $0.status != "dismissed" } ?? []
+        pack.tasks = tasks.prefix(InsightContextPack.maxTasks).map {
+            .init(id: "t-\($0.id.uuidString.prefix(8))",
+                  text: InsightContextPack.clip($0.taskDescription))
+        }
+
+        var memoryDescriptor = FetchDescriptor<UserMemory>(
+            predicate: #Predicate { !$0.isDismissed && !$0.needsReview },
+            sortBy: [SortDescriptor(\.createdAt, order: .reverse)])
+        memoryDescriptor.fetchLimit = InsightContextPack.maxMemories * 3
+        let memories = (try? context.fetch(memoryDescriptor)) ?? []
+        for memory in memories {
+            let entry = InsightContextPack.Entry(
+                id: "m-\(memory.id.uuidString.prefix(8))",
+                text: InsightContextPack.clip(memory.headline ?? memory.content))
+            // What the user stated about themselves is kept apart from what the
+            // app worked out. Merging them lets an inference be quoted back with
+            // the authority of something the user actually said.
+            if memory.kind == "stated" || memory.category == "user" {
+                pack.stated.append(entry)
+            } else {
+                pack.inferred.append(entry)
+            }
+        }
+        return pack.bounded()
+    }
+
     func onNewContext(_ ctx: ScreenContext) {
         Task { @MainActor [weak self] in
             guard let self else { return }
@@ -282,6 +326,7 @@ final class ProactiveContextService: ObservableObject {
         // read-only, one call per kind, through the same executor MetaChat
         // already trusts with its privacy filters. Nothing here may mutate.
         let toolExecutor = AppDelegate.shared?.chatService.toolExecutor
+        let contextPack = buildContextPack()
         let evaluation = await assistant.evaluate(
             appName: ctx.appName,
             windowTitle: ctx.windowTitle.isEmpty ? nil : ctx.windowTitle,
@@ -303,7 +348,10 @@ final class ProactiveContextService: ObservableObject {
                         .init(id: nil, tool: "searchMemories", args: ["query": query, "limit": "8"]))
                     return result.ok ? result.summary : "Error: memory search failed"
                 }
-            }
+            },
+            // The model had these as tools for its whole life and called them
+            // zero times in thirty-six comments. It is not asked any more.
+            context: contextPack
         )
         insight = evaluation?.insight
         runPromptVersion = evaluation?.promptVersion ?? ""
