@@ -371,7 +371,15 @@ final class ScreenAgentDeliveryService {
     /// `since` is the mark that makes the count clearable — anything queued
     /// before the user's last visit has been looked at, whatever the card
     /// itself did.
-    func unreadCount(since: Date) -> Int {
+    /// How far back a comment can be and still count as waiting.
+    static let unreadWindow: TimeInterval = 24 * 60 * 60
+
+    func unreadCount(since mark: Date, now: Date = Date()) -> Int {
+        // A comment from last week is not waiting for anyone — it is history,
+        // and counting it means the badge opens at «9+» on the first launch
+        // after this shipped and never means anything again. The window is a
+        // day because that is the rhythm the feature works on.
+        let since = max(mark, now.addingTimeInterval(-Self.unreadWindow))
         let context = ModelContext(container)
         let handled = [
             ScreenAgentDelivery.Interaction.opened.rawValue,

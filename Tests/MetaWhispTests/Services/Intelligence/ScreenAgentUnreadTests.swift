@@ -72,6 +72,26 @@ final class ScreenAgentUnreadTests: XCTestCase {
                        "a card older than the last look is not waiting for anyone")
     }
 
+    /// Nineteen comments were sitting in the journal the day this shipped, and
+    /// counting all of them would have opened the badge at «9+» forever. Only
+    /// the last day is still waiting for anyone.
+    func testYesterdaysCommentsHaveStoppedWaiting() throws {
+        let (service, container) = try makeService()
+        let item = makeItem()
+        XCTAssertNotNil(service.deliver(item, preflight: preflight()))
+        service.confirmPresented(itemID: item.id)
+        service.recordInteraction(.timedOut, itemID: item.id)
+
+        // Age the row past the window rather than waiting a day for it.
+        let context = ModelContext(container)
+        let record = try XCTUnwrap(
+            context.fetch(FetchDescriptor<ScreenAgentDeliveryRecord>()).first)
+        record.queuedAt = Date().addingTimeInterval(-ScreenAgentDeliveryService.unreadWindow - 60)
+        try context.save()
+
+        XCTAssertEqual(service.unreadCount(since: .distantPast), 0)
+    }
+
     /// A card that was pushed off the stack by newer ones was shown but may
     /// never have been read — the journal records `replaced` precisely so this
     /// case does not get filed as handled.
