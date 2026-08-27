@@ -426,30 +426,13 @@ struct MenuBarView: View {
 
     private var footer: some View {
         HStack(spacing: 4) {
-            // ITER-067 follow-up — a keyboard route to the newest comment. The
-            // popup deliberately never takes focus, which also means it can
-            // never be reached with the keyboard; this is the way in that does
-            // not depend on catching a card in six seconds.
-            Button {
-                if let newest = AppDelegate.shared?.screenAgentDelivery?
-                    .recentItems(limit: 1).first {
-                    AppDelegate.shared?.openScreenAgentInbox(selecting: newest.id)
-                } else {
-                    AppDelegate.shared?.openMainWindow(tab: .chat)
-                }
-            } label: {
-                HStack(spacing: 5) {
-                    Image(systemName: "tray").font(.system(size: 10, weight: .regular))
-                    Text("INBOX").font(MW.label).tracking(1.0)
-                }
-                .frame(maxWidth: .infinity)
-                .foregroundStyle(MW.textMuted)
-                .padding(.horizontal, 12).padding(.vertical, 6)
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(HoverButtonStyle(radius: MW.rSmall))
-            .accessibilityLabel("Open the newest Screen Agent comment")
-
+            // An INBOX button lived here for two days. It was added to solve
+            // "the popup never takes focus, so the Inbox has no keyboard
+            // route" — a real problem, answered in the wrong place and without
+            // being asked for. ⌘⌥O is the keyboard route now, the unread count
+            // beside the menu bar icon says when there is something to open,
+            // and the main window has always had the pane. Three ways in did
+            // not need a fourth crowding this footer.
             Button { openMainWindow() } label: {
                 HStack(spacing: 5) {
                     Image(systemName: "gearshape").font(.system(size: 10, weight: .regular))

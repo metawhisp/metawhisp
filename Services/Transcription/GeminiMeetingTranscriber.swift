@@ -113,7 +113,18 @@ final class GeminiMeetingTranscriber: @unchecked Sendable {
         return Int(digits) ?? 0
     }
 
-    /// Group consecutive words into utterances, breaking on a speaker change.
+    /// The longest silence that still belongs inside one utterance.
+    ///
+    /// Deepgram hands back finished utterances; Gemini hands back words, so the
+    /// grouping is ours to get right. Breaking only on a speaker change means
+    /// two remarks by the same person twenty minutes apart become one utterance
+    /// spanning twenty minutes — and the Me/Them decision is made by comparing
+    /// channel energy ACROSS an utterance's window, so a window that wide
+    /// averages the whole meeting and decides nothing.
+    static let maxSilenceInsideUtterance: Double = 1.5
+
+    /// Group consecutive words into utterances, breaking on a speaker change or
+    /// on a silence longer than `maxSilenceInsideUtterance`.
     ///
     /// `offsetSeconds` moves a slice's timings back onto the meeting's own
     /// clock, which is what lets the energy comparison look at the right piece
@@ -141,10 +152,18 @@ final class GeminiMeetingTranscriber: @unchecked Sendable {
                   let wordStart = parseOffset(word.startOffset) else { continue }
             let wordEnd = parseOffset(word.endOffset) ?? wordStart
             let speaker = speakerIndex(word.speaker)
-            if speaker != currentSpeaker {
+            let silence = wordStart - end
+            // A word timed BEFORE the run it would join is out of order, and
+            // stretching the window backwards to swallow it would hand the
+            // energy check audio from another turn. It starts a new one.
+            let outOfOrder = !currentWords.isEmpty && wordStart < start
+            if speaker != currentSpeaker
+                || (!currentWords.isEmpty && silence > Self.maxSilenceInsideUtterance)
+                || outOfOrder {
                 flush()
                 currentSpeaker = speaker
                 start = wordStart
+                end = wordStart
             }
             end = max(end, wordEnd)
             currentWords.append(text)

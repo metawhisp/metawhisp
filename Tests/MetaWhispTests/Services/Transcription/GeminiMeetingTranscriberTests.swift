@@ -167,4 +167,90 @@ final class GeminiMeetingTranscriberTests: XCTestCase {
         let response = try JSONDecoder().decode(G.Response.self, from: Data(json.utf8))
         XCTAssertTrue(G.words(from: response).isEmpty)
     }
+
+    // MARK: - Grouping, the hard cases
+
+    /// The defect this file caught. Gemini returns words, not utterances, so
+    /// breaking only on a speaker change joins two remarks by the same person
+    /// twenty minutes apart into one utterance twenty minutes wide. The Me/Them
+    /// decision compares channel energy ACROSS that window, and a window that
+    /// wide averages the entire meeting and decides nothing.
+    func testASilenceEndsTheUtteranceEvenWhenTheSpeakerDoesNotChange() {
+        let words = [
+            word("Before", "spk_1", "10.0s", "10.4s"),
+            word("After", "spk_1", "1210.0s", "1210.4s"),
+        ]
+        let utterances = G.utterances(from: words)
+        XCTAssertEqual(utterances.count, 2, "twenty minutes of silence is not one utterance")
+        XCTAssertEqual(utterances.map(\.transcript), ["Before", "After"])
+        for utterance in utterances {
+            XCTAssertLessThan(utterance.end - utterance.start, 5,
+                              "an utterance window must stay tight enough to measure")
+        }
+    }
+
+    /// A natural pause inside a sentence must not split it — the point is turn
+    /// boundaries, not breathing.
+    func testAShortPauseKeepsOneUtteranceTogether() {
+        let words = [
+            word("One", "spk_1", "1.0s", "1.3s"),
+            word("two", "spk_1", "2.0s", "2.3s"),
+        ]
+        XCTAssertEqual(G.utterances(from: words).map(\.transcript), ["One two"])
+    }
+
+    /// Timestamps that arrive out of order must not stretch a window backwards
+    /// over somebody else's turn.
+    func testAWordTimedBeforeItsRunStartsANewOne() {
+        let words = [
+            word("second", "spk_1", "20.0s", "20.4s"),
+            word("first", "spk_1", "1.0s", "1.4s"),
+        ]
+        let utterances = G.utterances(from: words)
+        XCTAssertEqual(utterances.count, 2)
+        for utterance in utterances {
+            XCTAssertLessThanOrEqual(utterance.start, utterance.end,
+                                     "an utterance cannot end before it begins")
+        }
+    }
+
+    /// Every window handed to the energy comparison has to be a real interval.
+    /// A zero-or-negative one reads as silence and flips the speaker.
+    func testEveryUtteranceWindowIsUsable() {
+        let words = (0..<40).map { i in
+            word("w\(i)", i % 3 == 0 ? "spk_1" : "spk_2",
+                 "\(Double(i) * 3.0)s", "\(Double(i) * 3.0 + 0.4)s")
+        }
+        for utterance in G.utterances(from: words) {
+            XCTAssertLessThanOrEqual(utterance.start, utterance.end)
+            XCTAssertFalse(utterance.transcript.isEmpty)
+        }
+    }
+
+    /// `spk_0` is a real label from the API and unknown speakers also land on
+    /// zero. They merge — worth knowing, because it means an unlabelled word
+    /// joins whoever the API called speaker zero rather than becoming a ghost
+    /// third participant. Pinned so a future change to either side is a
+    /// decision rather than a surprise.
+    func testUnknownSpeakersShareTheBucketWithSpeakerZero() {
+        XCTAssertEqual(G.speakerIndex("spk_0"), G.speakerIndex(nil))
+    }
+
+    /// A slice exactly the size of the cap is one request, not two — an
+    /// off-by-one here sends a second request carrying nothing.
+    func testAMeetingExactlyOneSliceLongIsNotSplit() {
+        let exact = Int(G.maxSliceSeconds * G.sampleRate)
+        XCTAssertEqual(G.sliceRanges(totalSamples: exact).count, 1)
+        XCTAssertEqual(G.sliceRanges(totalSamples: exact + 1).count, 2)
+    }
+
+    /// A response whose steps carry no content at all must not crash the
+    /// decode — the API is in public preview and its shape can move.
+    func testAnEmptyResponseDecodesToNothing() throws {
+        for json in ["{}", "{\"steps\":[]}", "{\"steps\":[{}]}",
+                     "{\"steps\":[{\"content\":[]}]}"] {
+            let response = try JSONDecoder().decode(G.Response.self, from: Data(json.utf8))
+            XCTAssertTrue(G.words(from: response).isEmpty, "failed on \(json)")
+        }
+    }
 }
