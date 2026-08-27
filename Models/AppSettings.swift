@@ -413,6 +413,14 @@ final class AppSettings: ObservableObject {
     /// transcribed via the user's own Deepgram account in one diarized pass
     /// (real speaker labels, 1× cost, никакого нашего воркера). Dictations
     /// are unaffected.
+    /// BYOK Gemini, for meetings only. Native speaker labels on the user's own
+    /// account — the same bargain the Deepgram key offers, with a different
+    /// provider and a thirty-minute-per-request diarization cap the transcriber
+    /// slices around.
+    @Published var geminiKey: String {
+        didSet { KeychainHelper.save(key: "com.metawhisp.geminiKey", value: geminiKey) }
+    }
+
     @Published var deepgramKey: String {
         didSet { KeychainHelper.save(key: "com.metawhisp.deepgramKey", value: deepgramKey) }
     }
@@ -422,6 +430,7 @@ final class AppSettings: ObservableObject {
         self.cerebrasKey = KeychainHelper.load(key: "com.metawhisp.cerebrasKey") ?? ""
         self.groqKey = KeychainHelper.load(key: "com.metawhisp.groqKey") ?? ""
         self.deepgramKey = KeychainHelper.load(key: "com.metawhisp.deepgramKey") ?? ""
+        self.geminiKey = KeychainHelper.load(key: "com.metawhisp.geminiKey") ?? ""
         Self.pinTranscriptionLanguageForExistingUsers()
     }
 

@@ -1890,6 +1890,33 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
                 }
             }
 
+            // Same bargain on a different provider, tried after Deepgram
+            // because Deepgram is generally available and this model is in
+            // public preview — and a preview model is exactly what took the
+            // vision path down this month when Groq withdrew llama-4. Failure
+            // falls through to the Whisper dual-stream below, same as above.
+            let geminiKey = AppSettings.shared.geminiKey
+            if !geminiKey.isEmpty {
+                let gStart = CFAbsoluteTimeGetCurrent()
+                do {
+                    let text = try await GeminiMeetingTranscriber()
+                        .transcribe(mic: micSamples, system: sysSamples, apiKey: geminiKey)
+                    let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+                    guard !trimmed.isEmpty else {
+                        throw GeminiMeetingTranscriber.GeminiError.emptyTranscript
+                    }
+                    let duration = Double(max(micSamples.count, sysSamples.count)) / 16000.0
+                    self.persistMeetingTranscript(fullText: trimmed, duration: duration,
+                                                  elapsed: CFAbsoluteTimeGetCurrent() - gStart)
+                    NSLog("[MetaWhisp] ✅ Meeting transcribed via Gemini BYOK: %.0fs audio in %.1fs",
+                          duration, CFAbsoluteTimeGetCurrent() - gStart)
+                    return
+                } catch {
+                    NSLog("[MetaWhisp] ⚠️ Gemini BYOK failed (%@) — falling back to Whisper dual-stream",
+                          error.localizedDescription)
+                }
+            }
+
             // Engine selection is the same for both paths — reads `coordinator.activeEngine`
             // at runtime so the user's current setting (cloud vs on-device) wins.
             guard let engine = coordinator.activeEngine, engine.isModelLoaded else {

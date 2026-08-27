@@ -154,8 +154,17 @@ struct DeepgramMeetingTranscriber {
     /// by ~700 MB on top of the retained channel buffers. Slice-wise mixing
     /// (same softClip math as `MeetingRecorder.mix`) keeps the overhead to
     /// ~2 MB regardless of meeting length; the upload then streams from disk.
-    static func writeMixedWAV(mic: [Float], system: [Float], to url: URL) throws -> Double {
-        let total = max(mic.count, system.count)
+    ///
+    /// `range` writes one slice of the meeting rather than all of it. Gemini
+    /// caps diarized audio at thirty minutes, so that path sends the meeting in
+    /// pieces — and taking a slice by copying the arrays would put a hundred
+    /// megabytes per channel back into memory, which is the exact spike this
+    /// function exists to avoid. Absent, it writes the whole thing as before.
+    static func writeMixedWAV(mic: [Float], system: [Float], to url: URL,
+                              range: Range<Int>? = nil) throws -> Double {
+        let bounds = range ?? 0..<max(mic.count, system.count)
+        let offset = bounds.lowerBound
+        let total = max(0, bounds.count)
         FileManager.default.createFile(atPath: url.path, contents: nil)
         let handle = try FileHandle(forWritingTo: url)
         defer { try? handle.close() }
@@ -168,7 +177,7 @@ struct DeepgramMeetingTranscriber {
             let end = min(total, i + slice)
             let n = end - i
             for k in 0..<n {
-                let j = i + k
+                let j = offset + i + k
                 let m: Float = j < mic.count ? mic[j] : 0
                 let s: Float = j < system.count ? system[j] : 0
                 let v = MeetingRecorder.softClip(m + s)

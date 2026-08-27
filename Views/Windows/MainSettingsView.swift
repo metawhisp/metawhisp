@@ -22,6 +22,7 @@ struct MainSettingsView: View {
     @State private var screenHistoryDeleteResult: String?
     // ITER-054 — Deepgram key draft (commit on ⏎/Save, not per keystroke)
     @State private var deepgramKeyDraft = ""
+    @State private var geminiKeyDraft = ""
 
     // Tab selection — single column scroll per tab beats the previous two-column wall
     // (1500-line settings was hard to scan).
@@ -382,6 +383,63 @@ struct MainSettingsView: View {
         Text("With a key set, meetings are transcribed on YOUR Deepgram account with real speaker labels (who said what) in one pass. Voice dictations are unaffected. console.deepgram.com")
             .font(MW.monoSm).foregroundStyle(MW.textMuted)
             .fixedSize(horizontal: false, vertical: true)
+    }
+
+    /// The same optional BYOK deal on a second provider. Tried after Deepgram:
+    /// that one is generally available, this model is in public preview, and a
+    /// preview model is what took the vision path down this month.
+    @ViewBuilder
+    private var geminiKeyField: some View {
+        let key = settings.geminiKey
+        HStack(spacing: MW.sp8) {
+            if key.isEmpty {
+                TextField("", text: $geminiKeyDraft,
+                          prompt: Text("Gemini API Key").foregroundStyle(MW.textMuted))
+                    .font(MW.mono)
+                    .textFieldStyle(.plain)
+                    .foregroundStyle(MW.textPrimary)
+                    .padding(.horizontal, MW.sp8)
+                    .padding(.vertical, MW.sp4)
+                    .overlay(RoundedRectangle(cornerRadius: MW.rSmall, style: .continuous).stroke(MW.border, lineWidth: 0.5))
+                    .onSubmit { commitGeminiKeyDraft() }
+                if !geminiKeyDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    Button("Save") { commitGeminiKeyDraft() }
+                        .buttonStyle(.plain)
+                        .font(MW.label).tracking(0.6)
+                        .foregroundStyle(MW.idle)
+                        .padding(.horizontal, 8).padding(.vertical, 3)
+                        .overlay(RoundedRectangle(cornerRadius: MW.rSmall, style: .continuous)
+                                    .stroke(MW.idle.opacity(0.4), lineWidth: 0.5))
+                }
+            } else {
+                HStack(spacing: MW.sp8) {
+                    let masked = String(repeating: "\u{2022}", count: min(20, max(0, key.count - 4))) + String(key.suffix(4))
+                    Text(masked)
+                        .font(MW.mono)
+                        .foregroundStyle(MW.textSecondary)
+                    Spacer()
+                    Circle().fill(MW.idle).frame(width: 6, height: 6)
+                    Button { settings.geminiKey = "" } label: {
+                        Image(systemName: "xmark.circle.fill")
+                            .foregroundStyle(MW.textMuted)
+                    }
+                    .buttonStyle(.plain)
+                }
+                .padding(.horizontal, MW.sp8)
+                .padding(.vertical, MW.sp4)
+                .overlay(Rectangle().stroke(MW.borderLight, lineWidth: MW.hairline))
+            }
+        }
+        Text("Alternative to the above, on YOUR Google account. Speaker labels for up to 8 voices; long meetings are sent in 25-minute pieces because diarization is capped at 30 minutes per request. Used only if the Deepgram field is empty or fails. aistudio.google.com")
+            .font(MW.monoSm).foregroundStyle(MW.textMuted)
+            .fixedSize(horizontal: false, vertical: true)
+    }
+
+    private func commitGeminiKeyDraft() {
+        let trimmed = geminiKeyDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        settings.geminiKey = trimmed
+        geminiKeyDraft = ""
     }
 
     /// ITER-054 — commit the Deepgram key draft into the keychain-backed setting.
@@ -1359,6 +1417,7 @@ struct MainSettingsView: View {
                 // review): the key affects MEETINGS regardless of the dictation
                 // engine, on any tier.
                 deepgramKeyField
+                geminiKeyField
                 GlassDivider()
                 toggleRow("Auto-detect calls", isOn: $settings.autoDetectCalls)
                 if settings.autoDetectCalls {
