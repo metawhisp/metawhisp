@@ -462,7 +462,7 @@ final class RealtimeScreenReactor: ObservableObject {
         let note = MWNotification(
             id: noteID,
             kind: .task,
-            title: "✓ Task marked done",
+            title: "Task completed",
             body: String(task.taskDescription.prefix(100)),
             onTap: { @MainActor in
                 AppDelegate.shared?.screenAgentDelivery?

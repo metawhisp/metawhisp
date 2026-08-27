@@ -25,18 +25,25 @@ final class MWNotificationStack: ObservableObject {
     var freeSlots: Int { max(0, maxStack - items.count) }
     private let autoDismissSeconds: TimeInterval = 6
 
-    /// A Screen Agent card asks for a decision; a toast reports a fact that
-    /// already happened. Measured on real use: fourteen cards in a day, every
-    /// single one recorded as timedOut — six seconds is how long a card
-    /// survives next to someone who is typing, so the feature had never
-    /// actually been read. Rare by design (a cooldown between them), so a
-    /// longer life costs nothing in clutter.
-    private let agentCardDismissSeconds: TimeInterval = 45
+    /// Stretching an agent card to forty-five seconds was the wrong repair.
+    /// Fourteen cards in a day, every one recorded as timedOut — and a surface
+    /// that sits for forty-five seconds and then vanishes with no consequence
+    /// teaches, once per card, that ignoring it costs nothing. The reference
+    /// implementation holds a message for two seconds by default and four to
+    /// five when there is something to do; nothing anywhere holds one for
+    /// three quarters of a minute.
+    ///
+    /// Six is what this card needs to be read: roughly twelve words of title
+    /// and body, about four seconds at reading speed, plus one to notice it.
+    /// Nothing is lost by the card going away — the comment itself is a
+    /// durable Inbox row and the card is a pointer to it — and hovering still
+    /// pauses the timer.
+    private let agentCardDismissSeconds: TimeInterval = 6
 
-    /// Visible to tests so the difference between the two lifetimes is a
-    /// pinned contract rather than a number someone can quietly equalize.
+    /// Visible to tests so the lifetime is a pinned contract rather than a
+    /// number someone can quietly stretch again.
     static let toastLifetimeForTests: TimeInterval = 6
-    static let agentCardLifetimeForTests: TimeInterval = 45
+    static let agentCardLifetimeForTests: TimeInterval = 6
 
     private init() {}
 

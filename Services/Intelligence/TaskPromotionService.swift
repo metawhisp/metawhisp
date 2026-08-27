@@ -131,8 +131,8 @@ final class TaskPromotionService: ObservableObject {
     private func postPromotionNotification(for task: TaskItem) {
         let note = MWNotification(
             kind: .task,
-            title: "Task",
-            body: "New task: \(String(task.taskDescription.prefix(200)))",
+            title: "Task added",
+            body: String(task.taskDescription.prefix(200)),
             onTap: { AppDelegate.shared?.openMainWindow(tab: .workspace) },
             proactiveItems: nil
         )

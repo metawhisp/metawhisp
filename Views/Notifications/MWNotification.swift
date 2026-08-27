@@ -59,27 +59,35 @@ struct MWNotification: Identifiable {
 
         var icon: String {
             switch self {
-            case .task:             return "text.badge.plus"
+            case .task:             return "checklist"
             case .call:             return "phone.fill"
-            case .recordingStopped: return "stop.circle"
-            case .recordingOverrun: return "stopwatch"
+            case .recordingStopped: return "stop.circle.fill"
+            // A stopwatch says "time is passing" and nothing more. This card
+            // fires because the recording outran its calendar slot, which the
+            // user may want to stop — the symbol has to say so.
+            case .recordingOverrun: return "clock.badge.exclamationmark"
             case .recap:            return "doc.text"
             case .advice:           return "sparkles"
-            case .proactive:        return "lightbulb.fill"
-            case .signIn:           return "person.crop.circle.badge.checkmark"
+            // A lightbulb means "here is an idea". This surface carries the
+            // opposite: something already decided, or something being waited
+            // on. That is history, and history has its own symbol.
+            case .proactive:        return "clock.arrow.circlepath"
+            case .signIn:           return "checkmark.seal.fill"
             }
         }
 
+        /// Colour is reserved for a state of the world, never for which sort of
+        /// card this is. Purple used to mean "advice" and yellow "context" —
+        /// a filing system the reader has no key to and no reason to learn,
+        /// and it spent the one signal that should have been available when
+        /// something is actually wrong.
+        ///
+        /// Exactly one kind qualifies: a recording still running past the
+        /// calendar slot that was supposed to end it.
         var accent: Color {
             switch self {
-            case .task:             return MW.idle
-            case .call:             return MW.postProcess
-            case .recordingStopped: return MW.textMuted
-            case .recordingOverrun: return MW.processing  // orange — active, needs attention but not error
-            case .recap:            return MW.idle
-            case .advice:           return Color(red: 0.65, green: 0.40, blue: 1.00)
-            case .proactive:        return Color(red: 1.00, green: 0.80, blue: 0.20)
-            case .signIn:           return MW.idle
+            case .recordingOverrun: return MW.processing
+            default:                return MW.textSecondary
             }
         }
 

@@ -324,15 +324,29 @@ extension ScreenAgentDeliveryTests {
         XCTAssertNotNil(records.first?.presentedAt)
     }
 
-    /// Every card the feature produced in a real day was recorded as
-    /// timedOut: nobody had read one. A card that asks for a decision must
-    /// outlive a toast that reports a fact.
+    /// A timeout is not a rejection, and the record has to keep them apart:
+    /// a card nobody got to read looks identical to one someone chose to
+    /// close unless the reason is stored.
     @MainActor
-    func testAnAgentCardOutlivesAPlainToast() {
-        XCTAssertGreaterThanOrEqual(
-            MWNotificationStack.agentCardLifetimeForTests,
-            MWNotificationStack.toastLifetimeForTests * 5,
-            "six seconds is how long a card survives beside someone who is typing")
+    func testATimeoutIsRecordedApartFromADismissal() throws {
+        let (service, container) = try makeService()
+        let timedOut = makeItem()
+        let closed = makeItem()
+        XCTAssertNotNil(service.deliver(timedOut, preflight: preflight()))
+        XCTAssertNotNil(service.deliver(closed, preflight: preflight()))
+        service.confirmPresented(itemID: timedOut.id)
+        service.confirmPresented(itemID: closed.id)
+        service.recordInteraction(.timedOut, itemID: timedOut.id)
+        service.recordInteraction(.dismissed, itemID: closed.id)
+
+        let records = try ModelContext(container)
+            .fetch(FetchDescriptor<ScreenAgentDeliveryRecord>())
+        let outcomes = Dictionary(
+            uniqueKeysWithValues: records.map { ($0.itemID, $0.interactionOutcome) })
+        XCTAssertEqual(outcomes[timedOut.id], ScreenAgentDelivery.Interaction.timedOut.rawValue)
+        XCTAssertEqual(outcomes[closed.id], ScreenAgentDelivery.Interaction.dismissed.rawValue)
+        XCTAssertNotEqual(outcomes[timedOut.id], outcomes[closed.id],
+                          "silence and rejection must not collapse into one word")
     }
 
     /// A prompt is the behaviour of this product. One edit to the wording made
