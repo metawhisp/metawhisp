@@ -78,4 +78,43 @@ final class MWNotificationCardLayoutTests: XCTestCase {
         XCTAssertTrue(visibleText(cited).contains { $0.hasPrefix("Chrome · ") })
         XCTAssertFalse(visibleText(plain).contains { $0.contains(" · ") })
     }
+
+    /// The tint and the sheen have to be ABOVE the blur or the card is a flat
+    /// frosted rectangle. Ordering them as loose sublayers of the view that
+    /// also holds the blur does not achieve that: a subview has no backing
+    /// layer until it joins a window, so at build time the blur is not in the
+    /// sublayer stack at all and AppKit inserts it later wherever it likes.
+    /// Sibling subview order is the one rule that does hold, so the gradients
+    /// live on their own view added after the blur — and this pins that.
+    func testTheTintAndSheenSitAboveTheBlur() {
+        let card = makeCard(title: "Ads payment declined", body: "The card was refused",
+                            sourceApp: "Chrome")
+        card.layoutSubtreeIfNeeded()
+        guard let clip = card.subviews.first else { return XCTFail("the glass is gone") }
+        let blurIndex = clip.subviews.firstIndex { $0 is NSVisualEffectView }
+        guard let blurIndex else { return XCTFail("no blur — the card is not glass") }
+
+        // Whichever sibling carries the gradients must come after the blur.
+        let gradientHosts = clip.subviews.enumerated().filter { _, view in
+            view.layer?.sublayers?.contains(where: { $0 is CAGradientLayer }) ?? false
+        }
+        XCTAssertFalse(gradientHosts.isEmpty, "the glass lost its tint and sheen")
+        for (index, _) in gradientHosts {
+            XCTAssertGreaterThan(index, blurIndex,
+                                 "the tint is behind the blur and cannot be seen")
+        }
+    }
+
+    /// None of the three glass layers may win a hit test, or which one happens
+    /// to be on top decides whether a click opens the comment.
+    func testTheGlassNeverAnswersAClick() {
+        let card = makeCard(title: "Ads payment declined", body: "The card was refused",
+                            sourceApp: "Chrome")
+        card.layoutSubtreeIfNeeded()
+        let middle = NSPoint(x: card.bounds.midX, y: card.bounds.midY)
+        for view in card.subviews where !(view is NSControl) && !(view is NSTextField) {
+            XCTAssertNil(view.hitTest(middle),
+                         "\(type(of: view)) intercepts clicks meant for the card")
+        }
+    }
 }

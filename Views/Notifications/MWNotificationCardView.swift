@@ -38,10 +38,28 @@ final class MWNotificationCardView: NSView {
     private let badgeSize: CGFloat = 34
     private let closeSize: CGFloat = 22
 
+    /// A view that is never the answer to a click. The glass is three stacked
+    /// layers under the text; letting any of them win a hit test makes taps and
+    /// hover depend on which one happened to be on top.
+    private final class PassThroughView: NSView {
+        override func hitTest(_ point: NSPoint) -> NSView? { nil }
+    }
+
     /// Clips the glass; the card itself must not clip or it would cut its own
     /// shadow off.
-    private let clipView = NSView()
+    private let clipView = PassThroughView()
     private let blurView = NSVisualEffectView()
+    /// The tint, the sheen and the lit edge live on their own view rather than
+    /// as loose sublayers of `clipView`.
+    ///
+    /// `clipView` also holds the blur as a SUBVIEW, and a subview's backing
+    /// layer does not exist until the view joins a window — so at construction
+    /// time the blur is simply absent from `clipView.layer.sublayers`, and
+    /// AppKit inserts it later at an index of its own choosing. Ordering that
+    /// depends on when AppKit decides to back a view is not ordering. As a
+    /// sibling view added after the blur, this one is above it by the only
+    /// rule AppKit actually guarantees.
+    private let glassView = PassThroughView()
     private let tintLayer = CAGradientLayer()
     private let sheenLayer = CAGradientLayer()
     private let rimLayer = CALayer()
@@ -111,20 +129,25 @@ final class MWNotificationCardView: NSView {
         blurView.state = .active
         clipView.addSubview(blurView)
 
+        // Added after the blur, so it is above it — the one ordering rule that
+        // does not depend on AppKit's layer-backing schedule.
+        glassView.wantsLayer = true
+        clipView.addSubview(glassView)
+
         tintLayer.startPoint = CGPoint(x: 0.08, y: 0)
         tintLayer.endPoint = CGPoint(x: 0.62, y: 1)
-        clipView.layer?.addSublayer(tintLayer)
+        glassView.layer?.addSublayer(tintLayer)
 
         // One diagonal sheen across the top-left, fading out before the middle.
         // More than one reads as a texture rather than as light.
         sheenLayer.startPoint = CGPoint(x: 0, y: 0)
         sheenLayer.endPoint = CGPoint(x: 0.85, y: 1)
         sheenLayer.locations = [0, 0.26, 0.46]
-        clipView.layer?.addSublayer(sheenLayer)
+        glassView.layer?.addSublayer(sheenLayer)
 
         // The lit top edge. A border alone is flat on every side; real glass
         // catches the light where it faces up.
-        clipView.layer?.addSublayer(rimLayer)
+        glassView.layer?.addSublayer(rimLayer)
     }
 
     // MARK: - Content
@@ -298,6 +321,7 @@ final class MWNotificationCardView: NSView {
         let box = NSRect(x: 0, y: 0, width: cardWidth, height: total)
         clipView.frame = box
         blurView.frame = box
+        glassView.frame = box
         // Implicit animations would make the glass slide behind the text while
         // the card is still growing into its measured height.
         CATransaction.begin()
