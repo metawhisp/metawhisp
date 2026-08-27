@@ -159,6 +159,13 @@ final class AppSettings: ObservableObject {
     /// every other consent: agreeing to cloud text is not agreeing to
     /// screenshots, and this stays off until the user says otherwise.
     @AppStorage("screenAgentVisualConsent") var screenAgentVisualConsent: Bool = false
+
+    /// When the Inbox was last opened, as a Unix timestamp. The unread badge
+    /// counts delivered comments queued after this mark, so looking clears it
+    /// without rewriting a single journal row — the journal is history and
+    /// stays what it was.
+    @AppStorage("screenAgentInboxLastOpenedAt")
+    var screenAgentInboxLastOpenedAt: Double = 0
     /// Minimum gap between chip surfaces. Lower = more useful but more intrusive.
     /// Default 5 min balances usefulness against annoyance.
     // 2026-08-08 — 5 → 10 min: reference-parity cadence (its analysis interval

@@ -358,6 +358,42 @@ final class ScreenAgentDeliveryService {
         try? context.save()
     }
 
+    /// How many delivered comments are still waiting for a person, counted
+    /// since the last time the Inbox was opened.
+    ///
+    /// Derived from the delivery journal rather than a flag on the item: the
+    /// journal already distinguishes a card someone opened, a card someone
+    /// closed on purpose, and a card that expired or was pushed off the stack
+    /// while nobody was looking. Only the last group is waiting. Deriving it
+    /// also means no new column and no schema version for what is really a
+    /// question about history.
+    ///
+    /// `since` is the mark that makes the count clearable — anything queued
+    /// before the user's last visit has been looked at, whatever the card
+    /// itself did.
+    func unreadCount(since: Date) -> Int {
+        let context = ModelContext(container)
+        let handled = [
+            ScreenAgentDelivery.Interaction.opened.rawValue,
+            ScreenAgentDelivery.Interaction.dismissed.rawValue,
+            ScreenAgentDelivery.Interaction.later.rawValue
+        ]
+        // The date and "was it shown" halves go to the store, which bounds the
+        // rows to one session's worth. The outcome half is filtered here: it is
+        // optional, and a nil outcome — shown, nothing ever came back — is
+        // precisely the case that counts, which is awkward to say in a
+        // predicate and easy to get backwards.
+        let descriptor = FetchDescriptor<ScreenAgentDeliveryRecord>(
+            predicate: #Predicate { record in
+                record.queuedAt > since && record.presentedAt != nil
+            })
+        guard let rows = try? context.fetch(descriptor) else { return 0 }
+        return rows.count { record in
+            guard let outcome = record.interactionOutcome else { return true }
+            return !handled.contains(outcome)
+        }
+    }
+
     /// Newest first, for the Inbox.
     /// Record what the user said was wrong, and act on it where the reason
     /// says to.

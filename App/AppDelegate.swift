@@ -85,13 +85,57 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     /// surface; for now it brings the window forward so a clicked card leads
     /// somewhere instead of vanishing.
     @MainActor
-    func openScreenAgentInbox(selecting itemID: UUID) {
+    func openScreenAgentInbox(selecting itemID: UUID? = nil) {
         pendingScreenAgentItemID = itemID
         openMainWindow(tab: .chat)
         // The window and the pane may both already be where we want them, in
         // which case nothing would otherwise redraw.
         NotificationCenter.default.post(name: .screenAgentShowInboxPane, object: nil)
-        NotificationCenter.default.post(name: .screenAgentOpenItem, object: itemID)
+        if let itemID {
+            NotificationCenter.default.post(name: .screenAgentOpenItem, object: itemID)
+        }
+        // Looking at the Inbox is what makes the waiting comments no longer
+        // waiting. The mark is the whole clearing mechanism — the journal rows
+        // themselves are history and are not rewritten.
+        AppSettings.shared.screenAgentInboxLastOpenedAt = Date().timeIntervalSince1970
+        refreshScreenAgentBadge()
+    }
+
+    /// ⌘⌥O, and the unread count beside the menu bar icon.
+    private var screenAgentInboxHotkey: ScreenAgentInboxHotkey?
+
+    @MainActor
+    func setUpScreenAgentInboxShortcut() {
+        let hotkey = ScreenAgentInboxHotkey { [weak self] in
+            self?.openScreenAgentInbox()
+        }
+        hotkey.register()
+        screenAgentInboxHotkey = hotkey
+        refreshScreenAgentBadge()
+    }
+
+    /// The count rides beside the icon as a short digit string. HIG is blunt
+    /// about long menu bar titles — on Tahoe they push neighbouring items, and
+    /// our own, off the screen — so it stays one or two characters and
+    /// disappears entirely at zero.
+    @MainActor
+    func refreshScreenAgentBadge() {
+        guard let button = statusItem?.button else { return }
+        let since = Date(timeIntervalSince1970: AppSettings.shared.screenAgentInboxLastOpenedAt)
+        let count = screenAgentDelivery?.unreadCount(since: since) ?? 0
+        guard count > 0 else {
+            button.attributedTitle = NSAttributedString(string: "")
+            button.toolTip = nil
+            return
+        }
+        let text = count > 9 ? "9+" : String(count)
+        button.attributedTitle = NSAttributedString(
+            string: " \(text)",
+            attributes: [
+                .font: NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .semibold),
+                .foregroundColor: NSColor.labelColor
+            ])
+        button.toolTip = "\(count) comment\(count == 1 ? "" : "s") waiting — ⌘⌥O"
     }
 
     /// The comment a click asked to open, read by the Inbox when it appears.
@@ -469,7 +513,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             button.image = Self.createMWMenuBarIcon()
             button.action = #selector(togglePopover)
             button.target = self
+            button.imagePosition = .imageLeading  // the unread count sits after it
         }
+        setUpScreenAgentInboxShortcut()
 
         // Bind floating overlay to coordinator stage + audio levels
         overlay.bind(to: coordinator, recorder: recorder)

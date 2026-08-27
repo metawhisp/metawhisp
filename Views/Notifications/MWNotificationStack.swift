@@ -53,6 +53,11 @@ final class MWNotificationStack: ObservableObject {
                                           _ interaction: ScreenAgentDelivery.Interaction) {
         guard let itemID = card.screenAgentItemID else { return }
         AppDelegate.shared?.screenAgentDelivery?.recordInteraction(interaction, itemID: itemID)
+        // The outcome of a card is what decides whether it is still waiting for
+        // someone, so the count beside the menu bar icon moves with it — the
+        // card leaving the screen is the exact moment it becomes findable only
+        // through the Inbox.
+        AppDelegate.shared?.refreshScreenAgentBadge()
     }
 
 
