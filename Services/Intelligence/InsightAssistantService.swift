@@ -57,6 +57,14 @@ final class InsightAssistantService: ObservableObject {
     /// in case some other path calls us re-entrantly.
     private(set) var isEvaluating: Bool = false
 
+    /// What the last `evaluate` cost and did. Read by the caller straight after
+    /// the call and written to the run's metrics row.
+    ///
+    /// A single field rather than a return value because the interesting case
+    /// is the one that returns nothing: a run the gate skipped produces no
+    /// `Evaluation`, and the skip is precisely the number worth having.
+    private(set) var tally = ScreenAgentRunMetrics.Tally()
+
     // MARK: - Public API
 
     /// Single evaluation tick. Returns the insight to surface, or `nil`
@@ -87,6 +95,12 @@ final class InsightAssistantService: ObservableObject {
         guard !isEvaluating else { return nil }
         isEvaluating = true
         defer { isEvaluating = false }
+        // Reset per run. One evaluation at a time (the guard above), so a
+        // single field is the whole bookkeeping — no queue, no identity to get
+        // wrong.
+        tally = ScreenAgentRunMetrics.Tally()
+        let runStartedAt = Date()
+        defer { tally.totalMilliseconds = Int(Date().timeIntervalSince(runStartedAt) * 1000) }
 
         // ITER-041 Phase C — cheap relevance gate (mini tier). Default to
         // skip unless the gate scores >= 0.65. Fail-open on errors so a
@@ -97,6 +111,7 @@ final class InsightAssistantService: ObservableObject {
         OCR: \(String(ocr.prefix(2000)))
         Activity: \(activitySummary)
         """
+        let gateStartedAt = Date()
         let gate = await GateClient.call(
             context: gateContext,
             purpose: .proactive,
@@ -104,6 +119,12 @@ final class InsightAssistantService: ObservableObject {
             serviceId: Self.llmServiceId,
             licenseKey: licenseKey
         )
+        tally.gateMilliseconds = Int(Date().timeIntervalSince(gateStartedAt) * 1000)
+        tally.gateScore = gate.score
+        // Whether this gate earns its keep is a ratio nobody could compute:
+        // the skip went to the log, and the log is not readable from every
+        // place this app is worked on. It goes to the database now.
+        tally.gateOutcome = gate.failedOpen ? .failedOpen : (gate.shouldFire ? .fired : .skipped)
         guard gate.shouldFire else {
             NSLog("[Insight] gate-skipped score=%.2f — %@",
                   gate.score, String(gate.reasoning.prefix(80)))
@@ -125,6 +146,8 @@ final class InsightAssistantService: ObservableObject {
         if !history.isEmpty {
             let transport: InsightInvestigator.Transport = { [weak self] messages, tools in
                 guard let self else { throw CancellationError() }
+                self.tally.toolTurnCount += 1
+                self.tally.textModelCallCount += 1
                 return try await self.callProxyTools(
                     system: InsightPrompts.investigationSystemPrompt,
                     messages: messages, tools: tools, licenseKey: licenseKey

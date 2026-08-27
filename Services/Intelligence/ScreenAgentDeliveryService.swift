@@ -358,6 +358,44 @@ final class ScreenAgentDeliveryService {
         try? context.save()
     }
 
+    /// Store what one run cost and did. Called once, at the end of the run.
+    ///
+    /// Upserts rather than inserts: a retried run keeps one row, and the
+    /// `runID` uniqueness constraint means a second insert would fail the whole
+    /// save and take the outcome down with it.
+    func recordMetrics(runID: UUID, tally: ScreenAgentRunMetrics.Tally) {
+        let context = ModelContext(container)
+        var descriptor = FetchDescriptor<ScreenAgentRunMetrics>(
+            predicate: #Predicate { $0.runID == runID })
+        descriptor.fetchLimit = 1
+        let row = (try? context.fetch(descriptor))?.first
+            ?? {
+                let fresh = ScreenAgentRunMetrics(runID: runID)
+                context.insert(fresh)
+                return fresh
+            }()
+        row.recordedAt = Date()
+        row.gateOutcome = tally.gateOutcome.rawValue
+        row.gateScore = tally.gateScore
+        row.gateMilliseconds = tally.gateMilliseconds
+        row.textModelCallCount = tally.textModelCallCount
+        row.toolTurnCount = tally.toolTurnCount
+        row.visionModelCallCount = tally.visionModelCallCount
+        row.providerFailureCount = tally.providerFailureCount
+        row.fallbackCount = tally.fallbackCount
+        row.screenHistorySearchCount = tally.screenHistorySearchCount
+        row.screenTextReadCount = tally.screenTextReadCount
+        row.taskSearchCount = tally.taskSearchCount
+        row.memorySearchCount = tally.memorySearchCount
+        row.totalMilliseconds = tally.totalMilliseconds
+        do {
+            try context.save()
+        } catch {
+            NSLog("[ScreenAgentRun] could not journal run metrics: %@",
+                  error.localizedDescription)
+        }
+    }
+
     /// How many delivered comments are still waiting for a person, counted
     /// since the last time the Inbox was opened.
     ///

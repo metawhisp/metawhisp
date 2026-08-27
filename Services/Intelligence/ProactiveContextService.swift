@@ -246,11 +246,16 @@ final class ProactiveContextService: ObservableObject {
         // empty until the assistant reports back, and empty means "not
         // measured", never "the default one" (Codex).
         var runPromptVersion = ""
+        // What the run cost, read off the assistant after it returns. Filled in
+        // even when the run produced nothing — a gate skip is the cheapest run
+        // there is and the most important one to be able to count.
+        var runTally = ScreenAgentRunMetrics.Tally()
         defer {
             if let runHandle {
                 journal?.completeRun(runID: runHandle, outcomeReason: runOutcome,
                                      evidenceRefs: runEvidence,
                                      promptVersion: runPromptVersion)
+                journal?.recordMetrics(runID: runHandle, tally: runTally)
             }
         }
 
@@ -302,6 +307,7 @@ final class ProactiveContextService: ObservableObject {
         )
         insight = evaluation?.insight
         runPromptVersion = evaluation?.promptVersion ?? ""
+        runTally = assistant.tally
 
         guard let insight else {
             runOutcome = "noProposal"

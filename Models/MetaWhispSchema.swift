@@ -372,6 +372,18 @@ enum MetaWhispSchemaV8: VersionedSchema {
     }
 }
 
+/// V9 adds `ScreenAgentRunMetrics`: what one analysis cost and did, as counts.
+/// A new entity, so the stage is lightweight and nothing already shipped
+/// changes shape — deliberately NOT more columns on `ScreenAgentRun`, which
+/// V6, V7 and V8 all pin.
+enum MetaWhispSchemaV9: VersionedSchema {
+    static var versionIdentifier = Schema.Version(9, 0, 0)
+
+    static var models: [any PersistentModel.Type] {
+        MetaWhispSchemaV8.models + [ScreenAgentRunMetrics.self]
+    }
+}
+
 /// Migration plan for the live store: V1 → V2 (ScreenObservation.embedding) →
 /// V3 (TaskItem.relevanceScore). All lightweight (additive optional columns),
 /// verified by `SchemaMigrationTests`.
@@ -379,7 +391,7 @@ enum MetaWhispMigrationPlan: SchemaMigrationPlan {
     static var schemas: [any VersionedSchema.Type] {
         [MetaWhispSchemaV1.self, MetaWhispSchemaV2.self, MetaWhispSchemaV3.self,
          MetaWhispSchemaV4.self, MetaWhispSchemaV5.self, MetaWhispSchemaV6.self,
-         MetaWhispSchemaV7.self, MetaWhispSchemaV8.self]
+         MetaWhispSchemaV7.self, MetaWhispSchemaV8.self, MetaWhispSchemaV9.self]
     }
     static var stages: [MigrationStage] {
         [
@@ -410,6 +422,10 @@ enum MetaWhispMigrationPlan: SchemaMigrationPlan {
             MigrationStage.lightweight(
                 fromVersion: MetaWhispSchemaV7.self,
                 toVersion: MetaWhispSchemaV8.self
+            ),
+            MigrationStage.lightweight(
+                fromVersion: MetaWhispSchemaV8.self,
+                toVersion: MetaWhispSchemaV9.self
             ),
         ]
     }

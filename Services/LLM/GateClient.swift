@@ -68,9 +68,12 @@ enum GateClient {
         return score >= threshold
     }
 
-    /// HTTP wrapper. Returns the decision + score + reasoning. On any
-    /// network / parse / non-200 error, returns `(true, 1.0, "fail-open")`
-    /// so the caller proceeds with the heavy call (avoid silent drops).
+    /// HTTP wrapper. Returns the decision + score + reasoning, and whether the
+    /// decision came from the gate or from it falling over. On any network /
+    /// parse / non-200 error the answer is "fire" so nothing is silently
+    /// dropped — but a gate that fails open all day and a gate that is passing
+    /// everything look identical from the outside unless the difference is
+    /// reported, so it is (Codex).
     static func call(
         context: String,
         purpose: GatePurpose,
@@ -78,9 +81,9 @@ enum GateClient {
         threshold: Double = defaultThreshold,
         serviceId: String,
         licenseKey: String
-    ) async -> (shouldFire: Bool, score: Double, reasoning: String) {
+    ) async -> (shouldFire: Bool, score: Double, reasoning: String, failedOpen: Bool) {
         guard !context.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-            return (false, 0, "empty context")
+            return (false, 0, "empty context", false)
         }
 
         var request = URLRequest(url: endpoint)
@@ -99,24 +102,24 @@ enum GateClient {
             request.httpBody = try JSONEncoder().encode(body)
         } catch {
             NSLog("[Gate] body encode failed (fail-open): %@", error.localizedDescription)
-            return (true, 1.0, "encode error, fail-open")
+            return (true, 1.0, "encode error, fail-open", true)
         }
 
         do {
             let (data, response) = try await URLSession.shared.data(for: request)
             if let http = response as? HTTPURLResponse, http.statusCode != 200 {
                 NSLog("[Gate] HTTP %d (fail-open) for purpose=%@", http.statusCode, purpose.rawValue)
-                return (true, 1.0, "gate HTTP \(http.statusCode), fail-open")
+                return (true, 1.0, "gate HTTP \(http.statusCode), fail-open", true)
             }
             let parsed = try JSONDecoder().decode(GateResponse.self, from: data)
             let fire = shouldFire(score: parsed.score, threshold: threshold)
             NSLog("[Gate] %@ score=%.2f → %@ (threshold=%.2f) — %@",
                   purpose.rawValue, parsed.score, fire ? "FIRE" : "SKIP", threshold,
                   String(parsed.reasoning.prefix(80)))
-            return (fire, parsed.score, parsed.reasoning)
+            return (fire, parsed.score, parsed.reasoning, false)
         } catch {
             NSLog("[Gate] error %@ (fail-open) for purpose=%@", error.localizedDescription, purpose.rawValue)
-            return (true, 1.0, "gate error, fail-open")
+            return (true, 1.0, "gate error, fail-open", true)
         }
     }
 }

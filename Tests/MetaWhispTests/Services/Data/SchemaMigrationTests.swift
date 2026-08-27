@@ -51,7 +51,7 @@ final class SchemaMigrationTests: XCTestCase {
         }
 
         // 2. Reopen the SAME file under the latest schema + the migration plan.
-        let latestSchema = Schema(versionedSchema: MetaWhispSchemaV8.self)
+        let latestSchema = Schema(versionedSchema: MetaWhispSchemaV9.self)
         let cfg2 = ModelConfiguration(schema: latestSchema, url: storeURL)
         let container2 = try ModelContainer(
             for: latestSchema, migrationPlan: MetaWhispMigrationPlan.self, configurations: [cfg2])
@@ -88,7 +88,7 @@ final class SchemaMigrationTests: XCTestCase {
             try ctx.save()
         }
 
-        let latestSchema = Schema(versionedSchema: MetaWhispSchemaV8.self)
+        let latestSchema = Schema(versionedSchema: MetaWhispSchemaV9.self)
         let cfg = ModelConfiguration(schema: latestSchema, url: storeURL)
         let container = try ModelContainer(
             for: latestSchema, migrationPlan: MetaWhispMigrationPlan.self, configurations: [cfg])
@@ -100,7 +100,7 @@ final class SchemaMigrationTests: XCTestCase {
     }
 
     func testFreshStoreCreatesUnderV3() throws {
-        let latestSchema = Schema(versionedSchema: MetaWhispSchemaV8.self)
+        let latestSchema = Schema(versionedSchema: MetaWhispSchemaV9.self)
         let cfg = ModelConfiguration(schema: latestSchema, url: storeURL)
         XCTAssertNoThrow(try ModelContainer(
             for: latestSchema, migrationPlan: MetaWhispMigrationPlan.self, configurations: [cfg]))
@@ -123,7 +123,7 @@ final class SchemaMigrationTests: XCTestCase {
             try ctx.save()
         }
 
-        let latestSchema = Schema(versionedSchema: MetaWhispSchemaV8.self)
+        let latestSchema = Schema(versionedSchema: MetaWhispSchemaV9.self)
         let cfg = ModelConfiguration(schema: latestSchema, url: storeURL)
         let container = try ModelContainer(
             for: latestSchema, migrationPlan: MetaWhispMigrationPlan.self, configurations: [cfg])
@@ -176,7 +176,7 @@ final class SchemaMigrationTests: XCTestCase {
             try ctx.save()
         }
 
-        let latestSchema = Schema(versionedSchema: MetaWhispSchemaV8.self)
+        let latestSchema = Schema(versionedSchema: MetaWhispSchemaV9.self)
         let cfg = ModelConfiguration(schema: latestSchema, url: storeURL)
         let container = try ModelContainer(
             for: latestSchema, migrationPlan: MetaWhispMigrationPlan.self, configurations: [cfg])
@@ -209,7 +209,7 @@ final class SchemaMigrationTests: XCTestCase {
             try ctx.save()
         }
 
-        let latestSchema = Schema(versionedSchema: MetaWhispSchemaV8.self)
+        let latestSchema = Schema(versionedSchema: MetaWhispSchemaV9.self)
         let cfg = ModelConfiguration(schema: latestSchema, url: storeURL)
         let container = try ModelContainer(
             for: latestSchema, migrationPlan: MetaWhispMigrationPlan.self, configurations: [cfg])
@@ -219,6 +219,54 @@ final class SchemaMigrationTests: XCTestCase {
         XCTAssertEqual(memories.count, 1, "existing facts must survive")
         XCTAssertEqual(memories.first?.needsReview, false,
                        "a fact the user already lived with is not suddenly unconfirmed")
+    }
+
+    /// The version that is on people's machines right now has to open under the
+    /// one about to ship. This is the invariant the V5 incident was about — the
+    /// store had a shape the new build refused, and the app sat in a temporary
+    /// container with the user's history apparently gone.
+    func testV8StoreMigratesToV9WithTheJournalIntactAndNoMetricsInvented() throws {
+        let runID = UUID()
+        do {
+            let v8Schema = Schema(versionedSchema: MetaWhispSchemaV8.self)
+            let cfg = ModelConfiguration(schema: v8Schema, url: storeURL)
+            let container = try ModelContainer(for: v8Schema, configurations: [cfg])
+            let ctx = ModelContext(container)
+            let run = ScreenAgentRun(contextID: UUID(), trigger: "contextAccepted",
+                                     deadlineAt: Date().addingTimeInterval(10))
+            run.id = runID
+            ctx.insert(run)
+            try ctx.save()
+        }
+
+        let latestSchema = Schema(versionedSchema: MetaWhispSchemaV9.self)
+        let cfg = ModelConfiguration(schema: latestSchema, url: storeURL)
+        let container = try ModelContainer(
+            for: latestSchema, migrationPlan: MetaWhispMigrationPlan.self, configurations: [cfg])
+        let ctx = ModelContext(container)
+
+        XCTAssertEqual(try ctx.fetch(FetchDescriptor<ScreenAgentRun>()).count, 1,
+                       "the run journal must survive the upgrade")
+        XCTAssertTrue(try ctx.fetch(FetchDescriptor<ScreenAgentRunMetrics>()).isEmpty,
+                      "runs from before the counters existed have no measurements, "
+                      + "and a zero row would read as «it cost nothing»")
+    }
+
+    /// One row per run, enforced by the store rather than by everyone
+    /// remembering: a second row would double every total silently.
+    func testARunCannotBeMeasuredTwice() throws {
+        let schema = Schema(versionedSchema: MetaWhispSchemaV9.self)
+        let cfg = ModelConfiguration(schema: schema, url: storeURL)
+        let container = try ModelContainer(for: schema, configurations: [cfg])
+        let ctx = ModelContext(container)
+        let runID = UUID()
+        ctx.insert(ScreenAgentRunMetrics(runID: runID, gateOutcome: "fired"))
+        try ctx.save()
+        ctx.insert(ScreenAgentRunMetrics(runID: runID, gateOutcome: "skipped"))
+        try? ctx.save()
+
+        let rows = try ctx.fetch(FetchDescriptor<ScreenAgentRunMetrics>())
+        XCTAssertEqual(rows.count, 1, "runID is unique — one run, one measurement")
     }
 
     /// The frozen pre-review memory shape, pinned as a full property set the
@@ -281,7 +329,7 @@ final class SchemaMigrationTests: XCTestCase {
             throw XCTSkip("Set MW_REAL_STORE_COPY to a copy of the real store to run this proof")
         }
         let url = URL(fileURLWithPath: path)
-        let latestSchema = Schema(versionedSchema: MetaWhispSchemaV8.self)
+        let latestSchema = Schema(versionedSchema: MetaWhispSchemaV9.self)
         let cfg = ModelConfiguration(schema: latestSchema, url: url)
         let container = try ModelContainer(
             for: latestSchema, migrationPlan: MetaWhispMigrationPlan.self, configurations: [cfg])
@@ -324,7 +372,7 @@ extension SchemaMigrationTests {
         }
 
         // Reopen it the way the shipped app will.
-        let latest = Schema(versionedSchema: MetaWhispSchemaV8.self)
+        let latest = Schema(versionedSchema: MetaWhispSchemaV9.self)
         let container = try ModelContainer(
             for: latest, migrationPlan: MetaWhispMigrationPlan.self,
             configurations: [ModelConfiguration(schema: latest, url: storeURL)])
@@ -382,7 +430,7 @@ extension SchemaMigrationTests {
             try ctx.save()
         }
 
-        let latest = Schema(versionedSchema: MetaWhispSchemaV8.self)
+        let latest = Schema(versionedSchema: MetaWhispSchemaV9.self)
         let container = try ModelContainer(
             for: latest, migrationPlan: MetaWhispMigrationPlan.self,
             configurations: [ModelConfiguration(schema: latest, url: storeURL)])
