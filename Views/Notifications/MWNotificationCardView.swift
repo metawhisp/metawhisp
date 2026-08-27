@@ -9,16 +9,16 @@ import SwiftUI  // for Color → NSColor conversion only; no SwiftUI rendering h
 /// explicit constraints we set ourselves, never the SwiftUI display-list
 /// recursion that crashed Tahoe.
 ///
-/// **Identical UX surface** to the SwiftUI version it replaces:
-///   - Same 344 pt fixed width + intrinsic height from text.
-///   - Same accent-bar / label / title / body layout.
-///   - Hover pauses the auto-dismiss timer (delegates back to the stack).
-///   - X button to close.
-///   - Optional tap action (fires `onTap` from `MWNotification`).
-///   - Rounded corners + thin border + drop shadow (the «liquid glass»
-///     look). Material blur is dropped — Tahoe's NSVisualEffectView still
-///     works fine but we omit it here to keep the layer count low; the
-///     opaque dark fill reads cleanly against any background.
+/// The surface is real glass: an `NSVisualEffectView` blurring what is behind
+/// the window, a tint gradient over it, and a single diagonal sheen. The
+/// previous card painted an opaque dark fill instead — cheaper in layers, but
+/// it read as a foreign rectangle dropped on the desktop rather than something
+/// belonging to the system it sits in.
+///
+/// Layout, top to bottom: a badge row carrying the kind's symbol and, where
+/// the card asserts something about the screen, where that was read from;
+/// then the title; then the body. No accent bar — colour is a state now, not
+/// a category, and lives in the badge alone.
 @MainActor
 final class MWNotificationCardView: NSView {
 
@@ -32,14 +32,38 @@ final class MWNotificationCardView: NSView {
     private(set) var measuredHeight: CGFloat = 80
 
     private let cardWidth: CGFloat = 344
+    private let corner: CGFloat = 26
+    private let padH: CGFloat = 20
+    private let padV: CGFloat = 18
+    private let badgeSize: CGFloat = 34
+    private let closeSize: CGFloat = 22
 
-    private let labelField = NSTextField(labelWithString: "")
+    /// Clips the glass; the card itself must not clip or it would cut its own
+    /// shadow off.
+    private let clipView = NSView()
+    private let blurView = NSVisualEffectView()
+    private let tintLayer = CAGradientLayer()
+    private let sheenLayer = CAGradientLayer()
+    private let rimLayer = CALayer()
+
+    private let badgeView = NSView()
+    private let badgeIcon = NSImageView()
+    private let sourceField = NSTextField(labelWithString: "")
     private let titleField = NSTextField(labelWithString: "")
     private let bodyField = NSTextField(wrappingLabelWithString: "")
-    private let iconView = NSImageView()
-    private let accentBar = NSView()
     private let closeButton = NSButton()
     private var trackingArea: NSTrackingArea?
+
+    /// "Chrome · 14:07" — the window this was read from and when. Only cards
+    /// that claim something about the screen carry one; on the rest the badge
+    /// sits alone and the claim needs no citation.
+    private var sourceLine: String? {
+        guard let app = notification.sourceApp, !app.isEmpty else { return nil }
+        let f = DateFormatter()
+        f.locale = Locale(identifier: "en_US_POSIX")
+        f.dateFormat = "HH:mm"
+        return "\(app) · \(f.string(from: notification.createdAt))"
+    }
 
     init(
         notification: MWNotification,
@@ -54,6 +78,7 @@ final class MWNotificationCardView: NSView {
         super.init(frame: NSRect(x: 0, y: 0, width: cardWidth, height: 80))
         setupLayer()
         setupContent()
+        applyAppearanceColors()
         layoutContent()
     }
 
@@ -61,143 +86,227 @@ final class MWNotificationCardView: NSView {
         fatalError("init(coder:) is not supported — programmatic only.")
     }
 
-    // MARK: - Layer (background, border, shadow)
+    // MARK: - Glass
 
     private func setupLayer() {
         wantsLayer = true
         guard let layer else { return }
-        layer.cornerRadius = 14
-        layer.cornerCurve = .continuous
-        layer.backgroundColor = NSColor(white: 0.13, alpha: 0.95).cgColor
-        layer.borderColor = NSColor(white: 1.0, alpha: 0.12).cgColor
-        layer.borderWidth = 0.5
-        // Drop shadow at view level (CALayer), not via SwiftUI .shadow().
-        layer.shadowColor = NSColor.black.cgColor
-        layer.shadowOpacity = 0.25
-        layer.shadowOffset = CGSize(width: 0, height: -6)
-        layer.shadowRadius = 14
         layer.masksToBounds = false
+        layer.shadowColor = NSColor.black.cgColor
+        layer.shadowOpacity = 0.44
+        layer.shadowOffset = CGSize(width: 0, height: -10)
+        layer.shadowRadius = 26
+
+        clipView.wantsLayer = true
+        clipView.layer?.cornerRadius = corner
+        clipView.layer?.cornerCurve = .continuous
+        clipView.layer?.masksToBounds = true
+        clipView.layer?.borderWidth = 1
+        addSubview(clipView)
+
+        // `.behindWindow` is what makes it glass rather than a grey panel: the
+        // desktop and whatever the user is working in show through it.
+        blurView.material = .hudWindow
+        blurView.blendingMode = .behindWindow
+        blurView.state = .active
+        clipView.addSubview(blurView)
+
+        tintLayer.startPoint = CGPoint(x: 0.08, y: 0)
+        tintLayer.endPoint = CGPoint(x: 0.62, y: 1)
+        clipView.layer?.addSublayer(tintLayer)
+
+        // One diagonal sheen across the top-left, fading out before the middle.
+        // More than one reads as a texture rather than as light.
+        sheenLayer.startPoint = CGPoint(x: 0, y: 0)
+        sheenLayer.endPoint = CGPoint(x: 0.85, y: 1)
+        sheenLayer.locations = [0, 0.26, 0.46]
+        clipView.layer?.addSublayer(sheenLayer)
+
+        // The lit top edge. A border alone is flat on every side; real glass
+        // catches the light where it faces up.
+        clipView.layer?.addSublayer(rimLayer)
     }
 
     // MARK: - Content
 
     private func setupContent() {
-        // Accent vertical bar on the left edge — coloured by kind.
-        accentBar.wantsLayer = true
-        accentBar.layer?.backgroundColor = Self.nsColor(notification.kind.accent).cgColor
-        accentBar.layer?.cornerRadius = 1.5
-        addSubview(accentBar)
+        badgeView.wantsLayer = true
+        badgeView.layer?.cornerRadius = badgeSize / 2
+        badgeView.layer?.masksToBounds = true
+        addSubview(badgeView)
 
-        // Icon next to the kind label.
-        if let symbol = NSImage(systemSymbolName: notification.kind.icon, accessibilityDescription: nil) {
-            iconView.image = symbol
-            iconView.contentTintColor = Self.nsColor(notification.kind.accent)
-            iconView.imageScaling = .scaleProportionallyDown
+        if let symbol = NSImage(systemSymbolName: notification.kind.icon,
+                                accessibilityDescription: nil) {
+            let config = NSImage.SymbolConfiguration(pointSize: 15, weight: .semibold)
+            badgeIcon.image = symbol.withSymbolConfiguration(config)
+            badgeIcon.imageScaling = .scaleProportionallyDown
         }
-        addSubview(iconView)
+        badgeView.addSubview(badgeIcon)
 
-        // Kind label («NEW TASK», «CALL DETECTED», etc).
-        labelField.stringValue = notification.kind.label
-        labelField.font = .systemFont(ofSize: 9, weight: .bold)
-        labelField.textColor = Self.nsColor(notification.kind.accent)
-        labelField.isBezeled = false
-        labelField.isEditable = false
-        labelField.drawsBackground = false
-        addSubview(labelField)
+        sourceField.stringValue = sourceLine ?? ""
+        sourceField.font = .monospacedSystemFont(ofSize: 11, weight: .regular)
+        sourceField.isBezeled = false
+        sourceField.isEditable = false
+        sourceField.drawsBackground = false
+        sourceField.lineBreakMode = .byTruncatingTail
+        sourceField.isHidden = (sourceLine == nil)
+        addSubview(sourceField)
 
-        // Title (main text).
         titleField.stringValue = notification.title
-        titleField.font = .systemFont(ofSize: 13, weight: .semibold)
-        titleField.textColor = .white
+        titleField.font = .systemFont(ofSize: 15, weight: .semibold)
         titleField.maximumNumberOfLines = 2
         titleField.lineBreakMode = .byTruncatingTail
         titleField.cell?.wraps = true
         titleField.cell?.isScrollable = false
-        titleField.preferredMaxLayoutWidth = cardWidth - 24
+        titleField.preferredMaxLayoutWidth = cardWidth - padH * 2
         titleField.isBezeled = false
         titleField.isEditable = false
         titleField.drawsBackground = false
         addSubview(titleField)
 
-        // Body (secondary text). Hidden when empty.
         bodyField.stringValue = notification.body
-        bodyField.font = .systemFont(ofSize: 11)
-        bodyField.textColor = NSColor(white: 1.0, alpha: 0.70)
+        bodyField.font = .systemFont(ofSize: 13)
         bodyField.maximumNumberOfLines = 3
         bodyField.lineBreakMode = .byTruncatingTail
         bodyField.cell?.wraps = true
         bodyField.cell?.isScrollable = false
-        bodyField.preferredMaxLayoutWidth = cardWidth - 24
+        bodyField.preferredMaxLayoutWidth = cardWidth - padH * 2
         bodyField.isBezeled = false
         bodyField.isEditable = false
         bodyField.drawsBackground = false
         bodyField.isHidden = notification.body.isEmpty
         addSubview(bodyField)
 
-        // Close button (X). Top-right.
         closeButton.title = ""
-        closeButton.image = NSImage(systemSymbolName: "xmark", accessibilityDescription: "Close")
+        closeButton.image = NSImage(systemSymbolName: "xmark",
+                                    accessibilityDescription: "Close")
         closeButton.imagePosition = .imageOnly
         closeButton.bezelStyle = .accessoryBarAction
         closeButton.isBordered = false
-        closeButton.contentTintColor = NSColor(white: 1.0, alpha: 0.45)
+        closeButton.wantsLayer = true
+        closeButton.layer?.cornerRadius = closeSize / 2
         closeButton.target = self
         closeButton.action = #selector(handleClose)
         addSubview(closeButton)
     }
 
+    // MARK: - Appearance
+
+    /// CALayer holds resolved `CGColor`s, which do not follow the system the
+    /// way `NSColor` does — so every layer colour is re-resolved whenever the
+    /// appearance changes. Text uses `labelColor`/`secondaryLabelColor` and
+    /// needs no help.
+    private func applyAppearanceColors() {
+        let dark = effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+
+        tintLayer.colors = dark
+            ? [NSColor(calibratedWhite: 0.19, alpha: 0.62).cgColor,
+               NSColor(calibratedWhite: 0.10, alpha: 0.72).cgColor,
+               NSColor(calibratedWhite: 0.07, alpha: 0.76).cgColor]
+            : [NSColor(calibratedWhite: 1.00, alpha: 0.62).cgColor,
+               NSColor(calibratedWhite: 0.97, alpha: 0.54).cgColor,
+               NSColor(calibratedWhite: 0.94, alpha: 0.58).cgColor]
+
+        sheenLayer.colors = [
+            NSColor(calibratedWhite: 1, alpha: dark ? 0.13 : 0.62).cgColor,
+            NSColor(calibratedWhite: 1, alpha: dark ? 0.05 : 0.20).cgColor,
+            NSColor(calibratedWhite: 1, alpha: 0).cgColor
+        ]
+
+        clipView.layer?.borderColor = NSColor(calibratedWhite: dark ? 1 : 0,
+                                              alpha: dark ? 0.11 : 0.10).cgColor
+        rimLayer.backgroundColor = NSColor(calibratedWhite: 1,
+                                           alpha: dark ? 0.16 : 0.85).cgColor
+
+        // Colour is a state of the world, so the badge is neutral unless the
+        // kind actually reports one. Neutral means "inverted from the glass":
+        // a light disc on dark glass, a dark disc on light.
+        let accent = notification.kind.accent
+        let neutralAccent = MW.textSecondary
+        let isNeutral = NSColor(accent).usingColorSpace(.sRGB)?.description
+            == NSColor(neutralAccent).usingColorSpace(.sRGB)?.description
+
+        if isNeutral {
+            badgeView.layer?.backgroundColor = dark
+                ? NSColor(calibratedWhite: 0.97, alpha: 1).cgColor
+                : NSColor(calibratedWhite: 0.11, alpha: 1).cgColor
+            badgeIcon.contentTintColor = dark
+                ? NSColor(calibratedWhite: 0.09, alpha: 1)
+                : NSColor(calibratedWhite: 1.00, alpha: 1)
+        } else {
+            badgeView.layer?.backgroundColor = NSColor(accent).cgColor
+            badgeIcon.contentTintColor = NSColor(calibratedWhite: 0.10, alpha: 1)
+        }
+
+        sourceField.textColor = .tertiaryLabelColor
+        titleField.textColor = .labelColor
+        bodyField.textColor = .secondaryLabelColor
+        closeButton.contentTintColor = .tertiaryLabelColor
+        closeButton.layer?.backgroundColor = NSColor(calibratedWhite: dark ? 1 : 0,
+                                                     alpha: 0.07).cgColor
+    }
+
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        applyAppearanceColors()
+    }
+
     // MARK: - Layout (no Auto Layout — manual frames, no NSISEngine entry)
 
     private func layoutContent() {
-        let inset: CGFloat = 12
-        let contentWidth = cardWidth - inset * 2
+        let contentWidth = cardWidth - padH * 2
 
-        // Accent bar: 3 pt wide, full height minus padding.
-        accentBar.frame = NSRect(x: 6, y: 12, width: 3, height: 0) // height set after measure
-
-        // Icon: 14×14 next to label.
-        iconView.frame = NSRect(x: inset + 6, y: 0, width: 14, height: 14)
-        // Label: right of icon.
-        let labelSize = labelField.intrinsicContentSize
-        labelField.frame = NSRect(x: iconView.frame.maxX + 6, y: 0, width: labelSize.width, height: labelSize.height)
-
-        // Title: full width.
-        let titleHeight = titleField.cell?.cellSize(forBounds: NSRect(x: 0, y: 0, width: contentWidth, height: 100)).height ?? 18
-        titleField.frame = NSRect(x: inset + 6, y: 0, width: contentWidth - 6, height: titleHeight)
-
-        // Body: full width, may be 0 height when hidden.
+        let titleHeight = titleField.cell?
+            .cellSize(forBounds: NSRect(x: 0, y: 0, width: contentWidth, height: 100)).height ?? 18
         let bodyHeight: CGFloat = notification.body.isEmpty ? 0
-            : (bodyField.cell?.cellSize(forBounds: NSRect(x: 0, y: 0, width: contentWidth, height: 200)).height ?? 16)
-        bodyField.frame = NSRect(x: inset + 6, y: 0, width: contentWidth - 6, height: bodyHeight)
+            : (bodyField.cell?
+                .cellSize(forBounds: NSRect(x: 0, y: 0, width: contentWidth, height: 200)).height ?? 16)
 
-        // Total content stack (top→bottom): label row (14), 6 gap, title, 4 gap, body. Then padding.
-        let labelRowH: CGFloat = 14
-        let interGap: CGFloat = 6
+        let headGap: CGFloat = 12
         let titleBodyGap: CGFloat = notification.body.isEmpty ? 0 : 4
-        let contentTotal = labelRowH + interGap + titleHeight + titleBodyGap + bodyHeight
-        let total = contentTotal + inset * 2
+        let contentTotal = badgeSize + headGap + titleHeight + titleBodyGap + bodyHeight
+        let total = contentTotal + padV * 2
 
-        // Pin actual y positions now that we know totals. Origin is bottom-left in AppKit views by default.
-        // We lay out top-down, so accumulate from top.
-        var y = total - inset - labelRowH
-        iconView.frame.origin.y = y
-        labelField.frame.origin.y = y
-        y -= interGap + titleHeight
-        titleField.frame.origin.y = y
+        // AppKit origin is bottom-left; lay out top-down and accumulate.
+        var y = total - padV - badgeSize
+        badgeView.frame = NSRect(x: padH, y: y, width: badgeSize, height: badgeSize)
+        badgeIcon.frame = NSRect(x: 0, y: 0, width: badgeSize, height: badgeSize)
+
+        let sourceX = padH + badgeSize + 11
+        // Stop short of the close button rather than sliding under it.
+        let sourceW = max(0, cardWidth - sourceX - padH - closeSize)
+        let sourceH = sourceField.intrinsicContentSize.height
+        sourceField.frame = NSRect(x: sourceX,
+                                   y: y + (badgeSize - sourceH) / 2,
+                                   width: sourceW, height: sourceH)
+
+        y -= headGap + titleHeight
+        titleField.frame = NSRect(x: padH, y: y, width: contentWidth, height: titleHeight)
+
         if !notification.body.isEmpty {
             y -= titleBodyGap + bodyHeight
-            bodyField.frame.origin.y = y
+            bodyField.frame = NSRect(x: padH, y: y, width: contentWidth, height: bodyHeight)
         }
 
-        // Accent bar runs the full content area height.
-        accentBar.frame = NSRect(x: 6, y: inset, width: 3, height: total - inset * 2)
-
-        // Close button top-right.
-        closeButton.frame = NSRect(x: cardWidth - 22, y: total - 22, width: 14, height: 14)
+        closeButton.frame = NSRect(x: cardWidth - 13 - closeSize,
+                                   y: total - 13 - closeSize,
+                                   width: closeSize, height: closeSize)
 
         measuredHeight = total
-        // Update own frame to match measured height — caller positions us.
         frame = NSRect(x: 0, y: 0, width: cardWidth, height: total)
+
+        let box = NSRect(x: 0, y: 0, width: cardWidth, height: total)
+        clipView.frame = box
+        blurView.frame = box
+        // Implicit animations would make the glass slide behind the text while
+        // the card is still growing into its measured height.
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        tintLayer.frame = box
+        sheenLayer.frame = box
+        rimLayer.frame = NSRect(x: corner * 0.55, y: total - 1,
+                                width: cardWidth - corner * 1.1, height: 1)
+        CATransaction.commit()
     }
 
     // MARK: - Hover
@@ -230,15 +339,5 @@ final class MWNotificationCardView: NSView {
 
     @objc private func handleClose() {
         onClose()
-    }
-
-    // MARK: - SwiftUI Color → NSColor bridge
-
-    /// SwiftUI's `Color` ↔ AppKit's `NSColor` via the built-in initializer
-    /// available since macOS 12. This is pure value conversion — no
-    /// SwiftUI rendering pipeline is invoked, so the Tahoe NSISEngine
-    /// recursion bug doesn't apply here.
-    private static func nsColor(_ swiftUIColor: Color) -> NSColor {
-        NSColor(swiftUIColor)
     }
 }

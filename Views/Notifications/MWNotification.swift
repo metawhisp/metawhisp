@@ -22,6 +22,13 @@ struct MWNotification: Identifiable {
     /// to read was indistinguishable from one they ignored.
     var screenAgentItemID: UUID?
 
+    /// The app this was read from, when the card asserts something about the
+    /// screen. Rendered beside the badge as «Chrome · 14:07», which turns an
+    /// assertion the reader would have to take on faith into one they can
+    /// check. Cards that report their own doing — a task added, a recording
+    /// saved — leave it nil: there is nothing to cite.
+    var sourceApp: String?
+
     /// Click → execute. Pass `nil` for purely informational cards.
     let onTap: (@MainActor () -> Void)?
 
@@ -32,6 +39,7 @@ struct MWNotification: Identifiable {
         body: String,
         onTap: (@MainActor () -> Void)? = nil,
         screenAgentItemID: UUID? = nil,
+        sourceApp: String? = nil,
         proactiveItems: Void? = nil
     ) {
         // ITER-027.5 — `proactiveItems` parameter retained as a no-op for
@@ -45,6 +53,7 @@ struct MWNotification: Identifiable {
         self.createdAt = Date()
         self.onTap = onTap
         self.screenAgentItemID = screenAgentItemID
+        self.sourceApp = sourceApp
     }
 
     enum Kind {

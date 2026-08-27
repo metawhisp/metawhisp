@@ -492,6 +492,9 @@ final class ProactiveContextService: ObservableObject {
                 MWNotificationStack.shared.dismiss(id: noteID, reason: .opened)
             },
             screenAgentItemID: itemID,
+            // The card says which window this was read from, and the click
+            // goes to the same place — the claim and its citation agree.
+            sourceApp: presented.sourceApp,
             proactiveItems: nil
         )
         MWNotificationStack.shared.push(note)

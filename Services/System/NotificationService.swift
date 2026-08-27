@@ -128,7 +128,8 @@ final class NotificationService: NSObject, ObservableObject {
                 // Space-throw fix (2026-06-10) — see postNewTask.
                 AppDelegate.shared?.openMainWindow(tab: .workspace)
                 NotificationCenter.default.post(name: .markAdviceAsRead, object: adviceID)
-            }
+            },
+            sourceApp: advice.sourceApp
         )
         MWNotificationStack.shared.push(note)
         lastAdviceAt = Date()
