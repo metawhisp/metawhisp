@@ -59,6 +59,20 @@ final class ScreenAgentDeliveryService {
         return .present
     }
 
+    /// What "the feature is on" means, in one place.
+    ///
+    /// It was in two, and they disagreed. The delivery preflight counted a
+    /// revoked Screen Recording permission as off; the persistence gate did
+    /// not. Revoking the permission mid-run therefore refused the comment while
+    /// still writing its UserMemory and exporting its Obsidian file — a
+    /// half-blocked state worse than either whole one. Permission withdrawn is
+    /// consent withdrawn, and both gates now ask this.
+    nonisolated static func featureIsOn(agentEnabled: Bool,
+                                        captureEnabled: Bool,
+                                        hasScreenPermission: Bool) -> Bool {
+        agentEnabled && captureEnabled && hasScreenPermission
+    }
+
     /// Whether anything derived from the screen may still be written down.
     ///
     /// Turning the Screen Agent off is not "be quiet for now" — it is "stop

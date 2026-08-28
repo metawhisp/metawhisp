@@ -484,4 +484,21 @@ extension ScreenAgentDeliveryTests {
             ScreenAgentDeliveryService.mayPersistScreenDerivedWork(
                 featureEnabled: true, purgeIntact: true))
     }
+
+    /// Two gates were asked "is the feature on?" and answered differently: the
+    /// delivery preflight counted a revoked Screen Recording permission as off,
+    /// the persistence gate did not. Revoke the permission mid-run and the
+    /// comment was refused while its UserMemory and its Obsidian file were
+    /// written anyway — the half-blocked state is worse than either whole one.
+    func testARevokedScreenPermissionCountsAsTheFeatureBeingOff() {
+        XCTAssertFalse(ScreenAgentDeliveryService.featureIsOn(
+            agentEnabled: true, captureEnabled: true, hasScreenPermission: false),
+            "permission withdrawn is consent withdrawn")
+        XCTAssertFalse(ScreenAgentDeliveryService.featureIsOn(
+            agentEnabled: false, captureEnabled: true, hasScreenPermission: true))
+        XCTAssertFalse(ScreenAgentDeliveryService.featureIsOn(
+            agentEnabled: true, captureEnabled: false, hasScreenPermission: true))
+        XCTAssertTrue(ScreenAgentDeliveryService.featureIsOn(
+            agentEnabled: true, captureEnabled: true, hasScreenPermission: true))
+    }
 }

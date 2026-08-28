@@ -125,6 +125,15 @@ final class ProactiveContextService: ObservableObject {
     }
 
 
+    /// Read at the moment it is asked, never cached: the whole point is that
+    /// the user can withdraw any of the three while the model is thinking.
+    private var screenAgentIsOn: Bool {
+        ScreenAgentDeliveryService.featureIsOn(
+            agentEnabled: settings.proactiveEnabled,
+            captureEnabled: settings.screenContextEnabled,
+            hasScreenPermission: CGPreflightScreenCaptureAccess())
+    }
+
     /// The user's own open work, assembled for the prompt.
     ///
     /// Ported filter: rejected and unconfirmed rows stay out of prompts. A fact
@@ -404,8 +413,12 @@ final class ProactiveContextService: ObservableObject {
                     self?.purgeEpoch == epoch
                         && AppDelegate.shared?.screenContext.lastAcceptedContextID == ctx.id
                         // Codex P0 — master-off mid-flight kills the result.
-                        && AppSettings.shared.screenContextEnabled
-                        && AppSettings.shared.proactiveEnabled
+                        // The third copy of "is it still on", and the one that
+                        // mattered most: this gates whether a frame already sent
+                        // to the cloud may be used. It read two toggles and not
+                        // the permission, so revoking Screen Recording mid-call
+                        // left the vision facts usable.
+                        && self?.screenAgentIsOn == true
                 })
             if case .facts(let facts) = outcome, !facts.isEmpty {
                 let (seeingEvidence, seeingIDs) = ScreenAgentCandidateAdapter.evidence(
@@ -466,10 +479,13 @@ final class ProactiveContextService: ObservableObject {
         // the agent off was leaving all of that behind. Delivery asks the same
         // question through the same function.
         guard ScreenAgentDeliveryService.mayPersistScreenDerivedWork(
-            featureEnabled: settings.proactiveEnabled && settings.screenContextEnabled,
+            featureEnabled: screenAgentIsOn,
             purgeIntact: epoch == purgeEpoch)
         else {
             runOutcome = epoch == purgeEpoch ? "featureOff" : "invalidated"
+            // A run nobody may act on cites nothing: leaving the evidence here
+            // would file citations under a decision that was thrown away.
+            runEvidence = []
             NSLog("[Proactive] %@ mid-run — discarding insight, nothing persisted",
                   epoch == purgeEpoch ? "Screen Agent switched off" : "Screen history deleted")
             return
@@ -507,9 +523,7 @@ final class ProactiveContextService: ObservableObject {
             // Codex P0 — the final gate re-checks everything that can be
             // withdrawn mid-run: the master capture toggle and the TCC
             // permission, not only the agent toggle.
-            featureEnabled: settings.proactiveEnabled
-                && settings.screenContextEnabled
-                && CGPreflightScreenCaptureAccess(),
+            featureEnabled: screenAgentIsOn,
             isPaused: settings.screenAgentPaused,
             meetingInProgress: AppDelegate.shared?.meetingRecorder.isRecording ?? false,
             pauseDuringMeetings: true,
