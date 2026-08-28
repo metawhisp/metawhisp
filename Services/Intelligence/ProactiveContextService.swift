@@ -458,9 +458,20 @@ final class ProactiveContextService: ObservableObject {
         // ITER-064A.9 — the screen rows this insight was derived from may have
         // been deleted while the model was thinking. Drop it rather than saving
         // a memory the user can no longer trace to any source.
-        guard epoch == purgeEpoch else {
-            runOutcome = "invalidated"
-            NSLog("[Proactive] Screen history deleted mid-run — discarding insight")
+        //
+        // Stage 1.1 — and the same gate now covers the off switch, which this
+        // guard did not. `storage.save` writes a UserMemory AND exports a
+        // Markdown file into the user's Obsidian vault, both of them before
+        // delivery is ever consulted; a run in flight when the user switched
+        // the agent off was leaving all of that behind. Delivery asks the same
+        // question through the same function.
+        guard ScreenAgentDeliveryService.mayPersistScreenDerivedWork(
+            featureEnabled: settings.proactiveEnabled && settings.screenContextEnabled,
+            purgeIntact: epoch == purgeEpoch)
+        else {
+            runOutcome = epoch == purgeEpoch ? "featureOff" : "invalidated"
+            NSLog("[Proactive] %@ mid-run — discarding insight, nothing persisted",
+                  epoch == purgeEpoch ? "Screen Agent switched off" : "Screen history deleted")
             return
         }
 

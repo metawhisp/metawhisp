@@ -2,7 +2,12 @@
 
 ## Status
 
-Planning complete; application implementation not started.
+Shipped to users as 1.3.27 (build 32, tag `v1.3.27`, 2026-08-27). The line that
+stood here — «Planning complete; application implementation not started» —
+contradicted 109 released commits and is corrected rather than preserved.
+
+Programme status is **HOLD / Request Changes**: shipping is not the same as the
+release gates being met. The dogfood gate has not begun.
 
 Planning package now includes the Omi product benchmark, current-code audit,
 plain-language user flows, one Claude master plan, nine numbered iteration
@@ -26,11 +31,26 @@ The repository-wide `specs/iterations/PROGRESS.md` currently tracks another acti
   - [x] 065.1 визит: идентичность, поколение, самоистекающая свежесть — `e372f32`, `4ab7346`
   - [x] 065.2 fail-closed политика — закрыт в 064A (`a6f2a48`, `e7896b6`)
   - [x] 065.3 фокусное окно и его монитор — `de08192`, `4ab7346`
-  - [x] 065.4 отпечаток содержимого + тайминги — `9f1be75`
+  - [~] 065.4 отпечаток содержимого + тайминги — `9f1be75`
+        **Галочка снята 2026-08-27: тип есть, продакшен его не вызывает.**
+        `grep -rn 'ScreenContentFingerprint\.' Services App Views` — ноль
+        совпадений вне собственного файла. `sameWindowProbeSeconds` объявлен в
+        `ScreenAgentTimingPolicy.swift:22` и не используется нигде.
+        Пользовательский провал: новое сообщение в уже открытом чате, изменённая
+        форма или документ при неизменном заголовке — агент не замечает.
+        Открыто как Stage 2.1.
   - [x] 065.5 OCR с главного потока в фон + bounds — `b436baa`
   - [x] 065.6 типизированные исходы захвата, сохранение до колбэка — `e11baaf`
   - [x] 065.7 очередь newest-value, пропуски прогонов, дедлайн — `5ac25a9`, `4ab7346`
-  - [ ] 065.8 проводка в продакшен (shadow)
+  - [x] 065.8 проводка в продакшен — `9dedba8`
+        Координатор действительно вызывается: `ScreenContextService.swift:549`
+        и `:587` (propose), `:556` и `:609` (commit).
+        **Честно о доказательстве:** переход обосновывался «четырьмя часами
+        чистого теневого прогона» — теневой фазы не было, пустой grep по
+        нечитаемому логу приняли за чистый результат (исправлено в `c8173d3`).
+        Данные, собранные постфактум, переход оправдывают: 6 ложных
+        срабатываний идентичности на 1357 визитов — см.
+        `baselines/VISIT-EVIDENCE-2026-08-26.md`.
   - [ ] 065.9 живой прогон на подписанной сборке — требует сборки
 - [~] ITER-066 — директор, evidence, adapter, полярность, quote-containment в обоих таск-путях.
   Открыто из ревью Codex: реактор всё ещё сам вставляет staged-задачи (мимо директора);
@@ -47,6 +67,47 @@ The repository-wide `specs/iterations/PROGRESS.md` currently tracks another acti
 - [x] ITER-070 — 5 причин фидбэка, Quiet/Balanced/Frequent, пауза, семантический дедуп отклонённого
 - [x] ITER-071 — границы визитов по окну, чекпойнт не теряет и не перескакивает, save-fail не засчитывается
 - [~] ITER-072 — health-статус в Inbox + честная копия в Settings + pacing UI. Открыто: онбординг, полный rollout-процесс
+
+## Remediation order (зафиксировано 2026-08-27)
+
+Программа на HOLD. Ниже — порядок доведения до доказанного production flow.
+Один срез за проход: RED → GREEN → регрессия → запись → атомарный коммит.
+
+### Stage 1 — safety containment
+
+- [x] **1.1 Feature-off отменяет и запрещает persistence/export** — `a90f828`+
+      Единое правило `ScreenAgentDeliveryService.mayPersistScreenDerivedWork`;
+      спрашивают оба писателя: `deliver()` и путь `storage.save` (UserMemory +
+      экспорт в Obsidian).
+- [ ] 1.2 Realtime task creation/fulfillment/promotion → proposal-only
+- [ ] 1.3 Правдивая privacy-копия + отмена pending vision при выключении Visual mode
+- [ ] 1.4 Полный retention-граф для новых данных
+- [ ] 1.5 Изолированная миграция существующих unlinked insights (без удаления данных)
+
+### Stage 2 — capture и freshness
+
+- [ ] 2.1 Продакшен-проба отпечатка в том же окне (см. снятую галочку 065.4)
+- [ ] 2.2 Generation по значимому изменению
+- [ ] 2.3 Проброс visit/generation по всему pipeline
+- [ ] 2.4 Настоящая отмена модели по 10-секундному дедлайну
+- [ ] 2.5 Гарантия newest-value A→B→C
+- [ ] 2.6 Невозможность persistence/presentation опоздавшего результата
+
+### Stage 3–7
+
+Evidence provenance, durable thread, один директор, work analysis, доказательство
+готовности — по тексту задачи. Не открываются, пока Stage 1–2 не закрыты.
+
+### Acceptance gates (ни один не закрыт)
+
+| Гейт | Состояние |
+|---|---|
+| Dogfood ≥50 показанных И разобранных | **не начат** |
+| Useful rate ≥80% | не измерялся |
+| Ноль неподтверждённых committed/completed screen-действий | **нарушается** (реактор) |
+| Ноль поздних показов после дедлайна | не доказан |
+| Ноль записей/сети после выключения | **1.1 закрыл запись; сеть — открыто (2.4)** |
+| Delete/retention на изолированном сторе | не выполнялся |
 
 ## Baseline facts
 
@@ -540,4 +601,35 @@ ITER-071.2 (c24de64): почасовой экстрактор читает ка�
 ContextVisit нечем наполнять → порядок следующего прохода: проводка
 координатора (с полным чтением capture-слоя) → V7 ContextVisitRecord →
 ITER-071. Ревью фикс-батча Codex — в полёте (bou753d57).
+```
+
+## Журнал — 2026-08-27, Stage 1.1
+
+```text
+Date/time: 2026-08-27
+Iteration/checklist item: Stage 1.1 — feature-off cancellation, gate before any persistence/export
+RED command + failing assertion:
+  swift test --filter ScreenAgentDeliveryTests
+  testTurningTheFeatureOffWritesNothingDown:
+    XCTAssertTrue failed — «a disabled feature must not persist the comment it was mid-way through»
+    XCTAssertTrue failed — «nor the journal row describing it»
+  (31 тест, 3 падения — третье было опечаткой ярлыка в самом тесте, исправлена)
+GREEN command + exact counts:
+  swift test --filter ScreenAgentDeliveryTests → Executed 31 tests, 0 failures
+  bash scripts/regression.sh → 1266 tests, 0 failures, 48 critical suites, PASS
+  (baseline был 1263 — +3 новых теста, регрессий нет)
+Build/full-suite state: swift build PASS; полный прогон PASS
+Live artifact and scenario: НЕ ВЫПОЛНЯЛСЯ — установленный артефакт остался 1.3.27
+  сборки до этой правки. Живая проверка «выключить агента во время модельного
+  вызова и убедиться, что ни строки не добавилось» — PENDING.
+Observed result (статический, проверен grep'ом):
+  до правки при featureEnabled=false сохранялись ScreenAgentItem + delivery-запись;
+  путь insight'а писал UserMemory и экспортировал файл в Obsidian-хранилище
+  пользователя, то есть данные покидали базу приложения.
+  после правки оба писателя спрашивают одну функцию; остальные причины
+  подавления (пауза, встреча, pacing, устаревший визит, полный стек)
+  по-прежнему сохраняются — обещание Инбокса не сломано, закреплено тестом.
+Open issue/blocker:
+  сеть по-прежнему не отменяется при выключении — модельный вызов доигрывает
+  до конца, просто его результат больше некуда записать. Настоящая отмена — 2.4.
 ```

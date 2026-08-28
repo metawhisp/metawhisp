@@ -427,4 +427,61 @@ extension ScreenAgentDeliveryTests {
             .fetch(FetchDescriptor<ScreenAgentDeliveryRecord>())
         XCTAssertNotNil(records.first?.terminalAt)
     }
+
+    // MARK: - Feature off means nothing more is written down
+
+    /// Turning the Screen Agent off is not "be quiet for now" — it is "stop
+    /// using my screen". A run that was already in flight when the switch went
+    /// off still reached `deliver`, and `deliver` wrote the comment and its
+    /// delivery record to disk anyway. The user sees a feature they disabled
+    /// leaving new rows behind it.
+    @MainActor
+    func testTurningTheFeatureOffWritesNothingDown() throws {
+        let (service, container) = try makeService()
+        XCTAssertNil(service.deliver(makeItem(), preflight: preflight(featureEnabled: false)))
+
+        let ctx = ModelContext(container)
+        XCTAssertTrue(try ctx.fetch(FetchDescriptor<ScreenAgentItem>()).isEmpty,
+                      "a disabled feature must not persist the comment it was mid-way through")
+        XCTAssertTrue(try ctx.fetch(FetchDescriptor<ScreenAgentDeliveryRecord>()).isEmpty,
+                      "nor the journal row describing it")
+    }
+
+    /// The other side of the same rule, and the reason it cannot be "suppressed
+    /// means do not save": a comment held back because the user is in a meeting
+    /// is still theirs to read afterwards. Only the off switch forbids the write.
+    @MainActor
+    func testEveryOtherQuietReasonStillLandsInTheInbox() throws {
+        let quiet: [(String, ScreenAgentDeliveryService.Preflight)] = [
+            ("paused", preflight(isPaused: true)),
+            ("meetingInProgress", preflight(meetingInProgress: true)),
+            ("staleVisit", preflight(visitIsStillCurrent: false)),
+            ("pacing", preflight(secondsSinceLastPresented: 1)),
+            ("stackFull", preflight(popupSlotsFree: 0)),
+        ]
+        for (name, p) in quiet {
+            let (service, container) = try makeService()
+            XCTAssertNil(service.deliver(makeItem(), preflight: p))
+            let stored = try ModelContext(container).fetch(FetchDescriptor<ScreenAgentItem>())
+            XCTAssertEqual(stored.count, 1, "\(name) must stay findable in the Inbox")
+            XCTAssertEqual(stored.first?.suppressionReason, name)
+        }
+    }
+
+    /// One named rule rather than a condition copied into each writer. The
+    /// insight path writes a UserMemory AND exports a file to the user's
+    /// Obsidian vault before delivery is ever consulted, so it has to be able
+    /// to ask the same question and get the same answer.
+    func testOnlyTheOffSwitchForbidsPersistence() {
+        XCTAssertFalse(
+            ScreenAgentDeliveryService.mayPersistScreenDerivedWork(
+                featureEnabled: false, purgeIntact: true))
+        XCTAssertFalse(
+            ScreenAgentDeliveryService.mayPersistScreenDerivedWork(
+                featureEnabled: true, purgeIntact: false),
+            "history the user deleted is not a source anything may be traced to")
+        XCTAssertTrue(
+            ScreenAgentDeliveryService.mayPersistScreenDerivedWork(
+                featureEnabled: true, purgeIntact: true))
+    }
 }

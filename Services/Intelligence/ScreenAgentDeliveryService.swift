@@ -59,6 +59,26 @@ final class ScreenAgentDeliveryService {
         return .present
     }
 
+    /// Whether anything derived from the screen may still be written down.
+    ///
+    /// Turning the Screen Agent off is not "be quiet for now" — it is "stop
+    /// using my screen". A run already in flight when the switch went off still
+    /// reached the writers, and they wrote: the comment, its journal row, a
+    /// UserMemory, and a Markdown file exported into the user's Obsidian vault.
+    /// The last one leaves the app's own store entirely.
+    ///
+    /// Deliberately NOT "suppressed means do not save". A comment held back
+    /// because the user was in a meeting is still theirs to read afterwards,
+    /// and that promise is the whole reason the Inbox exists. Only two states
+    /// forbid the write: the feature is off, and the history this was derived
+    /// from has been deleted — a source nothing can be traced back to.
+    ///
+    /// One named rule rather than a condition copied into each writer, because
+    /// the insight path persists and exports before delivery is ever consulted.
+    nonisolated static func mayPersistScreenDerivedWork(featureEnabled: Bool, purgeIntact: Bool) -> Bool {
+        featureEnabled && purgeIntact
+    }
+
     private let container: ModelContainer
     private var lastPresentedAt: Date?
 
@@ -113,6 +133,22 @@ final class ScreenAgentDeliveryService {
     /// throwing work away.
     @discardableResult
     func deliver(_ item: ScreenAgentItem, preflight: Preflight) -> ScreenAgentItem? {
+        // Before the context is even opened. The duplicate-run branch below
+        // writes a journal row of its own, so a gate placed after the decision
+        // would still leave one behind on a feature the user has switched off.
+        guard Self.mayPersistScreenDerivedWork(
+            featureEnabled: preflight.featureEnabled,
+            // The purge fence belongs to the run that owns the epoch; a comment
+            // reaching delivery has already been checked against it by its
+            // caller, and re-deriving it here would need state this type does
+            // not have.
+            purgeIntact: true)
+        else {
+            NSLog("[ScreenAgentDelivery] feature off — nothing persisted for run %@",
+                  item.runID.uuidString)
+            return nil
+        }
+
         let context = ModelContext(container)
 
         // Idempotent by run: a retried run must not produce a second comment.
