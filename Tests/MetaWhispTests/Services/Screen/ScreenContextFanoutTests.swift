@@ -45,4 +45,22 @@ final class ScreenContextFanoutTests: XCTestCase {
         XCTAssertEqual(reactorSawID, ctx.id)
         XCTAssertEqual(proactiveSawID, ctx.id)
     }
+    /// Stage 2.1-bis — the ceiling on the picture gate stores a row for a window
+    /// nobody touched so that an hour of reading is not a hole in history. The
+    /// pixels are the ones both consumers already saw, so waking them would buy
+    /// a model call every ceiling interval for a screen that did not change:
+    /// the cost the gate exists to avoid, arriving through the fix for the gate.
+    func testAForcedRereadWakesNeitherConsumer() async {
+        var reactorRan = false
+        var proactiveRan = false
+        ScreenContextFanout.dispatch(
+            makeContext(),
+            isForcedReread: true,
+            toTaskReactor: { _ in reactorRan = true },
+            toProactive: { _ in proactiveRan = true }
+        )
+        try? await Task.sleep(for: .milliseconds(200))
+        XCTAssertFalse(reactorRan, "nothing on the screen changed")
+        XCTAssertFalse(proactiveRan, "nothing on the screen changed")
+    }
 }

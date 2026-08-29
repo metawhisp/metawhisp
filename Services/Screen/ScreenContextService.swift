@@ -141,7 +141,10 @@ final class ScreenContextService: ObservableObject {
     /// own debounce/rate-limit. Hook layered on top of the polling loop — no extra timers.
     ///
     /// Implements spec://iterations/ITER-006-realtime-screen-reaction#scope.2
-    var onContextPersisted: ((ScreenContext) -> Void)?
+    /// The Bool says whether this row is a forced re-read of a window nobody
+    /// touched. It is stored either way; only a row with something new in it
+    /// wakes the consumers.
+    var onContextPersisted: ((ScreenContext, Bool) -> Void)?
 
     /// Set the model container for SwiftData persistence.
     func configure(modelContainer: ModelContainer) {
@@ -560,6 +563,10 @@ final class ScreenContextService: ObservableObject {
         // of the comparison have it or neither does. Two windows of one app
         // with the same title sit in different places; a page that renames its
         // own tab has not moved.
+        // Set only when the picture gate has been holding this window down past
+        // its ceiling: the row is stored so the history has no hole, and the
+        // consumers are not woken because nothing on the screen changed.
+        var forcedReread = false
         let tickIdentity = focusedWindowIdentity(pid: frontApp.processIdentifier)
         let tickProposal = visitCoordinator.propose(
             .init(bundleID: bundleID, appName: appName,
@@ -572,9 +579,17 @@ final class ScreenContextService: ObservableObject {
             // we committed still hashes the same — neither of which notices a
             // new message in an already-open channel. Ask the picture before
             // going quiet.
-            if await sameWindowContentMoved(pid: frontApp.processIdentifier) {
+            let verdict = await sameWindowVerdict(pid: frontApp.processIdentifier)
+            switch verdict {
+            case .moved:
                 NSLog("[ScreenContext] same window, content moved — reading it again")
-            } else {
+            case .forced:
+                // Stage 2.1-bis — the gate has held this window down long
+                // enough. Reading is what sitting still in front of a document
+                // looks like, and an hour of it used to leave no trace at all.
+                forcedReread = true
+                NSLog("[ScreenContext] same window held quiet too long — reading it anyway")
+            case .quiet:
                 visitCoordinator.commit(tickProposal, contentHash: lastCommittedToken,
                                         at: visitClock.now)
                 // The window may have been nudged since the visit opened: move
@@ -621,9 +636,21 @@ final class ScreenContextService: ObservableObject {
                       frame: snapshot.windowFrame),
                 at: visitClock.now, wallClock: Date())
 
+            // The flag was decided before the screenshot and OCR awaits, and
+            // the user can switch windows across them — the same reason the
+            // proposal above is derived from the snapshot rather than from the
+            // window this tick started on. A forced re-read is by definition a
+            // window that did not change, so a proposal that says otherwise
+            // means we are looking at something new and the consumers must hear
+            // about it.
+            let wasForcedReread: Bool
+            if case .unchanged = proposal { wasForcedReread = forcedReread }
+            else { wasForcedReread = false }
+
             // Persist first — it is what decides this cycle's outcome.
             persistContext(snapshot, frame: capture.frame,
-                           visitProposal: proposal, visitToken: token)
+                           visitProposal: proposal, visitToken: token,
+                           forcedReread: wasForcedReread)
 
             // ITER-064A.3 — consume the change from the window the frame
             // actually came from: the user may have switched during the await.
@@ -649,14 +676,14 @@ final class ScreenContextService: ObservableObject {
     /// Returns false whenever it cannot answer — no screenshot, no pixels, the
     /// cadence not elapsed. Guessing "it moved" would re-run OCR and a model
     /// call on a window sitting still, which is the failure this probe replaced.
-    private func sameWindowContentMoved(pid: pid_t) async -> Bool {
-        guard sameWindowProbe.shouldLook(at: Date()) else { return false }
+    private func sameWindowVerdict(pid: pid_t) async -> SameWindowProbe.Verdict {
+        guard sameWindowProbe.shouldLook(at: Date()) else { return .quiet }
         guard let shot = await captureScreenshot(frontPID: pid),
               let probe = ScreenFrameEncoder.probePixels(from: shot.image)
-        else { return false }
+        else { return .quiet }
         let fingerprint = ScreenContentFingerprint(
             pixels: probe.pixels, width: probe.width, height: probe.height)
-        return sameWindowProbe.contentMoved(to: fingerprint, at: Date())
+        return sameWindowProbe.look(at: fingerprint, now: Date())
     }
 
     /// ITER-064A.2 — an empty allowlist is now fail-closed, which is correct
@@ -812,7 +839,8 @@ final class ScreenContextService: ObservableObject {
 
     private func persistContext(_ snapshot: ScreenContextSnapshot, frame: CGImage?,
                                 visitProposal: ContextVisitCoordinator.Proposal? = nil,
-                                visitToken: Int = 0) {
+                                visitToken: Int = 0,
+                                forcedReread: Bool = false) {
         guard let container = modelContainer else { return }
         let ctx = ModelContext(container)
         let record = ScreenContext(
@@ -872,7 +900,7 @@ final class ScreenContextService: ObservableObject {
 
         // Fire realtime hook for ITER-006 reactor (per-window LLM task check).
         // Callback handles its own guards/debounce — we just pass every persisted row.
-        onContextPersisted?(record)
+        onContextPersisted?(record, forcedReread)
     }
 
     /// Get the title of the active window using Accessibility API.

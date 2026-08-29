@@ -13,11 +13,21 @@ import Foundation
 @MainActor
 enum ScreenContextFanout {
 
+    /// Stage 2.1-bis — a forced re-read reaches neither consumer.
+    ///
+    /// The ceiling on the picture gate exists so that an hour spent reading one
+    /// document is not a hole in screen history. It does not mean anything
+    /// happened: the pixels are the same ones both consumers already saw. Waking
+    /// them here would buy a model call every ceiling interval for a window
+    /// nobody touched, which is the cost the gate was added to avoid, arriving
+    /// through the fix for the gate.
     static func dispatch(
         _ ctx: ScreenContext,
+        isForcedReread: Bool = false,
         toTaskReactor reactor: @escaping @MainActor (ScreenContext) async -> Void,
         toProactive proactive: @escaping @MainActor (ScreenContext) -> Void
     ) {
+        guard !isForcedReread else { return }
         Task { @MainActor in await reactor(ctx) }
         Task { @MainActor in proactive(ctx) }
     }

@@ -1065,7 +1065,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             cache: screenContext.frameCache)
         realtimeScreenReactor.configure(modelContainer: historyService.modelContainer)
         realtimeScreenReactor.meetingRecorder = meetingRecorder
-        screenContext.onContextPersisted = { [weak self] ctx in
+        screenContext.onContextPersisted = { [weak self] ctx, forcedReread in
             // ITER-064A.4 — two independent consumers of the same context. The
             // reactor's model call is allowed 20 s; the proactive path used to
             // wait behind it and so evaluated screens the user had left.
@@ -1073,6 +1073,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             // blacklist inside `onNewContext`.
             ScreenContextFanout.dispatch(
                 ctx,
+                isForcedReread: forcedReread,
                 toTaskReactor: { [weak self] c in await self?.realtimeScreenReactor.react(to: c) },
                 toProactive: { [weak self] c in self?.proactiveContextService.onNewContext(c) }
             )

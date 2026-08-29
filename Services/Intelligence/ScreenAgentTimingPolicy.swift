@@ -21,6 +21,22 @@ enum ScreenAgentTimingPolicy {
     /// open channel is exactly this case.
     static let sameWindowProbeSeconds: TimeInterval = 3
 
+    /// How long the probe may keep saying "nothing moved" before the window is
+    /// read regardless of how identical it looks.
+    ///
+    /// A gate with no ceiling starves. "The picture has not changed" stays true
+    /// for exactly as long as somebody reads one document, and reading is what
+    /// sitting still in front of a document looks like — so an hour of the
+    /// user's deepest work produced no rows at all.
+    ///
+    /// Half of `ContextVisitCoordinator.maxGapSeconds`, derived rather than
+    /// picked round: a gap past that ends the visit and the same window becomes
+    /// news again, so forcing at half of it keeps a continuously-read window
+    /// inside one unbroken visit even when a tick is lost to a slow OCR pass.
+    /// It also bounds the cost exactly — at most one extra read per interval,
+    /// and only while a window is otherwise being suppressed.
+    static let forcedReadSeconds: TimeInterval = 150
+
     /// From a settled context to something shown. Past this the user has moved
     /// on and a comment is worse than silence, so late work is dropped rather
     /// than delivered.
