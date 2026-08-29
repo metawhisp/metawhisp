@@ -15,13 +15,16 @@ final class ScreenAgentHealthTests: XCTestCase {
         hasPermission: Bool = true,
         allowlistIsActiveAndEmpty: Bool = false,
         currentAppAllowed: Bool = true,
+        currentAppIsAssistant: Bool = false,
         currentApp: String? = "Slack",
         captureOutcome: ScreenCaptureOutcome = .captured(ocrCharacters: 500)
     ) -> ScreenAgentHealth {
         .evaluate(featureEnabled: featureEnabled, paused: paused,
                   hasPermission: hasPermission,
                   allowlistIsActiveAndEmpty: allowlistIsActiveAndEmpty,
-                  currentAppAllowed: currentAppAllowed, currentApp: currentApp,
+                  currentAppAllowed: currentAppAllowed,
+                  currentAppIsAssistant: currentAppIsAssistant,
+                  currentApp: currentApp,
                   captureOutcome: captureOutcome)
     }
 
@@ -107,5 +110,26 @@ final class ScreenAgentHealthTests: XCTestCase {
             XCTAssertTrue(h.isSilentlyIdle)
             XCTAssertNotNil(h.action, "\(h.summary) leaves the user stuck with no next step")
         }
+    }
+    // MARK: - Assistant windows (Stage 2.1-ter)
+
+    /// Skipping another assistant's window is our decision, not the user's
+    /// setting. Reporting it as "you excluded it" sends them looking through a
+    /// Settings list that does not contain the app.
+    func testSkippingAnotherAssistantIsNotBlamedOnTheUser() {
+        let h = health(currentAppIsAssistant: true, currentApp: "Claude")
+        XCTAssertEqual(h.state, .skippedAsAssistant(app: "Claude"))
+        XCTAssertFalse(h.isSilentlyIdle, "this is the feature working as designed")
+        XCTAssertTrue(h.summary.contains("Claude"))
+        XCTAssertFalse(h.summary.lowercased().contains("you excluded"),
+                       "the user did not do this")
+    }
+
+    /// If they excluded it themselves, say that — their own setting is the more
+    /// useful answer, and it is the one they can change.
+    func testTheUsersOwnExclusionOutranksOurDefault() {
+        let h = health(currentAppAllowed: false, currentAppIsAssistant: true,
+                       currentApp: "Claude")
+        XCTAssertEqual(h.state, .excludedHere(app: "Claude"))
     }
 }

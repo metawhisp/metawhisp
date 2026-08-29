@@ -18,6 +18,9 @@ struct ScreenAgentHealth: Equatable {
         /// On, but nothing is allowed to be looked at.
         case nothingAllowed
         case excludedHere(app: String)
+        /// On, but this window belongs to another assistant and we do not read
+        /// those. Our decision, not the user's setting.
+        case skippedAsAssistant(app: String)
         case watching(app: String)
         case degraded(reason: String)
     }
@@ -32,6 +35,8 @@ struct ScreenAgentHealth: Equatable {
         case .noPermission: return "Needs Screen Recording permission"
         case .nothingAllowed: return "On, but no apps are allowed yet"
         case .excludedHere(let app): return "Not watching \(app) — you excluded it"
+        case .skippedAsAssistant(let app):
+            return "Not watching \(app) — MetaWhisp doesn't read other assistants\u{2019} windows"
         case .watching(let app): return "Watching \(app)"
         case .degraded(let reason): return "Not working — \(reason)"
         }
@@ -44,7 +49,7 @@ struct ScreenAgentHealth: Equatable {
         case .paused: return "Resume to start getting comments again."
         case .noPermission: return "Grant Screen Recording in System Settings, then reopen this."
         case .nothingAllowed: return "Add the apps you want watched, or switch to excluding instead."
-        case .excludedHere: return nil
+        case .excludedHere, .skippedAsAssistant: return nil
         case .watching: return nil
         case .degraded: return "Restarting MetaWhisp usually clears this."
         }
@@ -55,7 +60,7 @@ struct ScreenAgentHealth: Equatable {
     var isSilentlyIdle: Bool {
         switch state {
         case .nothingAllowed, .noPermission, .degraded: return true
-        case .off, .paused, .excludedHere, .watching: return false
+        case .off, .paused, .excludedHere, .skippedAsAssistant, .watching: return false
         }
     }
 
@@ -67,6 +72,7 @@ struct ScreenAgentHealth: Equatable {
         hasPermission: Bool,
         allowlistIsActiveAndEmpty: Bool,
         currentAppAllowed: Bool,
+        currentAppIsAssistant: Bool,
         currentApp: String?,
         captureOutcome: ScreenCaptureOutcome
     ) -> ScreenAgentHealth {
@@ -88,6 +94,11 @@ struct ScreenAgentHealth: Equatable {
         }
         if !currentAppAllowed, let app = currentApp {
             return .init(state: .excludedHere(app: app))
+        }
+        // Their own setting outranks ours: it is the more useful answer and the
+        // one they can change.
+        if currentAppIsAssistant, let app = currentApp {
+            return .init(state: .skippedAsAssistant(app: app))
         }
         return .init(state: .watching(app: currentApp ?? "your screen"))
     }

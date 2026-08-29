@@ -160,12 +160,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             blacklist: policy.blacklist,
             whitelist: policy.whitelist
         )
+        // Stage 2.1-ter — the status line reads the same rule the polling loop
+        // obeys. Without this it says "Watching Claude" while the loop is
+        // skipping it, which is the status line lying in the one place it
+        // exists to stop happening.
+        let skippedAsAssistant = allowed && !ScreenContextPolicy.isAmbientCaptureAllowed(
+            appName: appName ?? "",
+            bundleID: frontApp?.bundleIdentifier ?? "",
+            blacklist: policy.blacklist,
+            whitelist: policy.whitelist,
+            defaultExcluded: ScreenContextPolicy.assistantWindows
+        )
         return ScreenAgentHealth.evaluate(
             featureEnabled: settings.proactiveEnabled && settings.screenContextEnabled,
             paused: settings.screenAgentPaused,
             hasPermission: CGPreflightScreenCaptureAccess(),
             allowlistIsActiveAndEmpty: policy.whitelist?.isEmpty == true,
             currentAppAllowed: allowed,
+            currentAppIsAssistant: skippedAsAssistant,
             currentApp: appName,
             captureOutcome: screenContext.lastCaptureOutcome
         )

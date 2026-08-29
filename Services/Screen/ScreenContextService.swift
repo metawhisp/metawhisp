@@ -477,9 +477,12 @@ final class ScreenContextService: ObservableObject {
         // The voice path reads the screen, it does not feed vision — the
         // frame is dropped here, not parked in shared state for some other
         // flow's persist to misattribute.
+        // The user asked out loud about the window in front of them. That is
+        // not ambient capture, so the assistant-window default does not apply.
         return await captureActiveWindow(
             blacklist: policy.blacklist,
-            whitelist: policy.whitelist
+            whitelist: policy.whitelist,
+            defaultExcluded: []
         )?.snapshot
     }
 
@@ -509,9 +512,12 @@ final class ScreenContextService: ObservableObject {
         // used to sit below, so an app the user had not allowed still had its
         // window title read and could auto-start a meeting recording: no OCR
         // row, but the recorder ran anyway.
-        guard ScreenContextPolicy.isCaptureAllowed(
+        // Stage 2.1-ter — and this loop, unlike `captureNow`, is capture nobody
+        // asked for, so it also skips another assistant's window.
+        guard ScreenContextPolicy.isAmbientCaptureAllowed(
             appName: appName, bundleID: bundleID,
-            blacklist: blacklist, whitelist: whitelist
+            blacklist: blacklist, whitelist: whitelist,
+            defaultExcluded: ScreenContextPolicy.assistantWindows
         ) else {
             lastCaptureOutcome = .excluded
             logSuppressedCaptureIfNeeded(appName: appName, whitelist: whitelist)
@@ -586,7 +592,9 @@ final class ScreenContextService: ObservableObject {
 
         // ITER-053.1 purge fence — snapshot before the capture/OCR awaits.
         let epoch = captureEpoch
-        if let capture = await captureActiveWindow(blacklist: blacklist, whitelist: whitelist) {
+        if let capture = await captureActiveWindow(
+            blacklist: blacklist, whitelist: whitelist,
+            defaultExcluded: ScreenContextPolicy.assistantWindows) {
             let snapshot = capture.snapshot
             // The user hit «Delete screen history» while this capture was in
             // flight — discard it rather than re-adding pre-delete OCR.
@@ -665,18 +673,24 @@ final class ScreenContextService: ObservableObject {
         NSLog("[ScreenContext] Not capturing %@ — allowlist mode is on with no apps listed. Add apps in Settings, or switch to blacklist mode.", appName)
     }
 
+    /// `defaultExcluded` separates the two callers: the polling loop passes
+    /// `assistantWindows`, the on-demand voice question passes nothing. Both
+    /// checkpoints have to agree or the loop stops at one and grabs at the
+    /// other.
     private func captureActiveWindow(
         blacklist: Set<String>,
-        whitelist: Set<String>?
+        whitelist: Set<String>?,
+        defaultExcluded: Set<String>
     ) async -> (snapshot: ScreenContextSnapshot, frame: CGImage?)? {
         guard let frontApp = NSWorkspace.shared.frontmostApplication else { return nil }
         let appName = frontApp.localizedName ?? "Unknown"
         let bundleID = frontApp.bundleIdentifier ?? ""
 
         // Safety checks — same shared rule as the change detector above.
-        guard ScreenContextPolicy.isCaptureAllowed(
+        guard ScreenContextPolicy.isAmbientCaptureAllowed(
             appName: appName, bundleID: bundleID,
-            blacklist: blacklist, whitelist: whitelist
+            blacklist: blacklist, whitelist: whitelist,
+            defaultExcluded: defaultExcluded
         ) else { return nil }
 
         let identity = focusedWindowIdentity(pid: frontApp.processIdentifier)
