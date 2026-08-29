@@ -79,7 +79,9 @@ The repository-wide `specs/iterations/PROGRESS.md` currently tracks another acti
       Единое правило `ScreenAgentDeliveryService.mayPersistScreenDerivedWork`;
       спрашивают оба писателя: `deliver()` и путь `storage.save` (UserMemory +
       экспорт в Obsidian).
-- [ ] 1.2 Realtime task creation/fulfillment/promotion → proposal-only
+- [x] **1.2 Screen-derived task creation/completion остановлены** — `3b4735a`
+      Одно правило `ScreenDerivedTaskPolicy.mayMutateWithoutConfirmation`, три
+      точки мутации. Наблюдение оставлено работать намеренно.
 - [ ] 1.3 Правдивая privacy-копия + отмена pending vision при выключении Visual mode
 - [ ] 1.4 Полный retention-граф для новых данных
 - [ ] 1.5 Изолированная миграция существующих unlinked insights (без удаления данных)
@@ -645,4 +647,41 @@ Self-check после коммита 4265d0a — найдена дыра В СА
 Open issue/blocker:
   сеть по-прежнему не отменяется при выключении — модельный вызов доигрывает
   до конца, просто его результат больше некуда записать. Настоящая отмена — 2.4.
+```
+
+## Журнал — 2026-08-29, Stage 1.2
+
+```text
+Date/time: 2026-08-29
+Iteration/checklist item: Stage 1.2 — screen-derived task mutation → notice only
+RED command + failing assertion:
+  swift test --filter ScreenDerivedTaskMutationTests
+  testTheScreenSayingItIsDoneDoesNotCloseYourTask:
+    XCTAssertEqual failed: ("Optional(true)") is not equal to ("Optional(false)")
+    XCTAssertNil failed: "2026-08-29 01:12:53 +0000"
+  Одна фраза на экране закрыла задачу пользователя и проставила метку времени.
+GREEN command + exact counts:
+  swift test --filter ScreenDerivedTaskMutationTests → 2 теста, 0 падений
+  bash scripts/regression.sh → 1269 tests, 0 failures, 48 critical suites, PASS
+  (baseline 1263 → 1267 после 1.1 → 1269; регрессий нет)
+Build/full-suite state: swift build PASS; полный прогон PASS
+Live artifact and scenario: VERIFIED (данные, не поведение) —
+  приложение остановлено, стор скопирован в
+  ~/Library/Application Support/MetaWhisp.store.backup-2026-08-29 (258 МБ),
+  954 накопленные staged-задачи из экрана помечены dismissed (НЕ удалены),
+  приложение перезапущено, PRAGMA quick_check → ok.
+  Поведение нового гейта на живой сборке НЕ проверялось: установленный
+  артефакт — сборка до этих правок.
+Observed result:
+  измерено до правки: 957 staged из экрана, старейшая 21 апреля, ~20/день,
+  до видимого статуса дошли 5. Причина — промоушен двигается только при
+  освобождении слота, а открытых задач 477, слоты не освобождаются.
+  после: активных staged из экрана 0; ручные задачи пользователя целы
+  (560 всего, 477 открытых, ZSCREENCONTEXTID IS NULL — не затронуты).
+Open issue/blocker:
+  предложению НЕКУДА идти — поверхность подтверждения (Stage 5) не существует,
+  поэтому наблюдение сейчас логируется и отбрасывается. Это осознанный
+  временный шаг, а не конечное состояние.
+  Откат данных: UPDATE ZTASKITEM SET ZISDISMISSED=0 WHERE ZSCREENCONTEXTID
+  IS NOT NULL AND ZSTATUS='staged' AND ZUPDATEDAT > <метка>; либо копия стора.
 ```
