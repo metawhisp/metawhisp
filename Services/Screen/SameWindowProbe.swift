@@ -33,16 +33,22 @@ struct SameWindowProbe {
 
     private var lastLookedAt: Date?
     private var baseline: ScreenContentFingerprint?
-    /// When this probe last let a read through — a change, a forced read, or
-    /// the first look that established the baseline. The ceiling is measured
-    /// from here, so a window that keeps being read never accumulates one.
+    /// When this window was last actually stored, set by `noteStored`. The
+    /// ceiling is measured from here, so a window that keeps being read never
+    /// accumulates one — and a read that stored nothing never spends one.
     private var lastReleasedAt: Date?
 
     /// Clock only. Called before a screenshot is taken, not after.
+    ///
+    /// A backwards jump — sleep, an NTP correction — counts as due here as well
+    /// as in the ceiling. This gate runs first, so rejecting a negative interval
+    /// would make the ceiling's own recovery unreachable: two rules each correct
+    /// on their own, and between them the starvation this probe was fixed for.
     func shouldLook(at now: Date) -> Bool {
         guard let lastLookedAt else { return true }
-        return now.timeIntervalSince(lastLookedAt)
-            >= ScreenAgentTimingPolicy.sameWindowProbeSeconds
+        let elapsed = now.timeIntervalSince(lastLookedAt)
+        return elapsed < 0
+            || elapsed >= ScreenAgentTimingPolicy.sameWindowProbeSeconds
     }
 
     /// Store what the window looks like now and say what that means. `.quiet`
@@ -53,19 +59,21 @@ struct SameWindowProbe {
             baseline = fingerprint
             lastLookedAt = now
         }
-        guard let baseline else {
-            // The first look is the baseline, and the capture that opened this
-            // window has just happened — so the ceiling starts counting here.
-            lastReleasedAt = now
-            return .quiet
-        }
-        if fingerprint.differs(from: baseline) {
-            lastReleasedAt = now
-            return .moved
-        }
-        guard forcedReadIsDue(at: now) else { return .quiet }
+        guard let baseline else { return .quiet }
+        if fingerprint.differs(from: baseline) { return .moved }
+        return forcedReadIsDue(at: now) ? .forced : .quiet
+    }
+
+    /// A row landed. This — not the decision to read — is what spends the
+    /// ceiling.
+    ///
+    /// Deciding to read used to advance the clock on its own, so a capture that
+    /// failed afterwards wrote nothing and still bought a full interval of
+    /// silence. A window whose screenshots keep failing would then starve
+    /// exactly as it did before the ceiling existed: the original bug wearing
+    /// the fix as a disguise. Nothing stored, nothing spent.
+    mutating func noteStored(at now: Date) {
         lastReleasedAt = now
-        return .forced
     }
 
     /// Whether the quiet answer has been held long enough that the window must

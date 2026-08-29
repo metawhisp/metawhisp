@@ -35,6 +35,11 @@ enum ScreenAgentTimingPolicy {
     /// inside one unbroken visit even when a tick is lost to a slow OCR pass.
     /// It also bounds the cost exactly — at most one extra read per interval,
     /// and only while a window is otherwise being suppressed.
+    ///
+    /// Measured from the last row that actually landed, so the first ceiling on
+    /// a freshly opened window runs one poll longer than this: the probe needs a
+    /// baseline before it can suppress anything. 150 + one poll is still well
+    /// inside the visit gap, which is the property that matters.
     static let forcedReadSeconds: TimeInterval = 150
 
     /// From a settled context to something shown. Past this the user has moved

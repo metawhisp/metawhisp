@@ -27,6 +27,7 @@ final class SameWindowProbeTests: XCTestCase {
         var probe = SameWindowProbe()
         let start = Date()
         _ = probe.look(at: fingerprint(10), now: start)
+        probe.noteStored(at: start)
         XCTAssertEqual(probe.look(at: fingerprint(10), now: start.addingTimeInterval(30)), .quiet)
     }
 
@@ -72,6 +73,7 @@ final class SameWindowProbeTests: XCTestCase {
         var probe = SameWindowProbe()
         let start = Date()
         _ = probe.look(at: fingerprint(10), now: start)
+        probe.noteStored(at: start)
         let justUnder = start.addingTimeInterval(ScreenAgentTimingPolicy.forcedReadSeconds - 1)
         XCTAssertEqual(probe.look(at: fingerprint(10), now: justUnder), .quiet)
         let justOver = start.addingTimeInterval(ScreenAgentTimingPolicy.forcedReadSeconds + 1)
@@ -85,8 +87,10 @@ final class SameWindowProbeTests: XCTestCase {
         var probe = SameWindowProbe()
         let start = Date()
         _ = probe.look(at: fingerprint(10), now: start)
+        probe.noteStored(at: start)
         let forced = start.addingTimeInterval(ScreenAgentTimingPolicy.forcedReadSeconds + 1)
         XCTAssertEqual(probe.look(at: fingerprint(10), now: forced), .forced)
+        probe.noteStored(at: forced)
         XCTAssertEqual(probe.look(at: fingerprint(10), now: forced.addingTimeInterval(30)), .quiet,
                        "the next tick is quiet again")
     }
@@ -97,8 +101,10 @@ final class SameWindowProbeTests: XCTestCase {
         var probe = SameWindowProbe()
         let start = Date()
         _ = probe.look(at: fingerprint(10), now: start)
+        probe.noteStored(at: start)
         let changed = start.addingTimeInterval(ScreenAgentTimingPolicy.forcedReadSeconds - 1)
         XCTAssertEqual(probe.look(at: fingerprint(200), now: changed), .moved)
+        probe.noteStored(at: changed)
         XCTAssertEqual(probe.look(at: fingerprint(200), now: changed.addingTimeInterval(30)), .quiet)
     }
 
@@ -109,7 +115,8 @@ final class SameWindowProbeTests: XCTestCase {
         var probe = SameWindowProbe()
         let start = Date()
         _ = probe.look(at: fingerprint(10), now: start)
-        XCTAssertNotEqual(probe.look(at: fingerprint(10), now: start.addingTimeInterval(-90)), .quiet)
+        probe.noteStored(at: start)
+        XCTAssertEqual(probe.look(at: fingerprint(10), now: start.addingTimeInterval(-90)), .forced)
     }
 
     /// Two gates in series multiply: if the cadence check ever outgrew the
@@ -127,5 +134,48 @@ final class SameWindowProbeTests: XCTestCase {
         XCTAssertLessThan(ScreenAgentTimingPolicy.forcedReadSeconds,
                           Double(ContextVisitCoordinator.maxGapSeconds.components.seconds),
                           "a window read continuously must not fall out of its own visit")
+    }
+    // MARK: - Review findings (Codex, 2026-08-29)
+
+    /// The ceiling used to be spent by *deciding* to read, not by reading. A
+    /// capture that failed after that decision wrote nothing and still bought
+    /// another full interval of silence, so a window whose screenshots keep
+    /// failing starves exactly as it did before the ceiling existed — the
+    /// original bug, wearing the fix as a disguise.
+    func testAReadThatStoredNothingDoesNotSpendTheCeiling() {
+        var probe = SameWindowProbe()
+        let start = Date()
+        _ = probe.look(at: fingerprint(10), now: start)
+        probe.noteStored(at: start)
+
+        let due = start.addingTimeInterval(ScreenAgentTimingPolicy.forcedReadSeconds + 1)
+        XCTAssertEqual(probe.look(at: fingerprint(10), now: due), .forced)
+        // No `noteStored` — the capture or the save failed.
+        XCTAssertEqual(probe.look(at: fingerprint(10), now: due.addingTimeInterval(30)), .forced,
+                       "a read that stored nothing must be retried, not waited out")
+    }
+
+    /// And a read that did land spends it.
+    func testAStoredReadSpendsTheCeiling() {
+        var probe = SameWindowProbe()
+        let start = Date()
+        _ = probe.look(at: fingerprint(10), now: start)
+        probe.noteStored(at: start)
+        let due = start.addingTimeInterval(ScreenAgentTimingPolicy.forcedReadSeconds + 1)
+        XCTAssertEqual(probe.look(at: fingerprint(10), now: due), .forced)
+        probe.noteStored(at: due)
+        XCTAssertEqual(probe.look(at: fingerprint(10), now: due.addingTimeInterval(30)), .quiet)
+    }
+
+    /// Two gates in series again, and the reason the backwards-clock test above
+    /// was false comfort: it calls `look` directly, but production asks
+    /// `shouldLook` first, and that one rejected a negative interval outright —
+    /// so the recovery branch it was meant to prove could never be reached.
+    func testABackwardsClockDoesNotWedgeTheCadenceCheckEither() {
+        var probe = SameWindowProbe()
+        let start = Date()
+        _ = probe.look(at: fingerprint(10), now: start)
+        XCTAssertTrue(probe.shouldLook(at: start.addingTimeInterval(-90)),
+                      "a clock that went backwards must not lock the probe out")
     }
 }

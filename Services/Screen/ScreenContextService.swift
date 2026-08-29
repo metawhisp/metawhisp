@@ -665,6 +665,12 @@ final class ScreenContextService: ObservableObject {
                 }
                 visitCoordinator.commit(proposal, contentHash: token, at: visitClock.now)
                 lastCommittedToken = token
+                // Stage 2.1-bis (Codex) — the ceiling is spent by a row that
+                // landed, not by the decision to go and get one. This is inside
+                // `consumesWindowTurn` for that reason: a capture or save that
+                // failed leaves the window due, so the next tick tries again
+                // instead of waiting out another full interval in silence.
+                sameWindowProbe.noteStored(at: Date())
             }
         }
     }
