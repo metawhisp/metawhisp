@@ -57,6 +57,17 @@ final class ScreenAgentVisionClient {
         case failed
     }
 
+    /// How often the in-flight upload is re-asked whether it is still wanted.
+    /// A quarter second is fast enough that a withdrawal is acted on before the
+    /// user has finished letting go of the switch, and rare enough to be free.
+    static let consentPollNanoseconds: UInt64 = 250_000_000
+
+    /// Set by the watcher, read by the error path, so a cancellation caused by
+    /// the user can be told apart from one caused by the network.
+    private final class RevocationFlag: @unchecked Sendable {
+        var value = false
+    }
+
     /// One call per run, and only when everything still holds.
     ///
     /// - Parameter isStillCurrent: re-checked after the await; the user can
@@ -69,13 +80,37 @@ final class ScreenAgentVisionClient {
         guard visualConsentGranted(), isStillCurrent(),
               let frame = cache.take(matching: contextID) else { return .notEligible }
 
+        // Consent is re-checked after the await further down, but discarding an
+        // answer is not the same as stopping the question. By then the frame —
+        // a JPEG of the user's screen — is already at the proxy and on its way
+        // to a provider, which is exactly where the user just said it must not
+        // go. The upload is cancelled, not merely ignored.
+        let work = Task { try await transport.analyze(
+            ScreenAgentVisionRequest(contextID: contextID, jpeg: frame.jpeg,
+                                     generation: frame.generation,
+                                     frameHash: frame.contentHash)) }
+        let revoked = RevocationFlag()
+        let watch = Task { @MainActor in
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: Self.consentPollNanoseconds)
+                guard !Task.isCancelled else { return }
+                if !visualConsentGranted() || !isStillCurrent() {
+                    revoked.value = true
+                    work.cancel()
+                    return
+                }
+            }
+        }
+        defer { watch.cancel() }
+
         let response: ScreenAgentVisionResponse
         do {
-            response = try await transport.analyze(
-                ScreenAgentVisionRequest(contextID: contextID, jpeg: frame.jpeg,
-                                         generation: frame.generation,
-                                         frameHash: frame.contentHash))
+            response = try await work.value
         } catch {
+            if revoked.value || error is CancellationError {
+                NSLog("[ScreenAgentVision] consent or freshness withdrawn — upload cancelled")
+                return .notEligible
+            }
             NSLog("[ScreenAgentVision] transport failed: %@", error.localizedDescription)
             return .failed
         }

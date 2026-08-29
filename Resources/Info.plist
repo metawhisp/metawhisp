@@ -60,7 +60,7 @@
 	<key>NSPrincipalClass</key>
 	<string>NSApplication</string>
 	<key>NSScreenCaptureUsageDescription</key>
-	<string>MetaWhisp uses screen context to provide AI-powered suggestions. Screenshots are processed locally and never sent to the cloud.</string>
+	<string>MetaWhisp reads your screen to suggest things at the right moment. Text is recognised on this Mac; that recognised text can be sent to your AI provider. Screenshots are never saved, and the picture itself is sent only if you separately turn on Visual mode.</string>
 	<key>SUEnableAutomaticChecks</key>
 	<true/>
 	<key>SUFeedURL</key>

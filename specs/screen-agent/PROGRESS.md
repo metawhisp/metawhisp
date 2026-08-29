@@ -82,7 +82,9 @@ The repository-wide `specs/iterations/PROGRESS.md` currently tracks another acti
 - [x] **1.2 Screen-derived task creation/completion остановлены** — `3b4735a`
       Одно правило `ScreenDerivedTaskPolicy.mayMutateWithoutConfirmation`, три
       точки мутации. Наблюдение оставлено работать намеренно.
-- [ ] 1.3 Правдивая privacy-копия + отмена pending vision при выключении Visual mode
+- [x] **1.3 Правдивая privacy-копия + настоящая отмена vision** — `HEAD`
+      Строка в диалоге TCC утверждала «never sent to the cloud», транспорт
+      слал `image_b64` на прокси. Отмена была не отменой, а выбрасыванием ответа.
 - [ ] 1.4 Полный retention-граф для новых данных
 - [ ] 1.5 Изолированная миграция существующих unlinked insights (без удаления данных)
 
@@ -684,4 +686,42 @@ Open issue/blocker:
   временный шаг, а не конечное состояние.
   Откат данных: UPDATE ZTASKITEM SET ZISDISMISSED=0 WHERE ZSCREENCONTEXTID
   IS NOT NULL AND ZSTATUS='staged' AND ZUPDATEDAT > <метка>; либо копия стора.
+```
+
+## Журнал — 2026-08-29, Stage 1.3
+
+```text
+Date/time: 2026-08-29
+Iteration/checklist item: Stage 1.3 — truthful privacy copy + real vision cancellation
+RED command + failing assertion:
+  swift test --filter ScreenAgentVisionCancellationTests
+    XCTAssertTrue failed — «withdrawing consent must cancel the upload, not wait
+      for it and bin the answer»
+    XCTAssertLessThan failed: ("3.021") is not less than ("2.0")
+    → запрос не отменялся, вызывающий досиживал полные 3 секунды
+  swift test --filter PrivacyCopyTests
+    XCTAssertFalse failed — строка содержала «never sent to the cloud»
+    XCTAssertTrue failed — Visual mode в тексте не упоминался
+GREEN command + exact counts:
+  swift test --filter ScreenAgentVision → 18 тестов, 0 падений (17 старых целы)
+  swift test --filter PrivacyCopyTests → 2 теста, 0 падений
+  bash scripts/regression.sh → 1272 tests, 0 failures, 48 critical suites, PASS
+  (baseline 1263 → 1267 → 1269 → 1272)
+Build/full-suite state: swift build PASS; полный прогон PASS
+Live artifact and scenario: PENDING — установленный артефакт остался сборкой до
+  сегодняшних правок. Новый текст TCC увидит только чистая установка: macOS
+  кеширует usage description до переустановки бандла.
+Observed result:
+  копия: было «Screenshots are processed locally and never sent to the cloud»
+    при том, что ScreenAgentProVisionTransport:25,30 шлёт image_b64 на
+    api.metawhisp.com/api/pro/vision. Стало: OCR локально, распознанный текст
+    может уйти провайдеру, картинка — только при отдельно включённом Visual
+    mode, скриншоты не сохраняются.
+  отмена: согласие перепроверялось ПОСЛЕ ответа, кадр к этому моменту уже был
+    у прокси. Теперь запрос отменяется через 250 мс опроса согласия и свежести;
+    отмена по воле пользователя отличается от сетевого сбоя (.notEligible, не
+    .failed).
+Open issue/blocker:
+  текст в Settings про Visual mode не сверялся — правился только TCC-диалог.
+  Отмена не проверена на живом сетевом вызове, только на внедрённом транспорте.
 ```
