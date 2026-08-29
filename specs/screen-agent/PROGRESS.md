@@ -85,7 +85,9 @@ The repository-wide `specs/iterations/PROGRESS.md` currently tracks another acti
 - [x] **1.3 Правдивая privacy-копия + настоящая отмена vision** — `HEAD`
       Строка в диалоге TCC утверждала «never sent to the cloud», транспорт
       слал `image_b64` на прокси. Отмена была не отменой, а выбрасыванием ответа.
-- [ ] 1.4 Полный retention-граф для новых данных
+- [x] **1.4 Retention-граф для новых данных** — `HEAD`
+      Выведенный факт получил `screenContextId` → попадает и в удаление, и в
+      очистку Obsidian (она идёт по тому же списку). Метрики V9 подключены.
 - [ ] 1.5 Изолированная миграция существующих unlinked insights (без удаления данных)
 
 ### Stage 2 — capture и freshness
@@ -724,4 +726,36 @@ Observed result:
 Open issue/blocker:
   текст в Settings про Visual mode не сверялся — правился только TCC-диалог.
   Отмена не проверена на живом сетевом вызове, только на внедрённом транспорте.
+```
+
+## Журнал — 2026-08-29, Stage 1.4
+
+```text
+Date/time: 2026-08-29
+Iteration/checklist item: Stage 1.4 — retention graph for NEW data
+RED command + failing assertion:
+  swift test --filter ScreenRetentionGraphTests
+    testAnInsightDerivedFactIsReachableByTheDelete — не компилировался:
+      toUserMemory не принимал screenContextId, то есть связи не было в принципе
+    testDeletingScreenHistoryTakesTheRunMetricsWithIt — метрики переживали wipe
+GREEN command + exact counts:
+  swift test --filter ScreenRetentionGraphTests → 3 теста, 0 падений
+  bash scripts/regression.sh → 1275 tests, 0 failures, 48 critical suites, PASS
+  (baseline 1263 → 1267 → 1269 → 1272 → 1275)
+Build/full-suite state: swift build PASS; полный прогон PASS
+Live artifact and scenario: PENDING. Деструктивная проверка удаления на
+  ИЗОЛИРОВАННОЙ копии стора не выполнялась; рабочий стор не трогался.
+Observed result:
+  корень один: InsightStorage.toUserMemory не проставлял screenContextId, а
+  deleteAll выбирает памяти ИМЕННО по этому полю, и очистка Obsidian идёт по
+  списку, который эта выборка порождает. Значит выведенный из экрана факт
+  переживал удаление ВМЕСТЕ со своей копией в хранилище пользователя.
+  На рабочем сторе таких строк 1441.
+  Теперь ссылка проставляется в ProactiveContextService:495; метрики V9
+  добавлены в deleteAll; подтверждённое пользователем по-прежнему остаётся
+  (тест testConfirmedWorkSurvivesTheDelete).
+Open issue/blocker:
+  1441 УЖЕ накопленных строк остаются без ссылки — они не чинятся этой правкой
+  и это намеренно: Stage 1.5, отдельным проходом, на изолированной копии.
+  `prune` (удержание по времени) метрики пока не чистит — только deleteAll.
 ```

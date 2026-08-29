@@ -156,10 +156,14 @@ enum ScreenRetention {
         // Visits describe stretches of the very history being deleted.
         let visits = try ctx.fetchCount(FetchDescriptor<ContextVisitRecord>())
         if visits > 0 { try ctx.delete(model: ContextVisitRecord.self) }
+        // V9 counters describe runs over screens that no longer exist. Added a
+        // day after this function and never wired into it.
+        let metrics = try ctx.fetchCount(FetchDescriptor<ScreenAgentRunMetrics>())
+        if metrics > 0 { try ctx.delete(model: ScreenAgentRunMetrics.self) }
         for row in doomedTasks { ctx.delete(row) }
         for row in doomedMemories { ctx.delete(row) }
         if contexts + observations + agentItems + runs + deliveries + visits
-            + taskIds.count + memoryIds.count > 0 { try ctx.save() }
+            + metrics + taskIds.count + memoryIds.count > 0 { try ctx.save() }
         return DeleteAllResult(contexts: contexts, observations: observations,
                                taskIds: taskIds, memoryIds: memoryIds)
     }

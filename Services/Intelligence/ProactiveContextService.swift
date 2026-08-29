@@ -492,7 +492,7 @@ final class ProactiveContextService: ObservableObject {
         }
 
         // ── Persist for cross-restart dedup ──────────────────────────
-        await storage.save(insight)
+        await storage.save(insight, screenContextId: ctx.id)
 
         // ── Surface ──────────────────────────────────────────────────
         // ITER-067 — the comment is written down first and shown second. It

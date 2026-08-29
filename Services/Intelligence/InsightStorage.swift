@@ -41,12 +41,20 @@ final class InsightStorage {
     /// `nonisolated` so unit tests can drive it from any thread without
     /// hopping to MainActor (the function reads/writes only the passed
     /// struct + a fresh `UserMemory` — no shared state).
-    nonisolated static func toUserMemory(_ insight: ExtractedInsight) -> UserMemory {
+    /// `screenContextId` is what makes the row deletable.
+    ///
+    /// «Delete screen history» selects memories BY this field, and the Obsidian
+    /// cleanup runs over the list that selection produces. Leaving it nil meant
+    /// every fact the agent derived from the screen survived the wipe AND kept
+    /// its exported copy in the user's vault — 1441 of them on the real store.
+    nonisolated static func toUserMemory(_ insight: ExtractedInsight,
+                                         screenContextId: UUID? = nil) -> UserMemory {
         let mem = UserMemory(
             content: insight.body,
             category: "system",
             sourceApp: insight.sourceApp,
-            confidence: insight.confidence
+            confidence: insight.confidence,
+            screenContextId: screenContextId
         )
         mem.headline = insight.headline
         mem.reasoning = insight.reasoning
@@ -84,9 +92,9 @@ final class InsightStorage {
 
     /// Persist an insight as a `UserMemory` row. Idempotent on `id`
     /// (each insight gets a fresh UUID inside the mapper).
-    func save(_ insight: ExtractedInsight) async {
+    func save(_ insight: ExtractedInsight, screenContextId: UUID? = nil) async {
         let ctx = ModelContext(modelContainer)
-        let mem = Self.toUserMemory(insight)
+        let mem = Self.toUserMemory(insight, screenContextId: screenContextId)
         ctx.insert(mem)
         do {
             try ctx.save()
