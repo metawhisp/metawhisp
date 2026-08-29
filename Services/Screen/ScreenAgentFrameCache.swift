@@ -70,6 +70,33 @@ enum ScreenFrameEncoder {
     static let maxLongEdge: CGFloat = 1280
     static let maxPayloadBytes = 1_000_000
 
+    /// A tiny grayscale rendering, for asking "did this window change?" without
+    /// running OCR to find out.
+    ///
+    /// 64×64 is 4 KB and takes a fraction of a millisecond to compare — the
+    /// fingerprint reduces it further to an 8×8 grid, so each block averages
+    /// 64 pixels and a blinking caret disappears into one. Same NSBitmapImageRep
+    /// path as the JPEG below, one channel instead of four.
+    static let probeSide = 64
+
+    static func probePixels(from image: CGImage) -> (pixels: [UInt8], width: Int, height: Int)? {
+        guard image.width > 0, image.height > 0 else { return nil }
+        let side = probeSide
+        guard let rep = NSBitmapImageRep(
+            bitmapDataPlanes: nil, pixelsWide: side, pixelsHigh: side,
+            bitsPerSample: 8, samplesPerPixel: 1, hasAlpha: false, isPlanar: false,
+            colorSpaceName: .deviceWhite, bytesPerRow: side, bitsPerPixel: 8)
+        else { return nil }
+        NSGraphicsContext.saveGraphicsState()
+        NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: rep)
+        NSGraphicsContext.current?.cgContext.interpolationQuality = .low
+        NSGraphicsContext.current?.cgContext.draw(
+            image, in: CGRect(x: 0, y: 0, width: side, height: side))
+        NSGraphicsContext.restoreGraphicsState()
+        guard let data = rep.bitmapData else { return nil }
+        return (Array(UnsafeBufferPointer(start: data, count: side * side)), side, side)
+    }
+
     /// nil when the frame cannot be brought under the bounds — in which case
     /// no image is sent at all, rather than a bigger one.
     static func downscaledJPEG(from image: CGImage) -> Data? {

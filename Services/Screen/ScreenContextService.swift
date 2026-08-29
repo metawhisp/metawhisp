@@ -33,6 +33,7 @@ final class ScreenContextService: ObservableObject {
         // in history" — the coordinator forgets, so the screen the user is
         // sitting on stays capturable.
         visitCoordinator.invalidateAll()
+        sameWindowProbe.reset()
         lastCommittedToken = 0
         // Codex P0 — a context queued across the purge boundary could still
         // pass the "is this the accepted screen" check and send deleted OCR
@@ -51,6 +52,13 @@ final class ScreenContextService: ObservableObject {
     /// = nil ALWAYS: the nil/non-nil asymmetry in window matching would
     /// otherwise open a visit every tick.
     private var visitCoordinator = ContextVisitCoordinator()
+
+    /// ITER-065.4, finally wired. The tick decides "nothing changed" from the
+    /// title and the last committed OCR hash, both of which stay identical when
+    /// a message arrives in an open channel — so that message was never seen.
+    /// The probe is the cheap second opinion: a 64×64 grayscale rendering, no
+    /// OCR, compared against the last one.
+    private var sameWindowProbe = SameWindowProbe()
     private let visitClock = ContinuousClock()
     /// Interim in-process change token (FNV-1a of the accepted OCR) until the
     /// content-fingerprint iteration. Never comparable across launches.
@@ -439,6 +447,7 @@ final class ScreenContextService: ObservableObject {
         // before the pause able to pass the final freshness check (Codex).
         lastAcceptedContextID = nil
         visitCoordinator.invalidateAll()
+        sameWindowProbe.reset()
         lastCommittedToken = 0
         NSLog("[ScreenContext] Monitoring stopped")
     }
@@ -553,13 +562,26 @@ final class ScreenContextService: ObservableObject {
                   frame: tickIdentity.frame),
             at: visitClock.now, wallClock: Date())
         if case .unchanged = tickProposal {
-            visitCoordinator.commit(tickProposal, contentHash: lastCommittedToken,
-                                    at: visitClock.now)
-            // The window may have been nudged since the visit opened: move the
-            // baseline with it, or a slow drag eventually looks like a jump.
-            visitCoordinator.refreshFrame(tickIdentity.frame)
-            touchDurableVisitIfStale()
-            return
+            // "Unchanged" here means the TITLE has not moved and the last OCR
+            // we committed still hashes the same — neither of which notices a
+            // new message in an already-open channel. Ask the picture before
+            // going quiet.
+            if await sameWindowContentMoved(pid: frontApp.processIdentifier) {
+                NSLog("[ScreenContext] same window, content moved — reading it again")
+            } else {
+                visitCoordinator.commit(tickProposal, contentHash: lastCommittedToken,
+                                        at: visitClock.now)
+                // The window may have been nudged since the visit opened: move
+                // the baseline with it, or a slow drag eventually looks like a
+                // jump.
+                visitCoordinator.refreshFrame(tickIdentity.frame)
+                touchDurableVisitIfStale()
+                return
+            }
+        } else {
+            // A different window, or the same one with a new document. Its
+            // picture is not comparable to the previous window's.
+            sameWindowProbe.reset()
         }
 
         // ITER-053.1 purge fence — snapshot before the capture/OCR awaits.
@@ -610,6 +632,23 @@ final class ScreenContextService: ObservableObject {
                 lastCommittedToken = token
             }
         }
+    }
+
+    /// One cheap look at the window, behind the same privacy gates the capture
+    /// path already passed: this runs after `isCaptureAllowed`, so a blacklisted
+    /// app is never probed either.
+    ///
+    /// Returns false whenever it cannot answer — no screenshot, no pixels, the
+    /// cadence not elapsed. Guessing "it moved" would re-run OCR and a model
+    /// call on a window sitting still, which is the failure this probe replaced.
+    private func sameWindowContentMoved(pid: pid_t) async -> Bool {
+        guard sameWindowProbe.shouldLook(at: Date()) else { return false }
+        guard let shot = await captureScreenshot(frontPID: pid),
+              let probe = ScreenFrameEncoder.probePixels(from: shot.image)
+        else { return false }
+        let fingerprint = ScreenContentFingerprint(
+            pixels: probe.pixels, width: probe.width, height: probe.height)
+        return sameWindowProbe.contentMoved(to: fingerprint, at: Date())
     }
 
     /// ITER-064A.2 — an empty allowlist is now fail-closed, which is correct
