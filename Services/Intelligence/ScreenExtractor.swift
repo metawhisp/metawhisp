@@ -330,6 +330,14 @@ final class ScreenExtractor: ObservableObject {
                 // Also avoid dup against tasks we're inserting in THIS batch.
                 let batchDescs = newTasks.map { $0.taskDescription }
                 if TaskExtractionFilters.isNearDuplicate(trimmedDesc, against: batchDescs) { continue }
+                // The hourly analysis is the other producer that filled the
+                // staged bin nobody could read. Same rule as the realtime one:
+                // notice, do not create.
+                guard ScreenDerivedTaskPolicy.mayMutateWithoutConfirmation else {
+                    NSLog("[ScreenExtractor] observed a task in the hour's work — not creating one: %@",
+                          String(trimmedDesc.prefix(60)))
+                    continue
+                }
                 var due: Date? = nil
                 if let raw = taskJson.dueAt, !raw.isEmpty, raw != "null" {
                     due = dueParser.date(from: raw)

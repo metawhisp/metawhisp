@@ -262,6 +262,13 @@ final class RealtimeScreenReactor: ObservableObject {
             }
 
             // (Purge fence already checked right after parse — no awaits since.)
+            // Creation is off for the same reason completion is: 957 of these
+            // accumulated unseen. A queue nobody reads is not a feature.
+            guard ScreenDerivedTaskPolicy.mayMutateWithoutConfirmation else {
+                NSLog("[RealtimeReactor] observed a task on screen — not creating one: %@",
+                      String(trimmedDesc.prefix(60)))
+                return
+            }
             guard let container = modelContainer else { return }
             let ctx = ModelContext(container)
             let task = TaskItem(
@@ -397,11 +404,23 @@ final class RealtimeScreenReactor: ObservableObject {
     /// `TaskFulfillment.confirmedIds`: ids must come from the sent list AND the
     /// evidence must be a verbatim (normalized) substring of the OCR — a
     /// hallucinated or prompt-echoed claim can't close anything.
-    private func applyFulfillment(_ claims: [TaskFulfillment.FulfilledJSON]?,
+    /// Internal rather than private so the mutation point itself is testable —
+    /// the whole question of this slice is what it is allowed to do.
+    func applyFulfillment(_ claims: [TaskFulfillment.FulfilledJSON]?,
                                   sent: [TaskFulfillment.OpenTaskRef],
                                   ocr: String) {
         let ids = TaskFulfillment.confirmedIds(claims, sent: sent, ocr: ocr)
-        guard !ids.isEmpty, let container = modelContainer else { return }
+        guard !ids.isEmpty else { return }
+        // The observation stands; acting on it does not. Closing a task the
+        // user wrote, because a phrase appeared on their screen, is a decision
+        // they never made — and there is currently nowhere for the proposal to
+        // go, so it is logged and dropped rather than applied.
+        guard ScreenDerivedTaskPolicy.mayMutateWithoutConfirmation else {
+            NSLog("[RealtimeReactor] observed %d task(s) claimed done — proposing nothing, mutating nothing",
+                  ids.count)
+            return
+        }
+        guard let container = modelContainer else { return }
         let ctx = ModelContext(container)
         // Re-fetch and re-validate: the LLM await took seconds — the user may
         // have dismissed/completed a task meanwhile (review finding).
