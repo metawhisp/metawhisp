@@ -135,7 +135,21 @@ enum ScreenRetention {
             $0.screenContextId != nil &&
             ($0.status == "staged" || $0.status == "dismissed" || $0.isDismissed)
         }
-        let memoryPred = #Predicate<UserMemory> { $0.screenContextId != nil }
+        // Two ways a memory can be screen history. The link is the right one
+        // and every new row carries it. The rows already on disk do not — the
+        // link was never recorded, and 1442 of them exist. Their origin cannot
+        // be recovered, only guessed from timestamps, and a guessed link is a
+        // wrong deletion waiting to happen. So they are selected by what they
+        // are: the `insight` tag is written from exactly one place in the app.
+        //
+        // The boundary matters as much as the rule. On the real store 445
+        // system-category rows carry no link and no insight tag — profile
+        // facts, calendar-derived things — and they were never screen history.
+        let insightTag = InsightStorage.insightTag
+        let memoryPred = #Predicate<UserMemory> { memory in
+            memory.screenContextId != nil
+                || (memory.tagsCSV?.contains(insightTag) ?? false)
+        }
         let doomedTasks = try ctx.fetch(FetchDescriptor<TaskItem>(predicate: taskPred))
         let doomedMemories = try ctx.fetch(FetchDescriptor<UserMemory>(predicate: memoryPred))
         let taskIds = doomedTasks.map(\.id)

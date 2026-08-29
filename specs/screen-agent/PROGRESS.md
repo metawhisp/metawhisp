@@ -88,7 +88,10 @@ The repository-wide `specs/iterations/PROGRESS.md` currently tracks another acti
 - [x] **1.4 Retention-граф для новых данных** — `HEAD`
       Выведенный факт получил `screenContextId` → попадает и в удаление, и в
       очистку Obsidian (она идёт по тому же списку). Метрики V9 подключены.
-- [ ] 1.5 Изолированная миграция существующих unlinked insights (без удаления данных)
+- [x] **1.5 Существующие unlinked insights — без миграции** — `HEAD`
+      Миграция не понадобилась: их опознаёт тег `insight`, который пишется из
+      одного места. Связь по времени была бы догадкой; догадка = неверное
+      удаление. Ни одной записи в пользовательский стор.
 
 ### Stage 2 — capture и freshness
 
@@ -113,7 +116,7 @@ Evidence provenance, durable thread, один директор, work analysis, �
 | Ноль неподтверждённых committed/completed screen-действий | **нарушается** (реактор) |
 | Ноль поздних показов после дедлайна | не доказан |
 | Ноль записей/сети после выключения | **1.1 закрыл запись; сеть — открыто (2.4)** |
-| Delete/retention на изолированном сторе | не выполнялся |
+| Delete/retention на изолированном сторе | **VERIFIED 2026-08-29** (чтение копии) |
 
 ## Baseline facts
 
@@ -758,4 +761,39 @@ Open issue/blocker:
   1441 УЖЕ накопленных строк остаются без ссылки — они не чинятся этой правкой
   и это намеренно: Stage 1.5, отдельным проходом, на изолированной копии.
   `prune` (удержание по времени) метрики пока не чистит — только deleteAll.
+```
+
+## Журнал — 2026-08-29, Stage 1.5 — Stage 1 закрыт
+
+```text
+Date/time: 2026-08-29
+Iteration/checklist item: Stage 1.5 — existing unlinked insights
+RED command + failing assertion:
+  swift test --filter ScreenRetentionGraphTests
+    testLegacyInsightsWithNoLinkAreStillScreenHistory:
+      XCTAssertEqual failed: ("0") is not equal to ("1")
+    → строка старой формы (тег insight, ссылки нет) переживала удаление
+GREEN command + exact counts:
+  swift test --filter ScreenRetentionGraphTests → 5 тестов, 0 падений
+  bash scripts/regression.sh → 1277 tests, 0 failures, 48 critical suites, PASS
+Build/full-suite state: swift build PASS; полный прогон PASS
+Live artifact and scenario: VERIFIED — изолированная копия рабочего стора
+  (260 МБ, только чтение, копия удалена после проверки). Рабочий стор не
+  изменялся.
+Observed result:
+  ПЛАН БЫЛ ХУЖЕ РЕАЛИЗОВАННОГО. Предполагалась миграция: восстановить связь по
+  близости во времени. Это догадка, а догадка о связи — это неверное удаление
+  в будущем, плюс запись в пользовательские данные ради ничего.
+  Данные показали точный опознаватель: тег `insight` пишется ровно из одного
+  места (InsightStorage:63). Поэтому выборка расширена по ИДЕНТИЧНОСТИ строки,
+  а не по выдуманной связи.
+  На копии реального стора:
+    новая выборка ловит  2332  (890 со ссылкой + 1442 осиротевших)
+    старая ловила         890
+    остаётся нетронутым   452  — профильные факты о пользователе, не история
+  Граница проверена выборочно: остающееся — утверждения о самом пользователе,
+  ни одно из них не выведено из экрана.
+Open issue/blocker:
+  `prune` (удержание по времени) по-прежнему чистит не всё: метрики V9 и
+  legacy-insights в нём не учтены — только в deleteAll. Отдельный пункт.
 ```

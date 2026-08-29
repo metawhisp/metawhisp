@@ -78,4 +78,48 @@ final class ScreenRetentionGraphTests: XCTestCase {
         XCTAssertEqual(try context.fetch(FetchDescriptor<UserMemory>()).count, 1,
                        "a fact with no screen origin was never screen history")
     }
+
+    /// The 1442 already written. Their origin is genuinely lost — the link was
+    /// never recorded — so it cannot be recovered, only guessed at from
+    /// timestamps, and a guessed link is a wrong deletion waiting to happen.
+    /// They are identifiable by what they are instead: the `insight` tag is
+    /// written from exactly one place in the app.
+    func testLegacyInsightsWithNoLinkAreStillScreenHistory() throws {
+        let container = try makeContainer()
+        let context = ModelContext(container)
+        let legacy = InsightStorage.toUserMemory(
+            ExtractedInsight(body: "The ads payment was declined",
+                             headline: "Payment declined", reasoning: nil,
+                             category: "system", sourceApp: "Chrome", confidence: 0.9))
+        XCTAssertNil(legacy.screenContextId, "this is the shape that already exists on disk")
+        context.insert(legacy)
+        try context.save()
+
+        let result = try ScreenRetention.deleteAll(in: context)
+
+        XCTAssertEqual(result.memoryIds.count, 1,
+                       "an unlinked insight is still a fact read off the screen — "
+                       + "and its Obsidian copy is named by this same list")
+        XCTAssertTrue(try context.fetch(FetchDescriptor<UserMemory>()).isEmpty)
+    }
+
+    /// The boundary that makes the widened selection safe. 445 rows on the real
+    /// store are system-category with no link and no insight tag — profile
+    /// facts, calendar-derived things. They were never screen history and the
+    /// delete must not take them.
+    func testSystemFactsThatAreNotInsightsAreLeftAlone() throws {
+        let container = try makeContainer()
+        let context = ModelContext(container)
+        let other = UserMemory(content: "User works European hours",
+                               category: "system", sourceApp: "Calendar", confidence: 0.8)
+        other.tagsCSV = "profile,schedule"
+        context.insert(other)
+        try context.save()
+
+        let result = try ScreenRetention.deleteAll(in: context)
+
+        XCTAssertTrue(result.memoryIds.isEmpty)
+        XCTAssertEqual(try context.fetch(FetchDescriptor<UserMemory>()).count, 1,
+                       "no screen origin, no insight tag — not screen history")
+    }
 }
