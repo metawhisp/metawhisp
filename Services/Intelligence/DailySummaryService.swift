@@ -31,6 +31,11 @@ final class DailySummaryService: ObservableObject {
     /// Notification identifier — swapped out on each re-schedule so the old one cancels.
     private let notificationId = "com.metawhisp.daily-summary"
 
+    /// What the recap notification carries so a click can find its way back.
+    static let recapNotificationInfo: [AnyHashable: Any] = [
+        NotificationRouter.targetKey: "dashboard"
+    ]
+
     func configure(modelContainer: ModelContainer) {
         self.modelContainer = modelContainer
     }
@@ -516,7 +521,10 @@ final class DailySummaryService: ObservableObject {
         content.body = String(overview.prefix(180))
         content.sound = .default
         content.categoryIdentifier = "DAILY_SUMMARY"
-        content.userInfo = ["target": "dashboard"]
+        // Named once, read by `NotificationRouter`, pinned by a test that fails
+        // if the two ever stop agreeing — they did not agree for the whole life
+        // of this notification, and a click did nothing.
+        content.userInfo = Self.recapNotificationInfo
 
         let request = UNNotificationRequest(
             identifier: "\(notificationId)-\(Int(Date().timeIntervalSince1970))",
