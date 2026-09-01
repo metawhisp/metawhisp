@@ -5,6 +5,7 @@ struct MenuBarView: View {
     @ObservedObject var recorder: AudioRecordingService
     @ObservedObject var meetingRecorder: MeetingRecorder
     @ObservedObject var screenContext: ScreenContextService
+    @ObservedObject var dailySummary: DailySummaryService
     @ObservedObject private var settings = AppSettings.shared
     var closePopover: () -> Void = {}
     var openMainWindow: () -> Void = {}
@@ -227,8 +228,8 @@ struct MenuBarView: View {
     /// there. 105 of the 130 stored recaps carry a real "what you learned".
     @ViewBuilder
     private var dayRecapStrip: some View {
-        if let recap = latestRecap,
-           DayRecapStrip.shouldShow(recapDate: recap.date, now: Date()) {
+        if let recap = dailySummary.latestRecap,
+           DayRecapStrip.shouldShow(recapDate: recap.date, isRead: recap.isRead, now: Date()) {
             let subtitle = DayRecapStrip.subtitle(decided: recap.decided.count,
                                                   learned: recap.learned.count)
             Button {
@@ -261,12 +262,9 @@ struct MenuBarView: View {
         }
     }
 
-    private var latestRecap: DailySummary? {
-        AppDelegate.shared?.dailySummaryService.latestRecap()
-    }
-
+    /// Read is recorded when the Dashboard shows the recap, not here: this
+    /// row used to clear the dot before anything had been displayed.
     private func openRecap(_ recap: DailySummary) {
-        AppDelegate.shared?.dailySummaryService.markRead(id: recap.id)
         AppDelegate.shared?.openMainWindow(tab: .dashboard)
     }
 

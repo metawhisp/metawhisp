@@ -351,4 +351,29 @@ final class ContextVisitCoordinatorTests: XCTestCase {
         }
         XCTAssertNotEqual(a.id, b.id)
     }
+    // MARK: - Same window or not (review finding, 2026-09-01)
+
+    /// A forced re-read is decided before the screenshot and OCR awaits, and the
+    /// user can switch windows across them. The guard that dropped the flag
+    /// keyed on the OCR hash, so a window whose text drifts under an identical
+    /// picture — "5 min ago" becoming "8 min ago" — came back as `.changed`,
+    /// lost the flag, and woke both consumers every ceiling interval: the exact
+    /// model call the flag exists to prevent. The question the guard has to ask
+    /// is "same window?", and only `.opened` answers no.
+    func testOnlyANewWindowDropsTheForcedRereadFlag() {
+        var c = ContextVisitCoordinator()
+        let clock = ContinuousClock()
+        let t0 = clock.now
+        let opened = c.propose(slack("Doc"), at: t0, wallClock: Date())
+        XCTAssertFalse(opened.keepsWindow, "a different window is news")
+        c.commit(opened, contentHash: 1, at: t0)
+
+        let same = c.propose(slack("Doc", hash: 1), at: t0 + .seconds(30), wallClock: Date())
+        XCTAssertEqual(same, .unchanged)
+        XCTAssertTrue(same.keepsWindow)
+
+        let drifted = c.propose(slack("Doc", hash: 2), at: t0 + .seconds(60), wallClock: Date())
+        if case .changed = drifted {} else { XCTFail("text drift is .changed, not a new window") }
+        XCTAssertTrue(drifted.keepsWindow, "drifted text is still the window nobody touched")
+    }
 }

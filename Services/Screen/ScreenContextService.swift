@@ -639,13 +639,12 @@ final class ScreenContextService: ObservableObject {
             // The flag was decided before the screenshot and OCR awaits, and
             // the user can switch windows across them — the same reason the
             // proposal above is derived from the snapshot rather than from the
-            // window this tick started on. A forced re-read is by definition a
-            // window that did not change, so a proposal that says otherwise
-            // means we are looking at something new and the consumers must hear
-            // about it.
-            let wasForcedReread: Bool
-            if case .unchanged = proposal { wasForcedReread = forcedReread }
-            else { wasForcedReread = false }
+            // window this tick started on. The question is "same window?", not
+            // "same text?": a review found the OCR-hash version of this guard
+            // let a window whose timestamps drift ("5 min ago" → "8 min ago")
+            // come back as `.changed`, lose the flag, and wake both consumers
+            // every ceiling interval — the exact call the flag exists to stop.
+            let wasForcedReread = forcedReread && proposal.keepsWindow
 
             // Persist first — it is what decides this cycle's outcome.
             persistContext(snapshot, frame: capture.frame,
@@ -892,13 +891,20 @@ final class ScreenContextService: ObservableObject {
         // ITER-067 — the screen the user is on right now, as far as capture
         // knows. Read at the last moment before interrupting, so a comment
         // about a window they have already left can be recognised as such.
-        lastAcceptedContextID = record.id
+        // A forced re-read describes the screen the user is STILL on, so it
+        // must not retire a run already under way about that same screen —
+        // `maxResultAgeSeconds` exists precisely so a long investigation of a
+        // window somebody keeps reading is still delivered (review, 2026-09-01).
+        if !forcedReread {
+            lastAcceptedContextID = record.id
+        }
 
         // ITER-069 — under visual consent, keep one downscaled frame for the
         // vision boundary, keyed to the row it describes. Consent is re-read
         // here because it can flip during the OCR await; the full-size image
         // dies with this flow's locals either way.
         if let frame,
+           !forcedReread,
            AppSettings.shared.screenAgentVisualConsent,
            let jpeg = ScreenFrameEncoder.downscaledJPEG(from: frame) {
             frameCache.store(contextID: record.id, jpeg: jpeg, generation: captureEpoch)

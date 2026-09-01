@@ -62,6 +62,7 @@ struct MWNotification: Identifiable {
         case recordingStopped // meeting recorder auto-stopped — recording REALLY ended
         case recordingOverrun // recording CONTINUES past calendar slot — info only (user can tap to stop)
         case recap            // meeting recap (light variant — heavy block lives in MeetingRecapWindow)
+        case dayRecap         // the once-a-day recap — the one announcement a day worth making
         case advice           // proactive advice item
         case proactive        // multi-row proactive surface (memory / past decision / waiting-on)
         case signIn           // web sign-in / Pro activation result (post deep-link)
@@ -76,6 +77,7 @@ struct MWNotification: Identifiable {
             // user may want to stop — the symbol has to say so.
             case .recordingOverrun: return "clock.badge.exclamationmark"
             case .recap:            return "doc.text"
+            case .dayRecap:         return "calendar"
             case .advice:           return "sparkles"
             // A lightbulb means "here is an idea". This surface carries the
             // opposite: something already decided, or something being waited
@@ -107,6 +109,7 @@ struct MWNotification: Identifiable {
             case .recordingStopped: return "RECORDING STOPPED"
             case .recordingOverrun: return "STILL RECORDING"
             case .recap:            return "MEETING RECAP"
+            case .dayRecap:         return "DAY RECAP"
             case .advice:           return "ADVICE"
             case .proactive:        return "CONTEXT"
             case .signIn:           return "ACCOUNT"

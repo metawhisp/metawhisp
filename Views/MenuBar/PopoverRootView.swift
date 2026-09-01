@@ -6,6 +6,7 @@ struct PopoverRootView: View {
     @ObservedObject var recorder: AudioRecordingService
     @ObservedObject var meetingRecorder: MeetingRecorder
     @ObservedObject var screenContext: ScreenContextService
+    @ObservedObject var dailySummary: DailySummaryService
     let closePopover: () -> Void
     var openMainWindow: () -> Void = {}
     var onMeetingToggle: () -> Void = {}
@@ -16,6 +17,7 @@ struct PopoverRootView: View {
             recorder: recorder,
             meetingRecorder: meetingRecorder,
             screenContext: screenContext,
+            dailySummary: dailySummary,
             closePopover: closePopover,
             openMainWindow: openMainWindow,
             onMeetingToggle: onMeetingToggle

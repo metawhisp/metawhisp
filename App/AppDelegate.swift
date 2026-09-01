@@ -3,14 +3,12 @@ import Combine
 import Foundation
 import Sparkle
 import SwiftData
-import UserNotifications
 import SwiftUI
 import os
 
 /// Manages the status bar item and popover.
 @MainActor
-final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate,
-                         UNUserNotificationCenterDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     private static let logger = Logger(subsystem: "com.metawhisp.app", category: "AppDelegate")
 
     /// SwiftUI's `@NSApplicationDelegateAdaptor` sets this instance as `NSApp.delegate`,
@@ -301,12 +299,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate,
         Self.shared = self
         FileLogger.setup()
 
-        // The day recap announced itself and then went nowhere: it posted a
-        // notification carrying a destination and the app had no delegate to
-        // read it, so the click did nothing at all. Set before anything can
-        // post — a delegate assigned late misses notifications already queued.
-        UNUserNotificationCenter.current().delegate = self
-
         // ITER-055 — black box for the recurring "throws me to another screen /
         // Space" bug. Log every Space switch with the frontmost app + cursor
         // screen so a repro shows whether OUR window ops caused the jump. Paired
@@ -488,6 +480,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate,
                 recorder: recorder,
                 meetingRecorder: meetingRecorder,
                 screenContext: screenContext,
+                dailySummary: dailySummaryService,
                 closePopover: { [weak self] in self?.closePopover() },
                 openMainWindow: { [weak self] in self?.openMainWindow() },
                 onMeetingToggle: { [weak self] in self?.toggleMeetingRecording() }
@@ -898,39 +891,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate,
             NSEvent.removeMonitor(monitor)
             eventMonitor = nil
         }
-    }
-
-    // MARK: - Notifications
-
-    /// Answer a click. `NotificationRouter` owns the decision; this only carries
-    /// it out, so the agreement between poster and reader stays testable without
-    /// a running notification centre.
-    func userNotificationCenter(_ center: UNUserNotificationCenter,
-                                didReceive response: UNNotificationResponse,
-                                withCompletionHandler completionHandler: @escaping () -> Void) {
-        let destination = NotificationRouter.route(
-            userInfo: response.notification.request.content.userInfo)
-        Task { @MainActor in
-            switch destination {
-            case .mainWindow(let tab):
-                self.openMainWindow(tab: tab)
-            case .screenAgentInbox(let itemID):
-                self.openScreenAgentInbox(selecting: itemID)
-            case .none:
-                break
-            }
-            completionHandler()
-        }
-    }
-
-    /// MetaWhisp lives in the menu bar, but it is frontmost while the user has
-    /// its window open — and that is exactly when the recap is worth seeing.
-    /// Without this the system swallows the banner in that case.
-    func userNotificationCenter(_ center: UNUserNotificationCenter,
-                                willPresent notification: UNNotification,
-                                withCompletionHandler completionHandler:
-                                    @escaping (UNNotificationPresentationOptions) -> Void) {
-        completionHandler([.banner, .sound])
     }
 
     func openMainWindow(tab: MainWindowView.SidebarTab? = nil) {

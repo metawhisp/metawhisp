@@ -299,9 +299,12 @@ private struct DailySummaryCard: View {
     @ObservedObject private var settings = AppSettings.shared
     @State private var isGenerating = false
 
+    /// Stands on the newest recap before the scheduled hour, not on an empty
+    /// "today": the menu-bar row and the card announcing a recap both opened
+    /// onto a placeholder for most of the day (review, 2026-09-01).
     private var todaysSummary: DailySummary? {
-        guard let latest = summaries.first else { return nil }
-        return Calendar.current.isDateInToday(latest.date) ? latest : nil
+        let day = DayRecapStrip.anchorDay(newestRecapDate: summaries.first?.date, now: Date())
+        return summaries.first { Calendar.current.isDate($0.date, inSameDayAs: day) }
     }
 
     var body: some View {
@@ -309,6 +312,8 @@ private struct DailySummaryCard: View {
             header
             if let s = todaysSummary {
                 summaryBody(for: s)
+                    .id(s.id)
+                    .onAppear { AppDelegate.shared?.dailySummaryService.markRead(id: s.id) }
             } else {
                 emptyPlaceholder
             }
@@ -738,8 +743,11 @@ private struct TodayCard: View {
     @State private var calendarEvents: [TodayCalendarRow] = []
 
     private var cal: Calendar { Calendar.current }
+    /// Stands on the newest recap before the scheduled hour, not on an empty
+    /// "today" (review, 2026-09-01). ‹ › move relative to that.
     private var selectedDate: Date {
-        cal.date(byAdding: .day, value: dayOffset, to: cal.startOfDay(for: Date())) ?? Date()
+        let anchor = DayRecapStrip.anchorDay(newestRecapDate: summaries.first?.date, now: Date())
+        return cal.date(byAdding: .day, value: dayOffset, to: anchor) ?? anchor
     }
 
     private var todaysSummary: DailySummary? {
@@ -987,7 +995,11 @@ private struct TodayCard: View {
     @ViewBuilder
     private var content: some View {
         if let s = todaysSummary {
+            // Shown is read. `.id` re-fires the appearance when ‹ › moves to a
+            // different day inside the same card.
             summaryRender(for: s)
+                .id(s.id)
+                .onAppear { AppDelegate.shared?.dailySummaryService.markRead(id: s.id) }
         } else {
             emptyPlaceholder
         }

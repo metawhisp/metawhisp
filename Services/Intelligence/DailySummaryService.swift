@@ -1,6 +1,5 @@
 import Foundation
 import SwiftData
-import UserNotifications
 
 /// Generates the once-a-day recap (`DailySummary`). Runs:
 /// - On a 5-minute in-process timer: when today's scheduled time has passed and no
@@ -8,9 +7,13 @@ import UserNotifications
 /// - On explicit "GENERATE NOW" from Dashboard.
 /// - On app launch (catch-up if the machine was asleep past the scheduled time).
 ///
-/// Notification delivery uses the system `UNUserNotificationCenter`. The generation
-/// itself is in-process because macOS doesn't wake non-daemon apps at a cron time;
-/// MetaWhisp is a menu-bar app so it's running whenever the user is logged in.
+/// Delivery is the app's own notification stack (`MWNotificationStack`), the same
+/// surface every other card uses. It used to post a macOS notification, and the
+/// authorization request for those was removed when the in-app stack arrived —
+/// so for the life of that banner nobody knew whether it was shown at all. The
+/// generation itself is in-process because macOS doesn't wake non-daemon apps
+/// at a cron time; MetaWhisp is a menu-bar app so it's running whenever the
+/// user is logged in.
 ///
 /// spec://iterations/ITER-009-daily-summary
 @MainActor
@@ -23,21 +26,20 @@ final class DailySummaryService: ObservableObject {
     @Published var isRunning = false
     @Published var lastError: String?
     @Published var lastGenerationAt: Date?
+    /// The newest recap there is, for the menu bar. Published rather than
+    /// fetched inside a view body: a fetch in `body` refreshed only when some
+    /// unrelated observable happened to publish, so the unread dot outlived
+    /// the read and a recap written at 22:00 stayed invisible until something
+    /// else moved (review, 2026-09-01).
+    @Published private(set) var latestRecap: DailySummary?
 
     private let settings = AppSettings.shared
     private var modelContainer: ModelContainer?
     private var timerTask: Task<Void, Never>?
 
-    /// Notification identifier — swapped out on each re-schedule so the old one cancels.
-    private let notificationId = "com.metawhisp.daily-summary"
-
-    /// What the recap notification carries so a click can find its way back.
-    static let recapNotificationInfo: [AnyHashable: Any] = [
-        NotificationRouter.targetKey: "dashboard"
-    ]
-
     func configure(modelContainer: ModelContainer) {
         self.modelContainer = modelContainer
+        refreshLatestRecap()
     }
 
     // MARK: - Scheduling (5-min tick)
@@ -125,23 +127,22 @@ final class DailySummaryService: ObservableObject {
         return fetchSummary(for: dayStart)
     }
 
-    /// The newest recap there is, for the menu bar.
-    ///
     /// Newest rather than "today's": the recap for a day is written at the end
     /// of it, so before the scheduled time the only recap that exists is
     /// yesterday's — and that is the one a person wants in the morning.
-    func latestRecap() -> DailySummary? {
-        guard let modelContainer else { return nil }
+    func refreshLatestRecap() {
+        guard let modelContainer else { latestRecap = nil; return }
         let ctx = ModelContext(modelContainer)
         var d = FetchDescriptor<DailySummary>(
             sortBy: [SortDescriptor(\.date, order: .reverse)])
         d.fetchLimit = 1
-        return (try? ctx.fetch(d))?.first
+        latestRecap = (try? ctx.fetch(d))?.first
     }
 
     /// `isRead` existed on the model from the start and was written by nobody,
     /// so "0 of 130 read" measured the flag rather than the reader. It is set
-    /// here, when the recap is actually opened.
+    /// when the recap is actually shown — by the Dashboard card, whichever
+    /// way the user arrived at it — not when something is clicked on the way.
     func markRead(id: UUID) {
         guard let modelContainer else { return }
         let ctx = ModelContext(modelContainer)
@@ -150,6 +151,7 @@ final class DailySummaryService: ObservableObject {
         guard let row = (try? ctx.fetch(d))?.first, !row.isRead else { return }
         row.isRead = true
         try? ctx.save()
+        refreshLatestRecap()
     }
 
     // MARK: - Core generation
@@ -167,6 +169,7 @@ final class DailySummaryService: ObservableObject {
         defer {
             isRunning = false
             lastGenerationAt = Date()
+            refreshLatestRecap()
         }
 
         let ctx = ModelContext(container)
@@ -539,30 +542,22 @@ final class DailySummaryService: ObservableObject {
         return str.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
-    // MARK: - macOS notification (native UNUserNotificationCenter)
+    // MARK: - The card
 
+    /// The same in-app card every other announcement uses, with a tap that
+    /// opens the recap. The previous macOS notification had no click handler
+    /// for its whole life, and — since the authorization request was removed
+    /// when the in-app stack arrived — no proof it was ever shown.
     private func postDeliveryNotification(title: String, overview: String) {
-        let content = UNMutableNotificationContent()
-        content.title = "Day recap ready"
-        content.subtitle = title
-        content.body = String(overview.prefix(180))
-        content.sound = .default
-        content.categoryIdentifier = "DAILY_SUMMARY"
-        // Named once, read by `NotificationRouter`, pinned by a test that fails
-        // if the two ever stop agreeing — they did not agree for the whole life
-        // of this notification, and a click did nothing.
-        content.userInfo = Self.recapNotificationInfo
-
-        let request = UNNotificationRequest(
-            identifier: "\(notificationId)-\(Int(Date().timeIntervalSince1970))",
-            content: content,
-            trigger: nil // immediate delivery
-        )
-        UNUserNotificationCenter.current().add(request) { err in
-            if let err {
-                NSLog("[DailySummary] Notification post failed: %@", err.localizedDescription)
+        let note = MWNotification(
+            kind: .dayRecap,
+            title: title,
+            body: String(overview.prefix(180)),
+            onTap: {
+                Task { @MainActor in AppDelegate.shared?.openMainWindow(tab: .dashboard) }
             }
-        }
+        )
+        Task { @MainActor in MWNotificationStack.shared.push(note) }
     }
 
     // MARK: - Data fetch helpers
