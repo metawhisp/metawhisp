@@ -125,6 +125,33 @@ final class DailySummaryService: ObservableObject {
         return fetchSummary(for: dayStart)
     }
 
+    /// The newest recap there is, for the menu bar.
+    ///
+    /// Newest rather than "today's": the recap for a day is written at the end
+    /// of it, so before the scheduled time the only recap that exists is
+    /// yesterday's — and that is the one a person wants in the morning.
+    func latestRecap() -> DailySummary? {
+        guard let modelContainer else { return nil }
+        let ctx = ModelContext(modelContainer)
+        var d = FetchDescriptor<DailySummary>(
+            sortBy: [SortDescriptor(\.date, order: .reverse)])
+        d.fetchLimit = 1
+        return (try? ctx.fetch(d))?.first
+    }
+
+    /// `isRead` existed on the model from the start and was written by nobody,
+    /// so "0 of 130 read" measured the flag rather than the reader. It is set
+    /// here, when the recap is actually opened.
+    func markRead(id: UUID) {
+        guard let modelContainer else { return }
+        let ctx = ModelContext(modelContainer)
+        var d = FetchDescriptor<DailySummary>(predicate: #Predicate { $0.id == id })
+        d.fetchLimit = 1
+        guard let row = (try? ctx.fetch(d))?.first, !row.isRead else { return }
+        row.isRead = true
+        try? ctx.save()
+    }
+
     // MARK: - Core generation
 
     @discardableResult
