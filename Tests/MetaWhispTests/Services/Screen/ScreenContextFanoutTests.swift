@@ -50,6 +50,23 @@ final class ScreenContextFanoutTests: XCTestCase {
     /// pixels are the ones both consumers already saw, so waking them would buy
     /// a model call every ceiling interval for a screen that did not change:
     /// the cost the gate exists to avoid, arriving through the fix for the gate.
+    /// The pair to the test below — the gate's release. A forced read whose
+    /// OCR came back different is not "nothing changed": the fingerprint
+    /// cannot see one new line, so this is the only way that line reaches a
+    /// consumer. Dropping the flag on `.changed` is what makes the silence
+    /// bounded; keeping it (tried 2026-09-01) silenced real messages for good.
+    @MainActor
+    func testAForcedReadThatCameBackDifferentWakesTheConsumersAfterAll() {
+        let visit = ContextVisit(id: UUID(), generation: 1, bundleID: "b", appName: "A",
+                                 normalizedTitle: "t", rawTitle: "t", windowID: nil,
+                                 displayID: nil, frame: nil, startedAt: Date())
+        XCTAssertTrue(ScreenContextService.forcedRereadSurvives(.unchanged))
+        XCTAssertFalse(ScreenContextService.forcedRereadSurvives(.changed(visit)),
+                       "different text is news, however it was noticed")
+        XCTAssertFalse(ScreenContextService.forcedRereadSurvives(.opened(visit)),
+                       "a different window is news")
+    }
+
     func testAForcedRereadWakesNeitherConsumer() async {
         var reactorRan = false
         var proactiveRan = false

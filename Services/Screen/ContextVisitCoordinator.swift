@@ -88,15 +88,6 @@ struct ContextVisitCoordinator {
         case changed(ContextVisit)
         /// Nothing worth re-reading.
         case unchanged
-
-        /// Whether this is still the window the tick started on. Only
-        /// `.opened` says no: `.changed` is the same window with different
-        /// text in it — a clock, a "5 min ago" that became "8 min ago" — and a
-        /// decision taken about that window before the OCR await still holds.
-        var keepsWindow: Bool {
-            if case .opened = self { return false }
-            return true
-        }
     }
 
     /// An absence longer than this ends the visit. Coming back to a window an

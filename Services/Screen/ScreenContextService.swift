@@ -639,12 +639,9 @@ final class ScreenContextService: ObservableObject {
             // The flag was decided before the screenshot and OCR awaits, and
             // the user can switch windows across them — the same reason the
             // proposal above is derived from the snapshot rather than from the
-            // window this tick started on. The question is "same window?", not
-            // "same text?": a review found the OCR-hash version of this guard
-            // let a window whose timestamps drift ("5 min ago" → "8 min ago")
-            // come back as `.changed`, lose the flag, and wake both consumers
-            // every ceiling interval — the exact call the flag exists to stop.
-            let wasForcedReread = forcedReread && proposal.keepsWindow
+            // window this tick started on. See `forcedRereadSurvives` for why
+            // `.changed` drops it too.
+            let wasForcedReread = forcedReread && Self.forcedRereadSurvives(proposal)
 
             // Persist first — it is what decides this cycle's outcome.
             persistContext(snapshot, frame: capture.frame,
@@ -672,6 +669,25 @@ final class ScreenContextService: ObservableObject {
                 sameWindowProbe.noteStored(at: Date())
             }
         }
+    }
+
+    /// Whether a forced re-read is still "nothing changed" once the row is in
+    /// hand. Only `.unchanged` keeps the flag.
+    ///
+    /// `.changed` is the release of the "forced reads wake nobody" gate, and
+    /// it has to stay one: the 8×8 fingerprint cannot see a single new line —
+    /// one 20 px reply in a 900 px window moves a block by about 5 of the 6
+    /// levels it takes to register — so the forced read is the only path by
+    /// which that line ever reaches a consumer. Treating `.changed` as "same
+    /// window, keep the flag" (tried on 2026-09-01 to stop timestamp drift
+    /// from waking the model) stored that line, dispatched it to nobody, and
+    /// committed it as the new baseline: a real message, silenced for good.
+    /// A window whose "5 min ago" ticks over costs a model call every ceiling
+    /// interval; that is the cheaper failure, and the fix for it belongs in
+    /// the content hash, not here.
+    nonisolated static func forcedRereadSurvives(_ proposal: ContextVisitCoordinator.Proposal) -> Bool {
+        if case .unchanged = proposal { return true }
+        return false
     }
 
     /// One cheap look at the window, behind the same privacy gates the capture

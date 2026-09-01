@@ -299,12 +299,9 @@ private struct DailySummaryCard: View {
     @ObservedObject private var settings = AppSettings.shared
     @State private var isGenerating = false
 
-    /// Stands on the newest recap before the scheduled hour, not on an empty
-    /// "today": the menu-bar row and the card announcing a recap both opened
-    /// onto a placeholder for most of the day (review, 2026-09-01).
     private var todaysSummary: DailySummary? {
-        let day = DayRecapStrip.anchorDay(newestRecapDate: summaries.first?.date, now: Date())
-        return summaries.first { Calendar.current.isDate($0.date, inSameDayAs: day) }
+        guard let latest = summaries.first else { return nil }
+        return Calendar.current.isDateInToday(latest.date) ? latest : nil
     }
 
     var body: some View {
@@ -312,8 +309,6 @@ private struct DailySummaryCard: View {
             header
             if let s = todaysSummary {
                 summaryBody(for: s)
-                    .id(s.id)
-                    .onAppear { AppDelegate.shared?.dailySummaryService.markRead(id: s.id) }
             } else {
                 emptyPlaceholder
             }
@@ -723,10 +718,12 @@ private struct TodayTomorrowSection: View {
 
 /// Today's LLM recap with single ‹ / › arrows for past-day navigation.
 /// Replaces the 14-day picker carousel — user navigates one day at a time
-/// while a `DailySummary` row exists for the destination day. The forward
-/// arrow is hidden at offset 0 (today) so the user can't slide into the
-/// future. Body re-uses the same render shape DetailCard had: title +
-/// LEARNED / DECIDED / SHIPPED / energy.
+/// while a `DailySummary` row exists for the destination day. The card opens
+/// on the newest recap there is — before the scheduled hour that is
+/// yesterday's — and the forward arrow is bounded by today, not by where the
+/// card opened, so today's placeholder and its GENERATE stay reachable. Body
+/// re-uses the same render shape DetailCard had: title + LEARNED / DECIDED /
+/// SHIPPED / energy.
 private struct TodayCard: View {
     /// True → split sections into 2 columns (LEARNED+SHIPPED | DECIDED).
     /// False → keep dense single-column layout. Driven by window width.
@@ -764,7 +761,10 @@ private struct TodayCard: View {
         return cal.startOfDay(for: oldest) < selectedDate
     }
 
-    private var canGoForward: Bool { dayOffset < 0 }
+    /// Bounded by today, not by the anchor: with the card opening on
+    /// yesterday, `dayOffset < 0` made today unreachable for the whole day
+    /// before the scheduled hour (review, 2026-09-01).
+    private var canGoForward: Bool { selectedDate < cal.startOfDay(for: Date()) }
 
     var body: some View {
         VStack(alignment: .leading, spacing: MW.sp16) {
@@ -782,7 +782,10 @@ private struct TodayCard: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .mwCard(radius: MW.rMedium, elevation: .raised)
         .task { await loadCalendarEvents() }
-        .onChange(of: dayOffset) { _, _ in
+        // Keyed on the day shown, not the offset: the anchor moves under a
+        // fixed offset when the 22:00 recap lands, and the calendar section
+        // used to stay on the previous day beneath the new recap.
+        .onChange(of: selectedDate) { _, _ in
             Task { await loadCalendarEvents() }
         }
         .onChange(of: settings.calendarReaderEnabled) { _, _ in
@@ -995,11 +998,16 @@ private struct TodayCard: View {
     @ViewBuilder
     private var content: some View {
         if let s = todaysSummary {
-            // Shown is read. `.id` re-fires the appearance when ‹ › moves to a
-            // different day inside the same card.
+            // Shown is read — and "shown" is asked of AppKit, because
+            // `onAppear` fires for a hidden or miniaturised window too, and
+            // a recap landing behind another app would have marked itself
+            // read unseen. `initial: true` covers the first render; the
+            // key-window notification covers a recap that arrived while the
+            // window was hidden and is only now in front of someone.
             summaryRender(for: s)
-                .id(s.id)
-                .onAppear { AppDelegate.shared?.dailySummaryService.markRead(id: s.id) }
+                .onChange(of: s.id, initial: true) { _, id in markReadIfShowing(id) }
+                .onReceive(NotificationCenter.default.publisher(
+                    for: NSWindow.didBecomeKeyNotification)) { _ in markReadIfShowing(s.id) }
         } else {
             emptyPlaceholder
         }
@@ -1090,6 +1098,11 @@ private struct TodayCard: View {
             .font(MW.mono).foregroundStyle(MW.textMuted)
             .fixedSize(horizontal: false, vertical: true)
             .padding(.vertical, 16)
+    }
+
+    private func markReadIfShowing(_ id: UUID) {
+        guard AppDelegate.shared?.mainWindow.isShowing == true else { return }
+        AppDelegate.shared?.dailySummaryService.markRead(id: id)
     }
 
     private var dayLabel: String {

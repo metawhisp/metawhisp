@@ -51,6 +51,15 @@ extension Notification.Name {
 final class MainWindowController: NSObject, NSWindowDelegate {
     private var window: NSWindow?
 
+    /// Whether a person can currently see the main window. SwiftUI's
+    /// `onAppear` fires for a hidden, miniaturised or occluded window just the
+    /// same, so "shown" has to be asked of AppKit, not of the view tree.
+    var isShowing: Bool {
+        guard let window, NSApp.isActive else { return false }
+        return window.isVisible && !window.isMiniaturized
+            && window.occlusionState.contains(.visible)
+    }
+
     /// ITER-055 — black-box trace for the recurring «throws me to another
     /// screen / Space» bug. Logs where a window actually lands vs where the
     /// user is (cursor screen), so the next repro pins the cause instead of a

@@ -56,7 +56,7 @@ struct MWNotification: Identifiable {
         self.sourceApp = sourceApp
     }
 
-    enum Kind {
+    enum Kind: CaseIterable {
         case task             // task extracted from voice / screen
         case call             // call detected (Zoom/Meet/Teams)
         case recordingStopped // meeting recorder auto-stopped — recording REALLY ended

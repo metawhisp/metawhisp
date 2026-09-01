@@ -116,6 +116,10 @@ final class DailySummaryService: ObservableObject {
             ))) ?? []
             for row in stale { ctx.delete(row) }
             if !stale.isEmpty { try? ctx.save() }
+            // The refresh has to follow the LAST write. generate() refreshed
+            // while both rows existed and could hand the menu bar the very row
+            // deleted just above (review, 2026-09-01).
+            refreshLatestRecap()
         }
         return fresh
     }
@@ -548,13 +552,22 @@ final class DailySummaryService: ObservableObject {
     /// opens the recap. The previous macOS notification had no click handler
     /// for its whole life, and — since the authorization request was removed
     /// when the in-app stack arrived — no proof it was ever shown.
+    ///
+    /// The card lives the stack's ordinary few seconds; the menu-bar row is
+    /// the durable surface and stays offered until the recap is read (see
+    /// `DayRecapStrip`). Opening it ends the card's life on screen, as with
+    /// every other card that opens something — left up, it sits over the
+    /// window it just opened.
     private func postDeliveryNotification(title: String, overview: String) {
+        let noteID = UUID()
         let note = MWNotification(
+            id: noteID,
             kind: .dayRecap,
             title: title,
             body: String(overview.prefix(180)),
-            onTap: {
-                Task { @MainActor in AppDelegate.shared?.openMainWindow(tab: .dashboard) }
+            onTap: { @MainActor in
+                AppDelegate.shared?.openMainWindow(tab: .dashboard)
+                MWNotificationStack.shared.dismiss(id: noteID, reason: .opened)
             }
         )
         Task { @MainActor in MWNotificationStack.shared.push(note) }

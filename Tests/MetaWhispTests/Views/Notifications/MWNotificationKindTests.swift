@@ -8,10 +8,9 @@ import SwiftUI
 @MainActor
 final class MWNotificationKindTests: XCTestCase {
 
-    private let all: [MWNotification.Kind] = [
-        .task, .call, .recordingStopped, .recordingOverrun,
-        .recap, .advice, .proactive, .signIn
-    ]
+    /// Every case, by construction. A hand-written list silently skipped a
+    /// kind added later (review, 2026-09-01).
+    private let all = MWNotification.Kind.allCases
 
     /// Colour is a status, not a filing system. Purple meant "this is the
     /// advice sort" and yellow meant "this is the context sort" — a taxonomy
