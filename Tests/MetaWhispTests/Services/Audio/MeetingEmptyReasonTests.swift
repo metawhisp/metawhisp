@@ -64,4 +64,16 @@ final class MeetingEmptyReasonTests: XCTestCase {
         XCTAssertTrue(mic.lowercased().contains("microphone"))
         XCTAssertFalse(mic.lowercased().contains("no speech"))
     }
+
+    /// The menu bar opens the Privacy pane for a message carrying 🎤 and for
+    /// no other (`MenuBarView.errorSettingsPane`). "Check your permission" is
+    /// the right advice for a mic that captured nothing; it is the wrong
+    /// advice for a device that ran and delivered silence — that one needs
+    /// the dead-device remedy, not a Settings pane (independent review, v22).
+    func test_onlyTheCaptureNothingMessageRoutesToPrivacy() {
+        XCTAssertTrue(R.micNeverCaptured.userMessage.contains("🎤"))
+        for reason in [R.micDeliveredSilence, R.genuinelySilent, R.chunksFailed(2)] {
+            XCTAssertFalse(reason.userMessage.contains("🎤"), "\(reason) must not open the Privacy pane")
+        }
+    }
 }

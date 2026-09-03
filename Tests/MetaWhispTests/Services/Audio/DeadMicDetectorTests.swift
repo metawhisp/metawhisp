@@ -209,4 +209,19 @@ final class DeadMicDetectorTests: XCTestCase {
         XCTAssertEqual(Double(fastTrip) / Double(slowTrip), 3.0, accuracy: 0.1,
                        "48 kHz needs 3x the buffers of 16 kHz for the same wall-clock window")
     }
+    /// `isDead` follows the CURRENT run: input volume at zero is a run that
+    /// never ends and stays dead; a run that ended is not a fault any more;
+    /// and a second run trips again — a stream that went dead, came back, and
+    /// went dead for good used to be invisible after its first trip.
+    func test_isDead_followsTheRunAndASecondRunTripsAgain() {
+        var d = DeadMicDetector()
+        for _ in 0..<50 { _ = d.observe(rms: 0, frames: 1024, sampleRate: 16_000) }   // 3.2 s of zeros
+        XCTAssertTrue(d.isDead)
+        _ = d.observe(rms: 0.01, frames: 1024, sampleRate: 16_000)                    // audio came back
+        XCTAssertFalse(d.isDead, "the run ended")
+        var trippedAgain = false
+        for _ in 0..<50 { if d.observe(rms: 0, frames: 1024, sampleRate: 16_000) { trippedAgain = true } }
+        XCTAssertTrue(trippedAgain, "the second run must trip on its own")
+        XCTAssertTrue(d.isDead)
+    }
 }

@@ -29,9 +29,10 @@ struct DeadMicDetector {
     private var zeroSeconds: Double = 0
     private var tripped = false
 
-    /// True once the run of digital silence has lasted past the window. Stays
-    /// true until `reset()` — recovery costs an engine rebuild, so this must
-    /// not re-arm on every subsequent buffer.
+    /// True while the CURRENT run of exact zeros has lasted past the window.
+    /// Audio clears it: a run that ended is not a fault, and the next run can
+    /// trip again — a stream that went dead, came back, and went dead for good
+    /// used to be invisible after its first trip (review round eight).
     var isDead: Bool { tripped }
 
     /// Did ANY non-zero sample arrive since the last `reset()`?
@@ -56,9 +57,11 @@ struct DeadMicDetector {
         guard frames > 0, sampleRate > 0 else { return false }
 
         guard rms == 0 else {
-            // Any real signal clears the run outright — a dead stream never
-            // recovers on its own, so an interrupted run was never one.
+            // Any real signal clears the run outright, trip included: a dead
+            // stream never recovers on its own, so a run that ended was never
+            // one, and the next run must be able to trip on its own.
             zeroSeconds = 0
+            tripped = false
             // NaN is neither zero nor evidence of a live mic — don't let it
             // vouch for the stream.
             if rms.isFinite { sawAudio = true }

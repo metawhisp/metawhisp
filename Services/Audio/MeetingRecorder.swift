@@ -16,7 +16,14 @@ final class MeetingRecorder: ObservableObject {
     @Published var audioLevel: Float = 0
     /// RAW (un-boosted) RMS, max of both channels — silence guards read this
     /// (ITER-060 units fix), never the boosted `audioLevel`.
-    @Published private(set) var rawRMSLevel: Float = 0
+    @Published private(set) var rawRMSLevel: Float = 0 {
+        // Peak since the post-start sniff began. The sniff used to read the
+        // latest buffer once every five seconds and could miss every audible
+        // moment in between; a latch cannot (review round twelve).
+        didSet { sniffPeakRMS = max(sniffPeakRMS, rawRMSLevel) }
+    }
+    private(set) var sniffPeakRMS: Float = 0
+    func markSniffStart() { sniffPeakRMS = 0 }
     @Published var audioBars: [Float] = Array(repeating: 0, count: 24)
     @Published var lastError: String?
     /// True if mic capture failed but system audio is still active (user will lose their own voice).
@@ -58,6 +65,9 @@ final class MeetingRecorder: ObservableObject {
     /// 2026-05-02: "Если запускаешь вручную, то останавливаешь тоже всегда
     /// только вручную").
     private(set) var isManualMode = false
+    /// Which recording is running. A sniff task from an earlier recording
+    /// must not judge — or stop — the one that replaced it.
+    var recordingGeneration: Int { startGeneration }
 
     let mic: AudioRecordingService
     let systemAudio: SystemAudioCaptureService
@@ -115,9 +125,11 @@ final class MeetingRecorder: ObservableObject {
             case .micNeverCaptured:
                 return "🎤 Microphone captured nothing — check mic permission and the input device in Settings"
             case .micDeliveredSilence:
-                return "🎤 Microphone ran but produced no audio — " + AudioRecordingService.deadMicMessage
+                // ⚠️, not 🎤: the menu bar routes 🎤 to the Privacy pane, and
+                // this is a dead device, not a permission.
+                return "⚠️ Mic input ran but produced no audio — " + AudioRecordingService.deadMicMessage
             case .genuinelySilent:
-                return "🎤 No speech detected in recording"
+                return "🔇 No speech detected in recording"
             }
         }
     }
@@ -153,6 +165,123 @@ final class MeetingRecorder: ObservableObject {
     private let silenceCheckInterval: TimeInterval = 1.0
     private var silenceCheckTimer: AnyCancellable?
 
+    // A meeting must never lose a channel silently — see `MicRecovery`.
+    private var micWatchdogTimer: AnyCancellable?
+    private var micOutage: MicOutageEpisode?
+    private var micProducedAtLastTick = 0
+    /// A loss the latches reported on a tick where the stream was not yet at
+    /// a healthy rate: counted at the first healthy tick, or folded into the
+    /// episode that opens meanwhile — never both.
+    private var micCarriedLoss = false
+    /// The "no input device" line is logged once per meeting, not on every
+    /// probe of a meeting-long wait.
+    private var micLoggedNoDevice = false
+    private var micHealthyTicks = 0
+    private var micLowRateTicks = 0
+    private var micLastTickAt: SuspendingClock.Instant?
+    private var micLateTicks = 0
+    /// When the rate window opened — the last tick that JUDGED. A skipped
+    /// late tick does not close it, so the count and the window agree.
+    private var micRateWindowStart: SuspendingClock.Instant?
+    private var micOutageCount = 0
+    private var micOutageSeconds: Double = 0
+    /// The mic has been down at some point this meeting, or is down now. The
+    /// post-start silence sniff must not discard such a recording: RMS says
+    /// nothing about a microphone that was, or is, being recovered.
+    var micHadOutage: Bool { micOutageCount > 0 || micOutage != nil }
+    var micHasPermission: Bool { mic.hasPermission }
+    /// The mic delivered at least one sample this recording. A mic that never
+    /// existed (no device, no permission) is not an outage that excuses an
+    /// all-silent auto-recording from the sniff's discard.
+    var micProducedThisRecording: Bool { mic.producedByTapThisRecording > 0 }
+    /// The stream is down, stalled or dead RIGHT NOW, whatever the last tick
+    /// saw. The post-start silence sniff asks this so a device change after
+    /// the last tick cannot make it discard a recording whose mic just died.
+    var micIsDownNow: Bool {
+        let s = mic.streamState
+        return s == .down || s == .stalled || s == .dead
+    }
+
+    /// The meeting's start on the monotonic clock: the retry schedule and
+    /// every recency test run on it, never on the wall clock.
+    private var micClockStart: SuspendingClock.Instant?
+    /// The outage note for this meeting's finalization. Later finalization
+    /// errors join it rather than replace it — an outage plus one failed
+    /// transcription chunk used to leave only the chunk warning.
+    private var finalizationNote: String?
+
+    /// What `stop()` hands back — a snapshot, so a meeting whose transcription
+    /// is still in flight when the next one stops is diagnosed with its OWN
+    /// numbers, not the next meeting's (review, 2026-09-03).
+    struct Capture {
+        let mic: [Float]
+        let system: [Float]
+        /// Samples the tap produced across the whole meeting, before pause
+        /// mutes: an empty capture must not look like a quiet one.
+        let tapSamples: Int
+        let micChannelWasSilent: Bool
+        /// How many times the mic went down, and for how long in total. The
+        /// user's side is missing for that long; finalization says so.
+        let outages: Int
+        let outageSeconds: Double
+        /// The mic was still down when the meeting ended — the card must not
+        /// say it was brought back.
+        let micDownAtStop: Bool
+        /// Why the mic could not be brought back, if the app can tell: a
+        /// denied (or revoked) permission gets the permission note; a Mac
+        /// with no input device gets a log line, not a card after every
+        /// meeting.
+        enum Unavailable { case noPermission, noInputDevice }
+        let micUnavailable: Unavailable?
+        /// The longest stretch, in seconds, that an external input delivered
+        /// exact zeros after it had delivered audio. Not an outage; reported
+        /// when long enough (`MicOutageReport.silentRunFloorSeconds`).
+        let micZeroRunSeconds: Double
+        /// The tap carried audio (not zeros) within the last seconds before
+        /// stop — the permission wording depends on it.
+        let micAudioAtStop: Bool
+        /// Which meeting this was. A finalization that finishes after the next
+        /// meeting started must not write its outcome over the live one.
+        let generation: Int
+    }
+
+    /// Record a finalization outcome for the meeting it belongs to. Ignored
+    /// when a newer meeting has started since (review, 2026-09-03).
+    /// The generation of the last recording that actually went live. A start
+    /// that failed before going live (no system audio) must not swallow the
+    /// previous meeting's outcome (independent review, v14).
+    private var liveGeneration = 0
+
+    func reportFinalization(error: String?, for generation: Int) {
+        guard generation == liveGeneration || (!isRecording && !isStarting) else {
+            NSLog("[MeetingRecorder] finalization for an earlier meeting — outcome not shown over the live one")
+            return
+        }
+        lastError = [finalizationNote, error].compactMap { $0 }.joined(separator: "\n")
+        if lastError?.isEmpty == true { lastError = nil }
+    }
+
+    /// A new meeting starts with a clean banner: the previous meeting's note
+    /// and error go together, SYNCHRONOUSLY. The note used to be cleared only
+    /// once the start had gone live, after asynchronous waits — and the
+    /// relay, composing every reset with the note, put the previous meeting's
+    /// "your side is missing" back into the popover for the whole next
+    /// meeting (independent review, v18). A start that then fails shows its
+    /// own error; the outcome of the earlier meeting is protected by
+    /// `liveGeneration`, not by the note.
+    func forgetOutcome() {
+        finalizationNote = nil
+        lastError = nil
+    }
+
+    /// A fact about the capture that every later finalization message must
+    /// keep — the microphone-loss note.
+    func keepFinalizationNote(_ note: String, for generation: Int) {
+        guard generation == liveGeneration || (!isRecording && !isStarting) else { return }
+        finalizationNote = note
+        lastError = note
+    }
+
     /// ITER-026 v2 — periods during which the user did a top-level dictation /
     /// voice question / translate. Mic is "paused" by recording the pause
     /// window timestamps; at `stop()` we zero out the matching slice of the
@@ -160,7 +289,10 @@ final class MeetingRecorder: ObservableObject {
     /// into the meeting transcript. System audio keeps recording during
     /// pause — meeting may still be going on the other side.
     private var pauseWindows: [(startSec: Double, endSec: Double)] = []
-    private var pauseStartedAt: Date?
+    /// On the suspending clock, like the mic timeline it is applied to: a
+    /// wall-clock window around a sleep used to mute every sample after
+    /// wake (review round eight).
+    private var pauseStartedAt: SuspendingClock.Instant?
 
     /// ITER-026 v2 — manual-mode 2h heartbeat task.
     private var manualHeartbeatTask: Task<Void, Never>?
@@ -173,10 +305,17 @@ final class MeetingRecorder: ObservableObject {
         // Forward nil TOO (ITER-050 B3.6): the old `if let err` swallowed the
         // reset, so a transient SCK failure pinned the red error banner in the
         // popover forever even after capture recovered.
+        // Composed with the sticky finalization note, exactly as
+        // `reportFinalization` does: the user-toggle stop resets this error
+        // BEFORE stopping, and that reset landed here asynchronously — after
+        // `keepFinalizationNote` — erasing the mic-loss banner (independent
+        // review, v17).
         systemAudio.$lastError
             .receive(on: RunLoop.main)
             .sink { [weak self] err in
-                self?.lastError = err
+                guard let self else { return }
+                let joined = [self.finalizationNote, err].compactMap { $0 }.joined(separator: "\n")
+                self.lastError = joined.isEmpty ? nil : joined
             }
             .store(in: &cancellables)
 
@@ -221,7 +360,7 @@ final class MeetingRecorder: ObservableObject {
     /// guards apply.
     func start(manualMode: Bool = false) {
         guard !isRecording, !isStarting else { return }
-        lastError = nil
+        forgetOutcome()
         micOnlyMode = false
         isStarting = true
         isManualMode = manualMode
@@ -230,6 +369,11 @@ final class MeetingRecorder: ObservableObject {
 
         Task { [weak self] in
             guard let self else { return }
+            // A stop that landed between `start()` and this Task must not
+            // bring up system audio for a meeting nobody is having — and it
+            // makes the synchronous half of `start()` testable (independent
+            // review, v20).
+            guard self.startGeneration == gen else { return }
 
             // 1. Start system audio first — it's the path with TCC prompts.
             //    `start()` returns immediately; actual stream setup is async inside it.
@@ -270,7 +414,12 @@ final class MeetingRecorder: ObservableObject {
             guard self.startGeneration == gen else { return }
 
             // 3. Start microphone in parallel. If mic fails (permission denied, etc.)
-            //    keep recording system audio only — the user still gets the other side.
+            //    keep recording system audio only — the user still gets the other
+            //    side — and recovery keeps trying to bring the mic in. The
+            //    timeline begins now either way, so a mic recovered later lands
+            //    at the right place against the system channel.
+            self.mic.beginTimeline()
+            self.micClockStart = SuspendingClock.now
             if self.mic.hasPermission {
                 do {
                     try self.mic.start()
@@ -285,9 +434,11 @@ final class MeetingRecorder: ObservableObject {
 
             self.isRecording = true
             self.isStarting = false
+            self.liveGeneration = gen
             self.recordingStartedAt = Date()
             NSLog("[MeetingRecorder] ✅ Recording (mic=%@, system=yes)",
                   self.micOnlyMode ? "NO" : "yes")
+            self.armMicRecovery()
 
             // ITER-026 v2 — auto-stop guards apply ONLY to gate-triggered
             // recordings. Manual recordings run unbounded; the only auto-
@@ -310,19 +461,19 @@ final class MeetingRecorder: ObservableObject {
     /// samples before returning.
     func pauseMic() {
         guard isRecording, pauseStartedAt == nil else { return }
-        pauseStartedAt = Date()
+        pauseStartedAt = SuspendingClock.now
         NSLog("[MeetingRecorder] mic paused (dictation in progress)")
     }
 
     /// ITER-026 v2 — pair to `pauseMic()`. Closes the pause window using
     /// elapsed seconds since `recordingStartedAt`.
     func resumeMic() {
-        guard let pauseStart = pauseStartedAt, let recStart = recordingStartedAt else {
+        guard let pauseStart = pauseStartedAt, let clockStart = micClockStart else {
             pauseStartedAt = nil
             return
         }
-        let startSec = pauseStart.timeIntervalSince(recStart)
-        let endSec = Date().timeIntervalSince(recStart)
+        let startSec = (pauseStart - clockStart).seconds
+        let endSec = (SuspendingClock.now - clockStart).seconds
         if endSec > startSec {
             pauseWindows.append((startSec: startSec, endSec: endSec))
             NSLog("[MeetingRecorder] mic resumed; muting %.2fs..%.2fs in final stream", startSec, endSec)
@@ -350,7 +501,7 @@ final class MeetingRecorder: ObservableObject {
     /// can pseudo-diarize (mic = .me, system = .them) without ever summing the
     /// two streams. `Self.mix` is still available for callers that need a
     /// single-channel mixdown (e.g. `assembleMeetingTranscriptFromLive` tail).
-    func stop() -> (mic: [Float], system: [Float]) {
+    func stop() -> Capture {
         startGeneration += 1  // AUD-008: invalidate any in-flight start task
 
         // Disarm backstops first — otherwise a stale silence-timer fire after manual
@@ -362,11 +513,85 @@ final class MeetingRecorder: ObservableObject {
         // ends the meeting mid-dictation.
         if pauseStartedAt != nil { resumeMic() }
 
-        let rawMicSamples = mic.isRecording ? mic.stop() : []
+        // Drain the mic UNCONDITIONALLY: during an outage the engine is down
+        // but everything captured before it is still in the buffer, and the
+        // old `isRecording ? stop() : []` threw the whole first part of the
+        // call away if the user stopped mid-recovery (review, 2026-09-03).
+        // Judge the LIVE stream at stop, not the cached episode: a drop after
+        // the last tick would otherwise go unreported, and a rebound already
+        // producing but not yet confirmed would be reported as still down.
+        let liveState = mic.streamState
+        // The buffer follows the clock to the end: the last buffers may have
+        // stopped a few seconds ago without any tick having judged it.
+        // Account BEFORE the tail fill: the tail is the host clock's view of
+        // the end, and against device-clock placement it carries drift and
+        // latency — a healthy mic must not be called "down at stop" by it
+        // (independent review, v14). The tail is filled for the timeline
+        // only; the stream's own state decides whether the mic was down.
+        let accounting = mic.takeAccounting()
+        if mic.producedByTapThisRecording > 0 { mic.fillSilence() }
+        _ = mic.takeAccounting()   // the tail's own seconds are not an outage
+        micOutageSeconds += accounting.silencePlacedSeconds + accounting.deadZeroSeconds
+        let latchedLoss = accounting.silencePlacedSeconds >= 1 || accounting.deadTripped || micCarriedLoss
+        micCarriedLoss = false
+        // A tail of a second or more (past the jitter allowance) is missing
+        // microphone time and is counted as an outage; a permission gone or
+        // an engine down at stop is one too, whatever the ticks saw. Counted
+        // ONCE: the synthetic episode covers the latched loss when it opens;
+        // otherwise the latches — a gap that ended, or a run of zeros, in the
+        // second before Stop — are counted on their own (rounds ten, eleven).
+        if micOutage == nil, let clockStart = micClockStart {
+            let now = (SuspendingClock.now - clockStart).seconds
+            if !mic.hasPermission {
+                openMicOutage(since: mic.lastProducedAt ?? clockStart, now: now,
+                              reason: "microphone permission revoked, seen at stop")
+            } else if liveState == .down || liveState == .stalled || liveState == .dead {
+                openMicOutage(since: micOutageStart(for: liveState, clockStart: clockStart),
+                              now: now, reason: "down at stop")
+            } else if latchedLoss {
+                micOutageCount += 1
+                NSLog("[MeetingRecorder] 🎙️ mic time went missing just before stop — %.1fs placed as silence, dead run: %@",
+                      accounting.silencePlacedSeconds, accounting.deadTripped ? "yes" : "no")
+            }
+        }
+        // "Back" means the rate went healthy, not that something arrived
+        // recently: a dead device's zeros, one drip, and a just-torn-down
+        // engine all produced half a second ago and none is back. Judged
+        // AFTER any outage opened above, so the card cannot say "brought
+        // back" about a mic the stop itself found down.
+        let backNow = mic.hasPermission && liveState == .delivering && micHealthyTicks >= 1
+        let micDownAtStop = micOutage != nil && !backNow
+        micOutage = nil
+        // Everything the tap produced across every bind of this meeting —
+        // the digital-silence judgement and the "captured nothing" diagnosis
+        // must not see the timeline's silence as audio.
+        let tapSamples = mic.producedByTapThisRecording
+        // A permission gone at stop is reported as such whether the mic ever
+        // produced or not — revoked at minute ten, the card must still say
+        // "permission" so the menu bar routes its click to the Privacy pane
+        // (independent review, v16). No input device at all is known only
+        // for a mic that never produced.
+        var micUnavailable: Capture.Unavailable? = nil
+        if !mic.hasPermission { micUnavailable = .noPermission }
+        else if tapSamples == 0, AudioInputCatalog.availableInputDevices().isEmpty { micUnavailable = .noInputDevice }
+        let micZeroRunSeconds = mic.longestZeroRunSecondsAfterAudio
+        // Audio (not zeros) within the last seconds: a permission the system
+        // reports as off while the stream still carries audio must not be
+        // told as "your side is missing" (independent review, v17).
+        let micAudioAtStop = mic.lastAudioAt.map { (SuspendingClock.now - $0).seconds < 5 } ?? false
+        let rawMicSamples = mic.stop()
         // Judge the mic on the RAW buffer — `applyPauseMutes` writes literal
         // zeros by design, so measuring after it would confuse "the user
         // dictated" with "the microphone was dead".
-        micChannelWasSilent = Self.isDigitalSilence(rawMicSamples)
+        micChannelWasSilent = tapSamples > 0 && Self.isDigitalSilence(rawMicSamples)
+        let outages = micOutageCount
+        let outageSeconds = micOutageSeconds
+        micOutageCount = 0
+        micOutageSeconds = 0
+        if outages > 0 {
+            NSLog("[MeetingRecorder] %d mic outage(s), %.1fs in total — silence on the timeline, the user's side is missing there",
+                  outages, outageSeconds)
+        }
         let micSamples = applyPauseMutes(to: rawMicSamples)
         let sysSamples = systemAudio.stop()
 
@@ -379,10 +604,232 @@ final class MeetingRecorder: ObservableObject {
         let mutedWindowCount = pauseWindows.count
         pauseWindows.removeAll()
 
-        NSLog("[MeetingRecorder] Stopped: mic=%d samples (%d pause windows muted), system=%d samples",
-              micSamples.count, mutedWindowCount, sysSamples.count)
+        NSLog("[MeetingRecorder] Stopped: mic=%d samples (%d produced by the tap, %d pause windows muted), system=%d samples",
+              micSamples.count, tapSamples, mutedWindowCount, sysSamples.count)
 
-        return (mic: micSamples, system: sysSamples)
+        return Capture(mic: micSamples, system: sysSamples, tapSamples: tapSamples,
+                       micChannelWasSilent: micChannelWasSilent, outages: outages,
+                       outageSeconds: outageSeconds, micDownAtStop: micDownAtStop,
+                       micUnavailable: micUnavailable, micZeroRunSeconds: micZeroRunSeconds,
+                       micAudioAtStop: micAudioAtStop, generation: liveGeneration)
+    }
+
+    // MARK: - Mic recovery
+
+    /// One signal, one episode, and a buffer that keeps its own timeline.
+    ///
+    /// The once-a-second tick reads the engine's account of its stream —
+    /// `streamState` and the rate since the last tick — never a raw count
+    /// that zeros or a retired bind could grow. An outage opens when the
+    /// stream is down, dead, stalled, or unpermitted. While it is open the
+    /// tick fills the mic buffer with silence up to the clock, so the buffer
+    /// stays on the meeting's timeline by construction and nothing is
+    /// inserted at stop; whatever a dead attempt appended already occupies
+    /// exactly its own time. The outage keeps its attempt count until the
+    /// rebound stream has held a healthy rate for
+    /// `MicRecoveryPolicy.confirmTicks` ticks — one buffer and a hang is not
+    /// delivery — and only that clears the banner.
+    ///
+    /// The one thing this cannot fix is a revoked microphone permission. The
+    /// outage opens all the same so the banner says so; nothing is attempted.
+    private func armMicRecovery() {
+        micOutage = nil
+        micCarriedLoss = false
+        micLoggedNoDevice = false
+        micProducedAtLastTick = 0
+        micHealthyTicks = 0
+        micLowRateTicks = 0
+        micOutageCount = 0
+        micOutageSeconds = 0
+        micLastTickAt = nil
+        micLateTicks = 0
+        // Anchored here, not left to the first tick's fallback: a meeting
+        // starts with the main thread busy (screen capture, TCC, the
+        // popover), so the first tick can be seconds late — and against a
+        // one-second bar a drip would read as healthy (independent review,
+        // v21).
+        micRateWindowStart = SuspendingClock.now
+        micWatchdogTimer = Timer.publish(every: 1, on: .main, in: .common)
+            .autoconnect()
+            .sink { [weak self] _ in self?.micRecoveryTick() }
+    }
+
+    private func micRecoveryTick() {
+        guard isRecording, let clockStart = micClockStart else { return }
+        // A tick the main thread held back judges nothing (see
+        // `MicRecoveryPolicy.lateTickSeconds`); the third in a row does.
+        let tickAt = SuspendingClock.now
+        let sinceLastTick = micLastTickAt.map { (tickAt - $0).seconds }
+        micLastTickAt = tickAt
+        let late = sinceLastTick.map { $0 > MicRecoveryPolicy.lateTickSeconds } ?? false
+        if MicRecoveryPolicy.skipsJudgement(sinceLastTick: sinceLastTick, consecutiveLate: micLateTicks) {
+            micLateTicks += 1
+            NSLog("[MeetingRecorder] mic tick %.1fs late — the main thread was held; judging nothing this tick",
+                  sinceLastTick ?? 0)
+            return
+        }
+        micLateTicks = late ? micLateTicks + 1 : 0
+        let now = (tickAt - clockStart).seconds
+        let sampleRate = 16000.0
+
+        // What the tap did since the last tick: silence it placed into the
+        // timeline (exact seconds of missing microphone), and whether the
+        // content detector tripped — both latched, so nothing between two
+        // polls is lost.
+        let accounting = mic.takeAccounting()
+        micOutageSeconds += accounting.silencePlacedSeconds + accounting.deadZeroSeconds
+        // Whether the latches describe a loss the tick never saw as an
+        // outage — a drip, a run of zeros that began and ended between polls,
+        // a bind that blocked — or one carried over from a tick where the
+        // stream was not yet healthy. Counted below, ONCE: either the episode
+        // this tick opens covers it, or it is counted on its own at a
+        // healthy tick, or it is carried again.
+        let latchedLoss = accounting.silencePlacedSeconds >= 1 || accounting.deadTripped || micCarriedLoss
+        micCarriedLoss = false
+
+        // The rate this tick, and how long it has been healthy or poor. Reset
+        // when the bind changes (a rebind starts its own streak).
+        let produced = mic.producedByTap
+        let sinceLast = max(0, produced - micProducedAtLastTick)
+        // The window this count covers: since the last tick that judged, so a
+        // skipped late tick cannot inflate the rate.
+        let rateWindow = micRateWindowStart.map { (tickAt - $0).seconds } ?? 1
+        if MicRecoveryPolicy.isHealthyRate(producedSinceLastTick: sinceLast, seconds: rateWindow,
+                                           sampleRate: sampleRate) {
+            micHealthyTicks += 1; micLowRateTicks = 0
+        } else {
+            micHealthyTicks = 0
+            if mic.streamState == .delivering { micLowRateTicks += 1 } else { micLowRateTicks = 0 }
+        }
+        micProducedAtLastTick = produced
+        micRateWindowStart = tickAt
+
+        // A trip whose run already ended is a loss to count, not a stream to
+        // restart: forcing a healthy stream into `.dead` opened an episode
+        // that then restarted a working mic and cut a second gap (round 11).
+        // Only a stream that is dead NOW is judged dead.
+        let state = mic.streamState
+        let input = MicTickInput(hasPermission: mic.hasPermission,
+                                 state: state,
+                                 producedSinceLastTick: sinceLast,
+                                 healthyTicks: micHealthyTicks,
+                                 lowRateTicks: micLowRateTicks,
+                                 secondsSinceLastTick: rateWindow,
+                                 elapsed: now,
+                                 outageOpen: micOutage != nil,
+                                 attemptDue: micOutage?.shouldAttempt(at: now) ?? false)
+        let decision = MicRecoveryPolicy.decide(input, sampleRate: sampleRate)
+
+        if let reason = decision.open {
+            openMicOutage(since: micOutageStart(for: state, clockStart: clockStart), now: now, reason: reason)
+        } else if latchedLoss, micOutage == nil, micHealthyTicks >= 1 {
+            // Counted on its own only when the stream is back at a healthy
+            // rate THIS tick. A gap followed by a drip is not back: if the
+            // drip goes on, "stream degraded" opens and counts it then; if
+            // it recovers, the next healthy tick counts it here (round 12:
+            // counting it now and again at degraded made one outage two).
+            micOutageCount += 1
+            NSLog("[MeetingRecorder] 🎙️ mic time went missing between ticks (%.1fs placed as silence, dead run: %@) — the stream is back on its own",
+                  accounting.silencePlacedSeconds, accounting.deadTripped ? "yes" : "no")
+        } else if latchedLoss, micOutage == nil {
+            // Loss seen, stream not yet healthy: carry it to the next tick.
+            micCarriedLoss = true
+        }
+        if decision.fill, mic.producedByTapThisRecording > 0 {
+            // Nothing is arriving: keep the buffer following the clock so the
+            // gap is placed as it grows rather than in one piece later. A
+            // buffer that does arrive places its own gap before itself. A mic
+            // that has never produced this recording (no device, no
+            // permission) keeps an EMPTY buffer, as before — hours of zeros
+            // for a channel that never existed would cost hundreds of MB and
+            // align nothing.
+            mic.fillSilence()
+        }
+        if decision.close {
+            closeMicOutage()
+            return
+        }
+        if decision.attempt, var outage = micOutage {
+            mic.preferBuiltInInput = outage.preferBuiltIn
+            var boundBuiltIn = false
+            // A Mac with no input device at all: probing the device list is a
+            // property read; building an engine to learn the same thing is
+            // churn. The probe counts as a built-in attempt so the schedule
+            // slows to its 30 s cadence — and that cadence is the release:
+            // when a microphone appears, the next probe binds it.
+            if AudioInputCatalog.availableInputDevices().isEmpty {
+                boundBuiltIn = true
+                if !micLoggedNoDevice {
+                    micLoggedNoDevice = true
+                    NSLog("[MeetingRecorder] mic recovery: no input device on this Mac — probing every %.0f s",
+                          MicRecoverySchedule.maxDelayOnBuiltInSeconds)
+                }
+            } else {
+                do {
+                    try mic.restart()
+                    // A Mac with no built-in microphone (mini, Studio, Pro)
+                    // that was asked for it has nothing else to try either:
+                    // the schedule slows as if the built-in bind had failed
+                    // (independent review, v17).
+                    let builtInAskedForButAbsent = outage.preferBuiltIn && AudioInputCatalog.builtInMicrophone() == nil
+                    boundBuiltIn = mic.boundInputIsBuiltIn || builtInAskedForButAbsent
+                    NSLog("[MeetingRecorder] mic recovery attempt %d bound (%@)",
+                          outage.attempts + 1,
+                          mic.boundInputIsBuiltIn ? "built-in" : builtInAskedForButAbsent ? "default input; no built-in exists" : "default input")
+                } catch {
+                    // A throw — the device vanished between the probe and the
+                    // bind, a format the pipeline cannot take — slows the
+                    // schedule like a failed built-in bind: there is nothing
+                    // else to try.
+                    boundBuiltIn = true
+                    NSLog("[MeetingRecorder] mic recovery attempt %d failed: %@",
+                          outage.attempts + 1, error.localizedDescription)
+                }
+            }
+            outage.noteAttempt(at: (SuspendingClock.now - clockStart).seconds, boundBuiltIn: boundBuiltIn)
+            micOutage = outage
+            // A new bind starts its own streaks.
+            micProducedAtLastTick = mic.producedByTap
+            micHealthyTicks = 0
+            micLowRateTicks = 0
+            return
+        }
+    }
+
+    /// When the outage began, for the accounting: the last production where
+    /// there was one; for a bind that never carried audio (`.dead`) its first
+    /// buffer — every zero since then was lost time, not the latest one; for
+    /// a mic that never started, the meeting's start.
+    private func micOutageStart(for state: MicStreamState,
+                                clockStart: SuspendingClock.Instant) -> SuspendingClock.Instant {
+        switch state {
+        case .binding: return clockStart
+        case .dead:    return mic.lastAudioAt ?? mic.firstBufferAt ?? mic.lastProducedAt ?? SuspendingClock.now
+        default:       return mic.lastProducedAt ?? clockStart
+        }
+    }
+
+    private func openMicOutage(since: SuspendingClock.Instant, now: Double, reason: String) {
+        guard micOutage == nil else { return }
+        micOutage = MicOutageEpisode(since: since, now: now)
+        micOnlyMode = true   // the banner tells the truth while the mic is down
+        micOutageCount += 1
+        micHealthyTicks = 0
+        micLowRateTicks = 0
+        NSLog("[MeetingRecorder] 🎙️ mic down (%@) — recovering", reason)
+    }
+
+    private func closeMicOutage() {
+        guard let outage = micOutage else { return }
+        micOutage = nil
+        micOnlyMode = false
+        // Seconds are not added here: the silence the tap placed into the
+        // timeline is the outage's exact length, and it was counted as it was
+        // placed. The episode is the count and the banner.
+        micLowRateTicks = 0
+        mic.preferBuiltInInput = false
+        NSLog("[MeetingRecorder] ✅ mic back after %.1fs and %d attempt(s) — the gap is silence on the timeline",
+              (SuspendingClock.now - outage.since).seconds, outage.attempts)
     }
 
     // MARK: - Auto-stop guards (ITER-012)
@@ -437,6 +884,11 @@ final class MeetingRecorder: ObservableObject {
     }
 
     private func disarmAutoStopGuards() {
+        micWatchdogTimer?.cancel()
+        micWatchdogTimer = nil
+        // A recovery cut short must not leave the NEXT recording bound to the
+        // built-in mic instead of the device the user chose.
+        mic.preferBuiltInInput = false
         maxDurationTask?.cancel()
         maxDurationTask = nil
         silenceCheckTimer?.cancel()

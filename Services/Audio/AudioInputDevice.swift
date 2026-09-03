@@ -51,6 +51,16 @@ enum AudioInputCatalog {
         }
     }
 
+    /// The Mac's own microphone, by transport type — the one input that is
+    /// always present. Recovery asks for it by name after the system default
+    /// following a device change has failed repeatedly (the 24 kHz aggregate
+    /// that followed the 2026-09-02 change bound fine and delivered nothing).
+    static func builtInMicrophone() -> AudioInputDevice? {
+        availableInputDevices().first {
+            transportType(deviceID: $0.deviceID) == kAudioDeviceTransportTypeBuiltIn
+        }
+    }
+
     /// Resolve a persisted UID back to a runtime device. nil if the device
     /// was unplugged since the user picked it — caller should fall back to
     /// the system default in that case.
@@ -76,6 +86,20 @@ enum AudioInputCatalog {
             size
         )
         return status == noErr
+    }
+
+    /// Whether the engine's input is ACTUALLY bound to the Mac's own microphone.
+    /// A live built-in mic always carries a noise floor, so exact zeros from it
+    /// after audio are a dead stream rather than a headset's silence
+    /// suppression — the one case where zeros-after-audio is unambiguous.
+    static func boundInputIsBuiltIn(for engine: AVAudioEngine) -> Bool {
+        guard let inputUnit = engine.inputNode.audioUnit else { return false }
+        var deviceID = AudioDeviceID(0)
+        var size = UInt32(MemoryLayout<AudioDeviceID>.size)
+        let status = AudioUnitGetProperty(inputUnit, kAudioOutputUnitProperty_CurrentDevice,
+                                          kAudioUnitScope_Global, 0, &deviceID, &size)
+        guard status == noErr, deviceID != 0 else { return false }
+        return transportType(deviceID: deviceID) == kAudioDeviceTransportTypeBuiltIn
     }
 
     /// Which device the engine's input is ACTUALLY bound to, as one log line.
@@ -115,6 +139,18 @@ enum AudioInputCatalog {
         )
         AudioObjectGetPropertyData(AudioObjectID(kAudioObjectSystemObject), &addr, 0, nil, &size, &deviceID)
         return deviceID
+    }
+
+    private static func transportType(deviceID: AudioDeviceID) -> UInt32 {
+        var value: UInt32 = 0
+        var size = UInt32(MemoryLayout<UInt32>.size)
+        var addr = AudioObjectPropertyAddress(
+            mSelector: kAudioDevicePropertyTransportType,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        AudioObjectGetPropertyData(deviceID, &addr, 0, nil, &size, &value)
+        return value
     }
 
     private static func hasInputStreams(deviceID: AudioDeviceID) -> Bool {

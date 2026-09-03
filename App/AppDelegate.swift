@@ -1827,6 +1827,38 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     /// 2h heartbeat, etc. without guessing from log neighbours
     /// (ITER-028.1, 2026-05-06 — every previous "why did the recording
     /// stop after 86s" question required cross-grepping).
+
+    /// Said before any transcription path — the BYOK paths save and return
+    /// early — and from every stop path, including the one that discards: a
+    /// transcript that reads complete must not hide that the user's side is
+    /// missing, and a recording thrown away because the mic was down must not
+    /// be thrown away silently (review rounds 6–11). The banner
+    /// (`keepFinalizationNote`) stays until the next meeting; the card is the
+    /// announcement. The words are `MicOutageReport`'s, so they are tested.
+    private func reportMicOutageIfAny(_ capture: MeetingRecorder.Capture, discarded: Bool = false) {
+        let input = MicOutageReport.Input(
+            outages: capture.outages, outageSeconds: capture.outageSeconds,
+            micDownAtStop: capture.micDownAtStop, tapSamples: capture.tapSamples,
+            noPermission: capture.micUnavailable == .noPermission,
+            noInputDevice: capture.micUnavailable == .noInputDevice,
+            silentRunSeconds: capture.micZeroRunSeconds, discarded: discarded,
+            audioAtStop: capture.micAudioAtStop)
+        guard input.outages > 0 || input.noPermission || input.noInputDevice
+                || input.silentRunSeconds >= MicOutageReport.silentRunFloorSeconds else { return }
+        NSLog("[MetaWhisp] mic report: %d outage(s) %.1fs, down at stop: %@, tap samples: %d, permission off: %@, no input device (known only for a mic that never produced): %@, silent run: %.0fs%@",
+              input.outages, input.outageSeconds, input.micDownAtStop ? "yes" : "no", input.tapSamples,
+              input.noPermission ? "yes" : "no", input.noInputDevice ? "yes" : "no", input.silentRunSeconds,
+              discarded ? " (recording discarded by the silence sniff)" : "")
+        guard let words = MicOutageReport.wording(input) else {
+            NSLog("[MetaWhisp] mic report kept to the log — below the card floor, or nothing to fix")
+            return
+        }
+        meetingRecorder.keepFinalizationNote(words.note, for: capture.generation)
+        if let title = words.title, let body = words.body {
+            MWNotificationStack.shared.push(MWNotification(kind: .micOutage, title: title, body: body, onTap: nil))
+        }
+    }
+
     private func stopMeetingRecording(reason: String) {
         NSLog("[MetaWhisp] ▶️ stopMeetingRecording reason=%@", reason)
         // Reset auto-detect flag — any follow-up manual recording starts from a clean slate.
@@ -1869,7 +1901,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         // 2026-05-31 — the saved transcript now always comes from the full-buffer
         // dual-stream pass below (per-channel, Me:/Them: labels), so the live
         // advisor's tail snapshot is no longer needed for persistence.
-        let (micSamples, sysSamples) = meetingRecorder.stop()
+        let capture = meetingRecorder.stop()
+        let micSamples = capture.mic
+        let sysSamples = capture.system
         NSLog("[MetaWhisp] Meeting stopped: mic=%d samples, system=%d samples",
               micSamples.count, sysSamples.count)
 
@@ -1877,6 +1911,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             NSLog("[MetaWhisp] Meeting recording too short, discarding")
             return
         }
+
+        reportMicOutageIfAny(capture)
 
         Task {
             // ITER-054 — BYOK Deepgram (optional): one diarized pass on the
@@ -1962,13 +1998,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
                 // into micOnlyMode), or genuine silence. Blaming the user's
                 // speech for a dead mic sent the founder chasing the wrong bug
                 // on 2026-08-10.
+                // The tap's own count from THIS meeting's snapshot: timeline
+                // silence would make an empty capture look like a quiet one,
+                // and the recorder's live fields may already belong to the
+                // next meeting.
                 let reason = MeetingRecorder.emptyTranscriptReason(
                     failedChunks: dual.failedChunks,
-                    micSamples: micSamples.count,
+                    micSamples: capture.tapSamples,
                     systemSamples: sysSamples.count,
-                    micPeakWasZero: meetingRecorder.micChannelWasSilent
+                    micPeakWasZero: capture.micChannelWasSilent
                 )
-                meetingRecorder.lastError = reason.userMessage
+                meetingRecorder.reportFinalization(error: reason.userMessage, for: capture.generation)
                 NSLog("[MetaWhisp] ❌ Meeting empty — %@ (mic=%d samples, system=%d samples, failedChunks=%d)",
                       "\(reason)", micSamples.count, sysSamples.count, dual.failedChunks)
                 return
@@ -1978,9 +2018,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             // still arrives through the system channel, so the guard above
             // never fires and a Them:-only transcript saves as if complete.
             // That is exactly what happened on 2026-08-12 and nobody was told.
-            if meetingRecorder.micChannelWasSilent {
-                meetingRecorder.lastError = MeetingRecorder.EmptyTranscriptReason
-                    .micDeliveredSilence.userMessage
+            if capture.micChannelWasSilent {
+                meetingRecorder.reportFinalization(
+                    error: MeetingRecorder.EmptyTranscriptReason.micDeliveredSilence.userMessage,
+                    for: capture.generation)
                 NSLog("[MetaWhisp] ⚠️ Meeting saved WITHOUT your side — mic channel was digital silence (%d samples)",
                       micSamples.count)
             }
@@ -1997,7 +2038,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             // dropped chunk is never hidden behind an apparently complete meeting.
             let fullText = DualStreamMerger.markIncomplete(dual.text, failedChunks: dual.failedChunks)
             if dual.failedChunks > 0 {
-                meetingRecorder.lastError = "⚠️ \(dual.failedChunks) segment(s) couldn't be transcribed — saved transcript is incomplete"
+                meetingRecorder.reportFinalization(
+                    error: "⚠️ \(dual.failedChunks) segment(s) couldn't be transcribed — saved transcript is incomplete",
+                    for: capture.generation)
                 NSLog("[MetaWhisp] ⚠️ Meeting saved with %d failed chunk(s) — marked incomplete", dual.failedChunks)
             }
             self.persistMeetingTranscript(fullText: fullText, duration: duration, elapsed: elapsed)
@@ -2846,21 +2889,42 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         // instead: any audible moment (raw ≥ 0.004 ≈ empty-room ambient
         // ceiling) keeps the recording; discard only if the whole minute was
         // dead quiet.
+        // Bound to THIS recording: a sniff that outlived its meeting used to
+        // judge — and could discard — the manual meeting started in its place.
+        // And it reads a latched PEAK, not the latest buffer: sampling one
+        // buffer every five seconds could miss every audible moment between
+        // polls and discard a real meeting (review round twelve).
+        let sniffGeneration = meetingRecorder.recordingGeneration
+        guard !meetingRecorder.isManualMode else { return }
+        meetingRecorder.markSniffStart()
         var sniffHeardAudio = false
         for _ in 0 ..< 12 {
             try? await Task.sleep(for: .seconds(5))
-            guard meetingRecorder.isRecording else { return }
-            if meetingRecorder.rawRMSLevel >= 0.004 {
+            guard meetingRecorder.isRecording,
+                  meetingRecorder.recordingGeneration == sniffGeneration else { return }
+            if meetingRecorder.sniffPeakRMS >= 0.004 {
                 sniffHeardAudio = true
                 break
             }
         }
-        if meetingRecorder.isRecording, !sniffHeardAudio {
+        guard meetingRecorder.recordingGeneration == sniffGeneration, !meetingRecorder.isManualMode else { return }
+        if meetingRecorder.isRecording, !sniffHeardAudio, meetingRecorder.micHasPermission,
+           meetingRecorder.micProducedThisRecording,
+           meetingRecorder.micHadOutage || meetingRecorder.micIsDownNow {
+            // RMS says nothing when the mic was, or is, being recovered: the
+            // user may have been talking the whole time. Keep the recording —
+            // discarding it here would lose the meeting silently. A mic that
+            // simply has no permission is not an outage and gets no such
+            // pass (review, 2026-09-03).
+            NSLog("[CallDetect] %@ post-start sniff inconclusive — mic had an outage, keeping the recording", name)
+        } else if meetingRecorder.isRecording, !sniffHeardAudio {
             NSLog("[CallDetect] ⚠️ %@ post-start sniff — 60s of silence (rawRMS=%.4f), stopping discardly",
                   name, meetingRecorder.rawRMSLevel)
             // Stop recorder — its onAutoStop won't fire (this isn't an auto-stop reason),
-            // we just stop and don't persist anything.
-            _ = meetingRecorder.stop()
+            // we just stop and don't persist anything. If the stop itself
+            // finds the mic had been down, the discard is still said out loud.
+            let discarded = meetingRecorder.stop()
+            reportMicOutageIfAny(discarded, discarded: true)
             didAutoStartRecording = false
             currentMeetingCallContext = nil
             calendarHardStopTask?.cancel()

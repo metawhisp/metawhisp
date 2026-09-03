@@ -63,6 +63,7 @@ struct MWNotification: Identifiable {
         case recordingOverrun // recording CONTINUES past calendar slot — info only (user can tap to stop)
         case recap            // meeting recap (light variant — heavy block lives in MeetingRecapWindow)
         case dayRecap         // the once-a-day recap — the one announcement a day worth making
+        case micOutage        // the meeting's microphone went down and came back; a stretch has one side only
         case advice           // proactive advice item
         case proactive        // multi-row proactive surface (memory / past decision / waiting-on)
         case signIn           // web sign-in / Pro activation result (post deep-link)
@@ -78,6 +79,7 @@ struct MWNotification: Identifiable {
             case .recordingOverrun: return "clock.badge.exclamationmark"
             case .recap:            return "doc.text"
             case .dayRecap:         return "calendar"
+            case .micOutage:        return "mic.slash"
             case .advice:           return "sparkles"
             // A lightbulb means "here is an idea". This surface carries the
             // opposite: something already decided, or something being waited
@@ -110,6 +112,7 @@ struct MWNotification: Identifiable {
             case .recordingOverrun: return "STILL RECORDING"
             case .recap:            return "MEETING RECAP"
             case .dayRecap:         return "DAY RECAP"
+            case .micOutage:        return "MICROPHONE"
             case .advice:           return "ADVICE"
             case .proactive:        return "CONTEXT"
             case .signIn:           return "ACCOUNT"

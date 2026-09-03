@@ -178,30 +178,42 @@ struct MenuBarView: View {
                 }
 
                 // Surface permission / setup errors so user knows why recording didn't start.
-                // Clickable — opens System Settings when error is about permissions.
+                // Clickable ONLY when the error names a pane to open.
                 if let err = meetingRecorder.lastError {
-                    Button {
-                        // If the error is about screen recording, open that pane directly.
-                        // Keyword match is crude but works for our known error strings.
-                        if err.lowercased().contains("screen recording") || err.contains("🎥") {
-                            PermissionsService.shared.openScreenRecordingSettings()
-                        } else if err.lowercased().contains("microphone") || err.contains("🎤") {
-                            PermissionsService.shared.openMicrophoneSettings()
-                        }
-                    } label: {
-                        HStack(spacing: 4) {
-                            Text(err)
-                                .font(MW.monoSm).foregroundStyle(.red)
-                                .frame(maxWidth: .infinity, alignment: .leading)
+                    // Where this message goes when clicked, if anywhere. 🎤
+                    // marks a microphone-permission message and nothing else
+                    // (`MicOutageReport`, pinned by its tests); the bare word
+                    // "microphone" used to qualify, which sent a dead device
+                    // and a recovered outage to the Privacy pane
+                    // (independent review, v20). A message that goes nowhere
+                    // is plain text: an arrow that does nothing is a lie
+                    // (v21).
+                    let pane = errorSettingsPane(err)
+                    let row = HStack(spacing: 4) {
+                        Text(err)
+                            .font(MW.monoSm).foregroundStyle(.red)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                        if pane != nil {
                             Image(systemName: "arrow.up.right.square")
                                 .font(.system(size: 9))
                                 .foregroundStyle(.red.opacity(0.7))
                         }
-                        .padding(.horizontal, MW.sp16).padding(.vertical, 4)
-                        .background(Color.red.opacity(0.08))
-                        .contentShape(Rectangle())
                     }
-                    .buttonStyle(.plain)
+                    .padding(.horizontal, MW.sp16).padding(.vertical, 4)
+                    .background(Color.red.opacity(0.08))
+                    if let pane {
+                        Button {
+                            switch pane {
+                            case .screenRecording: PermissionsService.shared.openScreenRecordingSettings()
+                            case .microphone: PermissionsService.shared.openMicrophoneSettings()
+                            }
+                        } label: {
+                            row.contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                    } else {
+                        row
+                    }
                 }
 
                 // Warn if mic didn't join (user's voice won't be captured)
@@ -520,6 +532,16 @@ struct MenuBarView: View {
         case .postProcessing: coordinator.translateNext ? "Translating" : "Processing"
         }
     }
+    /// The Settings pane an error message points at, or nil when it points
+    /// nowhere. Keyword matching stays crude on purpose — these are our own
+    /// strings — but the keywords are the ones the producers guarantee:
+    /// 🎥 / "screen recording" and 🎤.
+    private enum SettingsPane { case screenRecording, microphone }
+    private func errorSettingsPane(_ err: String) -> SettingsPane? {
+        if err.lowercased().contains("screen recording") || err.contains("🎥") { return .screenRecording }
+        if err.contains("🎤") { return .microphone }
+        return nil
+    }
 }
 
 // MARK: - Recording Timer
@@ -800,4 +822,5 @@ struct AudioLevelBar: View {
         .background(Color.white.opacity(0.1))
         .cornerRadius(MW.spaceXs)
     }
+
 }

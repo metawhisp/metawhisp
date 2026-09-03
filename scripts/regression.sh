@@ -56,6 +56,9 @@ CRITICAL_SUITES=(
     MeetingTranscriptSanitizerTests
     # microphone health
     DeadMicDetectorTests
+    MicRecoveryTests
+    MicOutageReportTests
+    MicTimelinePlacementTests
     # screen capture privacy + freshness
     ScreenContextPolicyTests
     ContextVisitCoordinatorTests
