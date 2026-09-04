@@ -727,110 +727,27 @@ final class LocalLLMService: ObservableObject {
         temperature: Float = 0.3,
         concatPartials: Bool = false
     ) async throws -> String {
-        let text = user.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard text.count > chunkChars else {
-            return try await completeBlocking(
-                system: system, user: text,
-                maxUserChars: chunkChars, maxTokens: maxTokensPerChunk,
+        // The fold itself lives in `ChunkedCompletion` — the Pro proxy runs
+        // the same one, so a long transcript is handled identically wherever
+        // it is processed (2026-09-04).
+        try await ChunkedCompletion.run(
+            system: system, user: user, chunkChars: chunkChars, concatPartials: concatPartials
+        ) { sys, usr, pass in
+            // Map outputs are capped tight so the fold shrinks geometrically
+            // and converges within the round bound even on repetitive
+            // hour-long transcripts.
+            let maxTokens: Int
+            switch pass {
+            case .map: maxTokens = min(512, maxTokensPerChunk)
+            // A transform's output IS the answer — capping it tighter than a
+            // whole prompt would truncate every cleaned-up chunk.
+            case .transform, .whole, .reduce: maxTokens = maxTokensPerChunk
+            }
+            return try await self.completeBlocking(
+                system: sys, user: usr,
+                maxUserChars: chunkChars, maxTokens: maxTokens,
                 temperature: temperature)
         }
-
-        func mapPass(_ pieces: [String], maxTokens: Int) async throws -> [String] {
-            var partials: [String] = []
-            for (i, piece) in pieces.enumerated() {
-                let mapSystem = system
-                    + " NOTE: this is part \(i + 1) of \(pieces.count) of a longer text — process just this part."
-                do {
-                    let part = try await completeBlocking(
-                        system: mapSystem, user: piece,
-                        maxUserChars: chunkChars, maxTokens: maxTokens,
-                        temperature: temperature)
-                    partials.append(part)
-                } catch {
-                    // Review fix — one bad chunk must not kill the whole job.
-                    NSLog("[ITER-051] completeChunked: chunk %d/%d failed (%@) — skipped",
-                          i + 1, pieces.count, error.localizedDescription)
-                }
-            }
-            guard !partials.isEmpty else {
-                throw NSError(domain: "LocalLLM", code: -3, userInfo: [
-                    NSLocalizedDescriptionKey: "All chunks failed to process."
-                ])
-            }
-            return partials
-        }
-
-        var pieces = Self.splitBySentences(text, limit: chunkChars)
-        NSLog("[ITER-051] completeChunked: %d chars → %d chunks (concat=%@)",
-              text.count, pieces.count, concatPartials ? "yes" : "no")
-
-        if concatPartials {
-            // Transform mode: output ≈ input per chunk, single round, join.
-            let partials = try await mapPass(pieces, maxTokens: maxTokensPerChunk)
-            return partials.joined(separator: "\n\n")
-        }
-
-        // Synthesis mode: tight map outputs → geometric fold convergence.
-        let mapTokens = min(512, maxTokensPerChunk)
-        var round = 0
-        while pieces.count > 1 {
-            round += 1
-            guard round <= 4 else {
-                throw NSError(domain: "LocalLLM", code: -2, userInfo: [
-                    NSLocalizedDescriptionKey: "Chunked reduction did not converge."
-                ])
-            }
-            let partials = try await mapPass(pieces, maxTokens: mapTokens)
-            let combined = partials.joined(separator: "\n\n")
-            if combined.count <= chunkChars {
-                // Final reduce over the combined partials.
-                return try await completeBlocking(
-                    system: system, user: combined,
-                    maxUserChars: chunkChars, maxTokens: maxTokensPerChunk,
-                    temperature: temperature)
-            }
-            pieces = Self.splitBySentences(combined, limit: chunkChars)
-        }
-        return pieces.first ?? ""
-    }
-
-    /// Greedy sentence-boundary splitter: packs sentences into chunks of at
-    /// most `limit` chars, hard-splitting only a single sentence that alone
-    /// exceeds the limit. Never loses characters (tested).
-    nonisolated static func splitBySentences(_ text: String, limit: Int) -> [String] {
-        guard text.count > limit else { return [text] }
-        var sentences: [String] = []
-        var current = ""
-        for ch in text {
-            current.append(ch)
-            if ch == "." || ch == "!" || ch == "?" || ch == "\n" {
-                sentences.append(current)
-                current = ""
-            }
-        }
-        if !current.isEmpty { sentences.append(current) }
-
-        var chunks: [String] = []
-        var buf = ""
-        for s in sentences {
-            if s.count > limit {
-                // Degenerate single sentence — flush + hard-split.
-                if !buf.isEmpty { chunks.append(buf); buf = "" }
-                var rest = Substring(s)
-                while rest.count > limit {
-                    chunks.append(String(rest.prefix(limit)))
-                    rest = rest.dropFirst(limit)
-                }
-                buf = String(rest)
-            } else if buf.count + s.count > limit {
-                chunks.append(buf)
-                buf = s
-            } else {
-                buf += s
-            }
-        }
-        if !buf.isEmpty { chunks.append(buf) }
-        return chunks
     }
 
     /// Sample one token — sync variant used by the GCD loop.

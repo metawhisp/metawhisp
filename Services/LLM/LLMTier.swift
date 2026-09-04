@@ -26,6 +26,16 @@ enum LLMTier: String, Codable, Equatable {
 /// Builders for the JSON bodies forwarded to the Pro proxy. Pure
 /// functions — tested in `LLMTierTests`.
 enum LLMRequestBody {
+    /// What `POST /api/pro/advice` accepts in ONE prompt. The proxy rejects
+    /// anything longer with HTTP 400 (`Prompt too long (… chars, max 32000)`)
+    /// — an 87-minute meeting is 47 000 characters, so a caller that sends a
+    /// whole transcript gets no answer at all (2026-09-04). Callers chunk
+    /// (`ChunkedCompletion`) or cap against this.
+    static let maxPromptChars = 32_000
+    /// What a caller should actually put in one prompt: the limit less room
+    /// for the joining and framing the fold adds around it.
+    static let safePromptChars = 30_000
+
     /// Body for `POST /api/pro/advice`. Optional `tier` + `serviceId` are
     /// the new ITER-041 fields; both default to nil so callers that haven't
     /// migrated yet keep producing the original 2-field body shape.

@@ -782,51 +782,105 @@ final class StructuredGenerator: ObservableObject {
         guard LicenseService.shared.isPro, let licenseKey = LicenseService.shared.licenseKey else {
             throw ProcessingError.apiError("Pro required to generate an action plan")
         }
-        let url = URL(string: "https://api.metawhisp.com/api/pro/advice")!
-        var request = URLRequest(url: url)
-        request.httpMethod = "POST"
-        request.setValue("Bearer \(licenseKey)", forHTTPHeaderField: "Authorization")
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.timeoutInterval = 60  // plan generation is longer than extraction
-        let body = LLMRequestBody.proAdviceBody(
+        // The proxy takes one prompt at a time, and an 87-minute meeting is
+        // longer than it accepts — the same reason the local path folds. Same
+        // fold, so the plan covers the whole meeting on either engine
+        // (2026-09-04; before this the Pro path sent 47 000 chars and got
+        // HTTP 400 back).
+        var skipped = 0
+        var ofParts = 0
+        let plan = try await ChunkedCompletion.run(
             system: system, user: user,
-            tier: .heavy, serviceId: "ActionPlan"
-        )
-        request.httpBody = try JSONSerialization.data(withJSONObject: body)
-        let (data, response) = try await URLSession.shared.data(for: request)
-        if let http = response as? HTTPURLResponse, http.statusCode != 200 {
-            throw ProcessingError.apiError("Action-plan proxy HTTP \(http.statusCode)")
-        }
-        struct ProResponse: Decodable { let text: String }
-        let result = try JSONDecoder().decode(ProResponse.self, from: data)
-        let plan = result.text.trimmingCharacters(in: .whitespacesAndNewlines)
+            chunkChars: ChunkedCompletion.graphemeBudget(for: user, unitLimit: LLMRequestBody.safePromptChars),
+            // Skips accumulate across fold rounds while each round has its
+            // own part count — keeping the largest is what makes "N of M"
+            // true (independent review: two skips in a round of three then
+            // one in a round of two read as "3 of 2").
+            onChunkSkipped: { _, of, _ in skipped += 1; ofParts = max(ofParts, of) }
+        ) { sys, usr, _ in
+            try await self.callProAdvice(system: sys, user: usr, licenseKey: licenseKey,
+                                         tier: .heavy, serviceId: "ActionPlan",
+                                         timeout: 60, label: "Action-plan")
+        }.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !plan.isEmpty else { throw ProcessingError.apiError("Empty plan from LLM") }
-        return plan
+        // A plan that covers part of the meeting says so: dropping a section
+        // quietly is the same lie as dropping the microphone quietly.
+        guard skipped > 0 else { return plan }
+        return plan + "\n\n_" + String(skipped) + " of " + String(ofParts)
+            + " sections of this meeting could not be processed — the plan may be missing items from them._"
     }
 
     // MARK: - Pro proxy
 
     private func callProProxy(system: String, user: String, licenseKey: String) async throws -> String {
+        // One JSON out (title/overview/…), so the fold does not apply here —
+        // the same head+tail sandwich the local path uses, against the
+        // proxy's own limit. Without it an hour-long meeting got HTTP 400 and
+        // no title at all (2026-09-04).
+        try await callProAdvice(system: system,
+                                user: Self.headAndTail(user, limit: ChunkedCompletion.graphemeBudget(
+                                    for: user, unitLimit: LLMRequestBody.safePromptChars)),
+                                licenseKey: licenseKey,
+                                tier: Self.llmTier, serviceId: Self.llmServiceId,
+                                timeout: 30, label: "Structured")
+    }
+
+    /// Keep the beginning and the END of a transcript when it does not fit:
+    /// the end of a meeting carries the decisions and the action items, and a
+    /// head-only cut used to drop them.
+    nonisolated static func headAndTail(_ text: String, limit: Int) -> String {
+        guard text.count > limit else { return text }
+        let marker = "\n[…transcript middle omitted…]\n"
+        let room = max(0, limit - marker.count)
+        let head = room * 2 / 3
+        return String(text.prefix(head)) + marker + String(text.suffix(room - head))
+    }
+
+    /// One call to `POST /api/pro/advice`. A failure carries the proxy's own
+    /// words: "HTTP 400" alone hid `Prompt too long (47178 chars, max 32000)`
+    /// for two days and left the founder guessing (2026-09-04).
+    private func callProAdvice(system: String, user: String, licenseKey: String,
+                               tier: LLMTier, serviceId: String,
+                               timeout: TimeInterval, label: String) async throws -> String {
+        // The wire limit counts UTF-16 units. Everything above aims below it;
+        // if a prompt still arrives over the line, say so plainly instead of
+        // spending a call to be told "Prompt too long".
+        guard user.utf16.count <= LLMRequestBody.maxPromptChars,
+              system.utf16.count <= LLMRequestBody.maxPromptChars else {
+            throw ProcessingError.apiError(
+                label + " prompt too long for the proxy (" + String(user.utf16.count)
+                    + " units, max " + String(LLMRequestBody.maxPromptChars) + ")")
+        }
         let url = URL(string: "https://api.metawhisp.com/api/pro/advice")!
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.setValue("Bearer \(licenseKey)", forHTTPHeaderField: "Authorization")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.timeoutInterval = 30
+        request.timeoutInterval = timeout
 
         let body = LLMRequestBody.proAdviceBody(
-            system: system, user: user,
-            tier: Self.llmTier, serviceId: Self.llmServiceId
+            system: system, user: user, tier: tier, serviceId: serviceId
         )
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
 
         let (data, response) = try await URLSession.shared.data(for: request)
         if let http = response as? HTTPURLResponse, http.statusCode != 200 {
-            throw ProcessingError.apiError("Structured proxy HTTP \(http.statusCode)")
+            throw ProcessingError.apiError(
+                "\(label) proxy HTTP \(http.statusCode)\(Self.proxyReason(data))")
         }
         struct ProResponse: Decodable { let text: String }
         let result = try JSONDecoder().decode(ProResponse.self, from: data)
         return result.text
+    }
+
+    /// The proxy answers `{"error": "…"}` on every failure it can name.
+    nonisolated static func proxyReason(_ data: Data) -> String {
+        struct ProxyError: Decodable { let error: String }
+        if let decoded = try? JSONDecoder().decode(ProxyError.self, from: data), !decoded.error.isEmpty {
+            return " — " + decoded.error.prefix(200)
+        }
+        let raw = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return raw.isEmpty ? "" : " — \(raw.prefix(200))"
     }
 
     // Internal (was private) — ITER-050 B1.1: ProjectAggregator must check
