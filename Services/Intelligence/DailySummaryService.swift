@@ -26,20 +26,12 @@ final class DailySummaryService: ObservableObject {
     @Published var isRunning = false
     @Published var lastError: String?
     @Published var lastGenerationAt: Date?
-    /// The newest recap there is, for the menu bar. Published rather than
-    /// fetched inside a view body: a fetch in `body` refreshed only when some
-    /// unrelated observable happened to publish, so the unread dot outlived
-    /// the read and a recap written at 22:00 stayed invisible until something
-    /// else moved (review, 2026-09-01).
-    @Published private(set) var latestRecap: DailySummary?
-
     private let settings = AppSettings.shared
     private var modelContainer: ModelContainer?
     private var timerTask: Task<Void, Never>?
 
     func configure(modelContainer: ModelContainer) {
         self.modelContainer = modelContainer
-        refreshLatestRecap()
     }
 
     // MARK: - Scheduling (5-min tick)
@@ -119,7 +111,6 @@ final class DailySummaryService: ObservableObject {
             // The refresh has to follow the LAST write. generate() refreshed
             // while both rows existed and could hand the menu bar the very row
             // deleted just above (review, 2026-09-01).
-            refreshLatestRecap()
         }
         return fresh
     }
@@ -129,18 +120,6 @@ final class DailySummaryService: ObservableObject {
     func summary(for date: Date) -> DailySummary? {
         let dayStart = Calendar.current.startOfDay(for: date)
         return fetchSummary(for: dayStart)
-    }
-
-    /// Newest rather than "today's": the recap for a day is written at the end
-    /// of it, so before the scheduled time the only recap that exists is
-    /// yesterday's — and that is the one a person wants in the morning.
-    func refreshLatestRecap() {
-        guard let modelContainer else { latestRecap = nil; return }
-        let ctx = ModelContext(modelContainer)
-        var d = FetchDescriptor<DailySummary>(
-            sortBy: [SortDescriptor(\.date, order: .reverse)])
-        d.fetchLimit = 1
-        latestRecap = (try? ctx.fetch(d))?.first
     }
 
     /// `isRead` existed on the model from the start and was written by nobody,
@@ -155,7 +134,6 @@ final class DailySummaryService: ObservableObject {
         guard let row = (try? ctx.fetch(d))?.first, !row.isRead else { return }
         row.isRead = true
         try? ctx.save()
-        refreshLatestRecap()
     }
 
     // MARK: - Core generation
@@ -173,7 +151,6 @@ final class DailySummaryService: ObservableObject {
         defer {
             isRunning = false
             lastGenerationAt = Date()
-            refreshLatestRecap()
         }
 
         let ctx = ModelContext(container)

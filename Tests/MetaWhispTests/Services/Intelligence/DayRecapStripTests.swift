@@ -23,62 +23,6 @@ final class DayRecapStripTests: XCTestCase {
         f.formatOptions = [.withInternetDateTime]
         return f.date(from: iso)!
     }
-    private func show(_ recap: String?, read: Bool = false, now: String) -> Bool {
-        DayRecapStrip.shouldShow(recapDate: recap.map(at), isRead: read, now: at(now), calendar: cal)
-    }
-
-    func testTodaysRecapIsOffered() {
-        XCTAssertTrue(show("2026-09-01T09:00:00Z", now: "2026-09-01T18:00:00Z"))
-    }
-
-    /// The recap for a day is generated at the end of it, so the morning after
-    /// is when a person most wants yesterday. Cutting it off at midnight would
-    /// hide it exactly when it is most useful.
-    func testYesterdaysRecapIsStillOfferedThisMorning() {
-        XCTAssertTrue(show("2026-08-31T22:00:00Z", now: "2026-09-01T09:00:00Z"))
-    }
-
-    /// The gate's first release: it was opened. A read recap two days old is
-    /// done with.
-    func testAReadRecapStopsBeingOfferedAfterADay() {
-        XCTAssertFalse(show("2026-08-29T22:00:00Z", read: true, now: "2026-09-01T09:00:00Z"))
-    }
-
-    /// The finding this rule was rewritten for: one missed generation
-    /// (2026-08-08 has no row in the store) left the menu bar empty the next
-    /// morning while an unread recap sat there. A gate with age as its only
-    /// release starves — an unread recap stays offered past the day.
-    func testAnUnreadRecapStaysOfferedPastTheDay() {
-        XCTAssertTrue(show("2026-08-29T22:00:00Z", read: false, now: "2026-09-01T09:00:00Z"),
-                      "unread and three days old is still worth a row")
-    }
-
-    /// And the second release: a row that never goes away stops being read.
-    func testAnUnreadRecapIsLetGoAfterAWeek() {
-        XCTAssertTrue(show("2026-08-25T22:00:00Z", read: false, now: "2026-09-01T09:00:00Z"))
-        XCTAssertFalse(show("2026-08-24T22:00:00Z", read: false, now: "2026-09-01T09:00:00Z"))
-    }
-
-    func testNoRecapMeansNoRow() {
-        XCTAssertFalse(show(nil, now: "2026-09-01T09:00:00Z"))
-    }
-
-    /// A recap stamped in the future is a clock that moved, not a recap from
-    /// tomorrow. Show it rather than hiding the newest thing there is.
-    func testAClockThatJumpedDoesNotHideTheNewestRecap() {
-        XCTAssertTrue(show("2026-09-02T09:00:00Z", now: "2026-09-01T09:00:00Z"))
-    }
-
-    /// What the row says. "4 decided · 4 learned" is the promise the recap
-    /// keeps; a bare title could be an empty one.
-    func testTheRowCountsWhatIsInside() {
-        XCTAssertEqual(DayRecapStrip.subtitle(decided: 4, learned: 4), "4 decided · 4 learned")
-        XCTAssertEqual(DayRecapStrip.subtitle(decided: 1, learned: 0), "1 decided")
-        XCTAssertEqual(DayRecapStrip.subtitle(decided: 0, learned: 2), "2 learned")
-        XCTAssertEqual(DayRecapStrip.subtitle(decided: 0, learned: 0), "",
-                       "an empty recap must not advertise itself as full")
-    }
-
     // MARK: - Which day the Dashboard opens on
 
     /// The review finding: the menu-bar row advertised yesterday's recap and the

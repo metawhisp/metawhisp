@@ -15,7 +15,6 @@ struct MenuBarView: View {
         VStack(spacing: 0) {
             statusStrip
             meetingStrip
-            dayRecapStrip
             screenContextStrip
             stageContent
             lastOutput
@@ -233,53 +232,6 @@ struct MenuBarView: View {
 
     /// Shows that Screen Context monitoring is active + last captured app/window.
     /// (spec://intelligence/FEAT-0002#ui-indicator)
-    /// The day recap, where a menu-bar app is actually looked at.
-    ///
-    /// It used to live in a Dashboard tab and a banner that fires once, so
-    /// reaching the best thing this app writes required already knowing it was
-    /// there. 105 of the 130 stored recaps carry a real "what you learned".
-    @ViewBuilder
-    private var dayRecapStrip: some View {
-        if let recap = dailySummary.latestRecap,
-           DayRecapStrip.shouldShow(recapDate: recap.date, isRead: recap.isRead, now: Date()) {
-            let subtitle = DayRecapStrip.subtitle(decided: recap.decided.count,
-                                                  learned: recap.learned.count)
-            Button {
-                openRecap(recap)
-            } label: {
-                HStack(spacing: 6) {
-                    Text(recap.dayEmoji ?? "\u{1F4CA}").font(.system(size: 11))
-                    VStack(alignment: .leading, spacing: 1) {
-                        Text(recap.title)
-                            .font(MW.monoSm).foregroundStyle(MW.textPrimary)
-                            .lineLimit(1)
-                        if !subtitle.isEmpty {
-                            Text(subtitle)
-                                .font(MW.label).tracking(1)
-                                .foregroundStyle(MW.textMuted)
-                        }
-                    }
-                    Spacer(minLength: 0)
-                    if !recap.isRead {
-                        Circle().fill(MW.accent).frame(width: 5, height: 5)
-                    }
-                }
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .padding(.horizontal, MW.sp16)
-            .padding(.vertical, 6)
-            .overlay(Rectangle().fill(MW.border).frame(height: MW.hairline), alignment: .bottom)
-            .accessibilityLabel("Day recap: \(recap.title). \(subtitle)")
-        }
-    }
-
-    /// Read is recorded when the Dashboard shows the recap, not here: this
-    /// row used to clear the dot before anything had been displayed.
-    private func openRecap(_ recap: DailySummary) {
-        AppDelegate.shared?.openMainWindow(tab: .dashboard)
-    }
-
     @ViewBuilder
     private var screenContextStrip: some View {
         if settings.screenContextEnabled && screenContext.isActive {
