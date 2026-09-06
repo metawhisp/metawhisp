@@ -526,18 +526,18 @@ final class MemoryExtractor: ObservableObject {
         let extracted = extractJSONObject(from: response)
         guard let data = extracted.data(using: .utf8) else { return nil }
         guard let parsed = try? JSONDecoder().decode(ExtractionResult.self, from: data) else {
-            NSLog("[MemoryExtractor] ⚠️ JSON parse failed: %@", String(extracted.prefix(200)))
+            NSLog("[MemoryExtractor] ⚠️ JSON parse failed — %d chars, starts with %@", extracted.count, extracted.first.map { String($0) } ?? "(empty)")
             return nil
         }
 
         return parsed.memories.compactMap { json -> UserMemory? in
             let wordCount = json.content.split(separator: " ").count
             guard wordCount <= 15 else {
-                NSLog("[MemoryExtractor] ⚠️ Rejected memory (>15 words, %d): %@", wordCount, json.content)
+                NSLog("[MemoryExtractor] ⚠️ rejected memory — %d words, %d chars", wordCount, json.content.count)
                 return nil
             }
             guard ["system", "interesting"].contains(json.category) else {
-                NSLog("[MemoryExtractor] ⚠️ Rejected memory (bad category '%@'): %@", json.category, json.content)
+                NSLog("[MemoryExtractor] ⚠️ rejected memory — bad category '%@' (%d chars)", json.category, json.content.count)
                 return nil
             }
             let mem = UserMemory(

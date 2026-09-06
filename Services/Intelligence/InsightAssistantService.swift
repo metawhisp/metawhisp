@@ -338,7 +338,7 @@ final class InsightAssistantService: ObservableObject {
         let (data, response) = try await URLSession.shared.data(for: request)
         if let http = response as? HTTPURLResponse, http.statusCode != 200 {
             let bodyStr = String(data: data, encoding: .utf8) ?? ""
-            NSLog("[Insight] proxy ❌ HTTP %d: %@", http.statusCode, String(bodyStr.prefix(200)))
+            NSLog("[Insight] proxy ❌ HTTP %d — %@", http.statusCode, LLMRequestBody.proxyReason(data))
             throw NSError(
                 domain: "InsightAssistantService",
                 code: http.statusCode,

@@ -545,7 +545,7 @@ final class ProjectAggregator: ObservableObject {
         let new = ProjectAlias(canonicalName: trimmed)
         ctx.insert(new)
         try? ctx.save()
-        NSLog("[ProjectAggregator] +new project alias: %@", trimmed)
+        NSLog("[ProjectAggregator] +new project alias (%d chars)", trimmed.count)
         return new.canonicalName
     }
 

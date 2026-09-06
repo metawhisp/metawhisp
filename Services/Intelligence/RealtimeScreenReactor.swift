@@ -163,7 +163,7 @@ final class RealtimeScreenReactor: ObservableObject {
             }
 
             guard let parsed = Self.parseReaction(response) else {
-                NSLog("[RealtimeReactor] ⚠️ Parse failed · Response: %@", String(response.prefix(200)))
+                NSLog("[RealtimeReactor] ⚠️ parse failed — response %d chars", response.count)
                 return
             }
 
@@ -222,7 +222,7 @@ final class RealtimeScreenReactor: ObservableObject {
 
             // Generic-phrase reject list ("Respond to messages", "Send daily", etc.)
             if TaskExtractionFilters.isGenericNoise(trimmedDesc) {
-                NSLog("[RealtimeReactor] Generic noise, skipping: %@", trimmedDesc)
+                NSLog("[RealtimeReactor] generic noise, skipping (%d chars)", trimmedDesc.count)
                 return
             }
             // ITER-032 — strict title validator (replaces reference's tool-loop
@@ -249,7 +249,7 @@ final class RealtimeScreenReactor: ObservableObject {
 
             // Dedup against recent TaskItems (fuzzy word-overlap).
             if isDuplicate(description: trimmedDesc) {
-                NSLog("[RealtimeReactor] Duplicate task, skipping: %@", String(trimmedDesc.prefix(60)))
+                NSLog("[RealtimeReactor] duplicate task, skipping (%d chars)", trimmedDesc.count)
                 return
             }
 
@@ -267,8 +267,8 @@ final class RealtimeScreenReactor: ObservableObject {
             // Creation is off for the same reason completion is: 957 of these
             // accumulated unseen. A queue nobody reads is not a feature.
             guard ScreenDerivedTaskPolicy.mayMutateWithoutConfirmation else {
-                NSLog("[RealtimeReactor] observed a task on screen — not creating one: %@",
-                      String(trimmedDesc.prefix(60)))
+                NSLog("[RealtimeReactor] observed a task on screen — not creating one (%d chars)",
+                      trimmedDesc.count)
                 return
             }
             guard let container = modelContainer else { return }
@@ -287,7 +287,7 @@ final class RealtimeScreenReactor: ObservableObject {
             try? ctx.save()
 
             lastFireAt = Date()
-            NSLog("[RealtimeReactor] ✅ Staged candidate from %@: %@", context.appName, String(trimmedDesc.prefix(60)))
+            NSLog("[RealtimeReactor] ✅ staged candidate from %@ (%d chars)", context.appName, trimmedDesc.count)
 
             // No notification for staged — they land in REVIEW CANDIDATES silently.
             // User sees them next time they open the Tasks tab and promotes ✓ / rejects ✗.

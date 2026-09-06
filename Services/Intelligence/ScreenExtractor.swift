@@ -312,7 +312,7 @@ final class ScreenExtractor: ObservableObject {
                 }
                 // Generic-phrase reject list.
                 if TaskExtractionFilters.isGenericNoise(trimmedDesc) {
-                    NSLog("[ScreenExtractor] Generic noise, skipping: %@", trimmedDesc)
+                    NSLog("[ScreenExtractor] generic noise, skipping (%d chars)", trimmedDesc.count)
                     continue
                 }
                 // ITER-032 — strict title validator (replaces reference's tool-loop
@@ -326,7 +326,7 @@ final class ScreenExtractor: ObservableObject {
                 }
                 // Fuzzy dedup — 60% word overlap counts as a duplicate.
                 if TaskExtractionFilters.isNearDuplicate(trimmedDesc, against: existingTasks) {
-                    NSLog("[ScreenExtractor] Near-duplicate task, skipping: %@", String(trimmedDesc.prefix(60)))
+                    NSLog("[ScreenExtractor] near-duplicate task, skipping (%d chars)", trimmedDesc.count)
                     continue
                 }
                 // Also avoid dup against tasks we're inserting in THIS batch.
@@ -336,8 +336,8 @@ final class ScreenExtractor: ObservableObject {
                 // staged bin nobody could read. Same rule as the realtime one:
                 // notice, do not create.
                 guard ScreenDerivedTaskPolicy.mayMutateWithoutConfirmation else {
-                    NSLog("[ScreenExtractor] observed a task in the hour's work — not creating one: %@",
-                          String(trimmedDesc.prefix(60)))
+                    NSLog("[ScreenExtractor] observed a task in the hour's work — not creating one (%d chars)",
+                          trimmedDesc.count)
                     continue
                 }
                 var due: Date? = nil

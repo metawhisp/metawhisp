@@ -397,12 +397,6 @@ final class StructuredGenerator: ObservableObject {
             conv.nextStepsJSON    = Self.encodeStringArray(parsed.nextSteps)
             conv.updatedAt = Date()
             try? ctx.save()
-            NSLog("[StructuredGenerator] ✅ [%@] (%@) project=%@ topics=%d: %@",
-                  conv.emoji ?? "?",
-                  parsed.category,
-                  conv.primaryProject ?? "—",
-                  parsed.topics?.count ?? 0,
-                  parsed.title)
                   NSLog("[StructuredGenerator] ✅ conv %@ — %.1fs, response %d chars, title %d chars, overview %d chars, decisions=%d actions=%d participants=%d quotes=%d next=%d topics=%d project=%d", conversationId.uuidString.prefix(8) as CVarArg, Date().timeIntervalSince(t0), response.count, parsed.title.count, parsed.overview.count, parsed.decisions?.count ?? 0, parsed.actionItems?.count ?? 0, parsed.participants?.count ?? 0, parsed.keyQuotes?.count ?? 0, parsed.nextSteps?.count ?? 0, parsed.topics?.count ?? 0, conv.primaryProject == nil ? 0 : 1)
 
             // Embed the now-finalized conversation so MetaChat can semantically retrieve
@@ -882,14 +876,17 @@ final class StructuredGenerator: ObservableObject {
         return result.text
     }
 
-    /// The proxy answers `{"error": "…"}` on every failure it can name.
+    /// The proxy's own words for a refusal, for the message shown to the USER.
+    /// It may quote the body: that text goes to the person whose request it
+    /// was, on their own screen. The LOG gets `LLMRequestBody.proxyReason`
+    /// instead, which never writes a body to disk (audit, 2026-09-06).
     nonisolated static func proxyReason(_ data: Data) -> String {
         struct ProxyError: Decodable { let error: String }
         if let decoded = try? JSONDecoder().decode(ProxyError.self, from: data), !decoded.error.isEmpty {
             return " — " + decoded.error.prefix(200)
         }
         let raw = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        return raw.isEmpty ? "" : " — \(raw.prefix(200))"
+        return raw.isEmpty ? "" : " — " + raw.prefix(200)
     }
 
     // Internal (was private) — ITER-050 B1.1: ProjectAggregator must check

@@ -249,7 +249,7 @@ final class LiveMeetingAdvisor: ObservableObject {
             // brand mangles (Brevo from Cyrillic transliteration).
             let stripped = TranscriptionCoordinator.stripHallucinationTokens(rawText)
             if stripped.isEmpty {
-                NSLog("[LiveAdvise] 🧹 partial emptied by strip (was '%@')", String(rawText.prefix(80)))
+                NSLog("[LiveAdvise] 🧹 partial emptied by strip (was %d chars)", rawText.count)
                 return
             }
             if stripped != rawText {

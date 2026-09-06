@@ -98,7 +98,7 @@ final class InsightStorage {
         ctx.insert(mem)
         do {
             try ctx.save()
-            NSLog("[InsightStorage] saved: %@", String(insight.body.prefix(80)))
+            NSLog("[InsightStorage] saved insight (%d chars)", insight.body.count)
             // ITER-035 v2 — export the insight to Obsidian vault. tagsCSV
             // contains "insight" → exportMemory routes it to Insights/ folder.
             if let exporter = AppDelegate.shared?.obsidianExporter {

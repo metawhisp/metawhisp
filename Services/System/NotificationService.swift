@@ -57,7 +57,7 @@ final class NotificationService: NSObject, ObservableObject {
             }
         )
         MWNotificationStack.shared.push(note)
-        NSLog("[Notifications] ✅ Posted task: %@", String(task.taskDescription.prefix(60)))
+        NSLog("[Notifications] ✅ posted task %@ (%d chars)", task.id.uuidString.prefix(8) as CVarArg, task.taskDescription.count)
     }
 
     /// Call detection — fires once per session per app (CallSessionMachine
@@ -154,7 +154,7 @@ final class NotificationService: NSObject, ObservableObject {
             }
         )
         MWNotificationStack.shared.push(note)
-        NSLog("[Notifications] ✅ Posted sign-in result: %@", title)
+        NSLog("[Notifications] ✅ posted sign-in result (%d-char title)", title.count)
     }
 
     // NOTE: `postMeetingRecap` was deliberately removed. The recap is shown

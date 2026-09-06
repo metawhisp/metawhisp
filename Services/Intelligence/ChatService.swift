@@ -225,7 +225,7 @@ final class ChatService: ObservableObject {
                 case .success(let preview):
                     pendingJSON = encodeToolCall(call)
                     pendingPreview = preview
-                    NSLog("[ChatService] 🔧 Tool call queued: %@ → %@", call.tool, preview)
+                    NSLog("[ChatService] 🔧 tool call queued: %@ → preview %d chars", call.tool, preview.count)
                 case .failure(let err):
                     NSLog("[ChatService] ⚠️ Tool call invalid (%@): %@", call.tool, err.localizedDescription)
                     if aiText.isEmpty {
@@ -596,8 +596,8 @@ final class ChatService: ObservableObject {
         msg.toolExecutedAt = Date()    // start the 60s undo window
         NSLog("[ChatService] tool confirmed by user: %@ ok=%@ followup=%@", call.tool, result.ok ? "yes" : "no", (call.id != nil && msg.originatingUserPrompt != nil && result.ok) ? "yes" : "no")
         try? ctx.save()
-        NSLog("[ChatService] 🔧 Tool executed: %@ → %@ (audit=%@)",
-              call.tool, result.summary,
+        NSLog("[ChatService] 🔧 tool executed: %@ → summary %d chars (audit=%@)",
+              call.tool, result.summary.count,
               result.auditId?.uuidString.prefix(8) as CVarArg? ?? "—")
 
         // ITER-017 v2 — multi-step continuation. If we have a native tool_call_id

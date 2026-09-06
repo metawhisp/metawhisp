@@ -124,8 +124,8 @@ final class MeetingCoachService {
             if suggestion == nil, usedLocal,
                response.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() != "null",
                LicenseService.shared.isPro || !settings.activeAPIKey.isEmpty {
-                NSLog("[MeetingCoach] local output unparseable ('%@') — retrying via cloud",
-                      String(response.prefix(120)))
+                NSLog("[MeetingCoach] local output unparseable (%d chars) — retrying via cloud",
+                      response.count)
                 usedLocal = false
                 response = try await callLLM(
                     systemPrompt: Self.systemPrompt, userPrompt: userPrompt, allowLocal: false
@@ -136,7 +136,7 @@ final class MeetingCoachService {
             if suggestion.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { NSLog("[MeetingCoach] ⚠️ suggestion dropped by the overlay — empty text after trim (kind=%@); nothing shown to the user", suggestion.kind.rawValue) }
                 MeetingCoachState.shared.addSuggestion(suggestion.kind, text: suggestion.text)
                 NSLog("[MeetingCoach] ✅ suggestion kind=%@, len=%d chars, backend=%@, tick #%d", suggestion.kind.rawValue, suggestion.text.count, usedLocal ? "local" : (LicenseService.shared.isPro ? "pro" : "byok"), allPartials.count)
-                NSLog("[MeetingCoach] ✅ %@ → %@", suggestion.kind.rawValue, String(suggestion.text.prefix(80)))
+                NSLog("[MeetingCoach] ✅ %@ → %d chars", suggestion.kind.rawValue, suggestion.text.count)
             } else {
                 // Log the RAW response — "no actionable suggestion" hid the
                 // difference between an honest `null` and a parse failure.

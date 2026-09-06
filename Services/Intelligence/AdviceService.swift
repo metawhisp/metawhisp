@@ -150,7 +150,7 @@ final class AdviceService: ObservableObject {
             }
 
             guard let advice = parseAdviceResponse(response, contexts: contexts) else {
-                NSLog("[Advice] ⚠️ Failed to parse LLM response as advice OR no_advice: %@", String(response.prefix(300)))
+                NSLog("[Advice] ⚠️ failed to parse the model reply as advice or no_advice — %d chars", response.count)
                 return nil
             }
 
@@ -165,7 +165,7 @@ final class AdviceService: ObservableObject {
             NotificationService.shared.postAdvice(advice)
             NSLog("[Advice] ✅ generated — category=%@, confidence=%.2f, content=%d chars, headline=%@", advice.category, advice.confidence, advice.content.count, advice.headline == nil ? "NO" : "YES")
 
-            NSLog("[Advice] ✅ Generated (%d chars): %@", advice.content.count, advice.content)
+            NSLog("[Advice] ✅ generated (%d chars)", advice.content.count)
             return advice
 
         } catch {
@@ -566,7 +566,7 @@ final class AdviceService: ObservableObject {
 
         if let http = response as? HTTPURLResponse, http.statusCode != 200 {
             let bodyStr = String(data: data, encoding: .utf8) ?? ""
-            NSLog("[Advice] PRO ❌ HTTP %d: %@", http.statusCode, String(bodyStr.prefix(200)))
+            NSLog("[Advice] PRO ❌ HTTP %d — %@", http.statusCode, LLMRequestBody.proxyReason(data))
             throw ProcessingError.apiError("Advice proxy: HTTP \(http.statusCode)")
         }
 

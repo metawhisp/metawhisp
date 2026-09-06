@@ -182,7 +182,7 @@ final class CloudWhisperEngine: TranscriptionEngine, @unchecked Sendable {
 
         if let http = response as? HTTPURLResponse, http.statusCode != 200 {
             let body = String(data: data, encoding: .utf8) ?? ""
-            NSLog("[CloudWhisper] PRO ❌ HTTP %d: %@", http.statusCode, String(body.prefix(300)))
+            NSLog("[CloudWhisper] PRO ❌ HTTP %d — %@", http.statusCode, LLMRequestBody.proxyReason(data))
             if let err = try? JSONDecoder().decode(ProErrorResponse.self, from: data) {
                 throw TranscriptionError.transcriptionFailed(err.error)
             }
@@ -260,7 +260,7 @@ final class CloudWhisperEngine: TranscriptionEngine, @unchecked Sendable {
             NSLog("[CloudWhisper] %@ HTTP %d (%.0fms)", provider.displayName, http.statusCode, processingTime * 1000)
             if http.statusCode != 200 {
                 let bodyStr = String(data: data, encoding: .utf8) ?? "(unreadable)"
-                NSLog("[CloudWhisper] ❌ Error: %@", String(bodyStr.prefix(500)))
+                NSLog("[CloudWhisper] ❌ error — %@", LLMRequestBody.proxyReason(data))
                 if let err = try? JSONDecoder().decode(APIErrorResponse.self, from: data) {
                     throw TranscriptionError.transcriptionFailed(err.error.message)
                 }

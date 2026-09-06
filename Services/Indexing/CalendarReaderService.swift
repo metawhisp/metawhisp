@@ -210,9 +210,9 @@ final class CalendarReaderService: ObservableObject {
         conv.calendarAttendeesJSON = (try? String(data: JSONEncoder().encode(attendeeNames), encoding: .utf8)) ?? "[]"
         conv.updatedAt = Date()
         try? ctx.save()
-        NSLog("[Calendar] ✅ linked conv %@ → event '%@' (score %.2f)",
+        NSLog("[Calendar] ✅ linked conv %@ → event %@ (title %d chars, score %.2f)",
               convId.uuidString.prefix(8) as CVarArg,
-              matched.title ?? "(untitled)", score)
+              matched.eventIdentifier ?? "(no id)", (matched.title ?? "").count, score)
     }
 
     /// Backfill: walk completed conversations missing a calendar link, attempt to

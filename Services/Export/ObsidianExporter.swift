@@ -435,7 +435,7 @@ final class ObsidianExporter: ObservableObject {
             for f in files where f.lastPathComponent.hasPrefix("\(taskID)--") {
                 do {
                     try FileManager.default.removeItem(at: f)
-                    NSLog("[ObsidianExporter] 🗑 Deleted task file %@", f.path)
+                    NSLog("[ObsidianExporter] 🗑 deleted task file (%d-char path under the vault)", f.path.count)
                 } catch {
                     NSLog("[ObsidianExporter] delete failed: %@", error.localizedDescription)
                 }
@@ -805,7 +805,7 @@ final class ObsidianExporter: ObservableObject {
             let dirURL = stubURL.deletingLastPathComponent()
             try FileManager.default.createDirectory(at: dirURL, withIntermediateDirectories: true)
             try stub.write(to: stubURL, atomically: true, encoding: .utf8)
-            NSLog("[ObsidianExporter] ✅ created project stub: %@", stubRel)
+            NSLog("[ObsidianExporter] ✅ created project stub (%d-char path)", stubRel.count)
         } catch {
             NSLog("[ObsidianExporter] ⚠️ failed to create project stub %@: %@", stubRel, error.localizedDescription)
         }

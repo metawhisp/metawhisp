@@ -264,7 +264,7 @@ final class TextProcessor {
 
         if let http = response as? HTTPURLResponse, http.statusCode != 200 {
             let bodyStr = String(data: data, encoding: .utf8) ?? ""
-            NSLog("[TextProcessor] PRO ❌ HTTP %d: %@", http.statusCode, String(bodyStr.prefix(300)))
+            NSLog("[TextProcessor] PRO ❌ HTTP %d — %@", http.statusCode, LLMRequestBody.proxyReason(data))
             throw ProcessingError.apiError("Server error: HTTP \(http.statusCode)")
         }
 

@@ -300,8 +300,8 @@ final class WeeklyPatternDetector: ObservableObject {
             }
         }
         guard let raw = try? JSONDecoder().decode(Raw.self, from: data) else {
-            NSLog("[Pattern] ⚠️ Parse failed — raw response prefix: %@",
-                  String(extracted.prefix(200)))
+            NSLog("[Pattern] ⚠️ parse failed — response %d chars",
+                  extracted.count)
             return ParsedDigest(themes: [], people: [], stuckLoops: [], insights: [])
         }
         let clean: ([String]?) -> [String] = {

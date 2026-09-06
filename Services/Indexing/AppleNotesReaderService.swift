@@ -241,7 +241,7 @@ final class AppleNotesReaderService: ObservableObject {
             // Drop notes that are essentially attachment wrappers — image scans,
             // PDFs, screen captures with no meaningful textual content.
             guard !Self.isLikelyAttachment(title: title, summary: body) else {
-                NSLog("[AppleNotes] skip attachment-only note '%@'", title)
+                NSLog("[AppleNotes] skip attachment-only note (title %d chars)", title.count)
                 continue
             }
 

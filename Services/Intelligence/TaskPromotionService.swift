@@ -115,7 +115,7 @@ final class TaskPromotionService: ObservableObject {
                     candidate.updatedAt = now
                 }
                 promoted += 1
-                NSLog("[TaskPromotion] ⬆️ promoted: %@", String(candidate.taskDescription.prefix(60)))
+                NSLog("[TaskPromotion] ⬆️ promoted task %@ (%d chars)", candidate.id.uuidString.prefix(8) as CVarArg, candidate.taskDescription.count)
                 if notify, AppSettings.shared.taskPromotionNotificationsEnabled {
                     postPromotionNotification(for: candidate)
                 }

@@ -2097,7 +2097,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         let sanitized = MeetingTranscriptSanitizer.sanitize(merged)
         NSLog("[MetaWhisp] sanitize: %d dropped — %d consecutive-duplicate, %d cross-channel-echo, %d foreign-language-fragment", sanitized.dropped.count, sanitized.dropped.filter { $0.reason == "consecutive-duplicate" }.count, sanitized.dropped.filter { $0.reason == "cross-channel-echo" }.count, sanitized.dropped.filter { $0.reason.hasPrefix("foreign-language-fragment") }.count)
         for drop in sanitized.dropped {
-            NSLog("[MetaWhisp] 🧹 sanitize: dropped (%@): '%@'", drop.reason, String(drop.segment.text.prefix(60)))
+            NSLog("[MetaWhisp] 🧹 sanitize: dropped (%@) — %d chars from %@", drop.reason, drop.segment.text.count, drop.segment.speaker == .me ? "me" : "them")
             SuspectTranscriptLog.append(drop.segment.text, reason: drop.reason,
                                         context: drop.segment.speaker == .me ? "Me merged" : "Them merged")
         }
@@ -2269,7 +2269,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
                     }
                     let stripped = TranscriptionCoordinator.stripHallucinationTokens(collapsed)
                     if stripped.isEmpty {
-                        NSLog("[MetaWhisp] 🧹 %@ chunk %d: emptied by strip (was '%@')", label, i + 1, String(text.prefix(80)))
+                        NSLog("[MetaWhisp] 🧹 %@ chunk %d: emptied by strip (was %d chars)", label, i + 1, text.count)
                         SuspectTranscriptLog.append(text, reason: "strip-emptied", context: "\(label) chunk \(i + 1)")  // TR-12
                         continue
                     }
@@ -2475,7 +2475,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
                !(rms < 0.003 && TranscriptionCoordinator.isHallucination(rawText)) {
                 let stripped = TranscriptionCoordinator.stripHallucinationTokens(rawText)
                 if stripped.isEmpty {
-                    NSLog("[MetaWhisp] Meeting tail emptied by strip (was '%@')", String(rawText.prefix(80)))
+                    NSLog("[MetaWhisp] meeting tail emptied by strip (was %d chars)", rawText.count)
                 } else {
                     if stripped != rawText {
                         NSLog("[MetaWhisp] 🧹 Meeting tail: stripped hallucination (was %d → %d chars)", rawText.count, stripped.count)
@@ -2742,8 +2742,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
                         isManualMode: self.meetingRecorder.isManualMode
                     )
                     if case let .stopAndRestart(newEventID, newName) = bbDecision {
-                        NSLog("[CallDetect] back-to-back via eventID: newID=%@ ('%@') != recordedID=%@ → stop A, immediately fire B countdown",
-                              newEventID, newName,
+                        NSLog("[CallDetect] back-to-back via eventID: newID=%@ (title %d chars) != recordedID=%@ → stop A, immediately fire B countdown",
+                              newEventID, newName.count,
                               self.recordingCalendarEventID ?? "(nil)")
                         self.stopMeetingRecording(reason: "back-to-back-eventID:\(newEventID)")
                         // CC-14 fix: gate already consumed its single
@@ -2892,8 +2892,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             if durationSec <= 6 * 3600 {
                 self.armCalendarEndStopTask(eventID: eventID, eventEnd: endDate)
             } else {
-                NSLog("[CalendarEndStop] skip arming for '%@' (duration %.0fs > 6h, treated as all-day)",
-                      name, durationSec)
+                NSLog("[CalendarEndStop] skip arming (title %d chars, duration %.0fs > 6h, treated as all-day)",
+                      name.count, durationSec)
             }
         }
 

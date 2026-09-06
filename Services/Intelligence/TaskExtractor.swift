@@ -570,7 +570,7 @@ final class TaskExtractor: ObservableObject {
         let extracted = extractJSONObject(from: response)
         guard let data = extracted.data(using: .utf8) else { return nil }
         guard let parsed = try? JSONDecoder().decode(ExtractionResult.self, from: data) else {
-            NSLog("[TaskExtractor] ⚠️ JSON parse failed: %@", String(extracted.prefix(200)))
+            NSLog("[TaskExtractor] ⚠️ JSON parse failed — %d chars, starts with %@", extracted.count, extracted.first.map { String($0) } ?? "(empty)")
             return nil
         }
 
@@ -582,7 +582,7 @@ final class TaskExtractor: ObservableObject {
         return parsed.tasks.compactMap { json -> TaskItem? in
             let wordCount = json.description.split(separator: " ").count
             guard wordCount <= 15 else {
-                NSLog("[TaskExtractor] ⚠️ Rejected task (>15 words): %@", json.description)
+                NSLog("[TaskExtractor] ⚠️ rejected task (>15 words, %d chars)", json.description.count)
                 return nil
             }
             var due: Date? = nil

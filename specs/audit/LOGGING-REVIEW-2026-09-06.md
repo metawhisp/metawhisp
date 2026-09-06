@@ -471,3 +471,33 @@
 - `Services/Transcription/WhisperKitEngine.swift:100` — NSLog("[WhisperKit] [%d] ❌ dropped (hallucination): '%@'", i, String(t.prefix(200))) — up to 200 characters of transcript segment text, i.e. what the user said into the voice question. The filter (cle
 - `Services/Transcription/WhisperKitEngine.swift:102` — NSLog("[WhisperKit] [%d] ✂️ trimmed tail: '%@'", i, String(result.suffix(60))) — 60 characters of the KEPT transcript segment (the log fires on the branch that appends the text), so this is user speec
 - `Services/Transcription/WhisperKitEngine.swift:115` — NSLog("[WhisperKit] ❌ dropped duplicate segment: '%@'", String(segment.prefix(100))) — 100 characters of transcript text; the duplicate of a segment whose twin was kept, so the same user speech is in 
+
+---
+
+## Что вычищено в коммите «no user content in the log» (2026-09-06)
+
+Убрано из файла лога: адрес почты при активации Pro и при проверке лицензии;
+весь текст совета; куски транскрипта (сегменты, отброшенные санитайзером,
+галлюцинации WhisperKit, дубли, хвост встречи); тексты задач при постановке,
+продвижении и дедупликации; текст памяти при отклонении; вывод модели при
+ошибке разбора (шесть мест); превью инструментов чата; заголовок окна экрана;
+заголовки заметок и событий календаря; пути к файлам хранилища, собранные из
+названий задач и проектов; **набранный пользователем текст в `CorrectionMonitor`**
+— он логировался вопреки прямому обещанию в соседнем файле.
+
+Вместо содержимого пишутся длина, счётчик, идентификатор или причина словами.
+Причина отказа от прокси разведена на два адресата: пользователю на экран
+по-прежнему показывается фраза прокси (`StructuredGenerator.proxyReason`),
+в долговечный файл идёт `LLMRequestBody.proxyReason` — разобранное поле
+`error` или размер тела, но не тело.
+
+### Осталось открытым (решение владельца)
+
+**Названия проектов** — `ProjectAggregator` пишет их примерно в 20 строках
+(`dedup: 'A' → 'B'`, `merge`, `renameCanonical`, `splitAlias`). Это данные
+пользователя, но это же единственный способ отладить агрегатор, который
+регулярно ошибается со слияниями. Не трогал: нужно твоё решение — вычистить
+(и отлаживать вслепую) или оставить.
+
+Безопасными считаю и оставил: коды языков, роли звуков, имена приложений,
+`reasonCode`, `rawValue` перечислений, идентификаторы событий, UUID.

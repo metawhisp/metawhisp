@@ -127,7 +127,7 @@ final class FileMemoryExtractor: ObservableObject {
                 totalProcessed += 1
             } catch {
                 lastError = error.localizedDescription
-                NSLog("[FileMemoryExtractor] ❌ %@: %@", file.filename, error.localizedDescription)
+                NSLog("[FileMemoryExtractor] ❌ file %@ — %@", file.id.uuidString.prefix(8) as CVarArg, error.localizedDescription)
                 // Don't mark contentExtractedAt — will retry next run.
             }
         }
@@ -223,7 +223,7 @@ final class FileMemoryExtractor: ObservableObject {
         let extracted = extractJSONObject(from: response)
         guard let data = extracted.data(using: .utf8) else { return nil }
         guard let result = try? JSONDecoder().decode(Result.self, from: data) else {
-            NSLog("[FileMemoryExtractor] ⚠️ Parse failed: %@", String(extracted.prefix(200)))
+            NSLog("[FileMemoryExtractor] ⚠️ parse failed — %d chars", extracted.count)
             return nil
         }
         return result.memories.filter { mem in

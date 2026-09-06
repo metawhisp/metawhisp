@@ -87,7 +87,7 @@ actor OpenAIService {
             NSLog("[LLM] %@ HTTP %d (%.0fms)", provider.displayName, http.statusCode, elapsed)
             if http.statusCode != 200 {
                 let bodyStr = String(data: data, encoding: .utf8) ?? "(unreadable)"
-                NSLog("[LLM] ❌ Error: %@", bodyStr)
+                NSLog("[LLM] ❌ error body: %d chars (content not logged)", bodyStr.count)
                 if let apiErr = try? JSONDecoder().decode(APIError.self, from: data) {
                     throw ProcessingError.apiError(apiErr.error.message)
                 }

@@ -510,7 +510,7 @@ final class DailySummaryService: ObservableObject {
         guard let data = extracted.data(using: .utf8) else { return [] }
         guard let dict = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let arr = dict[key] as? [String] else {
-            NSLog("[DailySummary] %@ parse failed: %@", key, String(extracted.prefix(120)))
+            NSLog("[DailySummary] %@ parse failed — %d chars", key, extracted.count)
             return []
         }
         return arr.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }

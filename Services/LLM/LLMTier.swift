@@ -36,6 +36,19 @@ enum LLMRequestBody {
     /// for the joining and framing the fold adds around it.
     static let safePromptChars = 30_000
 
+    /// What a refused request actually said. The proxy answers
+    /// `{"error": "…"}` on every failure it can name; that sentence is the
+    /// reason a log line owes the reader. The RAW body is never logged — an
+    /// upstream can echo the prompt back inside it, and this log is a durable
+    /// file (audit, 2026-09-06).
+    static func proxyReason(_ data: Data) -> String {
+        struct ProxyError: Decodable { let error: String }
+        if let decoded = try? JSONDecoder().decode(ProxyError.self, from: data), !decoded.error.isEmpty {
+            return String(decoded.error.prefix(200))
+        }
+        return "\(data.count)-byte body, not JSON (content not logged)"
+    }
+
     /// Body for `POST /api/pro/advice`. Optional `tier` + `serviceId` are
     /// the new ITER-041 fields; both default to nil so callers that haven't
     /// migrated yet keep producing the original 2-field body shape.

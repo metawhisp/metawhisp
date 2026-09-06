@@ -119,7 +119,7 @@ final class LicenseService: ObservableObject {
             guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
                 let body = String(data: data, encoding: .utf8) ?? ""
                 NSLog("[License] ❌ Activation rejected — HTTP %d, body %d chars", (response as? HTTPURLResponse)?.statusCode ?? -1, body.count)
-                NSLog("[License] ❌ HTTP error: %@", body)
+                NSLog("[License] ❌ HTTP error — %@", LLMRequestBody.proxyReason(data))
                 lastError = "Activation failed. Try signing in again."
                 isActivating = false
                 return
@@ -150,12 +150,12 @@ final class LicenseService: ObservableObject {
                     AppSettings.shared.transcriptionEngine = "cloud"
                     NSLog("[License] ☁️ Auto-switched to cloud transcription for Pro user")
                 }
-                NSLog("[License] ✅ Pro activated: %@ (%@)", result.email, license.plan)
+                NSLog("[License] ✅ Pro activated — plan=%@ (account identified, address not logged)", license.plan)
             } else {
                 // Signed in but no active subscription.
                 // AUD-026 — clear the persisted license too, not just memory.
                 clearInactiveLicense()
-                NSLog("[License] Signed in as %@ — no active subscription", result.email)
+                NSLog("[License] signed in — no active subscription (address not logged)")
             }
 
             isActivating = false
@@ -366,7 +366,7 @@ final class LicenseService: ObservableObject {
                 clearInactiveLicense()
             }
 
-            NSLog("[License] Verified: %@, pro=%@", result.email, isPro ? "YES" : "NO")
+            NSLog("[License] verified — pro=%@ (address not logged)", isPro ? "YES" : "NO")
         } catch {
             NSLog("[License] Verify failed (offline?): %@", error.localizedDescription)
             // Keep existing state if offline

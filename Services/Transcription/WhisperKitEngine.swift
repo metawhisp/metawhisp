@@ -97,9 +97,9 @@ final class WhisperKitEngine: TranscriptionEngine, @unchecked Sendable {
         for (i, t) in allTexts.enumerated() {
             let result = Self.cleanHallucinations(t)
             if result.isEmpty {
-                NSLog("[WhisperKit]   [%d] ❌ dropped (hallucination): '%@'", i, String(t.prefix(200)))
+                NSLog("[WhisperKit]   [%d] ❌ dropped (hallucination): %d chars", i, t.count)
             } else if result != t {
-                NSLog("[WhisperKit]   [%d] ✂️ trimmed tail: '%@'", i, String(result.suffix(60)))
+                NSLog("[WhisperKit]   [%d] ✂️ trimmed tail (%d chars left)", i, result.count)
                 cleaned.append(result)
             } else {
                 cleaned.append(result)
@@ -112,7 +112,7 @@ final class WhisperKitEngine: TranscriptionEngine, @unchecked Sendable {
             let norm = segment.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
             if let last = deduped.last,
                last.lowercased().trimmingCharacters(in: .whitespacesAndNewlines) == norm {
-                NSLog("[WhisperKit] ❌ dropped duplicate segment: '%@'", String(segment.prefix(100)))
+                NSLog("[WhisperKit] ❌ dropped duplicate segment (%d chars)", segment.count)
                 continue
             }
             deduped.append(segment)

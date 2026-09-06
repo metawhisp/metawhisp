@@ -119,8 +119,8 @@ final class CorrectionMonitor {
                 return
             }
 
-            NSLog("[CorrectionMonitor] Detected edit: '%@' → '%@'",
-                  String(pastedText.prefix(50)), String(editedText.prefix(50)))
+            NSLog("[CorrectionMonitor] detected an edit: %d chars → %d chars (the words are learned, never logged)",
+                  pastedText.count, editedText.count)
             dictionary.learn(original: pastedText, corrected: editedText)
             NSLog("[CorrectionMonitor] Edit handed to dictionary: pasted=%d chars, edited=%d chars", pastedText.count, editedText.count)
         }

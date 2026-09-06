@@ -783,8 +783,8 @@ final class ScreenContextService: ObservableObject {
             windowFrame: identity.frame
         )
 
-        NSLog("[ScreenContext] Captured: %@ — %@ (%d chars OCR)",
-              appName, String(windowTitle.prefix(40)), ocrText.count)
+        NSLog("[ScreenContext] captured: %@ — window title %d chars, %d chars OCR",
+              appName, windowTitle.count, ocrText.count)
 
         return (snapshot, frame)
     }
