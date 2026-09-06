@@ -94,6 +94,7 @@ final class UserProfileService {
         )
         desc.fetchLimit = 1000
         let all = (try? ctx.fetch(desc)) ?? []
+        NSLog("[UserProfileService] About Me — %d memories fetched (limit %d)", all.count, desc.fetchLimit ?? 0)
         return buildSections(from: all)
     }
 }

@@ -48,6 +48,7 @@ final class MutationService {
     /// post-commit hooks only if the commit succeeded. Use the empty-`mutate`
     /// form for an in-place edit (caller already changed the object's fields).
     func commit(_ mutation: Mutation, in ctx: ModelContext, _ mutate: () -> Void = {}) throws {
+    if !StoreHealthSignal.shared.isHealthy { NSLog("[MutationService] refused %@ — store degraded (temporary in-memory session)", String(describing: mutation)) }
         // ITER-049 A2 — refuse mutations at the owner layer in a degraded (temporary
         // in-memory) session: neither the empty-store save NOR the post-commit hooks
         // (Obsidian re-export, MCP snapshot) may fire, or the standalone MCP CLI's
@@ -58,6 +59,7 @@ final class MutationService {
         mutate()
         try save(ctx)        // PROPAGATES — never `try?`
         runHooks(mutation)   // unreachable if the save threw
+        NSLog("[MutationService] committed %@", String(describing: mutation))
     }
 
     // MARK: - Convenience (explicit insert / delete)

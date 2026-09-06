@@ -268,6 +268,7 @@ struct ScreenAgentInboxView: View {
     private func reload() {
         items = AppDelegate.shared?.screenAgentDelivery?.recentItems() ?? []
         health = AppDelegate.shared?.screenAgentHealth()
+        NSLog("[ScreenAgentInbox] list loaded — %d item(s), %d unanswered, filter=%@, health=%@", items.count, items.filter({ $0.interaction == ScreenAgentDelivery.Interaction.none.rawValue }).count, filter.rawValue, (health?.isSilentlyIdle ?? false) ? "silently-idle" : "ok")
         if let pending = AppDelegate.shared?.consumePendingScreenAgentItem() {
             selectedID = pending
             filter = .all
@@ -282,6 +283,7 @@ struct ScreenAgentInboxView: View {
             object: ScreenAgentThreadAnchor(item: item)
         )
         NotificationCenter.default.post(name: .screenAgentShowChatPane, object: nil)
+        NSLog("[ScreenAgentInbox] comment opened in chat — from %@, %.0f min old", item.sourceApp, Date().timeIntervalSince(item.capturedAt) / 60)
         reload()
     }
 
@@ -293,6 +295,7 @@ struct ScreenAgentInboxView: View {
 
     private func mark(_ item: ScreenAgentItem, _ interaction: ScreenAgentDelivery.Interaction) {
         AppDelegate.shared?.screenAgentDelivery?.recordInteraction(interaction, itemID: item.id)
+        NSLog("[ScreenAgentInbox] user chose %@ on an inbox item", interaction.rawValue)
         reload()
     }
 

@@ -65,6 +65,7 @@ final class LaunchAtLoginManager: ObservableObject {
                 description = "Unknown status"
             }
             await MainActor.run {
+            if self.statusDescription != description { NSLog("[LaunchAtLogin] status: %@ (enabled=%@)", description, enabled ? "yes" : "no") }
                 self.isEnabled = enabled
                 self.statusDescription = description
             }

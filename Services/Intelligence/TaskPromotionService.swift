@@ -105,6 +105,7 @@ final class TaskPromotionService: ObservableObject {
             .sorted { Self.ranksHigher(scoreA: $0.relevanceScore, createdA: $0.createdAt,
                                        scoreB: $1.relevanceScore, createdB: $1.createdAt) }
             .prefix(need)
+            NSLog("[TaskPromotion] Pass (%@): active=%d target=%d need=%d willPromote=%d", notify ? "timer/slot-vacated" : "startup", activeCount, Self.targetActiveAITasks, need, staged.count)
 
         var promoted = 0
         for candidate in staged {

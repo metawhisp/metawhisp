@@ -334,6 +334,7 @@ struct MenuBarView: View {
                 Button {
                     NSPasteboard.general.clearContents()
                     NSPasteboard.general.setString(result.text, forType: .string)
+                    NSLog("[MetaWhisp] menu bar — copy pressed on last output (%d chars, %.1fs processing)", result.text.count, result.processingTime)
                     showCopied = true
                     DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { showCopied = false }
                 } label: {
@@ -383,6 +384,7 @@ struct MenuBarView: View {
         HStack(spacing: 0) {
             Button {
                 coordinator.toggle()
+                NSLog("[MenuBar] RECORD/STOP button tapped")
             } label: {
                 controlBtn(
                     icon: coordinator.stage == .recording ? "stop.fill" : "mic.fill",
@@ -398,6 +400,7 @@ struct MenuBarView: View {
 
             Button {
                 coordinator.toggleWithTranslation()
+                NSLog("[MenuBar] TRANSLATE button tapped")
             } label: {
                 controlBtn(
                     icon: "globe",

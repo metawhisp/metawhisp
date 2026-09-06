@@ -59,6 +59,7 @@ final class MeetingCoachService {
     /// partial transcribe. Updates the overlay's transcript tail immediately
     /// and kicks off (at most one) LLM call to extract the next suggestion.
     func process(partialText: String) async {
+        let t0 = CFAbsoluteTimeGetCurrent()
         // Strip Whisper hallucination tokens (DimaTorzok / Subtitles by /
         // amara.org / ♪ music markers) BEFORE anything else looks at the
         // text. Otherwise the rolling transcript tail shows garbage AND
@@ -84,6 +85,7 @@ final class MeetingCoachService {
         // even when the LLM call is still pending.
         let recent = allPartials.suffix(recentChunkCount).joined(separator: " ")
         MeetingCoachState.shared.updateTranscriptTail(recent)
+        if inFlight { NSLog("[MeetingCoach] tick skipped — previous LLM call still in flight (partial #%d)", allPartials.count) }
 
         guard !inFlight else { return }
         guard hasLLMAccess else { return }
@@ -93,6 +95,7 @@ final class MeetingCoachService {
         defer {
             inFlight = false
             MeetingCoachState.shared.isProcessing = false
+            NSLog("[MeetingCoach] tick #%d finished in %.1fs", allPartials.count, CFAbsoluteTimeGetCurrent() - t0)
         }
 
         // Refresh the rolling summary of older content if we've accumulated
@@ -108,6 +111,7 @@ final class MeetingCoachService {
 
         do {
             let userPrompt = buildUserPrompt(recent: recent, memoryContext: memoryContext)
+            NSLog("[MeetingCoach] ▶️ tick #%d — recent=%d, summary=%d, memory=%d, prompt=%d chars, local=%@", allPartials.count, recent.count, meetingSummary.count, memoryContext.count, userPrompt.count, LocalLLMService.shared.isReady ? "YES" : "NO")
             var usedLocal = LocalLLMService.shared.isReady
             var response = try await callLLM(systemPrompt: Self.systemPrompt, userPrompt: userPrompt)
             var suggestion = parseSuggestion(response)
@@ -129,11 +133,14 @@ final class MeetingCoachService {
                 suggestion = parseSuggestion(response)
             }
             if let suggestion {
+            if suggestion.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { NSLog("[MeetingCoach] ⚠️ suggestion dropped by the overlay — empty text after trim (kind=%@); nothing shown to the user", suggestion.kind.rawValue) }
                 MeetingCoachState.shared.addSuggestion(suggestion.kind, text: suggestion.text)
+                NSLog("[MeetingCoach] ✅ suggestion kind=%@, len=%d chars, backend=%@, tick #%d", suggestion.kind.rawValue, suggestion.text.count, usedLocal ? "local" : (LicenseService.shared.isPro ? "pro" : "byok"), allPartials.count)
                 NSLog("[MeetingCoach] ✅ %@ → %@", suggestion.kind.rawValue, String(suggestion.text.prefix(80)))
             } else {
                 // Log the RAW response — "no actionable suggestion" hid the
                 // difference between an honest `null` and a parse failure.
+                NSLog("[MeetingCoach] no suggestion this cycle — verdict=%@, raw=%d chars, local=%@, tick #%d", response.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == "null" ? "null" : "unparseable", response.count, usedLocal ? "YES" : "NO", allPartials.count)
                 NSLog("[MeetingCoach] no suggestion this cycle (local=%@, raw: '%@')",
                       usedLocal ? "YES" : "NO", String(response.prefix(160)))
             }
@@ -147,6 +154,7 @@ final class MeetingCoachService {
         allPartials = []
         meetingSummary = ""
         partialIndexOfLastSummary = 0
+        NSLog("[MeetingCoach] reset for new meeting — llmAccess=%@ (local=%@ pro=%@ byok=%@)", hasLLMAccess ? "YES" : "NO", LocalLLMService.shared.isReady ? "YES" : "NO", LicenseService.shared.isPro ? "YES" : "NO", settings.activeAPIKey.isEmpty ? "NO" : "YES")
         inFlight = false
     }
 
@@ -159,6 +167,7 @@ final class MeetingCoachService {
         let endIdx = allPartials.count - recentChunkCount
         guard endIdx > partialIndexOfLastSummary else { return }
         let older = allPartials[partialIndexOfLastSummary..<endIdx].joined(separator: " ")
+        NSLog("[MeetingCoach] 📝 summary refresh — folding %d partials (%d chars) into prior summary (%d chars)", endIdx - partialIndexOfLastSummary, older.count, meetingSummary.count)
         let body: String
         if meetingSummary.isEmpty {
             body = "Summarize the meeting so far in 4-6 bullet points. Track: who's speaking, decisions made, open questions, important data points. Keep it factual.\n\nMeeting transcript:\n\(older)"

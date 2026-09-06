@@ -69,6 +69,7 @@ final class FileIndexerService: ObservableObject {
             return
         }
         isScanning = true
+        NSLog("[FileIndexer] scan start: %d folder(s), maxDepth=%d, maxFileSize=%lld MB", folders.count, maxDepth, maxFileSize / (1024 * 1024))
         defer {
             isScanning = false
             lastRun = Date()
@@ -215,6 +216,7 @@ final class FileIndexerService: ObservableObject {
         desc.fetchLimit = 1000  // sweep up to 1000/pass; periodic scan handles the tail.
         let candidates = ((try? ctx.fetch(desc)) ?? [])
             .filter { IndexedFile.isExtractable($0.fileExtension) }
+            if !candidates.isEmpty { NSLog("[FileIndexer] Content backfill start: %d candidate files (cap %d chars stored each)", candidates.count, IndexedFile.maxContentBytes) }
 
         guard !candidates.isEmpty else {
             NSLog("[FileIndexer] Content backfill: no pending files")

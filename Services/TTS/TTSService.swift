@@ -31,6 +31,7 @@ final class TTSService: ObservableObject {
             VoiceQuestionState.shared.isSpeaking = false
         }
         playerDelegate.onFinish = { [weak self] in
+        NSLog("[TTS] cloud playback ended")
             self?.audioPlayer = nil
             self?.isSpeaking = false
             VoiceQuestionState.shared.isSpeaking = false
@@ -42,6 +43,7 @@ final class TTSService: ObservableObject {
     func speak(_ text: String) {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
+        NSLog("[TTS] speak: %d chars via %@", trimmed.count, shouldUseCloud ? "cloud" : "local")
         stop()
 
         if shouldUseCloud {
@@ -117,6 +119,7 @@ final class TTSService: ObservableObject {
             try Task.checkCancellation()
             try await MainActor.run {
                 try playCloudAudio(data: mp3)
+                NSLog("[TTS] cloud audio playing (%d bytes)", mp3.count)
             }
         } catch is CancellationError {
             // stop() was called (user dismissed / new speak started) — don't play anything
@@ -201,6 +204,7 @@ private final class SynthesizerDelegate: NSObject, AVSpeechSynthesizerDelegate {
         Task { @MainActor in self.onStart?() }
     }
     func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didFinish utterance: AVSpeechUtterance) {
+    NSLog("[TTS] local utterance finished")
         Task { @MainActor in self.onFinish?() }
     }
     func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didCancel utterance: AVSpeechUtterance) {

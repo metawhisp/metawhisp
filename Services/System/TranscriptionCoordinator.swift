@@ -102,6 +102,7 @@ final class TranscriptionCoordinator: ObservableObject {
     /// Toggle with translation — called by Right ⌥ shortcut.
     func toggleWithTranslation() {
         if stage == .idle { translateNext = true }
+        NSLog("[Coordinator] Translate requested (stage=%@, armed=%@)", "\(stage)", translateNext ? "YES" : "NO")
         toggle()
     }
 
@@ -281,6 +282,7 @@ final class TranscriptionCoordinator: ObservableObject {
             stage = .idle
             soundService.playError()
             NSLog("[Coordinator] ❌ Engine not ready")
+            NSLog("[Coordinator] engine=%@, %d samples (%.1fs) dropped — %@", settings.transcriptionEngine, samples.count, Double(samples.count) / 16000.0, lastError ?? "?")
             return
         }
 
@@ -299,6 +301,7 @@ final class TranscriptionCoordinator: ObservableObject {
             var trimmed = result.text.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !trimmed.isEmpty else {
                 NSLog("[Coordinator] Empty result")
+                NSLog("[Coordinator] empty transcript after %.2fs engine time, RMS=%.5f", result.processingTime, rms)
                 // Surface to user — silent return left them wondering why
                 // pressing ⌘ produced nothing. Most common cause is Cloud
                 // Whisper / on-device engine returning a blank string when
@@ -394,6 +397,7 @@ final class TranscriptionCoordinator: ObservableObject {
                     }
                 } catch {
                     NSLog("[Coordinator] ⚠️ Post-processing failed: %@", error.localizedDescription)
+                    NSLog("[Coordinator] continuing with UNPROCESSED text (%d chars, translate=%@) — no translation applied", finalText.count, shouldTranslate ? "YES" : "NO")
                     lastError = error.localizedDescription
                 }
             }
@@ -422,6 +426,8 @@ final class TranscriptionCoordinator: ObservableObject {
             // raw transcript (displayText falls back to the raw text otherwise).
             if let hs = historyService {
                 let item = hs.save(result)
+                NSLog("[Coordinator] history %@ (translatedTo=%@, %d chars)", item == nil ? "NOT saved" : "saved", shouldTranslate ? settings.translateTo : "-", finalText.count)
+                NSLog("[Coordinator] History save: %@", item == nil ? "SKIPPED (store degraded or save failed)" : "OK")
                 item?.processedText = (finalText == result.text) ? nil : finalText
                 item?.translatedTo = shouldTranslate ? settings.translateTo : nil
                 item?.modelName = settings.selectedModel
@@ -450,6 +456,7 @@ final class TranscriptionCoordinator: ObservableObject {
                     // in-flight generation instead of letting it run blind.
                     VoiceQuestionState.shared.activeSendTask = Task {
                         await chat.send(finalText, source: .voice)
+                        NSLog("[Coordinator] 🎤 voice question send returned (chatError=%@)", chat.lastError ?? "none")
                     }
                 } else {
                     NSLog("[Coordinator] ⚠️ chatService nil — voice question dropped")
@@ -479,6 +486,8 @@ final class TranscriptionCoordinator: ObservableObject {
             // spec://BACKLOG#B1
 
             soundService.playSuccess()
+            NSLog("[Coordinator] ✅ Dictation done: translate=%@, %d chars, autoPaste=%@", shouldTranslate ? "YES" : "NO", finalText.count, settings.autoSubmit ? "ON" : "OFF")
+            NSLog("[Coordinator] ✅ Done: %d chars, autoPaste=%@", finalText.count, settings.autoSubmit ? "on" : "off")
             stage = .idle
 
         } catch {

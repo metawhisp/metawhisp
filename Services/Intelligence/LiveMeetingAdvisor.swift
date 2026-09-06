@@ -203,6 +203,7 @@ final class LiveMeetingAdvisor: ObservableObject {
         // RMS guard — silence/noise blocks below ~0.0005 are dropped (matches
         // the same-named filter in AppDelegate's full-meeting transcribe path).
         let rms = TranscriptionCoordinator.calculateRMS(mixed)
+        NSLog("[LiveAdvise] chunk — %d samples (%.1fs), rms=%.4f", mixed.count, Double(mixed.count) / 16000.0, rms)
         if rms < 0.0008 {
             // Advance offsets — quiet samples never need re-attempt.
             micOffset = micCurrent
@@ -229,6 +230,7 @@ final class LiveMeetingAdvisor: ObservableObject {
                 countUsage: false
             )
             let rawText = result.text.trimmingCharacters(in: .whitespacesAndNewlines)
+            NSLog("[LiveAdvise] transcribed %d chars", rawText.count)
 
             // Advance offsets on success — this audio is now "consumed".
             micOffset = micCurrent

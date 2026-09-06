@@ -51,10 +51,12 @@ final class AppleNotesReaderService: ObservableObject {
     func scanNow() async {
         guard !isRunning else { return }
         guard settings.appleNotesEnabled else { return }
+        if !hasLLMAccess { NSLog("[AppleNotes] scan skipped: no LLM access (no API key, not Pro, local model not loaded)") }
         guard hasLLMAccess else { return }
         guard let container = modelContainer else { return }
 
         isRunning = true
+        NSLog("[AppleNotes] scan start: fetching up to %d notes via osascript", maxNotesPerScan)
         defer {
             isRunning = false
             lastRun = Date()
@@ -81,6 +83,7 @@ final class AppleNotesReaderService: ObservableObject {
         let ctx = ModelContext(container)
         let processedIds = fetchAlreadyProcessedNoteIds(in: ctx)
         let pending = notes.filter { !processedIds.contains($0.id) && $0.body.count >= minContentChars }
+        NSLog("[AppleNotes] %d fetched, %d already processed (all-time), %d pending (body ≥ %d chars)", notes.count, processedIds.count, pending.count, minContentChars)
 
         guard !pending.isEmpty else {
             lastSummary = "No new notes to process"
@@ -115,6 +118,7 @@ final class AppleNotesReaderService: ObservableObject {
                     )
                 }
                 let mems = parse(response)
+                NSLog("[AppleNotes] note: body %d chars → prompt %d chars → %d memories returned", note.body.count, prompt.count, mems.count)
                 for m in mems where m.confidence >= minConfidence {
                     let trimmed = m.content.trimmingCharacters(in: .whitespacesAndNewlines)
                     if existingContents.contains(where: { $0.caseInsensitiveCompare(trimmed) == .orderedSame }) { continue }

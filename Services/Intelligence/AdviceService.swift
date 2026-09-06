@@ -74,6 +74,7 @@ final class AdviceService: ObservableObject {
     /// Generate advice based on current context.
     @discardableResult
     func generateAdvice(extraContext: String? = nil) async -> AdviceItem? {
+    if isGenerating { NSLog("[Advice] trigger dropped — previous generation still running") }
         guard !isGenerating else { return nil }
         guard hasLLMAccess else {
             NSLog("[Advice] No LLM access — skipping (need API key or Pro)")
@@ -101,6 +102,7 @@ final class AdviceService: ObservableObject {
             // time so toggle changes take effect immediately, not on next launch.
             let prompt = Self.activePrompt
             let mode = settings.adviceCoachMode ? "coach" : "standard"
+            NSLog("[Advice] ▶️ generate — screenContexts=%d, prompt=%d chars, extra=%d chars, mode=%@", contexts.count, contextBlock.count, extraContext?.count ?? 0, mode)
             let response: String
             // ITER-039 — local LLM takes priority when loaded.
             if LocalLLMService.shared.isReady {
@@ -161,6 +163,7 @@ final class AdviceService: ObservableObject {
 
             latestAdvice = advice
             NotificationService.shared.postAdvice(advice)
+            NSLog("[Advice] ✅ generated — category=%@, confidence=%.2f, content=%d chars, headline=%@", advice.category, advice.confidence, advice.content.count, advice.headline == nil ? "NO" : "YES")
 
             NSLog("[Advice] ✅ Generated (%d chars): %@", advice.content.count, advice.content)
             return advice

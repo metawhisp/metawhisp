@@ -267,6 +267,7 @@ struct FilesView: View {
     private func scanNow() {
         isWorking = true
         workingMessage = "Scanning folders…"
+        NSLog("[FileIndexer] SCAN NOW pressed (Files window): %d folder(s) configured", settings.indexedFolders.count)
         Task { @MainActor in
             guard let app = AppDelegate.shared else {
                 workingMessage = "FileIndexer not available"

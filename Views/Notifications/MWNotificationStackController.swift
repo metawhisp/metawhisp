@@ -80,6 +80,7 @@ final class MWNotificationStackController {
 
         // Position the panel.
         repositionWindow()
+        NSLog("[Notifications] panel placed — %d card(s), %.0fpt tall at (%.0f, %.0f), was visible=%@", items.count, container.frame.height, window?.frame.origin.x ?? 0, window?.frame.origin.y ?? 0, (window?.isVisible ?? false) ? "YES" : "NO")
 
         if let window, !window.isVisible {
             window.orderFrontRegardless()

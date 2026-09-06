@@ -358,6 +358,7 @@ final class MWNotificationCardView: NSView {
         // button has its own action wired.
         let point = convert(event.locationInWindow, from: nil)
         if closeButton.frame.contains(point) { return }
+        NSLog("[Notifications] card tapped kind=%@ action=%@ after %.1fs", String(describing: notification.kind), onTap == nil ? "none" : "handler", Date().timeIntervalSince(notification.createdAt))
         onTap?()
     }
 

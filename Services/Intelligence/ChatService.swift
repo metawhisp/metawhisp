@@ -47,6 +47,8 @@ final class ChatService: ObservableObject {
         guard !isSending else { return }
         guard hasLLMAccess else {
             lastError = "No LLM access (Pro license or API key required)"
+            NSLog("[ChatService] send refused: no LLM access (no Pro licence, no API key, local model not ready) source=%@", source == .voice ? "voice" : "typed")
+            NSLog("[ChatService] ❌ send refused: no LLM access (source=%@)", source == .voice ? "voice" : "typed")
             return
         }
         let trimmed = userText.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -90,6 +92,7 @@ final class ChatService: ObservableObject {
                       fs.appName, fs.ocrText.count)
             } else {
                 NSLog("[ChatService] 📸 voice: no fresh screen (perm denied / blacklisted)")
+                NSLog("[ChatService] 📸 voice: capture outcome=%@", svc.lastCaptureOutcome.reasonCode)
             }
         }
         let memories = fetchMemoriesForQuery(queryVector: queryVector, limit: 20)
@@ -196,6 +199,8 @@ final class ChatService: ObservableObject {
                 let apiKey = settings.activeAPIKey
                 guard !apiKey.isEmpty else {
                     lastError = "No API key"
+                    NSLog("[ChatService] send aborted: API key empty on the fallback transport — no reply persisted (source=%@)", source == .voice ? "voice" : "typed")
+                    NSLog("[ChatService] ❌ send refused: non-Pro path without API key (source=%@)", source == .voice ? "voice" : "typed")
                     return
                 }
                 let provider = LLMProvider(rawValue: settings.llmProvider) ?? .openai
@@ -268,22 +273,28 @@ final class ChatService: ObservableObject {
             }
             NSLog("[ChatService] ✅ Got response (%d chars, pendingTool=%@, nativeId=%@)",
                   aiText.count, pendingPreview ?? "—", aiMsg.toolCallIdNative ?? "—")
+                  NSLog("[ChatService] send done source=%@ elapsed=%.1fs", source == .voice ? "voice" : "typed", Date().timeIntervalSince(userMsg.createdAt))
+                  NSLog("[ChatService] ⏱ send took %.1fs (source=%@)", Date().timeIntervalSince(userMsg.createdAt), source == .voice ? "voice" : "typed")
 
             // For voice-source replies, surface the answer in the floating voice window.
             if source == .voice {
                 VoiceQuestionState.shared.answered(aiText)
+                NSLog("[ChatService] voice answer → popup: shown=%@ pendingTool=%@", VoiceQuestionState.shared.isVisible ? "yes" : "no (dismissed)", pendingPreview == nil ? "no" : "yes — confirm only in MetaChat window")
+                NSLog("[ChatService] 🗨 voice answer → popup: %d chars, shown=%@", aiText.count, VoiceQuestionState.shared.isVisible ? "yes" : "dropped (popup dismissed)")
             }
 
             // TTS: speak the reply aloud if the relevant toggle is enabled.
             // Skip speaking when a tool is pending — user needs to read the confirm bubble.
             let shouldSpeak = (source == .voice && settings.ttsVoiceQuestions)
                            || (source == .typed && settings.ttsTypedQuestions)
+                           if !shouldSpeak || aiText.isEmpty || pendingPreview != nil || ttsService == nil { NSLog("[ChatService] 🔇 reply not spoken (source=%@ toggle=%@ pendingTool=%@ tts=%@)", source == .voice ? "voice" : "typed", shouldSpeak ? "on" : "off", pendingPreview == nil ? "none" : "pending", ttsService == nil ? "missing" : "ready") }
             if shouldSpeak, !aiText.isEmpty, pendingPreview == nil {
                 ttsService?.speak(aiText)
             }
         } catch {
             lastError = error.localizedDescription
             NSLog("[ChatService] ❌ Failed: %@", error.localizedDescription)
+            NSLog("[ChatService] send failed source=%@ elapsed=%.1fs", source == .voice ? "voice" : "typed", Date().timeIntervalSince(userMsg.createdAt))
             let errMsg = ChatMessage(sender: "ai", text: "", errorText: error.localizedDescription)
             if let container = modelContainer {
                 let ctx = ModelContext(container)
@@ -583,6 +594,7 @@ final class ChatService: ObservableObject {
         msg.toolResultSummary = (result.ok ? "✓ " : "✗ ") + result.summary
         msg.pendingToolCallJSON = nil  // resolved — bubble flips to result mode
         msg.toolExecutedAt = Date()    // start the 60s undo window
+        NSLog("[ChatService] tool confirmed by user: %@ ok=%@ followup=%@", call.tool, result.ok ? "yes" : "no", (call.id != nil && msg.originatingUserPrompt != nil && result.ok) ? "yes" : "no")
         try? ctx.save()
         NSLog("[ChatService] 🔧 Tool executed: %@ → %@ (audit=%@)",
               call.tool, result.summary,
@@ -716,6 +728,7 @@ final class ChatService: ObservableObject {
         guard let container = modelContainer, let executor = toolExecutor else { return }
         guard let entry = executor.auditEntry(forChatMessage: messageId) else { return }
         let undoMsg = executor.undo(auditId: entry.id)
+        NSLog("[ChatService] undo: tool=%@ reverted=%@ age=%.0fs", entry.tool, undoMsg.hasPrefix("Reverted") ? "yes" : "no", Date().timeIntervalSince(entry.timestamp))
         // Refresh the chat message so UI re-renders with the updated outcome line.
         let ctx = ModelContext(container)
         var desc = FetchDescriptor<ChatMessage>(predicate: #Predicate { $0.id == messageId })
@@ -736,6 +749,7 @@ final class ChatService: ObservableObject {
         desc.fetchLimit = 1
         guard let msg = (try? ctx.fetch(desc))?.first else { return }
         msg.toolResultSummary = "✗ Cancelled"
+        NSLog("[ChatService] tool cancelled by user: %@", decodeToolCall(msg.pendingToolCallJSON ?? "")?.tool ?? "unknown")
         msg.pendingToolCallJSON = nil
         msg.toolExecutedAt = Date()  // cancellation is also a "resolution" — undo not relevant
         try? ctx.save()
@@ -1698,6 +1712,7 @@ final class ChatService: ObservableObject {
         while rounds < maxRounds {
             rounds += 1
             let raw = try await complete(composedPrompt())
+            NSLog("[ChatService] text-loop round %d: prompt=%d chars reply=%d chars", rounds, composedPrompt().count, raw.count)
             let txt = raw.trimmingCharacters(in: .whitespacesAndNewlines)
             if !txt.isEmpty { lastText = txt }
 
@@ -1802,6 +1817,7 @@ final class ChatService: ObservableObject {
                                  licenseKey: String,
                                  maxRounds: Int) async throws -> AgenticOutcome {
         var messages: [[String: Any]] = [["role": "user", "content": userPrompt]]
+        NSLog("[ChatService] loop start prompt=%d chars maxRounds=%d", userPrompt.count, maxRounds)
         var lastText = ""
         var rounds = 0
 
@@ -1814,6 +1830,7 @@ final class ChatService: ObservableObject {
                 licenseKey: licenseKey
             )
             let txt = resp.text.trimmingCharacters(in: .whitespacesAndNewlines)
+            NSLog("[ChatService] loop round %d: reply=%d chars finish=%@ tool=%@", rounds, txt.count, resp.finishReason, resp.toolCall?.tool ?? "none")
             if !txt.isEmpty { lastText = txt }
 
             // Some models still emit a DRIFT-format text tool call

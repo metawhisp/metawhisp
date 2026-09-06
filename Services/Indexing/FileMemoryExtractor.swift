@@ -30,6 +30,7 @@ final class FileMemoryExtractor: ObservableObject {
     /// Process up to N pending IndexedFile records (contentExtractedAt == nil, isExtractable ext).
     func runPass() async {
         guard !isRunning else { return }
+        if !hasLLMAccess { NSLog("[FileMemoryExtractor] pass skipped: no LLM access (no API key, not Pro, local model not loaded)") }
         guard hasLLMAccess else { return }
         guard let container = modelContainer else { return }
 
@@ -54,6 +55,7 @@ final class FileMemoryExtractor: ObservableObject {
 
         // Pre-fetch existing memory contents for dedup hint in prompt.
         let existingContents = fetchRecentMemoryContents(in: ctx, limit: 150)
+        NSLog("[FileMemoryExtractor] pass start: %d pending files (cap %d/run), %d existing memories in dedup prompt", candidates.count, maxFilesPerRun, existingContents.count)
 
         var totalAdded = 0
         var totalProcessed = 0
@@ -96,9 +98,11 @@ final class FileMemoryExtractor: ObservableObject {
                 // as processed (it would be skipped forever); retry next run.
                 guard let mems = parse(response) else {
                     lastError = "Unparseable LLM output for \(file.filename) — will retry"
+                    NSLog("[FileMemoryExtractor] ⚠️ unparseable LLM output (%d chars) — file left pending for retry", response.count)
                     continue
                 }
                 var added = 0
+                NSLog("[FileMemoryExtractor] file %d chars → prompt %d chars → %d memories returned", content.count, prompt.count, mems.count)
                 for m in mems where m.confidence >= minConfidence {
                     let trimmed = m.content.trimmingCharacters(in: .whitespacesAndNewlines)
                     if existingContents.contains(where: { $0.caseInsensitiveCompare(trimmed) == .orderedSame }) {

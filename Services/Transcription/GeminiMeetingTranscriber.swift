@@ -230,6 +230,7 @@ final class GeminiMeetingTranscriber: @unchecked Sendable {
             let offset = Double(range.lowerBound) / Self.sampleRate
             let utterances = Self.utterances(from: Self.words(from: response),
                                              offsetSeconds: offset)
+                                             NSLog("[Gemini] slice at %.0fs: %d utterance(s)", offset, utterances.count)
             guard !utterances.isEmpty else { continue }
 
             // The mapping is computed per slice and against the FULL channel

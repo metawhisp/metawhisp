@@ -647,6 +647,7 @@ final class ScreenContextService: ObservableObject {
             persistContext(snapshot, frame: capture.frame,
                            visitProposal: proposal, visitToken: token,
                            forcedReread: wasForcedReread)
+                           NSLog("[ScreenContext] tick outcome=%@ (%d chars OCR, forcedReread=%d, wakesConsumers=%d)", lastCaptureOutcome.reasonCode, snapshot.ocrText.count, wasForcedReread ? 1 : 0, (lastCaptureOutcome.deliversToAgent && !wasForcedReread) ? 1 : 0)
 
             // ITER-064A.3 — consume the change from the window the frame
             // actually came from: the user may have switched during the await.
@@ -794,6 +795,7 @@ final class ScreenContextService: ObservableObject {
 
         guard CGPreflightScreenCaptureAccess() else {
             lastCaptureOutcome = .permissionDenied
+            NSLog("[ScreenContext] screenshot skipped: %@", lastCaptureOutcome.reasonCode)
             return nil
         }
 
@@ -825,6 +827,7 @@ final class ScreenContextService: ObservableObject {
                 // Reading every candidate and labelling the result with one of
                 // them would be confidently wrong, so nothing is read.
                 lastCaptureOutcome = selection == .ambiguous ? .ambiguousWindow : .captureFailed
+                NSLog("[ScreenContext] screenshot skipped: %@ (%d on-screen windows for front app)", lastCaptureOutcome.reasonCode, refs.filter { $0.ownerPID == Int(frontPID) && $0.isOnScreen }.count)
                 return nil
             }
             guard let window = content.windows.first(where: { Int($0.windowID) == chosenID }) else {

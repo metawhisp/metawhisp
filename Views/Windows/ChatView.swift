@@ -349,6 +349,7 @@ struct ChatView: View {
         let text = inputText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty, !isSending else { return }
         inputText = ""
+        NSLog("[ChatService] MetaChat send: %d chars typed, screen-agent card anchor=%@", text.count, anchor == nil ? "no" : "yes")
         // ITER-068 — the anchored comment goes with the first question only.
         // After that the conversation has its own history and repeating it
         // would just crowd the context.
@@ -376,6 +377,7 @@ struct ChatView: View {
     }
 
     private func clearHistory() {
+    NSLog("[ChatService] chat history cleared by user (%d messages)", messages.count)
         AppDelegate.shared?.chatService.clearHistory()
     }
 

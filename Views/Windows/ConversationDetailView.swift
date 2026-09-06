@@ -650,8 +650,10 @@ struct ConversationDetailView: View {
     }
 
     private func regenerate() async {
+        let t0 = Date()
         guard let appDelegate = AppDelegate.shared else { return }
         isRegenerating = true
+        NSLog("[ConversationDetailView] REGENERATE ▶︎ conv %@ — %d transcript items, %d chars", conversationId.uuidString.prefix(8) as CVarArg, transcript.count, fullTranscriptText.count)
         defer { isRegenerating = false }
         lastError = nil
         await appDelegate.structuredGenerator.regenerate(conversationId: conversationId)
@@ -659,6 +661,7 @@ struct ConversationDetailView: View {
         if let conv = conversation,
            conv.title == "Quick note" || (conv.overview ?? "") == "(empty)" {
             lastError = "Regenerate produced no useful output. The transcript may be too short or the LLM proxy is unavailable."
+            NSLog("[ConversationDetailView] REGENERATE ❌ conv %@ — %.1fs, no useful output (placeholder title or empty overview), transcript %d chars", conversationId.uuidString.prefix(8) as CVarArg, Date().timeIntervalSince(t0), fullTranscriptText.count)
         }
     }
 
@@ -668,7 +671,11 @@ struct ConversationDetailView: View {
     /// pastes the transcript into ChatGPT by hand.
     private func generatePlan(_ conv: Conversation) async {
         guard let appDelegate = AppDelegate.shared else { return }
+        let t0 = Date()
+        NSLog("[ConversationDetailView] PLAN start conv %@ — transcript %d chars",
+              conversationId.uuidString.prefix(8) as CVarArg, fullTranscriptText.count)
         isGeneratingPlan = true
+        NSLog("[ConversationDetailView] PLAN ▶︎ conv %@ — %d transcript items, %d chars, engine=%@", conversationId.uuidString.prefix(8) as CVarArg, transcript.count, fullTranscriptText.count, LocalLLMService.shared.isReady ? "local" : (LicenseService.shared.isPro ? "pro" : "none"))
         defer { isGeneratingPlan = false }
         lastError = nil
         actionPlan = nil
@@ -678,10 +685,12 @@ struct ConversationDetailView: View {
                 title: conv.title
             )
             actionPlan = plan
+            NSLog("[ConversationDetailView] PLAN ✅ conv %@ — %.1fs, plan %d chars", conversationId.uuidString.prefix(8) as CVarArg, Date().timeIntervalSince(t0), plan.count)
             // Plan is most useful next to the structured summary.
             selectedTab = .summary
         } catch {
             lastError = "Couldn't generate the plan: \(error.localizedDescription)"
+            NSLog("[ConversationDetailView] PLAN ❌ conv %@ — %.1fs — %@", conversationId.uuidString.prefix(8) as CVarArg, Date().timeIntervalSince(t0), error.localizedDescription)
         }
     }
 }

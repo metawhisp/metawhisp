@@ -68,6 +68,7 @@ final class SystemAudioCaptureService: NSObject, ObservableObject, AudioSource {
                     // the popover, making the user think "nothing happened".
                     // User can click the error banner to open Settings (see popover strip).
                     self.lastError = "🎥 Screen Recording denied. Click here to open Settings"
+                    NSLog("[SystemAudio] Screen Recording still denied after the request — system audio not captured; user shown the click-to-open-Settings banner")
                     self.isStarting = false
                     return
                 }

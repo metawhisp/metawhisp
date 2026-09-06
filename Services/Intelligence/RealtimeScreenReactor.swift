@@ -98,6 +98,7 @@ final class RealtimeScreenReactor: ObservableObject {
         // Recently dismissed tasks are negative examples («не извлекай похожие») —
         // reference injects user-deleted tasks into every extraction prompt.
         let rejectedExamples = recentDismissedDescriptions(limit: 10)
+        NSLog("[RealtimeReactor] reacting in %@: %d chars OCR, %d open-task refs, %d rejected examples, %d calls this hour", context.appName, context.ocrText.count, fulfillmentRefs.count, rejectedExamples.count, callTimestamps.count)
 
         let prompt = buildPrompt(
             appName: context.appName,
@@ -178,6 +179,7 @@ final class RealtimeScreenReactor: ObservableObject {
             // ITER-057.5 — fulfillment applies regardless of hasTask: a screen
             // can prove an old task done while offering no new task.
             applyFulfillment(parsed.fulfilled, sent: fulfillmentRefs, ocr: context.ocrText)
+            NSLog("[RealtimeReactor] model answered in %.1fs: %d chars, hasTask=%d, relevance=%d, fulfilled claims=%d", Date().timeIntervalSince(lastCallPerApp[context.appName] ?? Date()), response.count, parsed.hasTask ? 1 : 0, parsed.relevance ?? -1, parsed.fulfilled?.count ?? 0)
 
             guard parsed.hasTask else {
                 NSLog("[RealtimeReactor] No task on %@ — %@",

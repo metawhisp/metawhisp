@@ -87,6 +87,7 @@ struct OnboardingPermissionsPage: View {
         AVCaptureDevice.requestAccess(for: .audio) { granted in
             DispatchQueue.main.async {
                 withAnimation { micGranted = granted }
+                NSLog("[Onboarding] mic row tapped — granted=%@ status=%d (0=undetermined, 2=denied: requestAccess cannot re-prompt, only System Settings can)", granted ? "yes" : "no", AVCaptureDevice.authorizationStatus(for: .audio).rawValue)
             }
         }
     }
@@ -95,6 +96,7 @@ struct OnboardingPermissionsPage: View {
         // Open System Settings → Privacy → Accessibility
         let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")!
         NSWorkspace.shared.open(url)
+        NSLog("[Onboarding] accessibility row tapped — opened Privacy > Accessibility; trusted=%@ at the moment of the tap", AXIsProcessTrusted() ? "yes" : "no")
     }
 
     private func startPolling() {

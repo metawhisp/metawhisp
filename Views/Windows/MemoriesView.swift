@@ -150,6 +150,7 @@ struct MemoriesView: View {
             try? await Task.sleep(for: .milliseconds(500))
             let newCount = memories.count
             let delta = newCount - beforeCount
+            NSLog("[MemoriesView] EXTRACT NOW finished — %d memories before, %d after (banner: %@)", beforeCount, newCount, delta > 0 ? "added" : "none")
             extractionResult = delta > 0
                 ? "Added \(delta) new \(delta == 1 ? "memory" : "memories")"
                 : "No new memories this cycle (nothing valuable to extract)"

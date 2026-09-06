@@ -183,6 +183,7 @@ final class TextInsertionService {
             }
         } else {
             // No saved app — try to find frontmost non-self app
+            NSLog("[TextInserter] No saved target app — pasting into frontmost: %@", NSWorkspace.shared.frontmostApplication?.localizedName ?? "?")
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
                 self.simulatePaste()
             }

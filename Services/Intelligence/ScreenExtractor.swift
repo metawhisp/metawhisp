@@ -148,6 +148,7 @@ final class ScreenExtractor: ObservableObject {
         }
 
         let prompt = buildPrompt(visits: trimmed)
+        NSLog("[ScreenExtractor] batch start: %d contexts, %d visit records → %d visits, prompt %d chars, route=%@", contexts.count, visitRecords.count, trimmed.count, prompt.count, LocalLLMService.shared.isReady ? "local" : (LicenseService.shared.isPro ? "pro" : "byok"))
 
         do {
             let response: String
@@ -176,6 +177,7 @@ final class ScreenExtractor: ObservableObject {
 
             guard let parsed = parseResponse(response) else {
                 NSLog("[ScreenExtractor] ⚠️ Parse failed")
+                NSLog("[ScreenExtractor] response was %d chars for %d visits", response.count, trimmed.count)
                 return
             }
 

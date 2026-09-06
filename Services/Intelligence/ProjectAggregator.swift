@@ -645,6 +645,7 @@ final class ProjectAggregator: ObservableObject {
         let allDesc = FetchDescriptor<ProjectAlias>()
         var aliases = (try? ctx.fetch(allDesc)) ?? []
         guard aliases.count >= 2 else { return }
+        NSLog("[ProjectAggregator] merge pass start — %d aliases", aliases.count)
 
         // STAGE 1 — Deterministic canonical+Lev pass (ITER-032).
         var deterministicMerges = 0
@@ -735,6 +736,7 @@ final class ProjectAggregator: ObservableObject {
         try? ctx.save()
         // ITER-032: total merge count = deterministic pass (Stage 1) + embedding pass (Stage 2).
         lastMergeCount = deterministicMerges + merges
+        NSLog("[ProjectAggregator] merge pass done — deterministic=%d embedding=%d, %d aliases with centroid", deterministicMerges, merges, withCentroid.count)
     }
 
     // MARK: - Internal helpers

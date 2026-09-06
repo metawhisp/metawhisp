@@ -318,6 +318,7 @@ final class ProactiveContextService: ObservableObject {
         // analysis that never ran (Codex).
         if insightAssistant?.isEvaluating == true {
             runOutcome = "assistantBusy"
+            NSLog("[Proactive] assistant busy — run ends assistantBusy")
             return
         }
 
@@ -331,6 +332,7 @@ final class ProactiveContextService: ObservableObject {
         // INVESTIGATE with tools instead of echoing the current frame.
         let insight: ExtractedInsight?
         let history = fetchHistorySnapshots(now: now)
+        NSLog("[Proactive] run start in %@: %d chars OCR, %d history snapshots, activity summary %d chars", ctx.appName, ctx.ocrText.count, history.count, activitySummary.count)
         // ITER-069 §5 — the investigator may reach into the user's own store,
         // read-only, one call per kind, through the same executor MetaChat
         // already trusts with its privacy filters. Nothing here may mutate.
@@ -365,6 +367,7 @@ final class ProactiveContextService: ObservableObject {
         insight = evaluation?.insight
         runPromptVersion = evaluation?.promptVersion ?? ""
         runTally = assistant.tally
+        NSLog("[Proactive] evaluated in %dms: gate=%@ score=%.2f (%dms), model calls=%d, tool turns=%d, proposal=%d", runTally.totalMilliseconds, runTally.gateOutcome.rawValue, runTally.gateScore, runTally.gateMilliseconds, runTally.textModelCallCount, runTally.toolTurnCount, insight == nil ? 0 : 1)
 
         guard let insight else {
             runOutcome = "noProposal"
@@ -421,6 +424,7 @@ final class ProactiveContextService: ObservableObject {
                         && self?.screenAgentIsOn == true
                 })
             if case .facts(let facts) = outcome, !facts.isEmpty {
+            NSLog("[Proactive] vision answered with %d facts", facts.count)
                 let (seeingEvidence, seeingIDs) = ScreenAgentCandidateAdapter.evidence(
                     contextID: ctx.id, ocrText: ctx.ocrText,
                     history: history, visualFacts: facts)

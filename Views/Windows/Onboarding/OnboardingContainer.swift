@@ -75,6 +75,7 @@ struct OnboardingContainer: View {
         if page < totalPages - 1 {
             appeared = false
             withAnimation(.easeInOut(duration: 0.2)) { page += 1 }
+            NSLog("[Onboarding] step %d of %d", page + 1, totalPages)
             triggerAppear()
         } else {
             onComplete()

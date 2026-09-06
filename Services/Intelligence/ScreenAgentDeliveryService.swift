@@ -301,6 +301,7 @@ final class ScreenAgentDeliveryService {
         guard item.interaction == ScreenAgentDelivery.Interaction.none.rawValue else { return }
         item.interaction = interaction.rawValue
         item.interactedAt = Date()
+        NSLog("[ScreenAgentDelivery] interaction=%@ item=%@", interaction.rawValue, itemID.uuidString)
         if let record = latestDeliveryRecord(itemID: itemID, in: context),
            record.interactionOutcome == nil {
             record.interactionOutcome = interaction.rawValue
@@ -504,6 +505,7 @@ final class ScreenAgentDeliveryService {
         guard let item = (try? context.fetch(descriptor))?.first else { return }
         item.feedbackReason = feedback.rawValue
         item.feedbackAt = Date()
+        NSLog("[ScreenAgentDelivery] feedback=%@ item=%@", feedback.rawValue, itemID.uuidString)
         if item.semanticSignature.isEmpty {
             item.semanticSignature = ScreenAgentDirector.semanticSignature(of: item.headline)
         }

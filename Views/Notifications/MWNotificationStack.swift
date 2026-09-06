@@ -72,6 +72,7 @@ final class MWNotificationStack: ObservableObject {
             // fact from the user closing it, and recording it as nothing at all
             // is how a comment silently ceases to exist.
             recordScreenAgentOutcome(oldest, .replaced)
+            NSLog("[Notifications] card evicted — stack full at %d, dropped kind=%@ after %.1fs on screen", maxStack, String(describing: oldest.kind), Date().timeIntervalSince(oldest.createdAt))
             items.removeLast()
         }
         // Insert at index 0 so the newest is at the top of the visual stack.
@@ -84,6 +85,7 @@ final class MWNotificationStack: ObservableObject {
         // modifier (also tamed below).
         items.insert(notification, at: 0)
         armFade(for: notification.id)
+        NSLog("[Notifications] card shown kind=%@ agent=%@ title=%dch body=%dch stack=%d/%d life=%.0fs", String(describing: notification.kind), notification.screenAgentItemID == nil ? "no" : "yes", notification.title.count, notification.body.count, items.count, maxStack, notification.screenAgentItemID == nil ? autoDismissSeconds : agentCardDismissSeconds)
     }
 
     /// Dismiss one card by id. No-op if not present.
@@ -94,6 +96,7 @@ final class MWNotificationStack: ObservableObject {
     func dismiss(id: UUID, reason: ScreenAgentDelivery.Interaction = .dismissed) {
         if let card = items.first(where: { $0.id == id }) {
             recordScreenAgentOutcome(card, reason)
+            NSLog("[Notifications] card gone kind=%@ reason=%@ after %.1fs agent=%@", String(describing: card.kind), reason.rawValue, Date().timeIntervalSince(card.createdAt), card.screenAgentItemID == nil ? "no" : "yes")
         }
         cancelFade(for: id)
         withAnimation(.easeOut(duration: 0.2)) {

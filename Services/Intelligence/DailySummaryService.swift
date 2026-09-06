@@ -49,6 +49,7 @@ final class DailySummaryService: ObservableObject {
             }
         }
         NSLog("[DailySummary] ✅ Scheduler started")
+        NSLog("[DailySummary] Fires at %02d:%02d · today's recap exists=%@", settings.dailySummaryHour, settings.dailySummaryMinute, hasSummary(for: Calendar.current.startOfDay(for: Date())) ? "yes" : "no")
     }
 
     func stopScheduler() {
@@ -133,6 +134,7 @@ final class DailySummaryService: ObservableObject {
         d.fetchLimit = 1
         guard let row = (try? ctx.fetch(d))?.first, !row.isRead else { return }
         row.isRead = true
+        NSLog("[DailySummary] Recap read %.0f min after generation", Date().timeIntervalSince(row.createdAt) / 60)
         try? ctx.save()
     }
 
@@ -140,6 +142,7 @@ final class DailySummaryService: ObservableObject {
 
     @discardableResult
     private func generate(for dayStart: Date, postNotification: Bool) async -> DailySummary? {
+        let generateStartedAt = Date()
         guard !isRunning else { return nil }
         guard hasLLMAccess else {
             NSLog("[DailySummary] No LLM access — skipping")
@@ -166,6 +169,7 @@ final class DailySummaryService: ObservableObject {
         // on standing targets ("ahead on writing, behind on push-ups"). Pulled at
         // generation time; daily-reset runs inside `resetIfNewDay` per goal.
         let goalsForDay = fetchActiveGoals(ctx: ctx)
+        NSLog("[DailySummary] ▶ Generate trigger=%@ day=%@ conv=%d mem=%d tasksNew=%d tasksDone=%d apps=%d goals=%d", postNotification ? "timer" : "button", dayStart.description, conversations.count, memoriesAdded.count, tasksCreated.count, tasksCompleted.count, topApps.count, goalsForDay.count)
 
         let isEmptyDay = conversations.isEmpty && memoriesAdded.isEmpty
             && tasksCreated.isEmpty && tasksCompleted.isEmpty && topApps.isEmpty
@@ -262,6 +266,7 @@ final class DailySummaryService: ObservableObject {
 
         NSLog("[DailySummary] ✅ Generated: %@ · L=%d D=%d S=%d Q=%d emoji=%@",
               headline, learned.count, decided.count, shipped.count, unresolved.count, dayEmoji)
+              NSLog("[DailySummary] ✅ Generated day=%@ in %.1fs · L=%d D=%d S=%d Q=%d emoji=%@ energy=%d chars · excerpts=%d chars over %d conv · card=%@", dayStart.description, Date().timeIntervalSince(generateStartedAt), learned.count, decided.count, shipped.count, unresolved.count, dayEmoji.isEmpty ? "no" : "yes", energy.count, convExcerpts.values.reduce(0, { $0 + $1.count }), convExcerpts.count, postNotification ? "yes" : "no")
 
         if postNotification {
             postDeliveryNotification(title: headline, overview: energy)
@@ -941,6 +946,7 @@ final class DailySummaryService: ObservableObject {
 
         let (data, response) = try await URLSession.shared.data(for: request)
         if let http = response as? HTTPURLResponse, http.statusCode != 200 {
+        NSLog("[DailySummary] ❌ Proxy HTTP %d%@", http.statusCode, StructuredGenerator.proxyReason(data))
             throw NSError(domain: "DailySummary", code: http.statusCode,
                           userInfo: [NSLocalizedDescriptionKey: "HTTP \(http.statusCode)"])
         }

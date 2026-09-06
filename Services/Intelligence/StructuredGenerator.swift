@@ -142,6 +142,7 @@ final class StructuredGenerator: ObservableObject {
             let transcript = items.map { $0.displayText }.joined(separator: "\n")
             guard transcript.count >= minTranscriptChars else {
                 // Short transcript — flag stays set, persist + skip LLM call.
+                NSLog("[StructuredGenerator] backfill: conv %@ skipped — transcript %d chars < %d, marked attempted", conv.id.uuidString.prefix(8) as CVarArg, transcript.count, minTranscriptChars)
                 try? ctx.save()
                 continue
             }
@@ -229,7 +230,9 @@ final class StructuredGenerator: ObservableObject {
     ///   Mac 2026-05-13 (3k-token prefill × N conversations). Backfill
     ///   stays on cloud; only fresh user-initiated dictations route local.
     func generate(conversationId: UUID, knownTranscript: String? = nil, preferCloud: Bool = false) async {
+        let t0 = Date()
         guard !isRunning else { return }
+        NSLog("[StructuredGenerator] conv %@ dropped — another generation already in flight", conversationId.uuidString.prefix(8) as CVarArg)
         guard hasLLMAccess else {
             NSLog("[StructuredGenerator] No LLM access — skipping")
             return
@@ -250,6 +253,7 @@ final class StructuredGenerator: ObservableObject {
         // StructuredGenerator fired before the HistoryItem was persisted.
         let isPlaceholder = (conv.title == "Quick note")
         if conv.title != nil && conv.overview != nil && !isPlaceholder {
+        NSLog("[StructuredGenerator] conv %@ already structured — skipping", conversationId.uuidString.prefix(8) as CVarArg)
             return
         }
 
@@ -320,6 +324,7 @@ final class StructuredGenerator: ObservableObject {
 
         let startedAt = conv.startedAt
         let userPrompt = buildPrompt(transcript: transcript, startedAt: startedAt)
+        NSLog("[StructuredGenerator] ▶︎ conv %@ — transcript %d chars, prompt %d chars, engine=%@, preferCloud=%d", conversationId.uuidString.prefix(8) as CVarArg, transcript.count, userPrompt.count, (!preferCloud && LocalLLMService.shared.isReady) ? "local" : ((LicenseService.shared.isPro && LicenseService.shared.licenseKey != nil) ? "pro" : "byok"), preferCloud ? 1 : 0)
 
         do {
             let response: String
@@ -349,6 +354,7 @@ final class StructuredGenerator: ObservableObject {
             }
 
             guard let parsed = parseResponse(response) else {
+            NSLog("[StructuredGenerator] ⚠️ parse failed conv %@ — response %d chars after %.1fs, has-brace=%d", conversationId.uuidString.prefix(8) as CVarArg, response.count, Date().timeIntervalSince(t0), response.contains("{") ? 1 : 0)
                 NSLog("[StructuredGenerator] ⚠️ Parse failed for conv %@", conversationId.uuidString.prefix(8) as CVarArg)
                 return
             }
@@ -397,6 +403,7 @@ final class StructuredGenerator: ObservableObject {
                   conv.primaryProject ?? "—",
                   parsed.topics?.count ?? 0,
                   parsed.title)
+                  NSLog("[StructuredGenerator] ✅ conv %@ — %.1fs, response %d chars, title %d chars, overview %d chars, decisions=%d actions=%d participants=%d quotes=%d next=%d topics=%d project=%d", conversationId.uuidString.prefix(8) as CVarArg, Date().timeIntervalSince(t0), response.count, parsed.title.count, parsed.overview.count, parsed.decisions?.count ?? 0, parsed.actionItems?.count ?? 0, parsed.participants?.count ?? 0, parsed.keyQuotes?.count ?? 0, parsed.nextSteps?.count ?? 0, parsed.topics?.count ?? 0, conv.primaryProject == nil ? 0 : 1)
 
             // Embed the now-finalized conversation so MetaChat can semantically retrieve
             // it later. Fire-and-forget; nil embedding falls back to recency ordering.
@@ -422,6 +429,7 @@ final class StructuredGenerator: ObservableObject {
             // there. Nothing to do here on the post-LLM path anymore.
         } catch {
             lastError = error.localizedDescription
+            NSLog("[StructuredGenerator] ❌ conv %@ failed after %.1fs — %@", conversationId.uuidString.prefix(8) as CVarArg, Date().timeIntervalSince(t0), error.localizedDescription)
             NSLog("[StructuredGenerator] ❌ Failed: %@", error.localizedDescription)
         }
     }
@@ -803,6 +811,7 @@ final class StructuredGenerator: ObservableObject {
                                          timeout: 60, label: "Action-plan")
         }.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !plan.isEmpty else { throw ProcessingError.apiError("Empty plan from LLM") }
+        NSLog("[StructuredGenerator] Action-plan pro ✅ plan %d chars, %d of %d sections skipped", plan.count, skipped, ofParts)
         // A plan that covers part of the meeting says so: dropping a section
         // quietly is the same lie as dropping the microphone quietly.
         guard skipped > 0 else { return plan }

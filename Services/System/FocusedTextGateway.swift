@@ -528,6 +528,7 @@ final class FocusedTextGateway {
         isStillCurrent: @escaping @MainActor () -> Bool
     ) async -> Bool {
         NSLog("[LayoutFix] Replacement started")
+        NSLog("[LayoutFix] Replacement plan: %d chars -> %d chars, range len=%d", (expectedText as NSString).length, (replacement as NSString).length, range.length)
 
         // Between selecting the word and pasting over it, the word sits in the
         // user's document as a REAL selection. If they type in that window

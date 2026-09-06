@@ -23,6 +23,7 @@ final class PermissionsService: ObservableObject {
         screenRecordingGranted = CGPreflightScreenCaptureAccess()
         microphoneGranted = checkMicPermission()
         accessibilityGranted = AXIsProcessTrusted()
+        NSLog("[Permissions] state: screen=%@ mic=%@ accessibility=%@", screenRecordingGranted ? "yes" : "no", microphoneGranted ? "yes" : "no", accessibilityGranted ? "yes" : "no")
     }
 
     // MARK: - Screen Recording
@@ -34,6 +35,7 @@ final class PermissionsService: ObservableObject {
     /// Returns true if already granted, false if dialog was shown (user must respond).
     @discardableResult
     func requestScreenRecording() async -> Bool {
+    NSLog("[Permissions] screen-recording request entered — preflight=%@", CGPreflightScreenCaptureAccess() ? "granted" : "denied")
         // 1. Classic TCC dialog — triggers "Screen Recording" prompt
         if !CGPreflightScreenCaptureAccess() {
             NSLog("[Permissions] Requesting Screen Recording via CGRequestScreenCaptureAccess")

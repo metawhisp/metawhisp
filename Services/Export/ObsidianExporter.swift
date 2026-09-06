@@ -477,12 +477,14 @@ final class ObsidianExporter: ObservableObject {
         guard let ctx = makeContext() else { return stats }
         guard vaultURL() != nil else {
             lastError = "Vault path not set or does not exist."
+            NSLog("[ObsidianExporter] ❌ bulk export refused: vault path not set or does not exist")
             return stats
         }
 
         isExporting = true
         defer { isExporting = false }
         lastError = nil
+        NSLog("[ObsidianExporter] bulk export start (Settings button)")
 
         var s = ExportStats.empty
 
@@ -731,6 +733,7 @@ final class ObsidianExporter: ObservableObject {
         let url = URL(fileURLWithPath: raw, isDirectory: true)
         guard FileManager.default.fileExists(atPath: url.path) else {
             lastError = "Vault path does not exist: \(raw)"
+            NSLog("[ObsidianExporter] ❌ vault path does not exist — export skipped")
             return nil
         }
         return url
@@ -745,6 +748,7 @@ final class ObsidianExporter: ObservableObject {
         do {
             try FileManager.default.createDirectory(at: dirURL, withIntermediateDirectories: true)
             try content.write(to: fileURL, atomically: true, encoding: .utf8)
+            if !isExporting { NSLog("[ObsidianExporter] ✅ wrote %@ (%d chars)", kind, content.count) }
         } catch {
             lastError = "Write failed for \(kind) at \(relativePath): \(error.localizedDescription)"
             stats.errors += 1

@@ -192,6 +192,7 @@ final class MLXModelManager: ObservableObject {
         try validatePreflight(spec)
 
         activeDownloadID = spec.id
+        NSLog("[ITER-039] download started: %@ (%lld bytes expected, %lld bytes free on disk)", spec.id, spec.downloadSizeBytes, freeDiskBytes())
         progress = 0
         bytesCompleted = 0
         retryAttempt = 0
@@ -236,6 +237,7 @@ final class MLXModelManager: ObservableObject {
                 activeDownloadID = nil
                 activeTask = nil
                 progress = 1.0
+                NSLog("[ITER-039] ✅ download complete: %@ on attempt %d/%d", spec.id, attempt, maxRetries)
                 retryAttempt = 0
                 downloadedIDs.insert(spec.id)
                 return url
@@ -278,6 +280,7 @@ final class MLXModelManager: ObservableObject {
     /// next `download(...)` call resumes via Hub's metadata check.
     func cancelActiveDownload() {
         activeTask?.cancel()
+        NSLog("[ITER-039] download cancelled by user: %@ at %.0f%%", activeDownloadID ?? "none", progress * 100)
         activeTask = nil
         activeDownloadID = nil
         progress = 0

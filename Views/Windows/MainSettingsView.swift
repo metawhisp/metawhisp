@@ -1890,6 +1890,7 @@ struct MainSettingsView: View {
             toggleRow("Use local model for AI features",
                       isOn: $settings.localLLMEnabled)
                 .onChange(of: settings.localLLMEnabled) { _, enabled in
+                NSLog("[ITER-039] Settings toggle: local model %@", enabled ? "ON" : "OFF")
                     if enabled {
                         let id = settings.localLLMActiveModelID
                         guard !id.isEmpty else { return }
@@ -2291,11 +2292,13 @@ struct MainSettingsView: View {
                 Button(label) {
                     if isActive && isReady {
                         // Deactivating — also unload from memory.
+                        NSLog("[ITER-039] Settings: deactivate %@ (Active clicked)", spec.id)
                         settings.localLLMActiveModelID = ""
                         Task { @MainActor in LocalLLMService.shared.unloadModel() }
                     } else {
                         // Either «Load now» (ID already set, just reload) or
                         // «Make active» (set ID + load). Either way: load.
+                        NSLog("[ITER-039] Settings: %@ %@", isActive ? "Load now" : "Make active", spec.id)
                         settings.localLLMActiveModelID = spec.id
                         Task { @MainActor in
                             try? await LocalLLMService.shared.loadModel(id: spec.id)
@@ -2370,12 +2373,14 @@ struct MainSettingsView: View {
     /// the UI — worst case the directory partially survives and the next
     /// download fully overwrites it.
     private func removeDownloadedModel(_ spec: ModelSpec) {
+    NSLog("[ITER-039] Settings: removing weights for %@ (was active: %@)", spec.id, settings.localLLMActiveModelID == spec.id ? "yes" : "no")
         if settings.localLLMActiveModelID == spec.id {
             settings.localLLMActiveModelID = ""
             Task { @MainActor in LocalLLMService.shared.unloadModel() }
         }
         do {
             try mlxManager.remove(spec)
+            NSLog("[ITER-039] ✅ removed weights for %@", spec.id)
         } catch {
             NSLog("[ITER-039] failed to remove \(spec.id): \(error.localizedDescription)")
         }

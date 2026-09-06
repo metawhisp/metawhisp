@@ -46,6 +46,7 @@ final class TaskExtractor: ObservableObject {
     func triggerOnConversationClose(conversationId: UUID) {
         guard settings.tasksEnabled else { return }
         queue.enqueue(conversationId)
+        NSLog("[TaskExtractor] Conversation closed → extraction queued (convo %@, %d pending)", conversationId.uuidString.prefix(8) as CVarArg, queue.pending().count)
         Task { [weak self] in await self?.drainQueue() }
     }
 
@@ -71,6 +72,7 @@ final class TaskExtractor: ObservableObject {
         isRunning = true
         defer { isRunning = false; lastRun = Date() }
         await queue.drain { id in await self.extractFromConversation(conversationId: id) }
+        NSLog("[TaskExtractor] Drain finished — %d conversation(s) still pending", queue.pending().count)
     }
 
     /// Manual EXTRACT TASKS NOW button. Picks the most recent HistoryItem's conversation
@@ -92,6 +94,7 @@ final class TaskExtractor: ObservableObject {
             return
         }
         queue.enqueue(convId)
+        NSLog("[TaskExtractor] Manual EXTRACT NOW (button) → convo %@ queued, %d pending", convId.uuidString.prefix(8) as CVarArg, queue.pending().count)
         await drainQueue()
     }
 
@@ -112,6 +115,7 @@ final class TaskExtractor: ObservableObject {
         let fragments = items
             .map { $0.displayText.trimmingCharacters(in: .whitespacesAndNewlines) }
             .filter { !$0.isEmpty }
+            if fragments.isEmpty || fragments.reduce(0, { $0 + $1.count }) < 20 { NSLog("[TaskExtractor] Skipping convo %@ — %d non-empty fragments, below the 20-char floor", conversationId.uuidString.prefix(8) as CVarArg, fragments.count) }
 
         guard !fragments.isEmpty else { return .completed }
         let totalChars = fragments.reduce(0) { $0 + $1.count }
@@ -139,6 +143,7 @@ final class TaskExtractor: ObservableObject {
 
         // Use the last fragment's source app if available (proxy for what app user was in most).
         let sourceApp = items.last.flatMap { $0.source } ?? "conversation"
+        NSLog("[TaskExtractor] Start: convo %@, %d fragments, %d transcript chars, %d prompt chars, %d dedup refs, calendar=%@, route=%@", conversationId.uuidString.prefix(8) as CVarArg, fragments.count, totalChars, prompt.count, existing.count, calendarContext == nil ? "no" : "yes", useLocal ? "local" : ((LicenseService.shared.isPro && LicenseService.shared.licenseKey?.isEmpty == false) ? "pro" : "byok"))
 
         do {
             let response: String
@@ -176,6 +181,7 @@ final class TaskExtractor: ObservableObject {
                                             sourceApp: sourceApp,
                                             conversationId: conversationId) else {
                 lastError = "LLM returned unparseable JSON — will retry"
+                NSLog("[TaskExtractor] ⚠️ Unparseable response for convo %@ (%d chars) — counted as failed attempt", conversationId.uuidString.prefix(8) as CVarArg, response.count)
                 return .failedAttempt   // counted — capped at maxFailedAttempts
             }
             guard !tasks.isEmpty else {
@@ -190,6 +196,7 @@ final class TaskExtractor: ObservableObject {
             // queue drop the conversation though nothing persisted — the exact
             // silent loss this iteration fixes. `try` → throw → catch → .retryLater.
             try ctx.save()
+            NSLog("[TaskExtractor] Response %d chars → %d task(s) saved, %d with due date, %d delegated", response.count, tasks.count, tasks.filter { $0.dueAt != nil }.count, tasks.filter { !$0.isMyTask }.count)
             NSLog("[TaskExtractor] ✅ Extracted %d tasks from conversation %@",
                   tasks.count, conversationId.uuidString.prefix(8) as CVarArg)
 

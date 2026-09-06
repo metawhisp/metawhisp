@@ -47,6 +47,7 @@ final class MemoryExtractor: ObservableObject {
     /// Fire-and-forget extraction on the whole conversation. Called by ConversationGrouper
     /// after a conversation closes.
     func triggerOnConversationClose(conversationId: UUID) {
+    NSLog("[MemoryExtractor] Conversation %@ closed — memories %@, queue depth %d", conversationId.uuidString.prefix(8) as CVarArg, settings.memoriesEnabled ? "on" : "off", queue.pending().count)
         guard settings.memoriesEnabled else { return }
         queue.enqueue(conversationId)
         Task { [weak self] in await self?.drainQueue() }
@@ -65,6 +66,7 @@ final class MemoryExtractor: ObservableObject {
     /// (a second conversation closing while we work just enqueues; this pass
     /// picks it up — see `ExtractionQueueStore.drain`) and drives the UI status.
     private func drainQueue() async {
+    NSLog("[MemoryExtractor] Drain requested — %d pending, running=%@, store=%@", queue.pending().count, isRunning ? "yes" : "no", StoreHealthSignal.shared.isHealthy ? "ok" : "degraded")
         guard !isRunning else { return }
         // ITER-049 A2 — never drain the durable queue against a degraded (empty
         // in-memory) store: it would mark queued conversations .completed and
@@ -74,6 +76,7 @@ final class MemoryExtractor: ObservableObject {
         isRunning = true
         defer { isRunning = false; lastRun = Date() }
         await queue.drain { id in await self.extractFromConversation(conversationId: id) }
+        NSLog("[MemoryExtractor] Drain done — %d still pending", queue.pending().count)
     }
 
     /// Manual EXTRACT NOW button. Uses the most recent HistoryItem's conversation.
@@ -99,6 +102,8 @@ final class MemoryExtractor: ObservableObject {
 
     /// Core extraction — collect all transcripts for the conversation, send as one block.
     private func extractFromConversation(conversationId: UUID) async -> ExtractionOutcome {
+    if !hasLLMAccess { NSLog("[MemoryExtractor] Convo %@ stays queued — no LLM access (no API key, not Pro, local model not loaded)", conversationId.uuidString.prefix(8) as CVarArg) }
+        let llmStartedAt = Date()
         guard hasLLMAccess else { return .retryLater }
 
         guard let container = modelContainer else { return .retryLater }
@@ -115,6 +120,7 @@ final class MemoryExtractor: ObservableObject {
 
         guard !fragments.isEmpty else { return .completed }
         let totalChars = fragments.reduce(0) { $0 + $1.count }
+        if totalChars < 20 { NSLog("[MemoryExtractor] Convo %@ dequeued without extraction — %d fragments, %d chars (below the 20-char floor)", conversationId.uuidString.prefix(8) as CVarArg, fragments.count, totalChars) }
         guard totalChars >= 20 else { return .completed }
 
         let existing = fetchExistingMemories()
@@ -146,6 +152,7 @@ final class MemoryExtractor: ObservableObject {
                     return .retryLater
                 }
                 let provider = LLMProvider(rawValue: settings.llmProvider) ?? .openai
+                NSLog("[MemoryExtractor] Extracting via %@ API key (convo %@, %d fragments, %d chars)", provider.displayName, conversationId.uuidString.prefix(8) as CVarArg, fragments.count, totalChars)
                 response = try await llm.complete(
                     system: Self.systemPrompt,
                     user: prompt,
@@ -155,6 +162,7 @@ final class MemoryExtractor: ObservableObject {
             }
 
             // F1.7 — nil = garbage/truncated JSON (routine for local models):
+            NSLog("[MemoryExtractor] LLM returned %d chars in %.1fs (convo %@)", response.count, Date().timeIntervalSince(llmStartedAt), conversationId.uuidString.prefix(8) as CVarArg)
             // keep the conversation queued instead of dequeuing it forever.
             guard let memories = parseResponse(response, sourceApp: sourceApp, windowTitle: windowTitle, conversationId: conversationId) else {
                 lastError = "LLM returned unparseable JSON — will retry"
@@ -195,6 +203,7 @@ final class MemoryExtractor: ObservableObject {
             // queue drop the conversation though nothing persisted — the exact
             // silent loss this iteration fixes. `try` → throw → catch → .retryLater.
             try ctx.save()
+            NSLog("[MemoryExtractor] Convo %@ — %d of %d candidates below confidence %.2f, insert cap %d", conversationId.uuidString.prefix(8) as CVarArg, memories.filter { $0.confidence < minConfidence }.count, memories.count, minConfidence, maxPerExtraction)
             NSLog("[MemoryExtractor] ✅ Extracted %d memories (inserted: %d) from conversation %@",
                   memories.count, insertedMemories.count, conversationId.uuidString.prefix(8) as CVarArg)
 
@@ -608,6 +617,7 @@ final class MemoryExtractor: ObservableObject {
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
 
         let (data, response) = try await URLSession.shared.data(for: request)
+        if let http = response as? HTTPURLResponse, http.statusCode != 200 { NSLog("[MemoryExtractor] Pro proxy refused — HTTP %d (%@), %d-byte body", http.statusCode, http.statusCode == 401 || http.statusCode == 403 ? "license rejected" : (http.statusCode == 429 ? "rate limited" : (http.statusCode >= 500 ? "proxy or model error" : "bad request")), data.count) }
         if let http = response as? HTTPURLResponse, http.statusCode != 200 {
             throw ProcessingError.apiError("Memory proxy HTTP \(http.statusCode)")
         }

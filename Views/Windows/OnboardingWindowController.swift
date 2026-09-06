@@ -56,6 +56,7 @@ final class OnboardingWindowController {
 
     private func complete() {
         AppSettings.shared.hasCompletedOnboarding = true
+        NSLog("[Onboarding] finished — engine=%@ model=%@ accessibility=%@", AppSettings.shared.transcriptionEngine, AppSettings.shared.selectedModel, AXIsProcessTrusted() ? "yes" : "no")
         window?.close()
         window = nil
         NSLog("[Onboarding] Completed")

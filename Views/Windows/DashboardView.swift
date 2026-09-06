@@ -93,6 +93,7 @@ struct DashboardView: View {
 
             Button {
                 coordinator.toggle()
+                NSLog("[Dashboard] RECORD/STOP button tapped")
             } label: {
                 HStack(spacing: 4) {
                     Image(systemName: coordinator.stage == .recording ? "stop.fill" : "mic.fill")
@@ -936,6 +937,7 @@ private struct TodayCard: View {
         }
 
         await MainActor.run { calendarEvents = mapped }
+        NSLog("[Dashboard] calendar section: %d events on selected day, %d linked to conversations", mapped.count, mapped.filter { $0.conversationId != nil }.count)
     }
 
     private var header: some View {
@@ -1127,6 +1129,7 @@ private struct TodayCard: View {
         let target = selectedDate
         Task { @MainActor in
             let result = await AppDelegate.shared?.dailySummaryService.generateForDate(target)
+            NSLog("[Dashboard] Recap GENERATE day=%@ → %@", target.description, result == nil ? "no summary" : "shown")
             localSummary = result
             isGenerating = false
         }

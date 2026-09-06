@@ -459,6 +459,7 @@ struct TasksView: View {
             extractionResult = delta > 0
                 ? "Added \(delta) new \(delta == 1 ? "task" : "tasks")"
                 : "No new tasks (nothing actionable in the last transcript)"
+                NSLog("[TasksView] EXTRACT NOW → banner=%@ (delta=%d, extractor lastError=%@)", delta > 0 ? "added" : "no new tasks", delta, appDelegate.taskExtractor.lastError ?? "none")
             isExtracting = false
         }
     }

@@ -98,6 +98,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         // waiting. The mark is the whole clearing mechanism — the journal rows
         // themselves are history and are not rewritten.
         AppSettings.shared.screenAgentInboxLastOpenedAt = Date().timeIntervalSince1970
+        NSLog("[ScreenAgentInbox] inbox opened — target=%@", itemID == nil ? "list" : "one item")
+        NSLog("[MetaWhisp] Screen Agent inbox opened (selecting item=%d)", itemID == nil ? 0 : 1)
         refreshScreenAgentBadge()
     }
 
@@ -123,6 +125,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         guard let button = statusItem?.button else { return }
         let since = Date(timeIntervalSince1970: AppSettings.shared.screenAgentInboxLastOpenedAt)
         let count = screenAgentDelivery?.unreadCount(since: since) ?? 0
+        NSLog("[ScreenAgentInbox] badge — %d comment(s) waiting, inbox last opened %@", count, AppSettings.shared.screenAgentInboxLastOpenedAt > 0 ? String(format: "%.0f min ago", Date().timeIntervalSince(since) / 60) : "never")
+        NSLog("[MetaWhisp] Screen Agent badge: %d waiting (mark %.0fh ago)", count, Date().timeIntervalSince(since) / 3600)
         guard count > 0 else {
             button.attributedTitle = NSAttributedString(string: "")
             button.toolTip = nil
@@ -346,6 +350,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
 
         // Sparkle auto-updater
         updaterController = SPUStandardUpdaterController(startingUpdater: true, updaterDelegate: nil, userDriverDelegate: nil)
+        NSLog("[MetaWhisp] Sparkle started — v%@ (build %@), autoCheck=%@, lastCheck=%@", Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "?", Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "?", updaterController.updater.automaticallyChecksForUpdates ? "on" : "off", updaterController.updater.lastUpdateCheckDate.map { String(format: "%.1fh ago", Date().timeIntervalSince($0) / 3600) } ?? "never")
 
         NSLog("[MetaWhisp] Launched")
 
@@ -915,6 +920,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         NSLog("[MetaWhisp] Microphone permission: %@", granted ? "GRANTED" : "DENIED")
         if !granted {
             coordinator.lastError = "🎤 Microphone denied — press Right ⌘ to retry (opens Settings)"
+            NSLog("[MetaWhisp] Microphone denied — all three request strategies failed (AVAudioApplication, AVCaptureDevice, AVAudioEngine touch); macOS now holds a standing decision, so requestAccess will not prompt again and only System Settings > Privacy > Microphone can change it")
         }
 
         // 2. Request accessibility (needed for text insertion via Cmd+V)
@@ -942,6 +948,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         }
         let layoutFixState = layoutSwitchController.start()
         NSLog("[LayoutFix] Runtime state: %@", layoutFixState.rawValue)
+        NSLog("[LayoutFix] Armed: auto=%@, doubleShift=%@, switchSource=%@, inputSource=%@", AppSettings.shared.layoutFixAutoEnabled ? "on" : "off", AppSettings.shared.layoutFixDoubleShiftEnabled ? "on" : "off", AppSettings.shared.layoutFixSwitchInputSource ? "on" : "off", InputSourceService().currentLayout()?.rawValue ?? "unsupported")
 
         // 4. Find downloaded models
         await modelManager.fetchAvailableModels()
@@ -1132,6 +1139,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         let storeHealthy = historyService.health.isHealthy
         MCPSnapshotService.shared.configure(container: historyService.modelContainer)
         if storeHealthy { MCPSnapshotService.shared.applyEnabledState() }
+        if !storeHealthy { NSLog("[MCPSnapshot] ⚠️ writer not started — store degraded; on-disk snapshot left stale") }
         structuredGenerator.configure(modelContainer: historyService.modelContainer)
         // Wire embedding so StructuredGenerator embeds each closed conversation
         // right after title/overview populate (ITER-011).
@@ -1783,6 +1791,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
                 transcript: transcript
             )
             MeetingRecapState.shared.present(payload)
+            NSLog("[MeetingRecap] presented conv %@ — %.0fs meeting, title %d chars, overview %d chars, decisions=%d nextSteps=%d participants=%d tasks=%d memories=%d", conversationId.uuidString.prefix(8) as CVarArg, durationSec, title.count, overview.count, decisions.count, nextSteps.count, participants.count, taskCount, memoryCount)
+            NSLog("[MeetingRecap] presented — %.0fs meeting, %d action item(s), %d memory row(s), %d decision(s), %d next step(s)", durationSec, actionItems.count, memoryRows.count, decisions.count, nextSteps.count)
+            NSLog("[MeetingRecap] recap shown: %.0fs meeting, %d transcript chars, %d task(s), %d memory row(s)", durationSec, transcript.count, actionItems.count, memoryRows.count)
         }
 
         // Per-meeting Obsidian markdown via new ITER-035 v2 exporter.
@@ -1854,6 +1865,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             return
         }
         meetingRecorder.keepFinalizationNote(words.note, for: capture.generation)
+        NSLog("[MetaWhisp] mic report surfaced: menu-bar note%@", (words.title != nil && words.body != nil) ? " + card" : " only")
         if let title = words.title, let body = words.body {
             MWNotificationStack.shared.push(MWNotification(kind: .micOutage, title: title, body: body, onTap: nil))
         }
@@ -1948,6 +1960,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             let geminiKey = AppSettings.shared.geminiKey
             if !geminiKey.isEmpty {
                 let gStart = CFAbsoluteTimeGetCurrent()
+                NSLog("[MetaWhisp] Gemini BYOK: sending %.0fs audio in %d slice(s)", Double(max(micSamples.count, sysSamples.count)) / 16000.0, GeminiMeetingTranscriber.sliceRanges(totalSamples: max(micSamples.count, sysSamples.count)).count)
                 do {
                     let text = try await GeminiMeetingTranscriber()
                         .transcribe(mic: micSamples, system: sysSamples, apiKey: geminiKey)
@@ -1977,6 +1990,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             }
 
             let startTime = CFAbsoluteTimeGetCurrent()
+            NSLog("[MetaWhisp] Meeting finalize via %@: mic %.0fs, system %.0fs", engine.name, Double(micSamples.count) / 16000.0, Double(sysSamples.count) / 16000.0)
             // 2026-05-31 — ALWAYS save via the per-channel dual-stream pass so the
             // stored transcript carries Me:/Them: speaker labels ("who said what").
             // The live advisor's partials already powered the real-time copilot
@@ -2081,6 +2095,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         // bleed re-transcribed as «Me:»), consecutive-identical decoder loops,
         // foreign-language fragments. Every drop is logged for recovery.
         let sanitized = MeetingTranscriptSanitizer.sanitize(merged)
+        NSLog("[MetaWhisp] sanitize: %d dropped — %d consecutive-duplicate, %d cross-channel-echo, %d foreign-language-fragment", sanitized.dropped.count, sanitized.dropped.filter { $0.reason == "consecutive-duplicate" }.count, sanitized.dropped.filter { $0.reason == "cross-channel-echo" }.count, sanitized.dropped.filter { $0.reason.hasPrefix("foreign-language-fragment") }.count)
         for drop in sanitized.dropped {
             NSLog("[MetaWhisp] 🧹 sanitize: dropped (%@): '%@'", drop.reason, String(drop.segment.text.prefix(60)))
             SuspectTranscriptLog.append(drop.segment.text, reason: drop.reason,
@@ -2494,12 +2509,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         if let item = historyService.save(result) {
             item.source = "meeting"
             item.modelName = AppSettings.shared.selectedModel
+            NSLog("[MetaWhisp] Meeting stored in Library: %d chars, %.0fs", fullText.count, duration)
             // Assign to Conversation (C1.1) — grouper creates a dedicated completed
             // conversation for the meeting and fires scheduleOnClose (structured gen +
             // memory + task extractors) automatically.
             // `currentMeetingCallContext` enables grouper's resume-window logic
             // so a lid-bounce/wake-from-sleep doesn't fragment one call into N rows.
             conversationGrouper.assign(historyItem: item, callContext: currentMeetingCallContext, meetingDurationSec: duration)
+            NSLog("[MetaWhisp] meeting transcript saved: %d chars, %.0fs audio, conversation=%@", fullText.count, duration, item.conversationId?.uuidString ?? "(none)")
 
             // ITER-012: per-meeting recap notification. Wait long enough for
             // StructuredGenerator (300ms delay → LLM ≈ 3-5s) and the per-transcript
@@ -2530,6 +2547,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         startLayoutFixEventTapProbeIfRequested()
 #endif
         _ = layoutSwitchController.start()
+        NSLog("[LayoutFix] Re-armed on activation: accessibility=%@, enabled=%@, auto=%@, doubleShift=%@", AXIsProcessTrusted() ? "yes" : "no", AppSettings.shared.layoutFixEnabled ? "on" : "off", AppSettings.shared.layoutFixAutoEnabled ? "on" : "off", AppSettings.shared.layoutFixDoubleShiftEnabled ? "on" : "off")
 
         // Re-start services that previously failed due to missing Screen Recording permission.
         // When user grants permission AFTER app launch and returns to the app, this catches that
@@ -2908,6 +2926,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             }
         }
         guard meetingRecorder.recordingGeneration == sniffGeneration, !meetingRecorder.isManualMode else { return }
+        NSLog("[CallDetect] post-start sniff verdict: %@ (peak rawRMS=%.4f over the first 60s, still recording: %@)", sniffHeardAudio ? "audio heard — keeping" : "silent", meetingRecorder.sniffPeakRMS, meetingRecorder.isRecording ? "yes" : "no")
         if meetingRecorder.isRecording, !sniffHeardAudio, meetingRecorder.micHasPermission,
            meetingRecorder.micProducedThisRecording,
            meetingRecorder.micHadOutage || meetingRecorder.micIsDownNow {

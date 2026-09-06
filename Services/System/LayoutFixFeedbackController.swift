@@ -58,6 +58,7 @@ final class LayoutFixFeedbackController {
 
         positionPanel()
         panel.orderFrontRegardless()
+        NSLog("[LayoutFix] Feedback banner shown for 1400 ms: %@, %d chars", direction(for: correction), correction.replacement.count)
 
         dismissTask = Task { @MainActor [weak self] in
             try? await Task.sleep(for: .milliseconds(1400))

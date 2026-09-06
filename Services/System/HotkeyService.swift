@@ -85,6 +85,7 @@ final class HotkeyService: ObservableObject {
             return event
         }
         NSLog("[HotkeyService] Right ⌘, Right ⌥ (tap+long-press) registered (global+local)")
+        NSLog("[HotkeyService] monitors global=%@ local=%@ accessibilityTrusted=%@ — without Accessibility macOS delivers no global key events and every hotkey is silently dead", flagsMonitor != nil ? "ok" : "nil", localFlagsMonitor != nil ? "ok" : "nil", AXIsProcessTrusted() ? "yes" : "no")
     }
 
     private func handleFlagsChanged(_ event: NSEvent) {

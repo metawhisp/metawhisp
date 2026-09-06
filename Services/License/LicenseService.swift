@@ -43,6 +43,7 @@ final class LicenseService: ObservableObject {
     private func scheduleExpiryReverify(after seconds: TimeInterval) {
         expiryReverifyTimer?.invalidate()
         expiryReverifyTimer = Timer.scheduledTimer(withTimeInterval: max(seconds, 1), repeats: false) { _ in
+        NSLog("[License] 72h grace-expiry re-verify tick — cached Pro is dropped unless the server confirms now")
             Task { @MainActor in
                 let s = LicenseService.shared
                 if let t = KeychainHelper.load(key: "com.metawhisp.sessionToken"), !t.isEmpty {
@@ -77,6 +78,7 @@ final class LicenseService: ObservableObject {
         }
 
         // Verify license is still valid on launch
+        NSLog("[License] Launch state: pro=%@, key=%@, stamp=%@, launchVerify=%@", isPro ? "YES" : "NO", hasKey ? "present" : "none", lastVerifiedAt.map { String(format: "%.1fh ago", Date().timeIntervalSince($0) / 3600) } ?? "never", (token?.isEmpty == false) ? "scheduled" : "skipped (no session token)")
         if let token, !token.isEmpty {
             Task { await verify(token: token) }
         }
@@ -88,6 +90,7 @@ final class LicenseService: ObservableObject {
         // account loses client-side Pro within the grace window even if the
         // app never restarts. (No-op when signed out — the token is empty.)
         reverifyTimer = Timer.scheduledTimer(withTimeInterval: 12 * 3600, repeats: true) { _ in
+        NSLog("[License] 12h re-verify tick")
             Task { @MainActor in
                 let s = LicenseService.shared
                 if let t = KeychainHelper.load(key: "com.metawhisp.sessionToken"), !t.isEmpty {
@@ -100,6 +103,7 @@ final class LicenseService: ObservableObject {
     /// Activate Pro via deep link token from website.
     func activate(token: String) async {
         isActivating = true
+        NSLog("[License] Activation START — deep-link token %d chars", token.count)
         lastError = nil
 
         // AUD-025 — never log token material (NSLog goes to a durable file).
@@ -114,6 +118,7 @@ final class LicenseService: ObservableObject {
 
             guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
                 let body = String(data: data, encoding: .utf8) ?? ""
+                NSLog("[License] ❌ Activation rejected — HTTP %d, body %d chars", (response as? HTTPURLResponse)?.statusCode ?? -1, body.count)
                 NSLog("[License] ❌ HTTP error: %@", body)
                 lastError = "Activation failed. Try signing in again."
                 isActivating = false
@@ -234,6 +239,7 @@ final class LicenseService: ObservableObject {
             return
         }
         verifyInFlight = true
+        NSLog("[License] verify START — key=%@, stamp=%@", (licenseKey?.isEmpty == false) ? "present" : "none", lastVerifiedAt.map { String(format: "%.1fh ago", Date().timeIntervalSince($0) / 3600) } ?? "never")
         defer { verifyInFlight = false }
         do {
             // AUD-025 — token in the Authorization header, not the URL.
@@ -374,6 +380,7 @@ final class LicenseService: ObservableObject {
     /// user is still signed in, just not subscribed), and the offline grace path
     /// in `verify`'s catch block — which keeps existing state — is untouched.
     private func clearInactiveLicense() {
+    NSLog("[License] Server says NOT subscribed — dropping Pro (was pro=%@, key=%@, stamp=%@)", isPro ? "YES" : "NO", (licenseKey?.isEmpty == false) ? "present" : "none", lastVerifiedAt == nil ? "never" : "set")
         isPro = false
         licenseKey = nil
         plan = nil
@@ -437,10 +444,13 @@ final class LicenseService: ObservableObject {
         req.timeoutInterval = 10
         do {
             let (data, resp) = try await URLSession.shared.data(for: req)
+            NSLog("[License] Usage meter HTTP %d — %d bytes", (resp as? HTTPURLResponse)?.statusCode ?? -1, data.count)
             guard (resp as? HTTPURLResponse)?.statusCode == 200 else { return }
             if let parsed = Self.parseUsage(data) { usage = parsed }
+            NSLog("[License] Usage meter: used=%.1f limit=%.1f balance=%.1f min", usage?.used ?? -1, usage?.limit ?? -1, usage?.balance ?? -1)
         } catch {
             // Meter is cosmetic — keep the last known value silently.
+            NSLog("[License] ⚠️ Usage meter refresh failed — %@ (keeping last known value)", error.localizedDescription)
         }
     }
 
@@ -451,6 +461,7 @@ final class LicenseService: ObservableObject {
     /// Best-effort: a failed log means at most one free meeting — never a crash
     /// and never a blocked save.
     func logMeetingUsage(minutes: Double) async {
+    NSLog("[License] Usage booking START — %.1f min, key=%@", minutes, (licenseKey?.isEmpty == false) ? "present" : "MISSING (nothing will be booked)")
         guard minutes > 0, let key = licenseKey, !key.isEmpty else { return }
         guard let url = URL(string: "\(api)/api/usage") else { return }
         let body = try? JSONSerialization.data(withJSONObject: ["license_key": key, "minutes": minutes])
@@ -483,6 +494,7 @@ final class LicenseService: ObservableObject {
 
     /// Sign out and clear all stored credentials.
     func signOut() {
+    NSLog("[License] Sign-out START — was pro=%@, key=%@, stamp=%@", isPro ? "YES" : "NO", (licenseKey?.isEmpty == false) ? "present" : "none", lastVerifiedAt == nil ? "never" : "set")
         KeychainHelper.save(key: "com.metawhisp.sessionToken", value: "")
         KeychainHelper.save(key: "com.metawhisp.proEmail", value: "")
         KeychainHelper.save(key: "com.metawhisp.licenseKey", value: "")

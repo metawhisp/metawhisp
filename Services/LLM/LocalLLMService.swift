@@ -134,6 +134,7 @@ final class LocalLLMService: ObservableObject {
             try await performLoad(id: id)
         } catch {
             lastError = (error as? LocalLLMError) ?? .mlxFailure(error.localizedDescription)
+            NSLog("[ITER-039] ❌ loadModel(%@) failed: %@", id, error.localizedDescription)
             throw error
         }
     }
@@ -398,6 +399,7 @@ final class LocalLLMService: ObservableObject {
         do {
             let response = try await session.respond(to: user, options: options)
             let text = response.content.trimmingCharacters(in: .whitespacesAndNewlines)
+            NSLog("[ITER-044] FM response: %d chars out (user=%d chars, maxTokens=%d)", text.count, user.count, maxTokens)
             guard !text.isEmpty else {
                 throw LocalLLMError.foundationModelsFailure("Apple model returned an empty response.")
             }
@@ -411,6 +413,7 @@ final class LocalLLMService: ObservableObject {
             // dead backend. A prompt-specific failure (guardrail / context
             // overflow) leaves FM ready and fails only this request —
             // consistent with an MLX failure (the failedAttempt cap bounds it).
+            NSLog("[ITER-044] ❌ FM request failed: %@", error.localizedDescription)
             if case .unavailable = SystemLanguageModel.default.availability {
                 NSLog("[ITER-044] FM became unavailable mid-session — falling back to cloud")
                 resetLoadedModelState()
@@ -439,6 +442,7 @@ final class LocalLLMService: ObservableObject {
             let myTask = Task { @MainActor in
                 await predecessor?.value
                 guard isReady, backend == .foundationModels, !cancelFlag.isSet() else {
+                NSLog("[ITER-044] FM generate skipped — empty stream (ready=%@, backendIsFM=%@, cancelled=%@)", isReady ? "yes" : "no", backend == .foundationModels ? "yes" : "no", cancelFlag.isSet() ? "yes" : "no")
                     continuation.finish()
                     return
                 }
@@ -626,6 +630,7 @@ final class LocalLLMService: ObservableObject {
         // baseline. mlx-swift docs (Memory.swift:355) confirm this is
         // the supported reclaim path.
         MLX.Memory.clearCache()
+        NSLog("[ITER-039] generation finished: %d tokens out, %d prompt tokens, cap hit=%@", generated, inputIds.count, generated >= maxTokens ? "yes" : "no")
 
         let memAfter = MLX.Memory.snapshot()
         NSLog("[ITER-039 mem] active=%dMB→%dMB  cache=%dMB→%dMB  peak=%dMB",
@@ -666,6 +671,7 @@ final class LocalLLMService: ObservableObject {
         let cappedUser = user.count > maxUserChars
             ? String(user.prefix(maxUserChars)) + "\n[local-LLM truncation]"
             : user
+            NSLog("[ITER-039] completeBlocking: system=%d chars, user=%d chars%@, maxTokens=%d, backend=%@", system.count, cappedUser.count, user.count > maxUserChars ? " (truncated from \(user.count))" : "", maxTokens, backend == .foundationModels ? "fm" : "mlx")
 
         // ITER-044 — Apple Foundation Models backend: one out-of-process
         // `respond` call, no MLX/GCD dance. `system` maps to the session's
@@ -696,6 +702,7 @@ final class LocalLLMService: ObservableObject {
         // (and cancels the decode loop via onTermination). Report that as
         // CancellationError, not a scary "no tokens" failure.
         try Task.checkCancellation()
+        NSLog("[ITER-039] completeBlocking: %d chars out%@", collected.count, collected.isEmpty ? " — NO TOKENS" : "")
         if collected.isEmpty {
             throw NSError(domain: "LocalLLM", code: -1, userInfo: [
                 NSLocalizedDescriptionKey: "Local model returned no tokens. Check Settings → AI Models."

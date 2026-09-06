@@ -305,11 +305,13 @@ final class CalendarReaderService: ObservableObject {
     /// Main scan: creates tasks from upcoming events + memories from patterns.
     func scanNow() async {
         guard !isRunning else { return }
+        if !settings.calendarReaderEnabled || !hasLLMAccess { NSLog("[Calendar] scan skipped: calendarEnabled=%@ llmAccess=%@ (no API key, not Pro, local model not loaded)", settings.calendarReaderEnabled ? "yes" : "no", hasLLMAccess ? "yes" : "no") }
         guard settings.calendarReaderEnabled else { return }
         guard hasLLMAccess else { return }
         guard let container = modelContainer else { return }
 
         isRunning = true
+        NSLog("[Calendar] scan start: window -%dd..+%dd, max %d events to LLM", daysBack, daysForward, maxEventsForLLM)
         defer {
             isRunning = false
             lastRun = Date()
@@ -358,6 +360,7 @@ final class CalendarReaderService: ObservableObject {
     private func extractMemoriesFromEvents(_ events: [EKEvent], in ctx: ModelContext) async -> Int {
         let existingContents = fetchRecentMemoryContents(in: ctx, limit: 150)
         let prompt = buildMemoryPrompt(events: events, existing: existingContents)
+        NSLog("[Calendar] memory extraction: %d events, %d existing memories in prompt, prompt %d chars", events.count, existingContents.count, prompt.count)
 
         do {
             let response: String
@@ -382,6 +385,7 @@ final class CalendarReaderService: ObservableObject {
             }
 
             let mems = parseMemories(response)
+            NSLog("[Calendar] LLM returned %d memories (%d chars response)", mems.count, response.count)
             var added = 0
             for m in mems where m.confidence >= minConfidence {
                 let trimmed = m.content.trimmingCharacters(in: .whitespacesAndNewlines)

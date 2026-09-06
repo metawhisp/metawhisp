@@ -107,6 +107,7 @@ enum ChunkedCompletion {
                 ])
             }
             let combined = try await mapPass(pieces, transform: false).joined(separator: "\n\n")
+            NSLog("[ChunkedCompletion] round %d: %d chunks → %d chars (%@)", round, pieces.count, combined.count, combined.count <= chunkChars ? "reduce" : "fold again")
             if combined.count <= chunkChars {
                 return try await complete(system, combined, .reduce)
             }

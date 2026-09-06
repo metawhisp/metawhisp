@@ -391,6 +391,7 @@ final class MeetingRecorder: ObservableObject {
                 if self.systemAudio.isRecording { break }
                 if let err = self.systemAudio.lastError {
                     self.lastError = err
+                    NSLog("[MeetingRecorder] ❌ start aborted — system audio reported: %@", err)
                     self.isStarting = false
                     return
                 }
@@ -400,6 +401,7 @@ final class MeetingRecorder: ObservableObject {
 
             guard self.systemAudio.isRecording else {
                 self.lastError = self.systemAudio.lastError ?? "System audio failed to start"
+                NSLog("[MeetingRecorder] ❌ start aborted after 5s — system audio never came up (screen recording permission: %@): %@", self.systemAudio.hasPermission ? "granted" : "denied", self.lastError ?? "no reason reported")
                 self.isStarting = false
                 // Review fix — the recorder gave up, so cancel the in-flight
                 // system-audio setup too (its retry path can outlast our 5s
@@ -449,6 +451,7 @@ final class MeetingRecorder: ObservableObject {
             } else {
                 self.armMaxDurationGuard()
                 self.armSilenceGuard()
+                NSLog("[MeetingRecorder] auto mode — silence guard %.1fm below %.4f RMS, max duration %.0fm", max(0.5, AppSettings.shared.meetingSilenceStopMinutes), Self.silenceRMSThreshold, max(5, AppSettings.shared.meetingMaxDurationMinutes))
             }
         }
     }
@@ -594,6 +597,7 @@ final class MeetingRecorder: ObservableObject {
         }
         let micSamples = applyPauseMutes(to: rawMicSamples)
         let sysSamples = systemAudio.stop()
+        NSLog("[MeetingRecorder] recorded %.0fs wall-clock (%@ mode)", recordingStartedAt.map { Date().timeIntervalSince($0) } ?? 0, isManualMode ? "manual" : "auto")
 
         isRecording = false
         isStarting = false

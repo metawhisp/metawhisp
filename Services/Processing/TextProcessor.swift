@@ -294,6 +294,7 @@ final class TextProcessor {
         )
         // Review fix — long selections prefer the cloud when available (same
         // rule as process()); local-only users get transform-mode chunking.
+        NSLog("[TextProcessor] translateOnly START: textLen=%d, target=%@, route=%@", text.count, targetCode, "\(route)")
         let cloudAvailable = (isPro && licenseKey != nil) || !settings.activeAPIKey.isEmpty
         if route == .local && !(text.count > 6000 && cloudAvailable) {
             do {

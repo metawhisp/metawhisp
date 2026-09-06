@@ -82,6 +82,7 @@ final class TaskPrioritizationService: ObservableObject {
         let goals = fetchGoals(in: ctx)
         let completed = fetchDescriptions(in: ctx, completed: true, limit: 10)
         let dismissed = fetchDismissedDescriptions(in: ctx, limit: 10)
+        NSLog("[TaskPrioritization] Re-rank start: %d staged, %d goals, %d completed refs, %d dismissed refs, route=%@", staged.count, goals.count, completed.count, dismissed.count, LocalLLMService.shared.isReady ? "local" : (LicenseService.shared.isPro ? "pro" : "byok"))
         let prompt = Self.buildPrompt(
             goals: goals,
             staged: staged.map { (id: $0.id, description: $0.taskDescription, dueAt: $0.dueAt, createdAt: $0.createdAt) },
@@ -137,6 +138,7 @@ final class TaskPrioritizationService: ObservableObject {
                 try freshCtx.save()
                 MCPSnapshotService.shared.snapshotNow()
                 NSLog("[TaskPrioritization] ✅ Re-ranked %d staged candidates", applied)
+                NSLog("[TaskPrioritization] Response %d chars → %d positions parsed, %d applied, %d live staged of %d sent", response.count, positions.count, applied, fresh.count, staged.count)
             } catch {
                 NSLog("[TaskPrioritization] ⚠️ Save failed: %@", error.localizedDescription)
             }

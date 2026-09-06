@@ -418,7 +418,7 @@ final class LayoutSwitchController {
             return
         }
 
-        NSLog("[LayoutFix] High-confidence automatic candidate detected")
+        NSLog("[LayoutFix] Automatic candidate: token=%d chars, replacement=%d chars, %@ -> %@", bufferedToken.token.count, correction.replacement.count, bufferedToken.source.rawValue, correction.targetLayout.rawValue)
         scheduleAutomaticCorrection(
             bufferedToken: bufferedToken,
             correction: correction
@@ -537,6 +537,7 @@ final class LayoutSwitchController {
             _ = inputSourceService.select(correction.targetLayout)
         }
         NSLog("[LayoutFix] Automatic replacement applied")
+        NSLog("[LayoutFix] Automatic replacement applied: %d chars, target=%@", correction.replacement.count, correction.targetLayout.rawValue)
         onAutomaticCorrection?(correction)
     }
 
@@ -578,6 +579,7 @@ final class LayoutSwitchController {
         }
 
         NSLog("[LayoutFix] Double Shift gesture detected")
+        NSLog("[LayoutFix] Double Shift input source: %@", inputSourceService.currentLayout()?.rawValue ?? "unsupported — gesture ignored")
         wordBuffer.reset()
         guard let source = inputSourceService.currentLayout() else { return }
         guard !correctionIsInFlight else {
@@ -613,6 +615,7 @@ final class LayoutSwitchController {
                 _ = self.inputSourceService.select(correction.targetLayout)
             }
             self.onAutomaticCorrection?(correction)
+            NSLog("[LayoutFix] Manual replacement applied: %d chars, target=%@", correction.replacement.count, correction.targetLayout.rawValue)
         }
     }
 }
