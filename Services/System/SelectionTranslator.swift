@@ -10,13 +10,44 @@ final class SelectionTranslator {
     private let textInserter: TextInsertionService
     private let soundService: SoundService
     private let overlay: RecordingOverlayController
+    private let pasteboard: NSPasteboard
 
     init(textProcessor: TextProcessor, textInserter: TextInsertionService,
-         soundService: SoundService, overlay: RecordingOverlayController) {
+         soundService: SoundService, overlay: RecordingOverlayController,
+         pasteboard: NSPasteboard = .general) {
         self.textProcessor = textProcessor
         self.textInserter = textInserter
         self.soundService = soundService
         self.overlay = overlay
+        self.pasteboard = pasteboard
+    }
+
+    /// Reading the selection means borrowing the clipboard: clear it, ask the
+    /// app to copy, take what lands. Everything borrowed is given back — every
+    /// representation, on every path, including success — and never over a
+    /// copy the user made meanwhile.
+    ///
+    /// This is `PasteboardReplacementTransaction`'s contract, which the layout
+    /// fix has kept since 2026-08-16 (`LayoutClipboardOwnershipTests`). The
+    /// translator kept its own: a snapshot of the plain-text flavour only, a
+    /// `clearContents()` that destroyed the rest, and no restore at all when
+    /// the translation succeeded.
+    final class ClipboardBorrow {
+        private let transaction: PasteboardReplacementTransaction
+
+        init(pasteboard: NSPasteboard) {
+            transaction = PasteboardReplacementTransaction(pasteboard: pasteboard)
+        }
+
+        /// Clear, so a copy that lands is recognisably new.
+        func begin() { transaction.beginSelectionCopy() }
+
+        /// Exactly one advance is the app answering our synthetic ⌘C.
+        @discardableResult
+        func acknowledgeCopy() -> Bool { transaction.acknowledgeSelectionCopy() }
+
+        /// Put back what we took, unless somebody else owns the clipboard now.
+        func giveBack() { transaction.restoreIfOwned() }
     }
 
     /// Read the currently selected text, translate it, and paste the result back (replacing selection).
@@ -29,11 +60,9 @@ final class SelectionTranslator {
         // Save the currently focused app so paste goes back to it
         textInserter.savePreviousApp()
 
-        let pasteboard = NSPasteboard.general
-        let previousContents = pasteboard.string(forType: .string)
-
-        // Clear clipboard so we can detect if Cmd+C copies something new
-        pasteboard.clearContents()
+        let borrow = ClipboardBorrow(pasteboard: pasteboard)
+        borrow.begin()
+        NSLog("[SelectionTranslator] borrowing the clipboard to read the selection")
 
         // Simulate Cmd+C to copy selected text
         simulateCmd(CGKeyCode(kVK_ANSI_C))
@@ -45,25 +74,23 @@ final class SelectionTranslator {
             if text.isEmpty {
                 // Retry once more after another 0.3s
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-                    self.handleCopiedText(pasteboard: pasteboard, previousContents: previousContents)
+                    self.handleCopiedText(borrow: borrow)
                 }
             } else {
-                self.handleCopiedText(pasteboard: pasteboard, previousContents: previousContents)
+                self.handleCopiedText(borrow: borrow)
             }
         }
     }
 
-    private func handleCopiedText(pasteboard: NSPasteboard, previousContents: String?) {
+    private func handleCopiedText(borrow: ClipboardBorrow) {
+        let owned = borrow.acknowledgeCopy()
         let selectedText = pasteboard.string(forType: .string)?
             .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
 
-        guard !selectedText.isEmpty else {
-            NSLog("[SelectionTranslator] No text selected, aborting")
-            // Restore previous clipboard
-            if let prev = previousContents {
-                pasteboard.clearContents()
-                pasteboard.setString(prev, forType: .string)
-            }
+        guard owned, !selectedText.isEmpty else {
+            NSLog("[SelectionTranslator] nothing to translate (copy landed: %@, %d chars) — clipboard given back",
+                  owned ? "yes" : "no", selectedText.count)
+            borrow.giveBack()
             return
         }
 
@@ -78,16 +105,14 @@ final class SelectionTranslator {
                 textInserter.insert(text: translated)
                 soundService.playTranslateDone()
                 overlay.hideTranslating()
-                NSLog("[SelectionTranslator] ✅ Done: %d → %d chars", selectedText.count, translated.count)
+                NSLog("[SelectionTranslator] ✅ done: %d → %d chars, clipboard given back",
+                      selectedText.count, translated.count)
+                borrow.giveBack()
             } catch {
-                NSLog("[SelectionTranslator] ❌ %@", error.localizedDescription)
+                NSLog("[SelectionTranslator] ❌ %@ — clipboard given back", error.localizedDescription)
                 soundService.playError()
                 overlay.hideTranslating()
-                // Restore original clipboard on failure
-                if let prev = previousContents {
-                    pasteboard.clearContents()
-                    pasteboard.setString(prev, forType: .string)
-                }
+                borrow.giveBack()
             }
         }
     }

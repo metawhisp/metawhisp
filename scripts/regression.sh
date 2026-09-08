@@ -44,6 +44,7 @@ CRITICAL_SUITES=(
     LayoutCorpusBenchmarkTests
     LayoutKeystrokeReplacementTests
     LayoutClipboardOwnershipTests
+    SelectionTranslateClipboardTests
     LayoutTypingRaceTests
     # meetings
     MeetingChunkTextGateTests
