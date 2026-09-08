@@ -25,6 +25,7 @@ final class HotkeyService: ObservableObject {
     /// Right Cmd long-press state.
     private var rightCmdLongPressTimer: DispatchWorkItem?
     private var rightCmdLongPressFired = false
+    private var accessibilityWatch: Timer?
     private var flagsMonitor: Any?
     private var localFlagsMonitor: Any?
     private var keyMonitor: Any?
@@ -85,6 +86,7 @@ final class HotkeyService: ObservableObject {
             return event
         }
         NSLog("[HotkeyService] Right ⌘, Right ⌥ (tap+long-press) registered (global+local)")
+        watchForAccessibilityGrant()
         NSLog("[HotkeyService] monitors global=%@ local=%@ accessibilityTrusted=%@ — without Accessibility macOS delivers no global key events and every hotkey is silently dead", flagsMonitor != nil ? "ok" : "nil", localFlagsMonitor != nil ? "ok" : "nil", AXIsProcessTrusted() ? "yes" : "no")
     }
 
@@ -221,7 +223,52 @@ final class HotkeyService: ObservableObject {
         }
     }
 
+    /// macOS delivers global key events only to a trusted process, and these
+    /// monitors do not begin working when the grant arrives later — they have
+    /// to be installed again. Without this, granting Accessibility mid-session
+    /// left Right ⌘ dead until the next launch while the log said "registered"
+    /// (audit, 2026-09-06, P1).
+    private func watchForAccessibilityGrant() {
+        accessibilityWatch?.invalidate()
+        var wasTrusted = AXIsProcessTrusted()
+        guard HotkeyRearmPolicy.keepWatching(isTrusted: wasTrusted, elapsedSeconds: 0) else { return }
+        NSLog("[HotkeyService] not trusted yet — watching for the Accessibility grant (up to %.0fs)",
+              HotkeyRearmPolicy.watchCeilingSeconds)
+        let startedAt = Date()
+        accessibilityWatch = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] timer in
+            guard let self else { timer.invalidate(); return }
+            let isTrusted = AXIsProcessTrusted()
+            let elapsed = Date().timeIntervalSince(startedAt)
+            if HotkeyRearmPolicy.shouldRearm(wasTrusted: wasTrusted, isTrusted: isTrusted) {
+                NSLog("[HotkeyService] Accessibility granted after %.0fs — installing the monitors again", elapsed)
+                self.reinstallMonitors()
+                timer.invalidate()
+                self.accessibilityWatch = nil
+                return
+            }
+            wasTrusted = isTrusted
+            guard HotkeyRearmPolicy.keepWatching(isTrusted: isTrusted, elapsedSeconds: elapsed) else {
+                NSLog("[HotkeyService] still not trusted after %.0fs — the hotkeys wait for the next launch", elapsed)
+                timer.invalidate()
+                self.accessibilityWatch = nil
+                return
+            }
+        }
+    }
+
+    /// Tear the four monitors down and put them back with the same handlers.
+    private func reinstallMonitors() {
+        guard let onToggle, let onPTTStart, let onPTTStop, let onTranslateToggle,
+              let onTranslateLongPress, let onVoiceQuestionStart, let onVoiceQuestionStop else { return }
+        unregister()
+        register(onToggle: onToggle, onPTTStart: onPTTStart, onPTTStop: onPTTStop,
+                 onTranslateToggle: onTranslateToggle, onTranslateLongPress: onTranslateLongPress,
+                 onVoiceQuestionStart: onVoiceQuestionStart, onVoiceQuestionStop: onVoiceQuestionStop)
+    }
+
     func unregister() {
+        accessibilityWatch?.invalidate()
+        accessibilityWatch = nil
         longPressTimer?.cancel()
         longPressTimer = nil
         rightCmdLongPressTimer?.cancel()
