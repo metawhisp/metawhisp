@@ -60,6 +60,7 @@ CRITICAL_SUITES=(
     MicRecoveryTests
     MeetingShutdownTests
     StructuredRegenerateTests
+    MemoryProposalConfirmationTests
     MicOutageReportTests
     MicTimelinePlacementTests
     # screen capture privacy + freshness

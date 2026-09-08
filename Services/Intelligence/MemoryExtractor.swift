@@ -176,7 +176,7 @@ final class MemoryExtractor: ObservableObject {
             // Saying it out loud IS the confirmation: when a fact matches a
             // proposal the screen made earlier, confirm that row instead of
             // inserting a second copy of the same sentence.
-            var pending = fetchPendingProposals()
+            var pending = Self.pendingProposals(in: ctx)
             var insertedMemories: [UserMemory] = []
             var confirmedCount = 0
             for mem in memories where mem.confidence >= minConfidence {
@@ -186,8 +186,7 @@ final class MemoryExtractor: ObservableObject {
                         .caseInsensitiveCompare(text) == .orderedSame
                 }) {
                     let proposal = pending.remove(at: idx)
-                    proposal.needsReview = false
-                    proposal.updatedAt = Date()
+                    Self.confirm(proposal)   // saved with `ctx` below, not in a throwaway context
                     confirmedCount += 1
                     continue
                 }
@@ -488,9 +487,14 @@ final class MemoryExtractor: ObservableObject {
     }
 
     /// Pending screen proposals, for the confirm-by-saying-it path.
-    private func fetchPendingProposals(limit: Int = 500) -> [UserMemory] {
-        guard let container = modelContainer else { return [] }
-        let ctx = ModelContext(container)
+    /// Proposals waiting for the user, read INTO THE CALLER'S CONTEXT.
+    ///
+    /// This used to make its own `ModelContext`, so confirming a proposal —
+    /// clearing `needsReview` — happened on objects belonging to a context
+    /// nobody saved. The confirmation vanished, and the memory was skipped
+    /// from that extraction as well, so the fact was lost twice (audit,
+    /// 2026-09-06, P1).
+    static func pendingProposals(in ctx: ModelContext, limit: Int = 500) -> [UserMemory] {
         var desc = FetchDescriptor<UserMemory>(
             predicate: #Predicate { !$0.isDismissed && $0.needsReview },
             sortBy: [SortDescriptor(\.createdAt, order: .reverse)]
@@ -498,6 +502,14 @@ final class MemoryExtractor: ObservableObject {
         desc.fetchLimit = limit
         return (try? ctx.fetch(desc)) ?? []
     }
+
+    /// The user said it out loud, so it is no longer a proposal. The caller
+    /// saves the context this object belongs to.
+    static func confirm(_ proposal: UserMemory) {
+        proposal.needsReview = false
+        proposal.updatedAt = Date()
+    }
+
 
     // MARK: - Response parsing
 
