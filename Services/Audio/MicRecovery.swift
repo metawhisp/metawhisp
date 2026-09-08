@@ -206,6 +206,10 @@ struct MicTickInput: Equatable {
     var lowRateTicks: Int
     /// The window `producedSinceLastTick` covers, in seconds.
     var secondsSinceLastTick: Double = 1
+    /// The recording service is already rebinding after a device change. Two
+    /// owners rebinding one engine is a race; the tick waits. Released by the
+    /// follow finishing — success or failure — not by a timer.
+    var followInFlight = false
     /// Since the meeting started.
     var elapsed: Double
     var outageOpen: Bool
@@ -298,7 +302,8 @@ enum MicRecoveryPolicy {
             // made three such restarts and moved the meeting to the built-in
             // microphone (independent review, v16). Released by the close
             // above, or by the next unhealthy tick, which resets the count.
-            d.attempt = i.attemptDue && !(i.state == .delivering && i.healthyTicks >= 1)
+            d.attempt = i.attemptDue && !i.followInFlight
+                && !(i.state == .delivering && i.healthyTicks >= 1)
             return d
         }
 

@@ -719,6 +719,7 @@ final class MeetingRecorder: ObservableObject {
                                  healthyTicks: micHealthyTicks,
                                  lowRateTicks: micLowRateTicks,
                                  secondsSinceLastTick: rateWindow,
+                                 followInFlight: mic.followInFlight,
                                  elapsed: now,
                                  outageOpen: micOutage != nil,
                                  attemptDue: micOutage?.shouldAttempt(at: now) ?? false)

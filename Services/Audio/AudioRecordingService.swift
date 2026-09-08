@@ -120,6 +120,11 @@ final class AudioRecordingService: ObservableObject, AudioSource {
     /// Bind to the built-in microphone instead of the system default on the
     /// next bind. Recovery sets it after the default has failed repeatedly.
     var preferBuiltInInput = false
+    /// A follow is scheduled or running. The meeting recorder's tick reads
+    /// this and stands down, so one engine never has two owners rebinding it.
+    private(set) var followInFlight = false
+    private var followAttempts = 0
+
     /// Incremented on every bind. The tap closure carries its generation and
     /// the main-actor hop drops buffers from a retired engine: they used to
     /// land after a rebind and look like the replacement delivering.
@@ -364,6 +369,43 @@ final class AudioRecordingService: ObservableObject, AudioSource {
                     grave.bury(tearDown: wasRecording)
                     // engine released inside bury(), on a background thread.
                 }
+                // Bring the microphone back. Starting capture on a Bluetooth
+                // headset makes macOS switch it to the hands-free profile,
+                // which lands here ~400 ms after the bind — and dictation,
+                // having no recovery tick of its own, simply recorded nothing
+                // (owner's log, 2026-09-08 19:23: eight seconds of speech,
+                // `0 samples, discarding`).
+                // A live recording FOLLOWS the device. This is the normal
+                // path, not a recovery: a headset switching to its hands-free
+                // profile, a monitor being plugged in and AirPods connecting
+                // all land here, and the recording should simply continue on
+                // whatever the input is now.
+                guard MicDeviceFollow.shouldFollow(wasRecording: wasRecording,
+                                                   attempts: self.followAttempts) else {
+                    if wasRecording {
+                        NSLog("[AudioRecording] ⚠️ the input device kept changing — stopped following after %d switch(es)",
+                              self.followAttempts)
+                    }
+                    return
+                }
+                self.followAttempts += 1
+                self.followInFlight = true
+                let attempt = self.followAttempts
+                NSLog("[AudioRecording] input device changed mid-recording — following it (switch %d of %d)",
+                      attempt, MicDeviceFollow.maxAttempts)
+                Task { @MainActor [weak self] in
+                    try? await Task.sleep(for: .seconds(MicDeviceFollow.settleDelaySeconds))
+                    guard let self else { return }
+                    defer { self.followInFlight = false }
+                    guard !self.isRecording else { return }
+                    do {
+                        try self.resume()   // keeps what was captured before the switch
+                        NSLog("[AudioRecording] ✅ now recording on the new input device (switch %d)", attempt)
+                    } catch {
+                        NSLog("[AudioRecording] ❌ could not follow the device (switch %d): %@",
+                              attempt, error.localizedDescription)
+                    }
+                }
             }
         }
     }
@@ -372,6 +414,7 @@ final class AudioRecordingService: ObservableObject, AudioSource {
     /// default when none is configured.
     func start() throws {
         guard !isRecording else { return }
+        followAttempts = 0
         defer { buryPending() }
         try bind(keepingSamples: false)
     }
