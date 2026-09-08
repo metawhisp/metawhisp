@@ -58,6 +58,7 @@ CRITICAL_SUITES=(
     # microphone health
     DeadMicDetectorTests
     MicRecoveryTests
+    MeetingShutdownTests
     MicOutageReportTests
     MicTimelinePlacementTests
     # screen capture privacy + freshness

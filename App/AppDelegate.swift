@@ -2565,6 +2565,46 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         }
     }
 
+    /// Quitting used to drop a meeting in progress: the mic and system buffers
+    /// live in RAM until `stop()` hands them on, so ⌘Q — or Sparkle's
+    /// Install-and-Relaunch — took the whole recording with it (audit,
+    /// 2026-09-06, P1). macOS is asked to wait while both channels are written
+    /// to the Recovery folder, and the wait is bounded so a stuck write cannot
+    /// turn a quit into a hang.
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        let plan = MeetingShutdown.plan(
+            isRecording: meetingRecorder.isRecording,
+            isStarting: meetingRecorder.isStarting,
+            micSamples: meetingMic.currentSampleCount,
+            systemSamples: systemAudioCapture.currentSampleCount)
+        guard case let .rescue(micCount, sysCount) = plan else {
+            NSLog("[MetaWhisp] quit — no meeting to rescue")
+            return .terminateNow
+        }
+        NSLog("[MetaWhisp] quit during a meeting — rescuing %d mic + %d system samples to the Recovery folder",
+              micCount, sysCount)
+        let capture = meetingRecorder.stop()
+        let stamp: String = {
+            let f = DateFormatter(); f.dateFormat = "yyyy-MM-dd-HH-mm-ss"
+            return f.string(from: Date())
+        }()
+        let names = MeetingShutdown.fileNames(stamp: stamp)
+        let deadline = DispatchTime.now() + MeetingShutdown.rescueDeadlineSeconds
+        DispatchQueue.global(qos: .userInitiated).async {
+            let mic = TranscriptionCoordinator.saveSamplesAsWav(capture.mic, named: names.mic)
+            let sys = TranscriptionCoordinator.saveSamplesAsWav(capture.system, named: names.system)
+            NSLog("[MetaWhisp] quit rescue done — me: %@, them: %@",
+                  mic == nil ? "not written" : "written", sys == nil ? "not written" : "written")
+            DispatchQueue.main.async { NSApp.reply(toApplicationShouldTerminate: true) }
+        }
+        // The wait ends either way: a write that hangs must not hold the quit.
+        DispatchQueue.main.asyncAfter(deadline: deadline) {
+            NSLog("[MetaWhisp] quit rescue deadline reached — quitting")
+            NSApp.reply(toApplicationShouldTerminate: true)
+        }
+        return .terminateLater
+    }
+
     func applicationWillTerminate(_ notification: Notification) {
         layoutSwitchController.stop()
 #if DEBUG

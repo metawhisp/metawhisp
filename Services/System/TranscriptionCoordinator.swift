@@ -529,7 +529,7 @@ final class TranscriptionCoordinator: ObservableObject {
     /// `~/Library/Application Support/MetaWhisp/Recovery/`.
     /// Used when transcription fails — gives the user something they can
     /// re-submit instead of losing the dictation entirely.
-    static func saveSamplesAsWav(_ samples: [Float]) -> URL? {
+    static func saveSamplesAsWav(_ samples: [Float], named fileName: String? = nil) -> URL? {
         guard !samples.isEmpty else { return nil }
 
         // Resolve / create the recovery folder.
@@ -552,7 +552,7 @@ final class TranscriptionCoordinator: ObservableObject {
             fmt.dateFormat = "yyyy-MM-dd-HH-mm-ss"
             return fmt.string(from: Date())
         }()
-        let url = dir.appendingPathComponent("recording-\(stamp).wav")
+        let url = dir.appendingPathComponent(fileName ?? "recording-\(stamp).wav")
 
         guard let format = AVAudioFormat(
             commonFormat: .pcmFormatFloat32,
