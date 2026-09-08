@@ -422,25 +422,23 @@ final class MemoryExtractor: ObservableObject {
     /// existing-memories list starved the transcript to zero — the model
     /// extracted from dedup context alone. When set, existing gets ≤30% of
     /// the budget and the transcript owns the rest (head+tail).
+    /// The whole prompt's ceiling. The Pro proxy refuses more than 32 000
+    /// (`LLMRequestBody.maxPromptChars`); this stays well under it.
+    private let maxPromptChars = 20_000
+
     private func buildPrompt(fragments: [String], existing: [UserMemory], localBudget: Int? = nil) -> String {
         var parts: [String] = []
 
-        // Existing memories passed ALL (not windowed) — up to 1000 for robust dedup.
+        // The known-facts block keeps its share on EVERY path. It used to be
+        // written uncapped whenever `localBudget` was nil — both cloud routes
+        // — and the finished prompt was then cut from the head at 20 000
+        // characters, which could leave the transcript out of its own
+        // extraction entirely (audit, 2026-09-06, P1).
         if !existing.isEmpty {
             parts.append("Existing memories you already know about User (DO NOT repeat or duplicate):")
-            if let budget = localBudget {
-                var used = 0, shown = 0
-                for m in existing {
-                    let line = "- \(m.content)"
-                    if used + line.count > budget * 3 / 10 { break }
-                    parts.append(line); used += line.count; shown += 1
-                }
-                if shown < existing.count { parts.append("(+\(existing.count - shown) more omitted)") }
-            } else {
-                for m in existing {
-                    parts.append("- \(m.content)")
-                }
-            }
+            let share = MemoryPromptBudget.split(total: localBudget ?? maxPromptChars).existing
+            parts.append(contentsOf: MemoryPromptBudget.fit(existing: existing.map { "- \($0.content)" },
+                                                            into: share))
             parts.append("")
         }
 
@@ -463,7 +461,7 @@ final class MemoryExtractor: ObservableObject {
         parts.append(fragText)
 
         let combined = parts.joined(separator: "\n")
-        if combined.count > 20000 { return String(combined.prefix(20000)) }
+        if combined.count > maxPromptChars { return String(combined.prefix(maxPromptChars)) }
         return combined
     }
 

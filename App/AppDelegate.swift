@@ -2047,14 +2047,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
                       micSamples.count)
             }
 
-            // ITER-054 — book the meeting's quota ONCE, by wall-clock length,
-            // and ONLY when it was cloud-transcribed via the Pro proxy (chunks
-            // went out count_usage=false). On-device (WhisperKit) and free-tier
-            // BYOK meetings never touch the worker, so they book nothing.
-            if engine is CloudWhisperEngine, LicenseService.shared.isPro {
-                await LicenseService.shared.logMeetingUsage(minutes: duration / 60.0)
-            }
-
             // AUD-002 — partial success: mark the saved transcript incomplete so a
             // dropped chunk is never hidden behind an apparently complete meeting.
             let fullText = DualStreamMerger.markIncomplete(dual.text, failedChunks: dual.failedChunks)
@@ -2064,7 +2056,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
                     for: capture.generation)
                 NSLog("[MetaWhisp] ⚠️ Meeting saved with %d failed chunk(s) — marked incomplete", dual.failedChunks)
             }
+            // Saved BEFORE the quota is booked. The booking is a network POST
+            // that retries for up to ~51s, and it used to be awaited first —
+            // so a finished transcript sat in memory, unsaved, for the whole
+            // of it, and a quit or a crash in that window took it (audit, P1).
+            // Booking cannot fail the meeting; losing the meeting can.
             self.persistMeetingTranscript(fullText: fullText, duration: duration, elapsed: elapsed)
+
+            // ITER-054 — book the meeting's quota ONCE, by wall-clock length,
+            // and ONLY when it was cloud-transcribed via the Pro proxy (chunks
+            // went out count_usage=false). On-device (WhisperKit) and free-tier
+            // BYOK meetings never touch the worker, so they book nothing.
+            if engine is CloudWhisperEngine, LicenseService.shared.isPro {
+                await LicenseService.shared.logMeetingUsage(minutes: duration / 60.0)
+            }
             NSLog("[MetaWhisp] ✅ Meeting transcribed: %.0fs audio → %d words in %.1fs", duration, fullText.split(separator: " ").count, elapsed)
         }
     }
