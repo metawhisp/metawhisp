@@ -315,6 +315,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             let mouseScreen = NSScreen.screens.firstIndex { NSMouseInRect(mouse, $0.frame, false) }
             NSLog("[SpaceTrace] activeSpaceDidChange — frontmost=%@ cursorScreen=%@",
                   front, mouseScreen.map(String.init) ?? "?")
+            // The observer used to only watch. A window left visible on the
+            // Space the user just left is what the next activation drags them
+            // back to (2026-09-08).
+            Self.shared?.mainWindow.unbindIfLeftBehind()
         }
 
         // Apply saved theme

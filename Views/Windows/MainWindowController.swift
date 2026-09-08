@@ -64,6 +64,24 @@ final class MainWindowController: NSObject, NSWindowDelegate {
     /// screen / Space» bug. Logs where a window actually lands vs where the
     /// user is (cursor screen), so the next repro pins the cause instead of a
     /// theory. Cheap; safe to keep on. Grep `[SpaceTrace]`.
+    /// The user has moved to another Space. A window left visible on the one
+    /// they came from is exactly what macOS drags them back to on the next
+    /// activation — a popover button, a card, the Dock icon (the recurring
+    /// "it scrolls me to another desktop" report, 2026-09-08). Unbind it; it
+    /// is not closed, and `open()` puts it back where the user actually is.
+    func unbindIfLeftBehind() {
+        guard let window else { return }
+        let decision = WindowSpaceResidency.decide(
+            isVisible: window.isVisible,
+            isOnActiveSpace: window.isOnActiveSpace,
+            appIsActive: NSApp.isActive)
+        guard decision == .unbind else { return }
+        Self.logPlacement(window, "space-change:unbinding")
+        window.orderOut(nil)
+        NSApp.setActivationPolicy(.accessory)
+        NSLog("[MainWindow] window was left on another Space — unbound so activation cannot drag you there")
+    }
+
     static func logPlacement(_ w: NSWindow?, _ phase: String) {
         let screens = NSScreen.screens
         let mouse = NSEvent.mouseLocation

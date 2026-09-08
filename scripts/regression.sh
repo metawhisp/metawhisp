@@ -64,6 +64,7 @@ CRITICAL_SUITES=(
     MemoryProposalConfirmationTests
     HotkeyRearmTests
     MemoryPromptBudgetTests
+    WindowSpaceResidencyTests
     MicOutageReportTests
     MicTimelinePlacementTests
     # screen capture privacy + freshness
