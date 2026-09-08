@@ -196,21 +196,17 @@ final class StructuredGenerator: ObservableObject {
         let ctx = ModelContext(container)
         var desc = FetchDescriptor<Conversation>(predicate: #Predicate { $0.id == conversationId })
         desc.fetchLimit = 1
-        guard let conv = try? ctx.fetch(desc).first else { return }
-        // Reset structured fields so generate() takes the full LLM path.
-        conv.title = nil
-        conv.overview = nil
-        conv.category = nil
-        conv.emoji = nil
-        conv.primaryProject = nil
-        conv.topicsJSON = nil
-        conv.decisionsJSON = nil
-        conv.actionItemsJSON = nil
-        conv.participantsJSON = nil
-        conv.keyQuotesJSON = nil
-        conv.nextStepsJSON = nil
-        try? ctx.save()
-        await generate(conversationId: conversationId)
+        guard (try? ctx.fetch(desc).first) != nil else { return }
+        // Nothing is cleared here. The eleven structured fields used to be set
+        // to nil and SAVED before the generator ran, and the generator has
+        // five ways to return without writing: no LLM access, a transcript
+        // under the floor, a run already in flight, a parse failure, a network
+        // error. Each of them left the conversation permanently blank (audit,
+        // 2026-09-06, P1). The full path is now asked for outright, and what
+        // was there stands until a result replaces it.
+        NSLog("[StructuredGenerator] regenerate requested for conv %@ — existing fields kept until a result replaces them",
+              conversationId.uuidString.prefix(8) as CVarArg)
+        await generate(conversationId: conversationId, isRegeneration: true)
     }
 
     /// Generate title/overview/category/emoji for a conversation by id.
@@ -229,7 +225,12 @@ final class StructuredGenerator: ObservableObject {
     ///   activated local model right after «Make active» froze user's
     ///   Mac 2026-05-13 (3k-token prefill × N conversations). Backfill
     ///   stays on cloud; only fresh user-initiated dictations route local.
-    func generate(conversationId: UUID, knownTranscript: String? = nil, preferCloud: Bool = false) async {
+    /// `isRegeneration` is the user pressing "regenerate": run the full path
+    /// even though the conversation already has a title. It used to be
+    /// simulated by deleting the eleven structured fields first, which lost
+    /// them for good whenever the run then produced nothing (audit, P1).
+    func generate(conversationId: UUID, knownTranscript: String? = nil, preferCloud: Bool = false,
+                  isRegeneration: Bool = false) async {
         let t0 = Date()
         guard !isRunning else { return }
         NSLog("[StructuredGenerator] conv %@ dropped — another generation already in flight", conversationId.uuidString.prefix(8) as CVarArg)
@@ -252,7 +253,8 @@ final class StructuredGenerator: ObservableObject {
         // has since landed. This recovers from the previous race condition where
         // StructuredGenerator fired before the HistoryItem was persisted.
         let isPlaceholder = (conv.title == "Quick note")
-        if conv.title != nil && conv.overview != nil && !isPlaceholder {
+        if !StructuredFieldSet.forcesFullRegeneration(isRegeneration: isRegeneration, hasTitle: conv.title != nil),
+           conv.title != nil && conv.overview != nil && !isPlaceholder {
         NSLog("[StructuredGenerator] conv %@ already structured — skipping", conversationId.uuidString.prefix(8) as CVarArg)
             return
         }
@@ -383,9 +385,13 @@ final class StructuredGenerator: ObservableObject {
                 let cleaned = topics
                     .map { $0.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() }
                     .filter { !$0.isEmpty }
-                if !cleaned.isEmpty {
-                    conv.topicsJSON = (try? String(data: JSONEncoder().encode(cleaned), encoding: .utf8))
-                }
+                // Written whether or not the new result has topics, like the
+                // five arrays below: a regeneration that keeps the old topics
+                // next to a new title describes a conversation that never
+                // happened (audit follow-up, 2026-09-08).
+                conv.topicsJSON = cleaned.isEmpty
+                    ? nil
+                    : (try? String(data: JSONEncoder().encode(cleaned), encoding: .utf8))
             }
             // ITER-021 — structured meeting summary sections.
             // Encode as JSON `[String]` for SwiftData (flat schema). Empty arrays
