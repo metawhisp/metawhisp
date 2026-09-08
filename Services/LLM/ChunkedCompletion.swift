@@ -44,6 +44,37 @@ enum ChunkedCompletion {
     ///     caller can say so instead of handing over a quietly partial answer.
     ///   - complete: completes one prompt. Throwing is survivable for a map
     ///     pass — one bad chunk must not kill the job.
+    /// The fold's answer, and what it cost. A caller cannot take the text
+    /// without being handed the count of what was left out — the local path
+    /// called `run` with no `onChunkSkipped` and returned a partial answer as
+    /// if it were whole (audit, 2026-09-06, P1).
+    struct Folded: Equatable {
+        let text: String
+        /// Chunks that failed and were left out of the answer.
+        let skipped: Int
+        /// The part count of the round a chunk was lost in — `nil` when
+        /// nothing was lost, because there is then no round to name.
+        let outOf: Int?
+        var isPartial: Bool { skipped > 0 }
+    }
+
+    /// Fold, and say what was left out. Prefer this to `run`.
+    static func fold(
+        system: String,
+        user: String,
+        chunkChars: Int,
+        concatPartials: Bool = false,
+        complete: (_ system: String, _ user: String, _ pass: Pass) async throws -> String
+    ) async throws -> Folded {
+        var skipped = 0
+        var outOf: Int?
+        let text = try await run(system: system, user: user, chunkChars: chunkChars,
+                                 concatPartials: concatPartials,
+                                 onChunkSkipped: { _, of, _ in skipped += 1; outOf = max(outOf ?? 0, of) },
+                                 complete: complete)
+        return Folded(text: text, skipped: skipped, outOf: outOf)
+    }
+
     static func run(
         system: String,
         user: String,

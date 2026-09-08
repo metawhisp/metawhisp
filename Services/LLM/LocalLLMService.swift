@@ -737,7 +737,7 @@ final class LocalLLMService: ObservableObject {
         // The fold itself lives in `ChunkedCompletion` — the Pro proxy runs
         // the same one, so a long transcript is handled identically wherever
         // it is processed (2026-09-04).
-        try await ChunkedCompletion.run(
+        let folded = try await ChunkedCompletion.fold(
             system: system, user: user, chunkChars: chunkChars, concatPartials: concatPartials
         ) { sys, usr, pass in
             // Map outputs are capped tight so the fold shrinks geometrically
@@ -755,6 +755,14 @@ final class LocalLLMService: ObservableObject {
                 maxUserChars: chunkChars, maxTokens: maxTokens,
                 temperature: temperature)
         }
+        // A chunk that failed used to be dropped in silence here, while the
+        // Pro path refused to hand over a partial answer as a whole one
+        // (audit, 2026-09-06, P1).
+        if folded.isPartial {
+            NSLog("[LocalLLM] ⚠️ chunked result is PARTIAL — %d of %d chunk(s) failed and were left out",
+                  folded.skipped, folded.outOf ?? folded.skipped)
+        }
+        return folded.text
     }
 
     /// Sample one token — sync variant used by the GCD loop.

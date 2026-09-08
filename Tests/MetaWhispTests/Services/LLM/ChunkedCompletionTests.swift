@@ -190,4 +190,35 @@ final class ChunkedCompletionTests: XCTestCase {
             XCTAssertLessThan(calls, 100, "bounded by the round limit")
         }
     }
+    // MARK: - A skipped chunk cannot be ignored
+
+    /// The local path called `run` without `onChunkSkipped` and returned the
+    /// partial result as if it were complete — the Pro path refuses to do
+    /// that, and the difference was invisible (audit, 2026-09-06, P1). The
+    /// fold now hands back what it skipped along with the text, so a caller
+    /// has to look at it.
+    func testTheFoldReportsWhatItSkippedAlongsideTheText() async throws {
+        var seen = 0
+        let folded = try await ChunkedCompletion.fold(
+            system: "S", user: text(sentences: 60), chunkChars: 2_000, concatPartials: true
+        ) { _, _, _ in
+            seen += 1
+            if seen == 2 { throw NSError(domain: "T", code: 1) }
+            return "ok"
+        }
+        XCTAssertEqual(folded.text, "ok\n\nok")
+        XCTAssertEqual(folded.skipped, 1)
+        XCTAssertEqual(folded.outOf, 3, "and it says which round it was lost from")
+        XCTAssertTrue(folded.isPartial, "one of three chunks is missing — this is not a complete answer")
+    }
+
+    func testAFoldThatSkippedNothingIsNotPartial() async throws {
+        let folded = try await ChunkedCompletion.fold(
+            system: "S", user: "short one", chunkChars: 2_000
+        ) { _, _, _ in "done" }
+        XCTAssertEqual(folded.text, "done")
+        XCTAssertEqual(folded.skipped, 0)
+        XCTAssertNil(folded.outOf, "nothing was lost, so there is no round to name")
+        XCTAssertFalse(folded.isPartial)
+    }
 }
