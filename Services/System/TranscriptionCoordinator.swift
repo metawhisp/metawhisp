@@ -529,10 +529,10 @@ final class TranscriptionCoordinator: ObservableObject {
     /// `~/Library/Application Support/MetaWhisp/Recovery/`.
     /// Used when transcription fails — gives the user something they can
     /// re-submit instead of losing the dictation entirely.
-    static func saveSamplesAsWav(_ samples: [Float], named fileName: String? = nil) -> URL? {
-        guard !samples.isEmpty else { return nil }
-
-        // Resolve / create the recovery folder.
+    /// `~/Library/Application Support/MetaWhisp/Recovery/`, created on demand.
+    /// Audio and, since 2026-09-08, a transcript the library refused both land
+    /// here — one folder the user can be pointed at.
+    static func recoveryDirectory() -> URL? {
         let fm = FileManager.default
         guard let appSupport = fm.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else {
             return nil
@@ -543,9 +543,16 @@ final class TranscriptionCoordinator: ObservableObject {
         do {
             try fm.createDirectory(at: dir, withIntermediateDirectories: true)
         } catch {
-            NSLog("[Coordinator] saveSamplesAsWav: mkdir failed — %@", error.localizedDescription)
+            NSLog("[Coordinator] recovery folder: mkdir failed — %@", error.localizedDescription)
             return nil
         }
+        return dir
+    }
+
+    static func saveSamplesAsWav(_ samples: [Float], named fileName: String? = nil) -> URL? {
+        guard !samples.isEmpty else { return nil }
+
+        guard let dir = Self.recoveryDirectory() else { return nil }
 
         let stamp: String = {
             let fmt = DateFormatter()

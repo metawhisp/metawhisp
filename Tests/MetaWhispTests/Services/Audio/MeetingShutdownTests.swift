@@ -74,4 +74,44 @@ final class MeetingShutdownTests: XCTestCase {
         XCTAssertGreaterThanOrEqual(MeetingShutdown.rescueDeadlineSeconds, 2,
                                     "…but long enough to write an hour of audio")
     }
+
+    // MARK: - Audio that cannot be transcribed
+
+    /// The second way a meeting used to vanish: `stop()` had already taken the
+    /// buffers when the transcription engine turned out not to be loaded, and
+    /// the guard returned with the samples as locals — the only copy (audit,
+    /// 2026-09-06, P1). Anything that cannot be transcribed is rescued on the
+    /// same terms as a quit.
+    func testAMeetingThatCannotBeTranscribedIsRescued() {
+        XCTAssertEqual(MeetingShutdown.planForUntranscribable(micSamples: 160_000, systemSamples: 320_000),
+                       .rescue(micSamples: 160_000, systemSamples: 320_000))
+    }
+
+    func testAnEmptyFailureHasNothingToRescue() {
+        XCTAssertEqual(MeetingShutdown.planForUntranscribable(micSamples: 0, systemSamples: 0), .nothingToDo)
+    }
+
+    /// One side alone is still worth keeping: a meeting where the mic never
+    /// came back is exactly the case the user most wants the audio for.
+    func testOneChannelAloneIsStillRescued() {
+        XCTAssertEqual(MeetingShutdown.planForUntranscribable(micSamples: 0, systemSamples: 160_000),
+                       .rescue(micSamples: 0, systemSamples: 160_000))
+    }
+    // MARK: - A transcript the store refused
+
+    /// The third way a meeting vanished: `historyService.save` returns nil
+    /// when the store is degraded or the save throws, `persistMeetingTranscript`
+    /// had no `else`, and the caller still logged "✅ Meeting transcribed"
+    /// (audit, 2026-09-06, P1). Text that could not be stored is written where
+    /// the user can find it, and never announced as saved.
+    func testATranscriptTheStoreRefusedIsWrittenOut() {
+        XCTAssertEqual(MeetingShutdown.planForUnsavedTranscript(chars: 4_200), .writeOut)
+        XCTAssertEqual(MeetingShutdown.planForUnsavedTranscript(chars: 0), .nothingToWrite,
+                       "an empty transcript is nothing to rescue")
+    }
+
+    func testTheUnsavedTranscriptGetsItsOwnFileName() {
+        XCTAssertEqual(MeetingShutdown.transcriptFileName(stamp: "2026-09-08-14-31-02"),
+                       "meeting-2026-09-08-14-31-02-transcript.txt")
+    }
 }

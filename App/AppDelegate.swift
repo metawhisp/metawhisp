@@ -1984,7 +1984,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             // at runtime so the user's current setting (cloud vs on-device) wins.
             guard let engine = coordinator.activeEngine, engine.isModelLoaded else {
                 let mode = AppSettings.shared.transcriptionEngine == "cloud" ? "Cloud" : "On-device"
-                coordinator.lastError = "\(mode) transcription not ready — open Settings and select a model"
+                // The buffers are locals here and this `return` used to be the
+                // end of them (audit, P1). Keep the audio, and say where.
+                let saved = self.rescueMeetingAudio(mic: micSamples, system: sysSamples,
+                                                    reason: "meeting transcribe: engine not ready")
+                let where_ = saved.mic ?? saved.system
+                coordinator.lastError = where_ == nil
+                    ? "\(mode) transcription not ready — open Settings and select a model"
+                    : "\(mode) transcription not ready — the meeting audio is saved in \(where_!.deletingLastPathComponent().path)"
                 NSLog("[MetaWhisp] ❌ Meeting transcribe: engine not ready (%@)", mode)
                 return
             }
@@ -2506,7 +2513,39 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             processingTime: elapsed,
             segments: []
         )
-        if let item = historyService.save(result) {
+        guard let item = historyService.save(result) else {
+            // The store refused it — a degraded (in-memory) session, or a save
+            // that threw. Both return nil, and this used to fall through to a
+            // "✅ Meeting transcribed" line (audit, P1). Write the transcript
+            // where the user can get it, and say so.
+            let stamp: String = {
+                let f = DateFormatter(); f.dateFormat = "yyyy-MM-dd-HH-mm-ss"
+                return f.string(from: Date())
+            }()
+            var savedPath: String?
+            if MeetingShutdown.planForUnsavedTranscript(chars: fullText.count) == .writeOut,
+               let dir = TranscriptionCoordinator.recoveryDirectory() {
+                let url = dir.appendingPathComponent(MeetingShutdown.transcriptFileName(stamp: stamp))
+                do {
+                    try fullText.write(to: url, atomically: true, encoding: .utf8)
+                    savedPath = url.path
+                } catch {
+                    NSLog("[MetaWhisp] ❌ meeting transcript could not be written out either — %@",
+                          error.localizedDescription)
+                }
+            }
+            NSLog("[MetaWhisp] ❌ meeting transcript NOT stored (%d chars) — the library refused it; written out: %@",
+                  fullText.count, savedPath == nil ? "no" : "yes")
+            meetingRecorder.reportFinalization(
+                error: savedPath == nil
+                    ? "⚠️ The meeting could not be saved to your library, and the transcript could not be written out either"
+                    : "⚠️ The meeting could not be saved to your library — the transcript is in \(savedPath!)",
+                for: meetingRecorder.recordingGeneration)
+            if fullText.count >= 20 {
+                adviceService.triggerOnTranscription(text: fullText, source: "meeting")
+            }
+            return
+        }
             item.source = "meeting"
             item.modelName = AppSettings.shared.selectedModel
             NSLog("[MetaWhisp] Meeting stored in Library: %d chars, %.0fs", fullText.count, duration)
@@ -2528,7 +2567,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
                     self?.fireMeetingRecap(for: conversationId)
                 }
             }
-        }
 
         // AdviceService stays per-transcript (it's a real-time signal — user dictates,
         // advice surfaces immediately). Memory + Task extractors now run on conversation
@@ -2571,6 +2609,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     /// 2026-09-06, P1). macOS is asked to wait while both channels are written
     /// to the Recovery folder, and the wait is bounded so a stuck write cannot
     /// turn a quit into a hang.
+    /// Audio in hand that cannot be transcribed goes to the Recovery folder
+    /// rather than out of scope. Returns the paths, if any were written, so
+    /// the caller can tell the user where the meeting went (audit, P1).
+    @discardableResult
+    func rescueMeetingAudio(mic: [Float], system: [Float], reason: String) -> (mic: URL?, system: URL?) {
+        guard case .rescue = MeetingShutdown.planForUntranscribable(micSamples: mic.count,
+                                                                    systemSamples: system.count) else {
+            NSLog("[MetaWhisp] %@ — nothing to rescue (%d mic, %d system samples)", reason, mic.count, system.count)
+            return (nil, nil)
+        }
+        let stamp: String = {
+            let f = DateFormatter(); f.dateFormat = "yyyy-MM-dd-HH-mm-ss"
+            return f.string(from: Date())
+        }()
+        let names = MeetingShutdown.fileNames(stamp: stamp)
+        let micURL = TranscriptionCoordinator.saveSamplesAsWav(mic, named: names.mic)
+        let sysURL = TranscriptionCoordinator.saveSamplesAsWav(system, named: names.system)
+        NSLog("[MetaWhisp] %@ — audio rescued: me %@, them %@", reason,
+              micURL == nil ? "not written" : "written", sysURL == nil ? "not written" : "written")
+        return (micURL, sysURL)
+    }
+
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         let plan = MeetingShutdown.plan(
             isRecording: meetingRecorder.isRecording,

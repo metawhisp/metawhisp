@@ -37,6 +37,28 @@ enum MeetingShutdown {
         return .rescue(micSamples: micSamples, systemSamples: systemSamples)
     }
 
+    /// A finalization that cannot run — the engine is not loaded, the model
+    /// was never downloaded — happens AFTER `stop()` has taken the buffers,
+    /// so the samples are locals and the guard's `return` was the end of them
+    /// (audit, 2026-09-06, P1). There is no "still recording" to check here:
+    /// audio in hand that cannot be transcribed is rescued.
+    static func planForUntranscribable(micSamples: Int, systemSamples: Int) -> Plan {
+        plan(isRecording: true, isStarting: false, micSamples: micSamples, systemSamples: systemSamples)
+    }
+
+    /// What a transcript owes when the store refuses it. `HistoryService.save`
+    /// returns nil on a degraded store and on a failed context save; the
+    /// meeting path had no `else` for that and logged success anyway.
+    enum TranscriptPlan: Equatable { case nothingToWrite, writeOut }
+
+    static func planForUnsavedTranscript(chars: Int) -> TranscriptPlan {
+        chars > 0 ? .writeOut : .nothingToWrite
+    }
+
+    static func transcriptFileName(stamp: String) -> String {
+        "meeting-\(stamp)-transcript.txt"
+    }
+
     /// "me" and "them" rather than "mic" and "system": the person opening the
     /// folder is looking for their own voice or the other side's.
     static func fileNames(stamp: String) -> (mic: String, system: String) {
