@@ -113,6 +113,13 @@ final class SelectionTranslator {
                 soundService.playError()
                 overlay.hideTranslating()
                 borrow.giveBack()
+                // `playError()` has an empty body and this class has no
+                // banner, so a failure used to look exactly like the hotkey
+                // never firing (audit, P1). Say it on the card surface every
+                // other feature uses.
+                let words = SelectionTranslateFeedback.wording(for: error)
+                MWNotificationStack.shared.push(
+                    MWNotification(kind: .advice, title: words.title, body: words.body, onTap: nil))
             }
         }
     }
