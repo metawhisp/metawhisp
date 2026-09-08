@@ -97,6 +97,7 @@ final class MeetingShutdownTests: XCTestCase {
         XCTAssertEqual(MeetingShutdown.planForUntranscribable(micSamples: 0, systemSamples: 160_000),
                        .rescue(micSamples: 0, systemSamples: 160_000))
     }
+
     // MARK: - A transcript the store refused
 
     /// The third way a meeting vanished: `historyService.save` returns nil
