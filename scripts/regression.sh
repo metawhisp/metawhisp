@@ -60,6 +60,9 @@ CRITICAL_SUITES=(
     DeadMicDetectorTests
     MicRecoveryTests
     MicDeviceFollowTests
+    MeetingStartPolicyTests
+    SystemChannelPlacementTests
+    LogRotationTests
     MeetingShutdownTests
     StructuredRegenerateTests
     MemoryProposalConfirmationTests
