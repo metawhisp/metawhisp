@@ -223,6 +223,16 @@ struct MenuBarView: View {
                         .padding(.horizontal, MW.sp16).padding(.vertical, 4)
                         .background(Color.orange.opacity(0.08))
                 }
+
+                // The mirror: recording went ahead without the other side
+                // rather than being thrown away.
+                if meetingRecorder.isRecording && meetingRecorder.systemAudioDown {
+                    Text("⚠️ Other participants' audio unavailable — recording your mic only")
+                        .font(MW.monoSm).foregroundStyle(.orange)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.horizontal, MW.sp16).padding(.vertical, 4)
+                        .background(Color.orange.opacity(0.08))
+                }
             }
             .overlay(Rectangle().fill(MW.border).frame(height: MW.hairline), alignment: .bottom)
         }

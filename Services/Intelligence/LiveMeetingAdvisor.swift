@@ -189,6 +189,11 @@ final class LiveMeetingAdvisor: ObservableObject {
         // Snapshot current sample offsets to bound this chunk.
         let micCurrent = mr.mic.currentSampleCount
         let sysCurrent = mr.systemAudio.currentSampleCount
+        // A system channel that joined late carries leading silence for the
+        // part of the meeting it missed. That silence is history: reading it
+        // now would mix the meeting's first minute against the mic's latest
+        // one.
+        sysOffset = max(sysOffset, mr.systemAudio.placedLeadingSilence)
         let micChunk = mr.mic.peekSamples(from: micOffset)
         let sysChunk = mr.systemAudio.peekSamples(from: sysOffset)
         // Advance offsets ONLY after a successful read so a transcription failure

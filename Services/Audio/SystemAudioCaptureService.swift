@@ -39,12 +39,35 @@ final class SystemAudioCaptureService: NSObject, ObservableObject, AudioSource {
         await PermissionsService.shared.requestScreenRecording()
     }
 
+    /// Samples of leading silence that place a channel starting `seconds`
+    /// into a recording at its true offset.
+    ///
+    /// The buffer is flat and mixing pairs index 0 with index 0, so a channel
+    /// that joins late without this would put the other side's voice at the
+    /// beginning of the meeting — audio that lies about when it was said. This
+    /// is the mic timeline's own answer to an outage (silence placed into the
+    /// timeline is the outage's exact length), applied to the other channel.
+    nonisolated static func leadingSilenceSamples(seconds: Double, rate: Double) -> Int {
+        guard seconds > 0, rate > 0 else { return 0 }
+        return Int((seconds * rate).rounded())
+    }
+
     /// Start capturing all system audio.
     /// Synchronously throws only for immediate state errors — actual SCStream setup is async.
-    func start() throws {
+    /// - Parameter leadingSilenceSeconds: how far into a recording this channel
+    ///   is joining, so its samples land where they belong.
+    func start() throws { try start(leadingSilenceSeconds: 0) }
+
+    func start(leadingSilenceSeconds: Double) throws {
         guard !isRecording, !isStarting else { return }
-        samples = []
-        samples.reserveCapacity(Int(targetSampleRate) * 300) // ~5 min pre-alloc
+        let lead = Self.leadingSilenceSamples(seconds: leadingSilenceSeconds, rate: targetSampleRate)
+        samples = lead > 0 ? [Float](repeating: 0, count: lead) : []
+        placedLeadingSilence = lead
+        samples.reserveCapacity(lead + Int(targetSampleRate) * 300) // ~5 min pre-alloc
+        if lead > 0 {
+            NSLog("[SystemAudio] joining %.1fs into the recording — %d samples of leading silence placed",
+                  leadingSilenceSeconds, lead)
+        }
         lastError = nil
         isStarting = true
         startGeneration += 1
@@ -86,6 +109,15 @@ final class SystemAudioCaptureService: NSObject, ObservableObject, AudioSource {
                 self.isRecording = true
                 self.isStarting = false
                 NSLog("[SystemAudio] ✅ Capture started via ScreenCaptureKit")
+            } catch is CancellationError {
+                // Our own `stop()` bumped the generation while the stream was
+                // still being built, and the setup noticed. That is an abort,
+                // not a system failure — reporting it as one put
+                // "System audio failed: … CancellationError" in front of the
+                // owner for a meeting the app itself had just abandoned
+                // (2026-09-16 12:00).
+                self.isStarting = false
+                NSLog("[SystemAudio] setup cancelled — stopped while starting")
             } catch {
                 self.lastError = "System audio failed: \(error.localizedDescription)"
                 self.isStarting = false
@@ -93,6 +125,11 @@ final class SystemAudioCaptureService: NSObject, ObservableObject, AudioSource {
             }
         }
     }
+
+    /// Silence placed at the front of the buffer so a late-joining channel
+    /// sits at its true offset. A reader that consumes the buffer live starts
+    /// past it — the padding is history, not something just heard.
+    private(set) var placedLeadingSilence = 0
 
     /// ITER-019 — total samples accumulated so far.
     var currentSampleCount: Int { samples.count }
@@ -137,14 +174,25 @@ final class SystemAudioCaptureService: NSObject, ObservableObject, AudioSource {
         // stop() during the retry window cancels instead of resurrecting a
         // stream nobody owns.
         let gen = startGeneration
+        // Five seconds of total silence in the log is what the owner's three
+        // failed auto-starts looked like from outside (2026-09-15 08:30,
+        // 2026-09-16 08:30 and 12:00): the recorder's budget expired and
+        // nothing said which step had not returned. Every step says how long
+        // it took now — counts and durations only, never content.
+        let t0 = Date()
         var content = try await SCShareableContent.current
         var attempt = 1
         while content.displays.isEmpty && attempt < 5 {
             guard startGeneration == gen else { throw CancellationError() }
+            NSLog("[SystemAudio] shareable content has no displays (attempt %d, %.0f ms) — retrying",
+                  attempt, Date().timeIntervalSince(t0) * 1000)
             try await Task.sleep(for: .milliseconds(400))
             content = try await SCShareableContent.current
             attempt += 1
         }
+        NSLog("[SystemAudio] shareable content: %d displays, %d windows (%.0f ms, attempt %d)",
+              content.displays.count, content.windows.count,
+              Date().timeIntervalSince(t0) * 1000, attempt)
         guard startGeneration == gen else { throw CancellationError() }
         guard let display = content.displays.first else {
             throw CaptureError.noDisplay
@@ -177,7 +225,10 @@ final class SystemAudioCaptureService: NSObject, ObservableObject, AudioSource {
         self.streamOutput = output
 
         try newStream.addStreamOutput(output, type: .audio, sampleHandlerQueue: audioQueue)
+        let beforeCapture = Date()
         try await newStream.startCapture()
+        NSLog("[SystemAudio] stream capture started (%.0f ms for startCapture, %.0f ms total)",
+              Date().timeIntervalSince(beforeCapture) * 1000, Date().timeIntervalSince(t0) * 1000)
         self.stream = newStream
     }
 

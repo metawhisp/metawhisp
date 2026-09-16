@@ -28,6 +28,11 @@ final class MeetingRecorder: ObservableObject {
     @Published var lastError: String?
     /// True if mic capture failed but system audio is still active (user will lose their own voice).
     @Published var micOnlyMode = false
+
+    /// The mirror of `micOnlyMode`: the meeting is running without the other
+    /// side's audio. Set when system audio never came up, cleared when it
+    /// joins.
+    @Published var systemAudioDown = false
     /// Set at `stop()`: the mic channel was bit-exact zero for the whole call.
     /// Published separately from `lastError` because this can be true even when
     /// the meeting transcribed FINE — the other side comes through the system
@@ -362,6 +367,7 @@ final class MeetingRecorder: ObservableObject {
         guard !isRecording, !isStarting else { return }
         forgetOutcome()
         micOnlyMode = false
+        systemAudioDown = false
         isStarting = true
         isManualMode = manualMode
         startGeneration += 1
@@ -389,26 +395,36 @@ final class MeetingRecorder: ObservableObject {
             //    SCStream setup takes ~100-500ms normally.
             for _ in 0..<50 {
                 if self.systemAudio.isRecording { break }
-                if let err = self.systemAudio.lastError {
-                    self.lastError = err
-                    NSLog("[MeetingRecorder] ❌ start aborted — system audio reported: %@", err)
-                    self.isStarting = false
-                    return
-                }
+                if self.systemAudio.lastError != nil { break }
                 try? await Task.sleep(for: .milliseconds(100))
                 if self.startGeneration != gen { return }  // AUD-008: stopped during startup wait
             }
 
-            guard self.systemAudio.isRecording else {
-                self.lastError = self.systemAudio.lastError ?? "System audio failed to start"
-                NSLog("[MeetingRecorder] ❌ start aborted after 5s — system audio never came up (screen recording permission: %@): %@", self.systemAudio.hasPermission ? "granted" : "denied", self.lastError ?? "no reason reported")
-                self.isStarting = false
-                // Review fix — the recorder gave up, so cancel the in-flight
-                // system-audio setup too (its retry path can outlast our 5s
-                // budget; stop() bumps its generation → the stale setup tears
-                // itself down instead of recording into the void).
+            // A channel that did not come up does not take the other one with
+            // it. Three calendar auto-starts were thrown away here — system
+            // audio missed the 5s budget and the microphone, which was
+            // available every time, was never started (owner's log,
+            // 2026-09-15 08:30, 2026-09-16 08:30 and 12:00).
+            if !self.systemAudio.isRecording {
+                let why = self.systemAudio.lastError ?? "did not come up within 5s"
+                // The setup that outlasted our budget must not go on recording
+                // into the void: stop() bumps its generation so a late arrival
+                // tears itself down instead.
                 _ = self.systemAudio.stop()
-                return
+
+                switch MeetingStartPolicy.start(micAvailable: self.mic.hasPermission,
+                                                systemAvailable: false) {
+                case .abandon:
+                    self.lastError = "No audio available — \(why)"
+                    NSLog("[MeetingRecorder] ❌ start abandoned — no channel available (system: %@, mic permission: %@)",
+                          why, self.mic.hasPermission ? "granted" : "denied")
+                    self.isStarting = false
+                    return
+                case .record:
+                    self.systemAudioDown = true
+                    NSLog("[MeetingRecorder] ⚠️ system audio unavailable (%@) — recording the microphone alone (screen recording permission: %@)",
+                          why, self.systemAudio.hasPermission ? "granted" : "denied")
+                }
             }
 
             // AUD-008 — final checkpoint: if the user stopped while we waited for
@@ -438,9 +454,10 @@ final class MeetingRecorder: ObservableObject {
             self.isStarting = false
             self.liveGeneration = gen
             self.recordingStartedAt = Date()
-            NSLog("[MeetingRecorder] ✅ Recording (mic=%@, system=yes)",
-                  self.micOnlyMode ? "NO" : "yes")
+            NSLog("[MeetingRecorder] ✅ Recording (mic=%@, system=%@)",
+                  self.micOnlyMode ? "NO" : "yes", self.systemAudioDown ? "NO" : "yes")
             self.armMicRecovery()
+            if self.systemAudioDown { self.armSystemJoin(gen: gen) }
 
             // ITER-026 v2 — auto-stop guards apply ONLY to gate-triggered
             // recordings. Manual recordings run unbounded; the only auto-
@@ -636,6 +653,58 @@ final class MeetingRecorder: ObservableObject {
     ///
     /// The one thing this cannot fix is a revoked microphone permission. The
     /// outage opens all the same so the banner says so; nothing is attempted.
+    /// A meeting that started without the other side keeps asking for it —
+    /// the courtesy `armMicRecovery` already extends to a dead microphone.
+    /// Bounded by `MeetingStartPolicy.maxSystemJoinAttempts`, because a chase
+    /// with no ceiling is a leak wearing a recovery's clothes.
+    private func armSystemJoin(gen: Int) {
+        let startedAt = recordingStartedAt ?? Date()
+        Task { [weak self] in
+            guard let self else { return }
+            var attempts = 0
+            while MeetingStartPolicy.shouldChaseSystem(isRecording: self.isRecording,
+                                                       systemUp: self.systemAudio.isRecording,
+                                                       attempts: attempts) {
+                try? await Task.sleep(for: .seconds(MeetingStartPolicy.systemJoinDelaySeconds))
+                guard self.liveGeneration == gen, self.isRecording else { return }
+                attempts += 1
+
+                // Joining mid-meeting means joining at the right second: the
+                // buffer is padded for everything this channel missed.
+                let elapsed = Date().timeIntervalSince(startedAt)
+                do {
+                    try self.systemAudio.start(leadingSilenceSeconds: elapsed)
+                } catch {
+                    NSLog("[MeetingRecorder] system-audio join %d/%d refused: %@",
+                          attempts, MeetingStartPolicy.maxSystemJoinAttempts, error.localizedDescription)
+                    continue
+                }
+                for _ in 0..<50 {
+                    if self.systemAudio.isRecording { break }
+                    if self.systemAudio.lastError != nil { break }
+                    try? await Task.sleep(for: .milliseconds(100))
+                }
+                guard self.liveGeneration == gen, self.isRecording else {
+                    _ = self.systemAudio.stop()
+                    return
+                }
+                if self.systemAudio.isRecording {
+                    self.systemAudioDown = false
+                    NSLog("[MeetingRecorder] ✅ system audio joined %.0fs in (attempt %d)", elapsed, attempts)
+                    return
+                }
+                _ = self.systemAudio.stop()
+                NSLog("[MeetingRecorder] system-audio join %d/%d failed: %@",
+                      attempts, MeetingStartPolicy.maxSystemJoinAttempts,
+                      self.systemAudio.lastError ?? "no reason reported")
+            }
+            if self.isRecording, !self.systemAudio.isRecording {
+                NSLog("[MeetingRecorder] system audio did not join after %d attempts — the meeting stays on the microphone",
+                      MeetingStartPolicy.maxSystemJoinAttempts)
+            }
+        }
+    }
+
     private func armMicRecovery() {
         micOutage = nil
         micCarriedLoss = false
