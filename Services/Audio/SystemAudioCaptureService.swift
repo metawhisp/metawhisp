@@ -363,17 +363,6 @@ final class SystemAudioCaptureService: NSObject, ObservableObject, AudioSource {
         "com.discord.Discord":         ["Voice Connected", "Voice Call"],
     ]
 
-    /// Browser bundle IDs — we look at the active window title for call keywords.
-    private static let browserBundleIDs: Set<String> = [
-        "com.google.Chrome",
-        "com.apple.Safari",
-        "company.thebrowser.Browser",     // Arc
-        "org.mozilla.firefox",
-        "com.microsoft.edgemac",
-        "com.brave.Browser",
-        "com.operasoftware.Opera",
-    ]
-
     /// Window-title keywords that indicate an active video call (matched case-insensitive).
     /// Observed title formats (2026-04-21 missed a Meet call because we required "Google Meet"
     /// but Chrome shows "Meet – <name>..."):
@@ -444,7 +433,7 @@ final class SystemAudioCaptureService: NSObject, ObservableObject, AudioSource {
         }
 
         // Browser: scan window title for call keywords.
-        if browserBundleIDs.contains(bundleID) {
+        if BrowserIdentity.isBrowser(bundleID) {
             for (kw, name) in callTitleKeywords where windowTitle.localizedCaseInsensitiveContains(kw) {
                 return name
             }
