@@ -61,6 +61,9 @@ CRITICAL_SUITES=(
     MicRecoveryTests
     MicDeviceFollowTests
     MeetingStartPolicyTests
+    MeetingAutoStartGateTests
+    CalendarAutoStartRetryTests
+    BrowserIdentityTests
     SystemChannelPlacementTests
     LogRotationTests
     MeetingShutdownTests

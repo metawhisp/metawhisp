@@ -1,5 +1,6 @@
 import AppKit
 import Combine
+import EventKit
 import Foundation
 import Sparkle
 import SwiftData
@@ -2810,31 +2811,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
                     bundleID: bundleID, appName: appName, windowTitle: title
                 )
 
-                // Fullscreen check: window covers the screen's visibleFrame.
-                let isFullscreen = self.isFrontmostWindowFullscreen()
-
                 // Calendar STRONG signal: any non-allday event that has just
                 // started (within last 65s, not yet ended). Lets the gate
                 // bypass the 10-sec sustained fallback when calendar says
                 // "you have a meeting now". User explicit spec 2026-05-02:
                 // "Если митинг начинается в два, то ровно в два часа
                 // начинается запись".
-                var calendarEvent: (id: String, title: String)? = nil
-                if let ev = self.calendarReader.eventStartingNow(),
-                   let id = ev.eventIdentifier {
+                func named(_ ev: EKEvent) -> (id: String, title: String)? {
+                    guard let id = ev.eventIdentifier else { return nil }
                     let title = (ev.title?.trimmingCharacters(in: .whitespaces)).flatMap { $0.isEmpty ? nil : $0 } ?? "Meeting"
-                    calendarEvent = (id: id, title: title)
+                    return (id: id, title: title)
                 }
+                let calendarEvent = self.calendarReader.eventStartingNow().flatMap(named)
+                // …and the same event while it is STILL running, so an
+                // attempt that captured nothing can be made again (the gate
+                // bounds how often, see CalendarAutoStartRetry).
+                let calendarRunning = self.calendarReader.eventInProgress().flatMap(named)
 
-                // Audio: gate currently can't probe audio without a recorder
-                // running. Pass `false` — fallback path needs only window
-                // sustain. Post-countdown audio-sniff (after meeting starts)
-                // catches AFK / silent-room cases.
                 let decision = MeetingAutoStartGate.shared.evaluate(
                     callName: callName,
-                    isFullscreen: isFullscreen,
-                    audioActive: false,
-                    calendarEventNow: calendarEvent
+                    calendarEventNow: calendarEvent,
+                    calendarEventInProgress: calendarRunning,
+                    isRecording: self.meetingRecorder.isRecording || self.meetingRecorder.isStarting
                 )
 
                 // ITER-028.2 (2026-05-06) — back-to-back transition detection
@@ -2902,42 +2900,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         let titleResult = AXUIElementCopyAttributeValue(axWindow, kAXTitleAttribute as CFString, &titleValue)
         guard titleResult == .success else { return nil }
         return titleValue as? String
-    }
-
-    /// Whether the frontmost window covers the entire visibleFrame of its
-    /// screen (no menu bar / dock visible).
-    private func isFrontmostWindowFullscreen() -> Bool {
-        guard let frontApp = NSWorkspace.shared.frontmostApplication else { return false }
-        let pid = frontApp.processIdentifier
-        let appRef = AXUIElementCreateApplication(pid)
-        var focusedWindow: CFTypeRef?
-        let r = AXUIElementCopyAttributeValue(appRef, kAXFocusedWindowAttribute as CFString, &focusedWindow)
-        guard r == .success, let win = focusedWindow else { return false }
-        let axWin = win as! AXUIElement
-        // Use kAXFullScreenAttribute first — set by macOS native fullscreen.
-        var fsValue: CFTypeRef?
-        if AXUIElementCopyAttributeValue(axWin, "AXFullScreen" as CFString, &fsValue) == .success,
-           let isFS = fsValue as? Bool, isFS {
-            return true
-        }
-        // Fallback: window bounds match screen visibleFrame.
-        var posValue: CFTypeRef?
-        var sizeValue: CFTypeRef?
-        guard AXUIElementCopyAttributeValue(axWin, kAXPositionAttribute as CFString, &posValue) == .success,
-              AXUIElementCopyAttributeValue(axWin, kAXSizeAttribute as CFString, &sizeValue) == .success
-        else { return false }
-        var pos = CGPoint.zero
-        var size = CGSize.zero
-        AXValueGetValue(posValue as! AXValue, .cgPoint, &pos)
-        AXValueGetValue(sizeValue as! AXValue, .cgSize, &size)
-        // Compare against screen frame containing the window — within 8pt slack.
-        guard let screen = NSScreen.screens.first(where: { NSPointInRect(pos, $0.frame) }) ?? NSScreen.main else { return false }
-        let f = screen.frame
-        let slack: CGFloat = 8
-        return abs(pos.x - f.origin.x) < slack
-            && abs(pos.y - f.origin.y) < slack
-            && abs(size.width - f.size.width) < slack
-            && abs(size.height - f.size.height) < slack
     }
 
     /// Show the 5-sec countdown plashka, then start `meetingRecorder`. Three

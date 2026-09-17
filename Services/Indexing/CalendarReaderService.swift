@@ -59,6 +59,29 @@ final class CalendarReaderService: ObservableObject {
     /// event begins. `lookback` defaults to 65 sec so the 1-sec poll loop
     /// catches every event boundary even if a tick was skipped, but events
     /// older than that are not returned (no stale-event re-firing on launch).
+    /// A non-allday event that is running RIGHT NOW, whether or not it just
+    /// started. `eventStartingNow` only sees the first 65 seconds of an event,
+    /// so an auto-start that captured nothing had no way to be tried again
+    /// while the meeting itself was still going (2026-09-17 08:30).
+    func eventInProgress(maxDuration: TimeInterval = 4 * 3600) -> EKEvent? {
+        let status = EKEventStore.authorizationStatus(for: .event)
+        guard status == .fullAccess || status == .authorized else { return nil }
+        let now = Date()
+        let predicate = store.predicateForEvents(withStart: now.addingTimeInterval(-maxDuration),
+                                                 end: now.addingTimeInterval(60),
+                                                 calendars: nil)
+        let candidates = store.events(matching: predicate).filter { ev in
+            if ev.isAllDay { return false }
+            if ev.status == .canceled { return false }
+            if let me = ev.attendees?.first(where: { $0.isCurrentUser }),
+               me.participantStatus == .declined { return false }
+            return ev.startDate <= now && ev.endDate > now
+        }
+        // Overlapping calendars: the one that started most recently is the one
+        // the user is in.
+        return candidates.sorted { $0.startDate > $1.startDate }.first
+    }
+
     func eventStartingNow(lookback: TimeInterval = 65) -> EKEvent? {
         let status = EKEventStore.authorizationStatus(for: .event)
         guard status == .fullAccess || status == .authorized else { return nil }
