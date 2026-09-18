@@ -592,11 +592,6 @@ struct MainSettingsView: View {
 
     // MARK: - Language
 
-    private let languages: [(String, String)] = [
-        ("RU", "ru"), ("EN", "en"), ("ES", "es"), ("FR", "fr"),
-        ("DE", "de"), ("ZH", "zh"), ("JA", "ja"), ("KO", "ko"),
-        ("PT", "pt"), ("IT", "it"), ("UK", "uk")
-    ]
 
     private let translateLanguages: [(String, String)] = [
         ("RU", "ru"), ("EN", "en"), ("ES", "es"), ("FR", "fr"),
@@ -608,15 +603,15 @@ struct MainSettingsView: View {
         VStack(alignment: .leading, spacing: MW.sp8) {
             Text("LANGUAGE").blocksLabel()
 
-            WrappingHStack(items: languages, spacing: MW.sp4) { lang in
-                Text(lang.0)
+            WrappingHStack(items: LanguageChoices.all, spacing: MW.sp4) { lang in
+                Text(lang.label)
                     .font(MW.monoSm)
-                    .foregroundStyle(settings.transcriptionLanguage == lang.1 ? Color.black : MW.textSecondary)
+                    .foregroundStyle(settings.transcriptionLanguage == lang.code ? Color.black : MW.textSecondary)
                     .padding(.horizontal, MW.sp8)
                     .padding(.vertical, MW.sp4)
-                    .background(settings.transcriptionLanguage == lang.1 ? MW.elevated : .clear)
+                    .background(settings.transcriptionLanguage == lang.code ? MW.elevated : .clear)
                     .overlay(RoundedRectangle(cornerRadius: MW.rSmall, style: .continuous).stroke(MW.border, lineWidth: 0.5))
-                    .onTapGesture { settings.transcriptionLanguage = lang.1 }
+                    .onTapGesture { settings.transcriptionLanguage = lang.code }
             }
         }
         .padding(MW.sp16)
