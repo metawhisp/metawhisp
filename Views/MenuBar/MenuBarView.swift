@@ -19,7 +19,6 @@ struct MenuBarView: View {
             stageContent
             lastOutput
             errorView
-            languageStrip
             controls
             footer
         }
@@ -387,43 +386,6 @@ struct MenuBarView: View {
                     .overlay(Rectangle().fill(MW.border).frame(height: MW.hairline), alignment: .bottom)
             }
         }
-    }
-
-    // MARK: - Language
-
-    /// Choosing a dictation language used to mean opening the settings window
-    /// and finding the card on its Dictation tab — for something switched as
-    /// often as the language you are speaking. The same list Settings shows,
-    /// one click from the menu bar (`LanguageChoices`, shared so the two
-    /// cannot drift apart).
-    private var languageStrip: some View {
-        HStack(spacing: MW.sp8) {
-            Text("LANG").font(MW.label).tracking(1).foregroundStyle(MW.textMuted)
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: MW.sp4) {
-                    ForEach(LanguageChoices.all, id: \.code) { choice in
-                        let isCurrent = settings.transcriptionLanguage == choice.code
-                        Text(choice.label)
-                            .font(MW.monoSm)
-                            .foregroundStyle(isCurrent ? Color.black : MW.textSecondary)
-                            .padding(.horizontal, MW.sp8)
-                            .padding(.vertical, 3)
-                            .background(isCurrent ? MW.elevated : .clear)
-                            .overlay(RoundedRectangle(cornerRadius: MW.rSmall, style: .continuous)
-                                .stroke(MW.border, lineWidth: 0.5))
-                            .contentShape(Rectangle())
-                            .onTapGesture {
-                                settings.transcriptionLanguage = choice.code
-                                NSLog("[MenuBar] dictation language set to %@", choice.code)
-                            }
-                    }
-                }
-                .padding(.vertical, 1)
-            }
-        }
-        .padding(.horizontal, MW.sp16)
-        .padding(.vertical, 6)
-        .overlay(Rectangle().fill(MW.border).frame(height: MW.hairline), alignment: .bottom)
     }
 
     // MARK: - Controls

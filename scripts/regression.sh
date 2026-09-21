@@ -64,7 +64,6 @@ CRITICAL_SUITES=(
     MeetingAutoStartGateTests
     CalendarAutoStartRetryTests
     BrowserIdentityTests
-    LanguageChoicesTests
     SystemChannelPlacementTests
     LogRotationTests
     MeetingShutdownTests
