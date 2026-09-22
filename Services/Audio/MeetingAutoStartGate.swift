@@ -59,8 +59,15 @@ final class MeetingAutoStartGate {
     /// Attempts made per event, so a retry can stop.
     private var calendarAttempts: [String: Int] = [:]
 
-    /// Ticks since the last calendar attempt — the retry's spacing.
+    /// Ticks since the last calendar attempt — the retry's spacing. It does
+    /// NOT advance while a meeting is recording: counting through a recording
+    /// meant a stop could be followed by a retry 98 ms later (owner's log,
+    /// 2026-09-22 16:17:30).
     private var ticksSinceCalendarAttempt: Int = 0
+
+    /// Events the person turned off by hand. A retry is for a meeting that
+    /// gave up on its own, never for one someone stopped.
+    private var declinedEvents: Set<String> = []
 
     /// Reset the window-tracking state. Called when the caller knows the gate
     /// should forget what it was watching (recording started, user declined).
@@ -94,13 +101,23 @@ final class MeetingAutoStartGate {
     ///   right now, whether or not it just started.
     /// - parameter isRecording: whether a meeting is already being recorded —
     ///   nothing is proposed on top of one.
+    /// The person stopped this event's recording by hand, or dismissed its
+    /// countdown. Nothing starts it again by itself.
+    func decline(eventID: String) {
+        guard !eventID.isEmpty, declinedEvents.insert(eventID).inserted else { return }
+        NSLog("[AutoStartGate] %@ turned off by hand — it will not start itself again", eventID)
+    }
+
     func evaluate(
         callName: String?,
         calendarEventNow: (id: String, title: String)?,
         calendarEventInProgress: (id: String, title: String)?,
         isRecording: Bool
     ) -> Decision {
-        ticksSinceCalendarAttempt += 1
+        // The cooldown is time spent NOT recording. Counting through a meeting
+        // made the wait expire while it ran, so a stop was followed instantly
+        // by the next attempt.
+        if isRecording { ticksSinceCalendarAttempt = 0 } else { ticksSinceCalendarAttempt += 1 }
 
         // Calendar trumps everything. Fire once per boundary.
         if let ev = calendarEventNow, ev.id != lastCalendarEventID {
@@ -115,7 +132,8 @@ final class MeetingAutoStartGate {
            CalendarAutoStartRetry.shouldRetry(attempts: calendarAttempts[ev.id] ?? 0,
                                               ticksSinceLast: ticksSinceCalendarAttempt,
                                               isRecording: isRecording,
-                                              eventInProgress: true) {
+                                              eventInProgress: true,
+                                              declined: declinedEvents.contains(ev.id)) {
             noteCalendarAttempt(ev.id)
             NSLog("[AutoStartGate] retrying %@ — attempt %d of %d, nothing is recording",
                   ev.title, calendarAttempts[ev.id] ?? 0, CalendarAutoStartRetry.maxAttempts)

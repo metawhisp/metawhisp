@@ -129,3 +129,57 @@ final class MeetingAutoStartGateTests: XCTestCase {
         }
     }
 }
+
+/// What the gate does after the person says no.
+@MainActor
+final class GateRespectsAManualStopTests: XCTestCase {
+
+    private func runOut(_ g: MeetingAutoStartGate, event: (id: String, title: String),
+                        ticks: Int, isRecording: Bool = false) -> MeetingAutoStartGate.Decision {
+        var last: MeetingAutoStartGate.Decision = .idle
+        for _ in 0..<ticks {
+            last = g.evaluate(callName: nil, calendarEventNow: nil,
+                              calendarEventInProgress: event, isRecording: isRecording)
+        }
+        return last
+    }
+
+    /// The owner's report, 2026-09-22: stopped at 18:31:02, started itself again
+    /// at 18:31:57, stopped at 18:32:23, started again at 18:33:10 — while they
+    /// were not on a call.
+    func testAnEventStoppedByHandNeverStartsItselfAgain() {
+        let g = MeetingAutoStartGate()
+        let ev = (id: "E1", title: "Atomic Wallet")
+        _ = g.evaluate(callName: nil, calendarEventNow: ev, calendarEventInProgress: ev, isRecording: false)
+        g.decline(eventID: ev.id)
+        for _ in 0..<5 {
+            XCTAssertEqual(runOut(g, event: ev, ticks: CalendarAutoStartRetry.cooldownTicks * 2), .idle,
+                           "the person already said no")
+        }
+    }
+
+    /// The cooldown is time spent NOT recording: counting through the meeting
+    /// let a retry fire 98 ms after a stop (owner's log, 16:17:30).
+    func testTheCooldownDoesNotRunWhileAMeetingIsRecording() {
+        let g = MeetingAutoStartGate()
+        let ev = (id: "E2", title: "Standup")
+        _ = g.evaluate(callName: nil, calendarEventNow: ev, calendarEventInProgress: ev, isRecording: false)
+        // A long meeting runs…
+        _ = runOut(g, event: ev, ticks: CalendarAutoStartRetry.cooldownTicks * 10, isRecording: true)
+        // …and the first tick after it stops must not already be a retry.
+        let justAfterStop = g.evaluate(callName: nil, calendarEventNow: nil,
+                                       calendarEventInProgress: ev, isRecording: false)
+        XCTAssertEqual(justAfterStop, .idle, "a stop must not be followed instantly by a restart")
+    }
+
+    /// And the case the retry exists for still works: nothing recorded, nobody
+    /// refused, the event is still running.
+    func testAnEventNobodyRefusedIsStillRetried() {
+        let g = MeetingAutoStartGate()
+        let ev = (id: "E3", title: "Daily")
+        _ = g.evaluate(callName: nil, calendarEventNow: ev, calendarEventInProgress: ev, isRecording: false)
+        guard case .calendarReady = runOut(g, event: ev, ticks: CalendarAutoStartRetry.cooldownTicks) else {
+            return XCTFail("a still-running event nobody stopped must be retried")
+        }
+    }
+}

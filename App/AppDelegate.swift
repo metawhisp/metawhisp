@@ -1878,6 +1878,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
 
     private func stopMeetingRecording(reason: String) {
         NSLog("[MetaWhisp] ▶️ stopMeetingRecording reason=%@", reason)
+        // A hand on the stop button ends this calendar event's auto-start for
+        // good. Without it the retry restarted a meeting the owner had just
+        // stopped, three times in four minutes while they were not on a call
+        // (owner's report, 2026-09-22 18:31).
+        if let eventID = recordingCalendarEventID, CalendarAutoStartRetry.isRefusal(stopReason: reason) {
+            MeetingAutoStartGate.shared.decline(eventID: eventID)
+        }
         // Reset auto-detect flag — any follow-up manual recording starts from a clean slate.
         // Without this a subsequent manual recording would be auto-stopped on the next call-end event.
         didAutoStartRecording = false
@@ -2924,6 +2931,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             let stillVisible = MWNotificationStack.shared.items.contains { $0.id == cancelToken }
             guard stillVisible else {
                 NSLog("[CallDetect] %@ countdown cancelled by user", name)
+                // Dismissing the countdown is a refusal too — the event must
+                // not come back on its own a minute later.
+                if let calendarEventID { MeetingAutoStartGate.shared.decline(eventID: calendarEventID) }
                 MeetingAutoStartGate.shared.reset()
                 return
             }

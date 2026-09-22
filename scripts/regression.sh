@@ -63,6 +63,9 @@ CRITICAL_SUITES=(
     MeetingStartPolicyTests
     MeetingAutoStartGateTests
     CalendarAutoStartRetryTests
+    CalendarRetryRespectsARefusalTests
+    StopReasonIsARefusalTests
+    GateRespectsAManualStopTests
     BrowserIdentityTests
     SystemChannelPlacementTests
     LogRotationTests

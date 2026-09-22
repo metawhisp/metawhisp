@@ -20,9 +20,26 @@ enum CalendarAutoStartRetry {
     /// this is roughly a minute.
     static let cooldownTicks = 60
 
+    /// - Parameter declined: the person already turned this event's recording
+    ///   off by hand. A retry exists for the meeting that started into an empty
+    ///   room and gave up on its own — never to argue with someone who pressed
+    ///   stop. Shipped without this, it restarted a meeting the owner had just
+    ///   stopped, three times in four minutes (owner's log, 2026-09-22 18:31).
+    /// Which stops came from the person. A meeting the recorder ended by
+    /// itself — silence, the calendar event running out — may be retried; one
+    /// a hand stopped may not. Matched here rather than at the call site so
+    /// the list is one thing, with a test.
+    static func isRefusal(stopReason: String) -> Bool {
+        // `calendar-end-overrun-card-tap:<eventID>` carries the id after the
+        // reason, so this matches inside the string rather than at its end.
+        stopReason == "user-toggle" || stopReason.contains("card-tap")
+    }
+
     static func shouldRetry(attempts: Int, ticksSinceLast: Int,
-                            isRecording: Bool, eventInProgress: Bool) -> Bool {
-        eventInProgress
+                            isRecording: Bool, eventInProgress: Bool,
+                            declined: Bool) -> Bool {
+        !declined
+            && eventInProgress
             && !isRecording
             && attempts < maxAttempts
             && ticksSinceLast >= cooldownTicks
