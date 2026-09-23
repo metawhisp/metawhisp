@@ -238,7 +238,7 @@ final class ScreenExtractor: ObservableObject {
                 let trimmedContent = memJson.content.trimmingCharacters(in: .whitespacesAndNewlines)
                 // Exact text, anywhere in the store — not just the recent
                 // window. The live store holds three identical copies of
-                // "User conducts SEO analysis for sigmabrowser.com" because a
+                // "User conducts SEO analysis for example.com" because a
                 // bounded recent list had scrolled past the earlier ones.
                 if Self.memoryExists(exactly: trimmedContent, in: ctx) { continue }
                 // Same fact, different sentence. Reuses the director's own

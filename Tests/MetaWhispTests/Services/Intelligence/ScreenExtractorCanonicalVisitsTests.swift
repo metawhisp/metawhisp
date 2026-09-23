@@ -145,8 +145,8 @@ final class ScreenExtractorCanonicalVisitsTests: XCTestCase {
     func testTheSameFactInDifferentWordsIsOneFact() {
         let pairs = [
             ("User tracks launches in Linear", "User uses Linear to track launches"),
-            ("User conducts SEO analysis for sigmabrowser.com",
-             "User does SEO analysis for sigmabrowser.com"),
+            ("User conducts SEO analysis for example.com",
+             "User does SEO analysis for example.com"),
             ("Пользователь готовит презентацию к запуску",
              "Пользователь готовит презентацию для запуска"),
         ]
@@ -163,8 +163,8 @@ final class ScreenExtractorCanonicalVisitsTests: XCTestCase {
             "User tracks launches in Linear",
             "User pays for Linear with the company card"))
         XCTAssertFalse(ScreenAgentDirector.isNearDuplicate(
-            "User conducts SEO audits for Atomic Wallet",
-            "User conducts SEO analysis for sigmabrowser.com"))
+            "User conducts SEO audits for Acme Wallet",
+            "User conducts SEO analysis for example.com"))
     }
 
     /// A record whose frames were all retention-pruned contributes nothing —

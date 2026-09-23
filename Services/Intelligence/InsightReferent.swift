@@ -47,7 +47,7 @@ enum InsightReferent {
 
     /// Sentence starters that are capitalized by grammar, not because they
     /// name anyone. The first word of a headline is where a Russian or English
-    /// name most naturally sits — "Павел просит…", "Anna is waiting…" — so
+    /// name most naturally sits — "Сэм просит…", "Maya is waiting…" — so
     /// skipping position zero wholesale was throwing away the most common
     /// referent position; the deck caught it silencing a named request.
     private static let sentenceStarters: Set<String> = [

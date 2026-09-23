@@ -82,8 +82,8 @@ That is the **truthful** answer, not a gap to paper over. We optimize for
 *structured truth*, not for always-having-an-answer.
 
 ⚠️ Second limit (verified 2026-05-30): the workspace dictionary contains **only
-the user's tracked MetaWhisp projects** (`ZPROJECTALIAS`, 28 rows: `Overchat`,
-`SkyGen.ai`, …). A company that appears in a window title but is **not** a tracked
+the user's tracked MetaWhisp projects** (`ZPROJECTALIAS`, 28 rows: `ProjectAlpha`,
+`ProjectBeta.ai`, …). A company that appears in a window title but is **not** a tracked
 project (e.g. an external vendor's workspace seen in the title) will NOT be
 recognized and its people go to `unclear`. So "separate by company" works for
 *tracked-project* companies; everything else is honestly `unclear`. Widening this

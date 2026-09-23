@@ -382,15 +382,15 @@
     {
       "id": "referent_person_request",
       "locale": "ru",
-      "screen": "Павел: можешь глянуть мой PR до вечера? Это блокирует релиз",
+      "screen": "Сэм: можешь глянуть мой PR до вечера? Это блокирует релиз",
       "candidates": [
         {
-          "headline": "Павел просит глянуть его PR до вечера",
+          "headline": "Сэм просит глянуть его PR до вечера",
           "confidence": 0.9,
           "cited": [
             "e1"
           ],
-          "quote": "Павел"
+          "quote": "Сэм"
         }
       ],
       "expect": "item",

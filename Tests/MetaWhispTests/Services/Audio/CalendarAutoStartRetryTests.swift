@@ -52,7 +52,7 @@ final class CalendarAutoStartRetryTests: XCTestCase {
 /// A retry must never argue with the person.
 ///
 /// Shipped in 1.3.34, the retry had no idea the user could say no. The owner's
-/// log, 2026-09-22: the event "Atomic Wallet + Dima" auto-started at 18:30, the
+/// log, 2026-09-22: a calendar event auto-started at 18:30, the
 /// owner stopped it at 18:31:02, it started itself again at 18:31:57, they
 /// stopped it at 18:32:23, and it started again at 18:33:10. Three times, while
 /// they were not on a call at all.

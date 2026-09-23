@@ -1,6 +1,6 @@
 import Foundation
 
-/// ITER-057.5 — fulfillment detection: «я написал Сергею — задача закрывается сама».
+/// ITER-057.5 — fulfillment detection: «я написал Сэму — задача закрывается сама».
 ///
 /// Neither we nor the reference had this (reference only REJECTS re-extraction of
 /// completed tasks); founder explicitly asked for it. Design: the realtime reactor's
@@ -33,8 +33,8 @@ enum TaskFulfillment {
     }
 
     /// Minimum shared normalized tokens between a task description and the OCR
-    /// for the task to be worth sending. 2 catches "Написать Сергею Петровичу"
-    /// against a chat with Сергей Петрович while keeping unrelated tasks out of
+    /// for the task to be worth sending. 2 catches "Написать Сэму Смиту"
+    /// against a chat with Сэм Смит while keeping unrelated tasks out of
     /// the prompt (cost + hallucinated matches).
     static let minSharedTokens = 2
     /// Cap on tasks per LLM call — keeps the prompt small on the 30/hour budget.

@@ -214,8 +214,8 @@ the page `article:modified_time` and sitemap `<lastmod>`. Example:
 - `/blog/how-to-use-dictation-on-mac/`: schema `2026-03-26`, head and sitemap
   `2026-05-15`
 
-Eight older articles describe Andrew Dyuzhov as an `Organization` while linking
-to his author profile. The other articles correctly use `Person`.
+Eight older articles describe the site's author as an `Organization` while linking
+to the author profile. The other articles correctly use `Person`.
 
 Fix:
 

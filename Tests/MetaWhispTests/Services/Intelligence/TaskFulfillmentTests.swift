@@ -11,8 +11,8 @@ final class TaskFulfillmentTests: XCTestCase {
     // MARK: - relatedTasks pre-filter
 
     func test_related_taskSharingTwoTokensWithOCR_included() {
-        let task = ref("Написать Сергею Петровичу про отчёт")
-        let ocr = "Чат с Сергею Петровичу\nПривет! Как дела?"
+        let task = ref("Написать Сэму Смиту про отчёт")
+        let ocr = "Чат с Сэму Смиту\nПривет! Как дела?"
         XCTAssertEqual(TaskFulfillment.relatedTasks(ocr: ocr, tasks: [task]), [task])
     }
 

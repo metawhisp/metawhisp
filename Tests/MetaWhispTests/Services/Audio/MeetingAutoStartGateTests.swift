@@ -149,7 +149,7 @@ final class GateRespectsAManualStopTests: XCTestCase {
     /// were not on a call.
     func testAnEventStoppedByHandNeverStartsItselfAgain() {
         let g = MeetingAutoStartGate()
-        let ev = (id: "E1", title: "Atomic Wallet")
+        let ev = (id: "E1", title: "Weekly Sync")
         _ = g.evaluate(callName: nil, calendarEventNow: ev, calendarEventInProgress: ev, isRecording: false)
         g.decline(eventID: ev.id)
         for _ in 0..<5 {
