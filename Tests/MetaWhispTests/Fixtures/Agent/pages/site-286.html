@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Site Two Hundred Eighty-Six</title>
+<style>body { margin: 0; font: 14px sans-serif; }</style>
+</head>
+<body>
+<p id="note">Offers</p>
+<script>
+  // A widget of another site that asks for a payment — or, told 'ask-grant',
+  // for a grant — in its own confirm when the page that holds it says so,
+  // and tells the page what it was answered (ITER-076 I-09, review round 4,
+  // part C).
+  addEventListener('message', (event) => {
+    if (event.data === 'ask') {
+      parent.postMessage(confirm('Pay EUR 5 now?') ? 'widget paid' : 'widget cancel', '*');
+    } else if (event.data === 'ask-grant') {
+      parent.postMessage(confirm('Allow Acme to access your account?') ? 'widget granted' : 'widget cancel', '*');
+    }
+  });
+</script>
+</body>
+</html>

@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Site Five Hundred Twenty-One</title>
+<style>
+  body { margin: 0; font: 16px sans-serif; }
+  main { padding: 24px 40px; }
+  .window { position: fixed; bottom: 0; left: 0; right: 0; background: #fff; border-top: 1px solid #999; padding: 12px; }
+  .hide { display: none; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Timetable</h1>
+  <p>The first train leaves at 6:10.</p>
+  <p id="log"></p>
+</main>
+<!-- A cookie window whose settings replace its first layer (2026-10-21): "Customize" opens them; there the boxes are
+     drawn as they are, the one a person cannot change — named by no necessary word — on and switched off, "Marketing"
+     on unless ?off=1, and "Save preferences" saves what they show. Each act is logged. -->
+<div id="first" class="window" role="dialog" aria-label="Cookies">
+  <p>We use cookies to run the site and, with your consent, to measure and advertise.</p>
+  <button id="customize" type="button">Customize</button>
+  <button id="accept" type="button">Accept all</button>
+</div>
+<div id="settings" class="window hide" role="dialog" aria-label="Cookie settings">
+  <p>Choose which cookies we may use.</p>
+  <label><input type="checkbox" id="session" checked disabled> Session</label>
+  <label><input type="checkbox" id="analytics"> Analytics</label>
+  <label><input type="checkbox" id="marketing"> Marketing</label>
+  <button id="save" type="button">Save preferences</button>
+  <button id="accept-all" type="button">Accept all</button>
+</div>
+<script>
+  const params = new URLSearchParams(location.search);
+  const log = (entry) => { document.getElementById('log').textContent += entry + ';'; };
+  document.getElementById('marketing').checked = params.get('off') !== '1';
+  const first = document.getElementById('first');
+  const settings = document.getElementById('settings');
+  const closeAll = () => { first.classList.add('hide'); settings.classList.add('hide'); };
+  document.getElementById('customize').addEventListener('click', () => {
+    log('customize');
+    first.classList.add('hide');
+    settings.classList.remove('hide');
+  });
+  for (const id of ['accept', 'accept-all']) {
+    document.getElementById(id).addEventListener('click', () => { log('accept'); closeAll(); });
+  }
+  for (const id of ['session', 'analytics', 'marketing']) {
+    const box = document.getElementById(id);
+    box.addEventListener('change', () => log((box.checked ? 'on:' : 'off:') + id));
+  }
+  document.getElementById('save').addEventListener('click', () => {
+    const states = ['session', 'analytics', 'marketing']
+      .map((id) => id + '=' + (document.getElementById(id).checked ? 'on' : 'off'));
+    log('save:' + states.join(','));
+    closeAll();
+  });
+</script>
+</body>
+</html>

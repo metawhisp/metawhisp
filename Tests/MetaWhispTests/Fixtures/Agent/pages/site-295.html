@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Site Two Hundred Ninety-Five</title>
+<style>body { margin: 0; font: 16px sans-serif; } main { padding: 16px 40px; } iframe { border: 0; width: 240px; height: 40px; }</style>
+</head>
+<body>
+<main>
+  <h1>Checkout</h1>
+  <!-- ITER-076 I-09, round 5: frames only the page's words name — a label
+       around one in a form, the title of one outside any form — each holding
+       a field no structure and no word of its own marks. What they ask for is
+       still the user's part. -->
+  <form action="https://site-295.test/pay" method="post">
+    <label>Card number <iframe srcdoc="<input aria-label=Number value=1234>"></iframe></label>
+    <button type="submit">Pay</button>
+  </form>
+  <iframe title="Password" srcdoc="<input aria-label=Entry value=abcd>"></iframe>
+  <button type="button">Help</button>
+</main>
+</body>
+</html>

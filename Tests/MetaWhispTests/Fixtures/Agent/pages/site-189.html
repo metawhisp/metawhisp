@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Site One Hundred Eighty-Nine</title>
+<style>
+  body { margin: 0; font: 16px sans-serif; }
+  main { padding: 24px 40px; }
+  #outer { position: relative; display: inline-block; padding: 8px 12px; border: 1px solid #333; }
+  #inner { position: absolute; left: 0; top: 0; right: 0; bottom: 0; }
+  #go { position: absolute; left: 400px; top: 0; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Terms</h1>
+  <form id="other" action="/other" method="get"></form>
+  <div id="place"></div>
+</main>
+<script>
+  // A control of the page's own making: a form-associated element that sends
+  // the other form when clicked.
+  customElements.define('send-button', class extends HTMLElement {
+    static formAssociated = true;
+    constructor() {
+      super();
+      this.attachInternals();
+      this.addEventListener('click', () => document.getElementById('other').requestSubmit());
+    }
+  });
+  // The checkbox's label holds it, drawn away, and a label for it covers the
+  // checkbox's label whole.
+  const box = document.createElement('input');
+  box.type = 'checkbox';
+  box.id = 'agree';
+  box.hidden = true;
+  const outer = document.createElement('label');
+  outer.id = 'outer';
+  outer.htmlFor = 'agree';
+  outer.textContent = 'I agree';
+  const go = document.createElement('send-button');
+  go.id = 'go';
+  // ?bare: a control the report cannot see — no role, no focus.
+  if (!new URLSearchParams(location.search).has('bare')) {
+    go.setAttribute('role', 'button');
+    go.setAttribute('tabindex', '0');
+  }
+  go.textContent = 'Go elsewhere';
+  outer.appendChild(go);
+  const inner = document.createElement('label');
+  inner.id = 'inner';
+  inner.htmlFor = 'go';
+  outer.appendChild(inner);
+  const place = document.getElementById('place');
+  place.appendChild(box);
+  place.appendChild(outer);
+</script>
+</body>
+</html>

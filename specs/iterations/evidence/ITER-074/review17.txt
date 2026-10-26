@@ -1,0 +1,34 @@
+ITER-074 review round 17 (Codex on fd03b15), fix — 2026-09-24 22:23 CEST
+Code by GLM-5.3-Flash from the orchestrator's instructions (review17-instructions.md, two parts).
+Round 17 confirmed fixed: labels filled through a slot (native and aria-labelledby).
+
+Finding (confirmed in the code): the label reader followed a shadow host's shadow root AND its own
+children, and glued every text node together. A component whose slot shows the host's "OTP" read
+"OTPOTP", so \botp\b missed it; the field stayed unmarked and, on a clean page, its value was reported.
+The same gluing made "Enter" "OTP" in two tags read "EnterOTP".
+
+Fix (owner layer: composedText, the one reader of label words): a label is read twice — as the page draws
+it (a shadow host through its shadow root only, a slot through its assigned nodes or its fallback) and as
+its markup holds it (a child no slot shows included, per fieldWords' "shown or hidden"). Each reading is
+taken run together ("Pass" "word" -> Password) and apart ("Enter" "OTP"), and no reading runs into
+another. The words feed only the password/payment classifiers; nothing else reads them.
+
+Guard (site-36): an OTP label held in markup that no slot shows. It passes on fd03b15 and after the fix,
+and fails on the drawn-only variant (the minimal fix the review proposed) — shown below.
+
+--- red (fd03b15 + tests)
+Tests/MetaWhispTests/Services/Agent/ObserverFormsTests.swift:430: error: testALabelsWordsKeepTheirBoundaries] : XCTAssertTrue failed - https://site-33.test/
+Tests/MetaWhispTests/Services/Agent/ObserverFormsTests.swift:431: error: testALabelsWordsKeepTheirBoundaries] : XCTAssertFalse failed - https://site-33.test/
+Tests/MetaWhispTests/Services/Agent/ObserverFormsTests.swift:430: error: testALabelsWordsKeepTheirBoundaries] : XCTAssertTrue failed - https://site-34.test/
+Tests/MetaWhispTests/Services/Agent/ObserverFormsTests.swift:431: error: testALabelsWordsKeepTheirBoundaries] : XCTAssertFalse failed - https://site-34.test/
+Tests/MetaWhispTests/Services/Agent/ObserverFormsTests.swift:430: error: testALabelsWordsKeepTheirBoundaries] : XCTAssertTrue failed - https://site-35.test/
+Tests/MetaWhispTests/Services/Agent/ObserverFormsTests.swift:431: error: testALabelsWordsKeepTheirBoundaries] : XCTAssertFalse failed - https://site-35.test/
+--- guard on the drawn-only variant (temporary edit, restored)
+Tests/MetaWhispTests/Services/Agent/ObserverFormsTests.swift:430: error: testALabelsWordsKeepTheirBoundaries] : XCTAssertTrue failed - https://site-36.test/
+Tests/MetaWhispTests/Services/Agent/ObserverFormsTests.swift:431: error: testALabelsWordsKeepTheirBoundaries] : XCTAssertFalse failed - https://site-36.test/
+--- green (ObserverFormsTests)
+	 Executed 40 tests, with 0 failures (0 unexpected) in 3.375 (3.379) seconds
+--- gate
+  ✅ 1791 tests, 0 failures
+  ✅ 88 critical suites ran
+PASS — safe to continue.

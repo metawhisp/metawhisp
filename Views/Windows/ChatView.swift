@@ -16,6 +16,8 @@ struct ChatView: View {
     @FocusState private var inputFocused: Bool
 
     @ObservedObject private var localLLM = LocalLLMService.shared
+    /// The errand cards (ITER-076 stage 8b, 8.9): a running errand typed here shows its card's lines and buttons.
+    @ObservedObject private var errandCards = ErrandCardStack.shared
 
     /// ITER-047 Element B / ITER-051 F1.5 — chat unlocks via key, Pro, OR a
     /// ready local model (matches ChatService.hasLLMAccess).
@@ -107,14 +109,21 @@ struct ChatView: View {
                 .frame(maxWidth: 340)
             VStack(alignment: .leading, spacing: 6) {
                 Text("Try:").font(MW.label).tracking(0.6).foregroundStyle(MW.textMuted)
-                Text("• What did I do today?").font(MW.monoSm).foregroundStyle(MW.textSecondary)
-                Text("• What are my active tasks?").font(MW.monoSm).foregroundStyle(MW.textSecondary)
-                Text("• What do I know about <project>?").font(MW.monoSm).foregroundStyle(MW.textSecondary)
+                ForEach(Self.tryLines(errandCanStart: AgentService.shared.canStartErrands), id: \.self) { line in
+                    Text(line).font(MW.monoSm).foregroundStyle(MW.textSecondary)
+                }
             }
             .padding(.top, 8)
             Spacer()
         }
         .frame(maxWidth: .infinity)
+    }
+
+    /// What the empty MetaChat offers to try: an errand too while one can start — Pro, the agent on, a run, the
+    /// owner's switch on (ITER-076 stage 8b, № 160). Plain text, never a button: an errand starts with no bubble.
+    static func tryLines(errandCanStart: Bool) -> [String] {
+        ["• What did I do today?", "• What are my active tasks?", "• What do I know about <project>?"]
+            + (errandCanStart ? [AgentSetup.example] : [])
     }
 
     // MARK: - Messages
@@ -134,10 +143,22 @@ struct ChatView: View {
                 .padding(16)
             }
             .onAppear {
-                // On first open, jump to the latest message without animation —
-                // onChange below only fires on subsequent count changes, not initial load.
-                if let last = messages.last {
+                // An errand card asked for its result (ITER-076 I-11): open
+                // on it. Otherwise jump to the latest message without
+                // animation — onChange below only fires on subsequent count
+                // changes, not initial load.
+                if let asked = AppDelegate.shared?.consumePendingChatMessage() {
+                    proxy.scrollTo(asked, anchor: .center)
+                } else if let last = messages.last {
                     proxy.scrollTo(last.id, anchor: .bottom)
+                }
+            }
+            .onReceive(NotificationCenter.default.publisher(for: .metaChatShowMessage)) { notification in
+                // Already on screen: the request is served here, not again on
+                // the next appearance.
+                _ = AppDelegate.shared?.consumePendingChatMessage()
+                if let asked = notification.object as? UUID {
+                    withAnimation(.easeOut(duration: 0.2)) { proxy.scrollTo(asked, anchor: .center) }
                 }
             }
             .onChange(of: messages.count) {
@@ -170,6 +191,19 @@ struct ChatView: View {
                         .overlay(Rectangle().stroke(Color.red.opacity(0.3), lineWidth: MW.hairline))
                 } else {
                     VStack(alignment: .leading, spacing: 6) {
+                        // The user's own words above an errand's result, this session, with no label (ITER-076
+                        // stage 8b, 8.10): shown, never saved into the message.
+                        if !isUser, let asked = AppDelegate.shared?.chatService.request(ofResult: msg.id) {
+                            HStack(alignment: .top, spacing: 6) {
+                                Image(systemName: "quote.opening")
+                                    .font(.system(size: 10))
+                                    .foregroundStyle(MW.textMuted)
+                                Text(asked)
+                                    .font(MW.monoSm)
+                                    .foregroundStyle(MW.textMuted)
+                                    .lineLimit(3)
+                            }
+                        }
                         if !msg.text.isEmpty {
                             Text(msg.text)
                                 .font(MW.mono)
@@ -249,6 +283,14 @@ struct ChatView: View {
                     )
                     .frame(maxWidth: 520, alignment: isUser ? .trailing : .leading)
                 }
+                // Each errand this typed message started, while it runs: its card's lines and buttons, the same
+                // card's — the first answer counts, here or in the corner (ITER-076 stage 8b, 8.9).
+                if isUser {
+                    ForEach(liveErrandCards(of: msg.id), id: \.id) { card in
+                        ErrandLiveRow(card: card) { action in errandCards.press(action, on: card.id) }
+                            .frame(maxWidth: 520, alignment: .trailing)
+                    }
+                }
                 Text(msg.createdAt.formatted(date: .omitted, time: .shortened))
                     .font(MW.monoSm)
                     .foregroundStyle(MW.textMuted)
@@ -256,6 +298,12 @@ struct ChatView: View {
 
             if !isUser { Spacer(minLength: 40) }
         }
+    }
+
+    /// The cards of the errands typed message `id` started this session that have not ended.
+    private func liveErrandCards(of id: UUID) -> [ErrandCard] {
+        let errands = AppDelegate.shared?.chatService.errands(askedBy: id) ?? []
+        return errands.compactMap { errand in errandCards.cards.first { $0.id == errand && !$0.hasEnded } }
     }
 
     private var typingIndicator: some View {
@@ -353,13 +401,11 @@ struct ChatView: View {
         // ITER-068 — the anchored comment goes with the first question only.
         // After that the conversation has its own history and repeating it
         // would just crowd the context.
-        let outgoing: String
-        if let anchor {
-            outgoing = anchor.frozenContextBlock() + "\n\n" + text
-            self.anchor = nil
-        } else {
-            outgoing = text
-        }
+        let sentAnchor = anchor
+        // The card goes along with the words, never as the user's own words
+        // (ITER-076 I-06: an errand's goal is checked against those alone).
+        let attached = anchor?.frozenContextBlock()
+        self.anchor = nil
         isSending = true
         errorMsg = nil
         Task { @MainActor in
@@ -368,8 +414,16 @@ struct ChatView: View {
                 isSending = false
                 return
             }
-            await appDelegate.chatService.send(outgoing)
-            if let err = appDelegate.chatService.lastError {
+            let outcome = await appDelegate.chatService.send(text, attached: attached)
+            if outcome == .busy || outcome == .noAccess {
+                // Nothing was sent or saved (ITER-079): the message goes back
+                // to the box to send again.
+                if inputText.isEmpty { inputText = text }
+                if self.anchor == nil { self.anchor = sentAnchor }
+                errorMsg = outcome == .busy
+                    ? "Still answering a voice question. Send again in a moment."
+                    : appDelegate.chatService.lastError
+            } else if let err = appDelegate.chatService.lastError {
                 errorMsg = err
             }
             isSending = false
@@ -392,6 +446,52 @@ struct ChatView: View {
         guard !result.hasPrefix("✗") else { return false }
         guard let executedAt = msg.toolExecutedAt else { return false }
         return Date().timeIntervalSince(executedAt) <= 60
+    }
+}
+
+/// A running errand's card in MetaChat (ITER-076 stage 8b, 8.9): the card's own lines and buttons — never saved into
+/// a message, so no model reads them. Its time left to answer follows the card's.
+struct ErrandLiveRow: View {
+    let card: ErrandCard
+    let press: (ErrandCard.Action) -> Void
+
+    /// The card's lines as MetaChat shows them, top to bottom: its label, source, title, body and meta.
+    static func lines(of card: ErrandCard) -> [String] {
+        [card.label.uppercased(), card.source, card.title, card.body, card.meta].filter { !$0.isEmpty }
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            ForEach(Array(Self.lines(of: card).enumerated()), id: \.offset) { index, line in
+                Text(line)
+                    .font(index == 0 ? MW.label : MW.monoSm)
+                    .foregroundStyle(line == card.title ? MW.textPrimary : MW.textMuted)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            if card.question != nil {
+                TimelineView(.periodic(from: .now, by: 1)) { context in
+                    Text(card.countdown(at: .now)?.time ?? "")
+                        .font(MW.monoSm)
+                        .foregroundStyle(MW.textMuted)
+                        .id(context.date)
+                }
+            }
+            HStack(spacing: 8) {
+                ForEach(card.buttons, id: \.label) { button in
+                    Button { press(button.action) } label: {
+                        Text(button.label)
+                            .font(MW.label).tracking(0.6)
+                            .foregroundStyle(button.primary ? MW.textPrimary : MW.textSecondary)
+                            .padding(.horizontal, 8).padding(.vertical, 4)
+                            .overlay(RoundedRectangle(cornerRadius: MW.rSmall, style: .continuous)
+                                .stroke(button.primary ? MW.textMuted : MW.border, lineWidth: 0.5))
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+        }
+        .padding(10)
+        .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).strokeBorder(MW.border, lineWidth: 0.5))
     }
 }
 

@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Site Two Hundred Thirty-Six</title>
+<style>
+  #results { height: 300px; overflow-y: auto; }
+  #results li { height: 60px; }
+  footer { height: 3000px; }
+</style></head>
+<body>
+<main>
+  <h1>A page that scrolls</h1>
+  <ul id="results"></ul>
+</main>
+<footer>More below</footer>
+<script>
+  // The page itself scrolls, and holds a panel that scrolls too.
+  for (let i = 1; i <= 50; i++) {
+    const item = document.createElement('li');
+    item.textContent = 'Result ' + i;
+    document.getElementById('results').appendChild(item);
+  }
+</script>
+</body>
+</html>

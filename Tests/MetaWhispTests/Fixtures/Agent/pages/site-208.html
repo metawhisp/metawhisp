@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Site Two Hundred Eight</title>
+<style>body { margin: 0; font: 16px sans-serif; } main { padding: 16px 40px; } iframe { display: block; border: 0; }</style>
+</head>
+<body>
+<main id="page"></main>
+<script>
+  const page = document.getElementById('page');
+  if (location.pathname === '/passport') {
+    // A field named by the page around its frame alone (Claude review of
+    // I-09, kept 12): the frame's own words say only "Number".
+    page.innerHTML = '<h1>Your profile</h1><label>Passport number <iframe style="width:360px;height:80px" ' +
+      'title="Passport number" src="https://site-208.test/id-field"></iframe></label>' +
+      '<button type="button">Help</button>';
+  } else if (location.pathname === '/id-field') {
+    page.innerHTML = '<input placeholder="Number" value="X12Y34Z"> <button type="button">Save</button>';
+  } else if (location.pathname === '/long') {
+    // More words than a look reads for its secrets, a code's words past them
+    // (Codex review 1 of I-09, P1-1): the page is not read whole — and a
+    // frame there whose own words name nothing.
+    page.innerHTML = '<p>' + 'Lorem ipsum dolor sit amet. '.repeat(25000) + '</p><h2>Your one-time code</h2>' +
+      '<button type="button">481920</button><button type="button">Help</button>' +
+      '<iframe style="width:300px;height:40px" srcdoc="<button type=button>735102</button>"></iframe>';
+  } else if (location.pathname === '/field') {
+    // A code shown only as a field's value, the field's own words naming a
+    // code (review round 3, decision 1: a field's value is judged by its
+    // field's words).
+    page.innerHTML = '<h2>Your one-time code</h2><input aria-label="Verification code" value="527391">' +
+      '<button type="button">Help</button>';
+  } else if (location.pathname === '/apart') {
+    // A code's words in the page's header, the code in its main text and in
+    // the page's own address.
+    document.body.insertAdjacentHTML('afterbegin', '<header><h2>Your one-time code</h2></header>');
+    page.innerHTML = '<p>527391</p><button type="button">Help</button>';
+  } else {
+    // A one-time code shown as a button's label and a field's value, its
+    // words in a heading beside them (Codex review 1 of I-09, P1-1).
+    page.innerHTML = '<h2>Your one-time code</h2><button type="button">481920</button>' +
+      '<label>Reference <input value="481920"></label>' +
+      '<button type="button">Resend</button><a href="https://site-208.test/help">Help</a>';
+  }
+</script>
+</body>
+</html>

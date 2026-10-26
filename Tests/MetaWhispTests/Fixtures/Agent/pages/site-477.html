@@ -1,0 +1,16 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Site Four Hundred Seventy Seven</title></head>
+<body>
+<main>
+  <h1>Dynamic loading</h1>
+  <!-- Frames a person cannot see, in no form: a password in one of this page's own origin, and frames named as
+       a sign-in — not shown, zero-sized, made invisible. As an ad-heavy page holds them. -->
+  <iframe style="display:none" srcdoc="<input type=password aria-label=Secret>"></iframe>
+  <iframe title="Sign in" style="width:0;height:0;border:0" srcdoc="<p>x</p>"></iframe>
+  <iframe name="login" style="visibility:hidden;width:200px;height:40px" srcdoc="<input type=password aria-label=Code>"></iframe>
+  <button type="button" id="start">Start</button>
+  <a href="https://site-477.test/help">Help</a>
+</main>
+</body>
+</html>

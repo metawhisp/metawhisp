@@ -6,42 +6,77 @@ import XCTest
 /// before the grant does not start working when the grant arrives — it has to
 /// be installed again.
 ///
-/// `register()` installed four monitors, never checked `AXIsProcessTrusted()`,
-/// and logged "registered" either way. Grant Accessibility in the middle of a
-/// session and the hotkeys stayed dead until the next launch, with a log that
-/// said they were fine (audit, 2026-09-06, P1).
+/// History: `register()` once ignored the grant altogether (audit, 2026-09-06,
+/// P1). Its fix watched for 600 s and then gave up, so a grant made later —
+/// after a re-signed build on 2026-09-25 — left Right ⌘ and the layout fix
+/// dead until a relaunch. `PermissionMonitor` now watches for the life of the
+/// app (ITER-075 step 0, US-0.3).
+@MainActor
 final class HotkeyRearmTests: XCTestCase {
 
+    private typealias State = PermissionMonitor.State
+
     func testTheGrantArrivingIsWhatRearms() {
-        XCTAssertTrue(HotkeyRearmPolicy.shouldRearm(wasTrusted: false, isTrusted: true),
-                      "permission just arrived — the monitors have to be installed again")
+        XCTAssertEqual(PermissionMonitor.change(was: false, is: true), .granted,
+                       "permission just arrived — the monitors have to be installed again")
     }
 
-    func testNothingIsRearmedWhileTheAnswerHasNotChanged() {
-        XCTAssertFalse(HotkeyRearmPolicy.shouldRearm(wasTrusted: false, isTrusted: false))
-        XCTAssertFalse(HotkeyRearmPolicy.shouldRearm(wasTrusted: true, isTrusted: true),
-                       "re-installing working monitors would drop the keystroke in flight")
+    func testNothingHappensWhileTheAnswerHasNotChanged() {
+        XCTAssertNil(PermissionMonitor.change(was: false, is: false))
+        XCTAssertNil(PermissionMonitor.change(was: true, is: true),
+                     "re-installing working monitors would drop the keystroke in flight")
     }
 
-    /// Permission taken away is not a re-arm: the monitors are already there
-    /// and there is nothing to install.
-    func testLosingPermissionIsNotARearm() {
-        XCTAssertFalse(HotkeyRearmPolicy.shouldRearm(wasTrusted: true, isTrusted: false))
+    func testLosingPermissionIsARevocationNotARearm() {
+        XCTAssertEqual(PermissionMonitor.change(was: true, is: false), .revoked)
     }
 
-    /// The watch exists only until the grant arrives — a poll that runs for
-    /// the life of the app is a battery cost with no purpose. This is the
-    /// gate's release: granted, or the ceiling below.
-    func testTheWatchStopsOnceThePermissionIsThere() {
-        XCTAssertFalse(HotkeyRearmPolicy.keepWatching(isTrusted: true, elapsedSeconds: 1))
-        XCTAssertTrue(HotkeyRearmPolicy.keepWatching(isTrusted: false, elapsedSeconds: 60))
+    /// The release of the watch is the grant itself, whenever it comes: there
+    /// is no ceiling after which a grant stops counting.
+    func testAGrantIsPickedUpHoweverLateItComes() {
+        var granted = false
+        let monitor = PermissionMonitor(read: { State(accessibility: granted, screenRecording: true) })
+        var changes: [PermissionMonitor.Change] = []
+        monitor.onAccessibility = { changes.append($0) }
+        for _ in 0..<10_000 { monitor.check() }
+        XCTAssertEqual(changes, [], "hours of checks with nothing granted change nothing")
+        granted = true
+        monitor.check()
+        XCTAssertEqual(changes, [.granted])
     }
 
-    /// …and a ceiling, so a user who never grants it is not polled forever.
-    func testTheWatchGivesUpEventually() {
-        XCTAssertFalse(HotkeyRearmPolicy.keepWatching(isTrusted: false,
-                                                      elapsedSeconds: HotkeyRearmPolicy.watchCeilingSeconds + 1))
-        XCTAssertGreaterThanOrEqual(HotkeyRearmPolicy.watchCeilingSeconds, 300,
-                                    "long enough for a person to walk through System Settings")
+    /// A grant that is revoked and given again — what a re-signed build does —
+    /// re-arms again, even when the app was trusted at launch.
+    func testARevokedPermissionThatComesBackRearmsAgain() {
+        var trusted = true
+        let monitor = PermissionMonitor(read: { State(accessibility: trusted, screenRecording: true) })
+        var changes: [PermissionMonitor.Change] = []
+        monitor.onAccessibility = { changes.append($0) }
+        trusted = false
+        monitor.check()
+        trusted = true
+        monitor.check()
+        XCTAssertEqual(changes, [.revoked, .granted])
+    }
+
+    func testScreenRecordingIsWatchedToo() {
+        var screen = false
+        let monitor = PermissionMonitor(read: { State(accessibility: true, screenRecording: screen) })
+        var changes: [PermissionMonitor.Change] = []
+        monitor.onScreenRecording = { changes.append($0) }
+        screen = true
+        monitor.check()
+        XCTAssertEqual(changes, [.granted])
+    }
+
+    /// Often while something is missing, so a grant lands within seconds;
+    /// rarely once everything is granted, so a revocation is still noticed.
+    func testTheWatchIsFastWhileSomethingIsMissingAndNeverStops() {
+        XCTAssertEqual(PermissionMonitor.interval(for: State(accessibility: false, screenRecording: true),
+                                                  needsScreenRecording: true), 5)
+        XCTAssertEqual(PermissionMonitor.interval(for: State(accessibility: true, screenRecording: false),
+                                                  needsScreenRecording: true), 5)
+        XCTAssertEqual(PermissionMonitor.interval(for: State(accessibility: true, screenRecording: true),
+                                                  needsScreenRecording: true), 60)
     }
 }

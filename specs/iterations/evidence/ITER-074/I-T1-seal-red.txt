@@ -1,0 +1,27 @@
+ITER-074 I-T1 harness seal — red run, 2026-09-24 16:46 CEST, stubs from step C1
+command: swift test --filter WebViewBridgeTests
+
+WebViewBridgeTests testAClickRunsThePagesOwnScript passed (0.241 seconds).
+WebViewBridgeTests testAClosedTabIsGone passed (0.144 seconds).
+WebViewBridgeTests testAFixturePageLoadsAndRunsJavaScript passed (0.074 seconds).
+WebViewBridgeTests testAFrameGoingAnywhereIsBlocked failed (0.607 seconds).
+WebViewBridgeTests testANonWebAddressIsBlocked failed (0.001 seconds).
+WebViewBridgeTests testAPageCannotFetchFromTheNetwork failed (0.079 seconds).
+WebViewBridgeTests testAPageGoingToAWebAddressIsRoutedToAFixture failed (0.000 seconds).
+WebViewBridgeTests testARunThatOutlivesItsDeadlineTimesOut passed (0.073 seconds).
+WebViewBridgeTests testAScriptErrorIsReportedNotSwallowed passed (0.073 seconds).
+WebViewBridgeTests testASearchAddressRoutesToTheResultsPage passed (0.000 seconds).
+WebViewBridgeTests testAnEmptyFrameIsAllowed passed (0.000 seconds).
+WebViewBridgeTests testAnUnknownAddressGetsTheNotFoundPage passed (0.079 seconds).
+WebViewBridgeTests testClickingAResultLandsOnThatSitesFixture failed (0.073 seconds).
+WebViewBridgeTests testEveryPageCarriesTheNetworkLock failed (0.068 seconds).
+WebViewBridgeTests testGoingToARealHostLandsOnTheNotFoundFixture failed (0.080 seconds).
+WebViewBridgeTests testNonWebURLsAreRefusedBeforeAnythingLoads passed (0.001 seconds).
+WebViewBridgeTests testOurOwnLoadIsAllowed passed (0.000 seconds).
+WebViewBridgeTests testScriptsMustReturnText failed (0.084 seconds).
+WebViewBridgeTests testThePageBelievesItIsAtItsAddress passed (0.072 seconds).
+WebViewBridgeTests testTheResultsPageHasThreeResults passed (0.076 seconds).
+WebViewBridgeTests testTwoTabsAreIndependent passed (0.153 seconds).
+WebViewBridgeTests testUndefinedComesBackAsEmptyText passed (0.074 seconds).
+
+	 Executed 22 tests, with 13 failures (3 unexpected) in 2.055 (2.058) seconds

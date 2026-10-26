@@ -247,6 +247,9 @@ final class LayoutSwitchController {
     private let isKnownWord: (String, KeyboardLayout) -> Bool
     private let permitsInputCapture: @MainActor () -> Bool
     private let inputContextIdentity: @MainActor () -> LayoutInputContextIdentity?
+    /// Whether macOS trusts us for Accessibility; injected so the rule is
+    /// testable (ITER-075 step 0, US-0.3).
+    private let isTrusted: @MainActor () -> Bool
     private var wordBuffer = LayoutWordBuffer()
     private var doubleShiftDetector = LayoutDoubleShiftDetector()
     private var globalKeyMonitor: Any?
@@ -279,6 +282,7 @@ final class LayoutSwitchController {
         self.inputContextIdentity = {
             LayoutCaptureSafetyGate.currentContextIdentity()
         }
+        self.isTrusted = { AXIsProcessTrusted() }
     }
 
     init(
@@ -289,7 +293,8 @@ final class LayoutSwitchController {
         permitsInputCapture: @escaping @MainActor () -> Bool = { true },
         inputContextIdentity: @escaping @MainActor () -> LayoutInputContextIdentity? = {
             LayoutInputContextIdentity(processIdentifier: 0, focusedElementHash: 0)
-        }
+        },
+        isTrusted: @escaping @MainActor () -> Bool = { AXIsProcessTrusted() }
     ) {
         SystemLayoutLexicon.shared.warmUp()
         self.confidenceEngine = confidenceEngine
@@ -300,19 +305,20 @@ final class LayoutSwitchController {
         }
         self.permitsInputCapture = permitsInputCapture
         self.inputContextIdentity = inputContextIdentity
+        self.isTrusted = isTrusted
     }
 
     @discardableResult
     func start() -> State {
         stop()
         guard Self.shouldObserveInput(
-            featureEnabled: AppSettings.shared.layoutFixEnabled,
+            featureEnabled: AppSettings.shared.layoutFixEnabled && AppSettings.shared.globalInputEnabled,
             automaticEnabled: AppSettings.shared.layoutFixAutoEnabled,
             doubleShiftEnabled: AppSettings.shared.layoutFixDoubleShiftEnabled
         ) else {
             return .disabled
         }
-        guard AXIsProcessTrusted() else {
+        guard isTrusted() else {
             return .needsAccessibility
         }
 

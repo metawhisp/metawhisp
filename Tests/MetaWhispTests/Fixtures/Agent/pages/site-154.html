@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Site One Hundred Fifty-Four</title>
+<style>
+  body { margin: 0; font: 16px sans-serif; }
+  main { padding: 24px 40px; }
+  input { width: 220px; height: 28px; }
+  #saved-docs { position: absolute; left: 40px; top: 140px; width: 228px; list-style: none; margin: 0; padding: 0;
+                border: 1px solid #777; background: #fff; }
+  #saved-docs li { height: 30px; line-height: 30px; padding: 0 6px; }
+  /* A secret field is marked by its structure: it draws dots (ITER-076 I-09, round 5). */
+  .dots { -webkit-text-security: disc; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Traveller</h1>
+  <!-- A secret field that is a made-up dropdown, its saved numbers listed at
+       the end of the page. -->
+  <label for="doc">Passport number</label>
+  <input id="doc" class="dots" role="combobox" aria-autocomplete="list" aria-expanded="true" aria-controls="saved-docs">
+  <p><button type="button" style="margin-top: 120px">Continue</button></p>
+  <!-- A secret widget that names no list itself: its field inside does. -->
+  <div id="id-card" class="dots" role="combobox" aria-label="Identity card number" aria-expanded="true">
+    <input id="id-input" aria-autocomplete="list" aria-controls="saved-ids">
+  </div>
+  <ul id="saved-ids" role="listbox" aria-label="Recent" aria-owns="more-ids">
+    <li role="option">XY7654321</li>
+  </ul>
+  <!-- More of them, a list the first one names in turn. -->
+  <ul id="more-ids" role="listbox" aria-label="Older">
+    <li role="option">QZ9988776</li>
+  </ul>
+  <!-- A secret widget whose field stands in a component inside it. -->
+  <div id="deep-card" class="dots" role="combobox" aria-label="Identity card number" aria-expanded="true">
+    <deep-input></deep-input>
+  </div>
+  <ul id="saved-deep" role="listbox" aria-label="Recent">
+    <li role="option">YZ5656565</li>
+  </ul>
+  <script>
+    customElements.define('deep-input', class extends HTMLElement {
+      constructor() {
+        super();
+        this.attachShadow({ mode: 'open' }).innerHTML = '<input aria-autocomplete="list" aria-controls="saved-deep">';
+      }
+    });
+  </script>
+  <!-- A secret field the page hides, its saved numbers shown. -->
+  <input id="hidden-doc" aria-label="Passport number" aria-controls="hidden-saved" style="display: none; -webkit-text-security: disc">
+  <ul id="hidden-saved" role="listbox" aria-label="Kept">
+    <li role="option">QR4545454</li>
+  </ul>
+  <!-- Its saved numbers, drawn away from the field in the page's main part. -->
+  <ul id="saved-docs" role="listbox" aria-label="Saved">
+    <li role="option">AB1234567</li>
+    <li role="option">CD7654321</li>
+  </ul>
+</main>
+</body>
+</html>

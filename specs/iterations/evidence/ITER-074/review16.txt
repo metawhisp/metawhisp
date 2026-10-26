@@ -1,0 +1,13 @@
+ITER-074 review round 16 (Codex on b1a278e), fix — 2026-09-24 22:05 CEST
+Code by GLM-5.3-Flash from the orchestrator's instructions (review16-instructions.md).
+Round 16 confirmed fixed: a sensitive submitter; labels drawn in shadow roots. Overall verdict on the
+observer's sinks: no other high-confidence MAJOR/CRITICAL bypass found.
+
+Finding (confirmed in the code): the label reader did not follow a slot to its assigned nodes, so a label
+a component fills through a slot left its field unmarked. Fix: a slot shows its assigned nodes, or its
+fallback content when none are assigned, as the page draws it.
+
+--- red
+ObserverFormsTests testASlottedLabelStillMarksAFieldSensitive failed (0.706 seconds).
+--- green (agent suites)
+	 Executed 209 tests, with 0 failures (0 unexpected) in 13.395 (13.409) seconds

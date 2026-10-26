@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Site Twenty-Four</title></head>
+<body>
+<main>
+  <h1>Profile</h1>
+  <span id="l1">One</span> <span id="l2">Two</span> <span id="l3">Three</span> <span id="l4">Four</span>
+  <span id="l5">Five</span> <span id="l6">Password</span>
+  <input type="text" aria-labelledby="l1 l2 l3 l4 l5 l6" value="secret-sixth">
+  <label for="split"><span>Pass</span><span>word</span></label>
+  <input id="split" type="text" value="secret-split">
+  <label for="long">Notice: please read these terms before you continue. We keep your settings private and never share them with anyone else, so take a moment to check every detail below before saving the form or leaving this page for good. Your password</label>
+  <input id="long" type="text" value="secret-long">
+  <label for="verify">Verification
+      code</label>
+  <input id="verify" type="text" value="secret-verify">
+  <recipient-field id="recipients"><button slot="chips">Remove Sam</button></recipient-field>
+  <ul role="listbox textbox" aria-label="Sizes"><li role="option" tabindex="0">Large size</li></ul>
+</main>
+<script>
+  document.getElementById('recipients').attachShadow({ mode: 'open' }).innerHTML =
+    '<div role="textbox" aria-label="To" tabindex="0" style="display:inline-block;min-width:40px;min-height:20px">' +
+    '<slot name="chips"></slot></div>';
+</script>
+</body>
+</html>

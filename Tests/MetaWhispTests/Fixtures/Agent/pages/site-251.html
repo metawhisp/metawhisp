@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Site Two Hundred Fifty-One</title>
+<style>body { margin: 0; font: 16px sans-serif; } main { padding: 16px 40px; } iframe { display: block; border: 0; }</style>
+</head>
+<body>
+<main id="page"></main>
+<script>
+  // A checkout whose total and order button stand in two documents (Claude
+  // review of I-09, kept 3). No card field, no saved card shown: payment by
+  // invoice. Each order button logs in its own document and sends nothing.
+  const page = document.getElementById('page');
+  const order = (label) => '<form method="post" action="https://site-251.test/order" ' +
+    'onsubmit="event.preventDefault(); document.getElementById(\'log\').textContent += \'ordered;\'">' +
+    '<button type="submit">' + label + '</button></form><p id="log"></p>';
+  const path = location.pathname;
+  if (path === '/confirm') {
+    page.innerHTML = order('Zahlungspflichtig bestellen');
+  } else if (path === '/reverse') {
+    // The order button in the page, the total in a frame of it.
+    page.innerHTML = '<h1>Kasse</h1>' + order('Jetzt bestellen') +
+      '<iframe style="width:300px;height:40px" src="https://site-251.test/total"></iframe>';
+  } else if (path === '/total') {
+    page.innerHTML = '<p>Gesamt: 49,00 &euro;</p>';
+  } else if (path === '/late') {
+    // The total comes when the page scrolls to the frame: at the act.
+    page.innerHTML = '<h1>Kasse</h1><div style="height:1400px"></div>' +
+      '<iframe style="width:420px;height:80px" src="https://site-251.test/confirm-late"></iframe><div id="total"></div>';
+    addEventListener('scroll', () => {
+      document.getElementById('total').innerHTML = '<p>Gesamt: 49,00 &euro;</p>';
+    }, { once: true });
+  } else if (path === '/euros') {
+    // A total written with its currency's name, beside a form sent by POST.
+    page.innerHTML = '<h1>Checkout</h1><p>Total: 120 euros</p>' + order('Continue');
+  } else if (path === '/confirm-late') {
+    page.innerHTML = order('Bestellen');
+  } else {
+    // The total in the page, the order button in a frame of it.
+    page.innerHTML = '<h1>Kasse</h1><p>Gesamt: 49,00 &euro;</p>' +
+      '<iframe style="width:420px;height:80px" src="https://site-251.test/confirm"></iframe>';
+  }
+</script>
+</body>
+</html>

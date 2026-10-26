@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Dynamic loading 479</title></head>
+<body>
+<main>
+  <h1>Dynamic loading</h1>
+  <div id="start"><button type="button">Start</button></div>
+  <div id="loading" hidden>Loading...</div>
+  <div id="finish"></div>
+  <p><a href="https://site-479.test/elsewhere">Elsewhere</a></p>
+</main>
+<script>
+  // A result that comes six seconds after Start, a loading indicator on screen meanwhile (2026-10-16).
+  document.querySelector('#start button').addEventListener('click', () => {
+    document.getElementById('start').hidden = true;
+    document.getElementById('loading').hidden = false;
+    // On /forever the indicator never goes: the wait on it has an end.
+    if (location.pathname === '/forever') return;
+    setTimeout(() => {
+      document.getElementById('loading').hidden = true;
+      document.getElementById('finish').innerHTML = '<h4>Hello World!</h4>';
+    }, 6000);
+  });
+</script>
+</body>
+</html>

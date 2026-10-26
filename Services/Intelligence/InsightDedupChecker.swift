@@ -30,9 +30,19 @@ enum InsightDedupChecker {
         recent: [ExtractedInsight],
         similarityThreshold: Double = defaultSimilarityThreshold
     ) -> Bool {
-        let candKey = candidate.body.lowercased()
+        isDuplicate(candidate.body, of: recent.map(\.body), similarityThreshold: similarityThreshold)
+    }
+
+    /// The same check on bare texts, for a path whose items are not insights
+    /// — the advice cards (2026-10-20), which had no check after the model.
+    static func isDuplicate(
+        _ candidate: String,
+        of recent: [String],
+        similarityThreshold: Double = defaultSimilarityThreshold
+    ) -> Bool {
+        let candKey = candidate.lowercased()
         for prior in recent {
-            let priorKey = prior.body.lowercased()
+            let priorKey = prior.lowercased()
             if candKey == priorKey { return true }
             if similarityRatio(candKey, priorKey) >= similarityThreshold { return true }
         }

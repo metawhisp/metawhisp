@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Site One Hundred Eighty-Five</title>
+<style>
+  body { margin: 0; font: 16px sans-serif; }
+  main { padding: 24px 40px; }
+  #outer { position: relative; display: inline-block; padding: 8px 12px; border: 1px solid #333; }
+  #inner { position: absolute; left: 0; top: 0; right: 0; bottom: 0; }
+  #go { position: absolute; left: 400px; top: 0; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Terms</h1>
+  <form id="other" action="/other" method="get"></form>
+  <div id="place"></div>
+</main>
+<script>
+  // Built by script, as nesting a label in a label is not something the
+  // parser keeps: an outer label for a hidden checkbox holds the other form's
+  // submit button, drawn away from it, and a plain label for that button
+  // covers the outer one whole.
+  const box = document.createElement('input');
+  box.type = 'checkbox';
+  box.id = 'agree';
+  box.hidden = true;
+  const outer = document.createElement('label');
+  outer.id = 'outer';
+  outer.htmlFor = 'agree';
+  outer.textContent = 'I agree';
+  // ?hidden: the other form's submit is a hidden input the report cannot see.
+  const hidden = new URLSearchParams(location.search).has('hidden');
+  const go = document.createElement(hidden ? 'input' : 'button');
+  go.id = 'go';
+  go.type = 'submit';
+  go.setAttribute('form', 'other');
+  if (hidden) go.hidden = true; else go.textContent = 'Go elsewhere';
+  outer.appendChild(go);
+  const inner = document.createElement('label');
+  inner.id = 'inner';
+  inner.htmlFor = 'go';
+  outer.appendChild(inner);
+  const place = document.getElementById('place');
+  place.appendChild(box);
+  place.appendChild(outer);
+</script>
+</body>
+</html>

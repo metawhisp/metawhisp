@@ -1,0 +1,16 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Site Two Hundred Thirty-Three</title></head>
+<body>
+<main>
+  <h1>A page that rewrites its own address</h1>
+  <p><a href="https://site-234.test/">Next site</a></p>
+</main>
+<script>
+  // The page plants an address of its own origin that the tab never loaded:
+  // a later Back through the tab's history must never ask for it (ITER-076
+  // 2.2, S1).
+  if (location.pathname === '/') history.replaceState(null, '', '/delete-account');
+</script>
+</body>
+</html>

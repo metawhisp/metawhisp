@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Site One Hundred Fifty-Seven</title>
+<style>
+  body { margin: 0; font: 16px sans-serif; }
+  main { padding: 24px 40px; }
+  article { width: 320px; padding: 12px; border: 1px solid #777; }
+  .select { display: inline-block; width: 260px; min-height: 36px; line-height: 36px; padding: 0 8px; border: 1px solid #777;
+            cursor: pointer; }
+  ul { list-style: none; margin: 0; padding: 0; width: 278px; border: 1px solid #777; }
+  li { height: 30px; line-height: 30px; padding: 0 6px; cursor: pointer; }
+</style>
+</head>
+<body>
+<main>
+  <!-- A made-up dropdown on a product card, its list drawn inside the card. -->
+  <article>
+    <h3>Shirt</h3>
+    <div id="size" class="select" role="combobox" tabindex="0" aria-label="Size" aria-haspopup="listbox"
+         aria-expanded="false" aria-controls="sizes">Choose a size</div>
+    <ul id="sizes" role="listbox" hidden><li role="option">Small</li><li role="option">Medium</li><li role="option">Large</li></ul>
+    <p><button type="button">Add to bag</button></p>
+  </article>
+  <!-- One whose list is drawn inside the dropdown itself. -->
+  <article>
+    <h3>Hat</h3>
+    <div id="colour" class="select" role="combobox" tabindex="0" aria-label="Colour" aria-haspopup="listbox"
+         aria-expanded="false"><span class="shown">Choose a colour</span>
+      <ul role="listbox" hidden><li role="option">Grey</li><li role="option">Blue</li><li role="option">Green</li></ul></div>
+    <p><button type="button">Add hat to bag</button></p>
+  </article>
+</main>
+<script>
+  const box = document.getElementById('size');
+  const list = document.getElementById('sizes');
+  box.addEventListener('click', () => {
+    list.hidden = !list.hidden;
+    box.setAttribute('aria-expanded', String(!list.hidden));
+  });
+  for (const option of list.children) {
+    option.addEventListener('click', () => {
+      box.textContent = option.textContent;
+      list.hidden = true;
+      box.setAttribute('aria-expanded', 'false');
+    });
+  }
+  const colour = document.getElementById('colour');
+  const colours = colour.querySelector('ul');
+  colour.addEventListener('click', () => {
+    colours.hidden = !colours.hidden;
+    colour.setAttribute('aria-expanded', String(!colours.hidden));
+  });
+  for (const option of colours.children) {
+    option.addEventListener('click', (event) => {
+      event.stopPropagation();
+      colour.querySelector('.shown').textContent = option.textContent;
+      colours.hidden = true;
+      colour.setAttribute('aria-expanded', 'false');
+    });
+  }
+</script>
+</body>
+</html>

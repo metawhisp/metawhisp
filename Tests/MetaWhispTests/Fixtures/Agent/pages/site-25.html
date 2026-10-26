@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Site Twenty-Five</title>
+<style>.box { display:inline-block; min-width:40px; min-height:20px; }</style></head>
+<body>
+<main>
+  <h1>Contact</h1>
+  <a href="mailto:help"><span class="box" role="button" tabindex="0">Write to support</span></a>
+  <form action="mailto:help"><button>Send the form</button></form>
+  <form action="mailto:help"><button><span class="box" role="button" tabindex="0">Continue inside</span></button></form>
+  <a href="https://site-25.test/next"><span class="box" role="button" tabindex="0">Next page</span></a>
+  <select id="country" aria-label="Country"></select>
+  <select id="big-one" aria-label="Big one"></select>
+  <select id="big-two" aria-label="Big two"></select>
+</main>
+<script>
+  const fill = (id, count, prefix) => {
+    const select = document.getElementById(id);
+    for (let i = 1; i <= count; i++) select.add(new Option(prefix + ' ' + i));
+  };
+  fill('country', 300, 'Country');
+  fill('big-one', 1500, 'Item');
+  fill('big-two', 1500, 'Entry');
+</script>
+</body>
+</html>

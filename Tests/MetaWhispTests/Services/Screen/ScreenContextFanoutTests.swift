@@ -7,7 +7,8 @@ import XCTest
 /// They were chained: the reactor was awaited first, and its model call is
 /// allowed 20 seconds, so a screen the user was looking at right now did not
 /// reach the proactive path until the task classifier had finished with it.
-/// By then the user has usually moved on.
+/// By then the user has usually moved on. Both run only with the Ultra switch on
+/// (U1; its off state: `UltraFeaturesTests`), so these tests turn it on.
 @MainActor
 final class ScreenContextFanoutTests: XCTestCase {
 
@@ -20,6 +21,7 @@ final class ScreenContextFanoutTests: XCTestCase {
         let proactiveRan = expectation(description: "proactive consumer ran")
         ScreenContextFanout.dispatch(
             makeContext(),
+            ultra: true,
             toTaskReactor: { _ in try? await Task.sleep(for: .seconds(3)) },
             toProactive: { _ in proactiveRan.fulfill() }
         )
@@ -37,6 +39,7 @@ final class ScreenContextFanoutTests: XCTestCase {
 
         ScreenContextFanout.dispatch(
             ctx,
+            ultra: true,
             toTaskReactor: { c in reactorSawID = c.id; reactorRan.fulfill() },
             toProactive: { c in proactiveSawID = c.id; proactiveRan.fulfill() }
         )
@@ -73,6 +76,7 @@ final class ScreenContextFanoutTests: XCTestCase {
         ScreenContextFanout.dispatch(
             makeContext(),
             isForcedReread: true,
+            ultra: true,
             toTaskReactor: { _ in reactorRan = true },
             toProactive: { _ in proactiveRan = true }
         )

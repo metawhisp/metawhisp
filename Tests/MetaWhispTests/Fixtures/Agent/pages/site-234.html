@@ -1,0 +1,17 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Site Two Hundred Thirty-Four</title></head>
+<body>
+<main>
+  <h1>Notes</h1>
+  <div id="words"></div>
+</main>
+<script>
+  // Far more words than a look may carry: the first part is kept, and the
+  // look says it was cut.
+  const words = [];
+  for (let i = 0; i < 2000; i++) words.push('Line ' + i + ' of the notes.');
+  document.getElementById('words').textContent = words.join(' ');
+</script>
+</body>
+</html>

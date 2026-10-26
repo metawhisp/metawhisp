@@ -1,13 +1,14 @@
 import Foundation
 
-/// UI-only access check for the "smart features need an API key or Pro" reminder
-/// bar (ITER-047 Element B).
+/// Access check for the "smart features need an API key or Pro" reminder bar
+/// (ITER-047 Element B) — and, for chat, MetaChat's real gate: `ChatService.send`
+/// asks `hasForChat` before it saves anything (ITER-079).
 ///
 /// This is NOT a replacement for the per-service private `hasLLMAccess` getters
-/// scattered across the intelligence services — those differ by policy (some
-/// count a ready local LLM, some are cloud/Pro-only). It mirrors only the two
-/// gates the reminder bar needs, so each screen's bar reflects that screen's
-/// real gate.
+/// scattered across the other intelligence services — those differ by policy
+/// (some count a ready local LLM, some are cloud/Pro-only). It holds only the
+/// two gates the reminder bar needs, so each screen's bar reflects that
+/// screen's real gate.
 enum LLMAccess {
     /// Generic gate — used by Tasks / Memories (and most extraction services):
     /// a cloud API key, Pro, OR a ready local LLM all grant access.
@@ -17,7 +18,7 @@ enum LLMAccess {
 
     /// Chat gate. ITER-051 F1.5 — a ready local LLM now COUNTS: MetaChat runs
     /// through the text agentic loop (read-only search tools work; mutations
-    /// use the same confirm flow). Keep in sync with `ChatService.hasLLMAccess`.
+    /// use the same confirm flow). `ChatService.send` asks it before saving anything.
     static func hasForChat(apiKey: String, isPro: Bool, localReady: Bool) -> Bool {
         !apiKey.isEmpty || isPro || localReady
     }

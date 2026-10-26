@@ -56,11 +56,15 @@ enum LLMRequestBody {
         system: String,
         user: String,
         tier: LLMTier? = nil,
-        serviceId: String? = nil
+        serviceId: String? = nil,
+        deadlineMs: Int? = nil
     ) -> [String: Any] {
         var body: [String: Any] = ["system": system, "user": user]
         if let tier { body["tier"] = tier.rawValue }
         if let serviceId { body["service_id"] = serviceId }
+        // ITER-075 step 1 (1.5) — a caller that stops waiting asks the proxy to
+        // answer before then; past it the proxy says 503, the service's failure.
+        if let deadlineMs { body["deadline_ms"] = deadlineMs }
         return body
     }
 }

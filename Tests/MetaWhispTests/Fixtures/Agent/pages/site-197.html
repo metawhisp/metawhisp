@@ -1,0 +1,15 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Site One Hundred Sixty-Seven</title></head>
+<body>
+<main>
+  <h1>Renamed often</h1>
+  <p id="log"></p>
+</main>
+<script>
+  // The page sets its own title, and sets it again later.
+  document.title = 'Inbox (1)';
+  setTimeout(() => { document.title = 'Inbox (2)'; document.getElementById('log').textContent = 'renamed'; }, 300);
+</script>
+</body>
+</html>

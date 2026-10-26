@@ -5,14 +5,20 @@ import SwiftUI
 /// Manages the borderless floating window that displays voice-question status.
 /// Shows/hides based on `VoiceQuestionState.shared.isVisible`.
 ///
+/// **The Island (ITER-078).** The window is the island itself: its frame
+/// follows `VoiceIslandPresenter.shape`, animated for both windows together,
+/// top centre just under the menu bar, and `VoiceIslandView` fills it. The
+/// shadow window also draws the island's glow.
+///
 /// **Two-window design (ITER-050 B2.2 — copied from MeetingCoachWindowController).**
 /// Click-through is a *structural* property here, not a runtime toggle:
 ///   - `cardWindow` — sized exactly to the visible pill. Interactive, so the
 ///     STOP button actually works. `nonactivatingPanel` keeps focus in the
 ///     user's app.
 ///   - `shadowWindow` — a child window `shadowPadding` larger per side that
-///     renders ONLY the drop shadow and has `ignoresMouseEvents = true`, so
-///     clicks around the pill pass straight through to the app beneath.
+///     renders only the drop shadow and the glow, and has
+///     `ignoresMouseEvents = true`, so clicks around the pill pass straight
+///     through to the app beneath.
 ///
 /// Replaces the single-panel `ClickThroughHostingView`, whose
 /// ignoresMouseEvents+NSTrackingArea toggle left the panel permanently
@@ -24,17 +30,44 @@ final class FloatingVoiceWindowController {
     private var cardWindow: NSPanel?
     private var shadowWindow: NSPanel?
     private var shadowView: CardShadowView?
-    private var hostingView: SelfSizingHostingView<FloatingVoiceView>?
     private var visibilityCancellable: AnyCancellable?
+    private var shapeCancellable: AnyCancellable?
+    private var stageCancellable: AnyCancellable?
+    /// The current error has shaken once already.
+    private var errorShaken = false
+    /// Counts the island's moves: only the latest one's end may shake it.
+    private var placement = 0
+    /// Drives the island's stages, shape and characters (ITER-078).
+    let presenter = VoiceIslandPresenter(
+        phases: VoiceQuestionState.shared.$phase.eraseToAnyPublisher(),
+        level: { AppDelegate.shared?.recorder.audioLevel ?? 0 },
+        reduceMotion: { NSWorkspace.shared.accessibilityDisplayShouldReduceMotion }
+    )
+    /// The island sits this far under the menu bar.
+    private let gapUnderMenuBar: CGFloat = 10
     private var escMonitor: Any?
     private var globalEscMonitor: Any?
     private var autoDismissTask: Task<Void, Never>?
 
-    /// Shadow breathing room per side: 2·radius 24 + |y| 12 = 60 — the no-clip
-    /// rule for a blurred shadow's soft tail (same as MeetingCoach).
+    /// Shadow breathing room per side: at least 2·radius + |y| for the drop
+    /// shadow (2·18 + 12 = 48) and 2·radius for the glow (40) — the no-clip
+    /// rule for a blurred shadow's soft tail.
     private let shadowPadding: CGFloat = 60
 
     init() {
+        // The island's shape sets the window's frame (ITER-078).
+        shapeCancellable = presenter.$shape
+            .sink { [weak self] shape in
+                MainActor.assumeIsolated {
+                    guard let shape else { return }
+                    self?.apply(shape)
+                }
+            }
+        // The design's glow: red while it listens, faint red on an error.
+        stageCancellable = presenter.$stage
+            .sink { [weak self] stage in
+                MainActor.assumeIsolated { self?.glow(for: stage) }
+            }
         // React to state changes.
         visibilityCancellable = VoiceQuestionState.shared.$phase
             .receive(on: RunLoop.main)
@@ -63,16 +96,24 @@ final class FloatingVoiceWindowController {
     }
 
     private func scheduleAutoDismiss(seconds: Double) {
+        guard let question = VoiceQuestionState.shared.question else { return }
+        scheduleAutoDismiss(seconds: seconds, question: question)
+    }
+
+    /// Closes `question` after `seconds` — only that question: a newer one
+    /// that started in the meantime stays open (ITER-079 review). Internal so
+    /// a test can fire it for an old question.
+    func scheduleAutoDismiss(seconds: Double, question: UUID) {
         autoDismissTask?.cancel()
         autoDismissTask = Task { @MainActor [weak self] in
             try? await Task.sleep(for: .seconds(seconds))
             guard !Task.isCancelled else { return }
             // Don't dismiss while still speaking.
             if VoiceQuestionState.shared.isSpeaking {
-                self?.scheduleAutoDismiss(seconds: 2)
+                self?.scheduleAutoDismiss(seconds: 2, question: question)
                 return
             }
-            VoiceQuestionState.shared.dismiss()
+            VoiceQuestionState.shared.dismiss(ifStill: question)
         }
     }
 
@@ -80,14 +121,14 @@ final class FloatingVoiceWindowController {
         if cardWindow == nil { createWindows() }
         guard let cardWindow, let shadowWindow else { return }
         if !cardWindow.isVisible {
-            positionTopCenter(cardWindow)
+            placeTopCenter(presenter.shape ?? VoiceIsland.shape(for: .seed), animated: false)
+            glow(for: presenter.stage)
             // Order ONLY the parent — children come along; explicitly ordering
             // a child window detaches it from its parent (see MeetingCoach).
             cardWindow.orderFrontRegardless()
             if cardWindow.childWindows?.contains(shadowWindow) != true {
                 cardWindow.addChildWindow(shadowWindow, ordered: .below)
             }
-            updateShadowFrame()
             installEscMonitors()
         }
     }
@@ -105,16 +146,13 @@ final class FloatingVoiceWindowController {
     }
 
     private func createWindows() {
-        let hosting = SelfSizingHostingView(rootView: FloatingVoiceView(state: VoiceQuestionState.shared))
-        hosting.onContentSizeChange = { [weak self] size in
-            self?.updateCardSize(size)
-        }
-        self.hostingView = hosting
+        let hosting = NSHostingView(rootView: VoiceIslandView(presenter: presenter, state: VoiceQuestionState.shared))
+        hosting.sizingOptions = []
 
-        // Card window — exactly the visible pill. Interactive; non-activating
-        // so clicking STOP never steals focus from the app the user is in.
+        // Card window — exactly the island. Interactive; non-activating so
+        // clicking Stop never steals focus from the app the user is in.
         let card = NSPanel(
-            contentRect: NSRect(x: 0, y: 0, width: 380, height: 120),
+            contentRect: NSRect(x: 0, y: 0, width: 44, height: 14),
             styleMask: [.borderless, .nonactivatingPanel],
             backing: .buffered,
             defer: false
@@ -132,19 +170,22 @@ final class FloatingVoiceWindowController {
 
         // Shadow window — child, below the card, transparent to mouse events.
         let shadowFrame = card.frame.insetBy(dx: -shadowPadding, dy: -shadowPadding)
-        let shadow = NSPanel(
+        let shadow = IslandShadowPanel(
             contentRect: shadowFrame,
             styleMask: [.borderless, .nonactivatingPanel],
             backing: .buffered,
             defer: false
         )
+        // The island is glass: its shadow and glow are drawn only outside it,
+        // or they would tint it from behind.
         let shadowContent = CardShadowView(
             frame: NSRect(origin: .zero, size: shadowFrame.size),
             inset: shadowPadding,
-            cornerRadius: 14,          // pill's clipShape radius
-            shadowRadius: 24,
-            shadowOpacity: 0.45,
-            shadowYOffset: 12
+            cornerRadius: 7,
+            shadowRadius: 18,
+            shadowOpacity: 0.30,
+            shadowYOffset: 12,
+            cutsOutCard: true
         )
         shadow.isOpaque = false
         shadow.backgroundColor = .clear
@@ -160,60 +201,96 @@ final class FloatingVoiceWindowController {
         self.cardWindow = card
         self.shadowWindow = shadow
         self.shadowView = shadowContent
-
-        // Force the first measurement so the card matches the content before
-        // the window is shown, not on a later async layout pass.
-        hosting.layoutSubtreeIfNeeded()
-        hosting.reportCurrentSize()
     }
 
-    /// Resize the card window to the measured pill size, keeping the top edge
-    /// and horizontal center anchored (the pill grows downward as the answer
-    /// streams in), then resync the shadow window.
-    private func updateCardSize(_ size: CGSize) {
-        guard let cardWindow, size.width > 0, size.height > 0 else { return }
-        // Review fix — clamp like MeetingRecap: a degenerate or runaway
-        // measurement must not produce a giant (screen-overflowing,
-        // click-blocking) or invisible card. Content past the cap scrolls
-        // inside the pill (FloatingVoiceView's ScrollView).
-        let newSize = NSSize(
-            width: ceil(min(max(size.width, 380), 420)),
-            height: ceil(min(max(size.height, 56), 520))
-        )
-        var frame = cardWindow.frame
-        guard abs(frame.width - newSize.width) > 0.5 ||
-              abs(frame.height - newSize.height) > 0.5 else { return }
-        let top = frame.maxY
-        frame.origin.x = frame.midX - newSize.width / 2
-        frame.origin.y = top - newSize.height
-        frame.size = newSize
-        cardWindow.setFrame(frame, display: true)
-        updateShadowFrame()
-    }
-
-    private func updateShadowFrame() {
-        guard let cardWindow, let shadowWindow else { return }
-        let frame = cardWindow.frame.insetBy(dx: -shadowPadding, dy: -shadowPadding)
-        shadowWindow.setFrame(frame, display: true)
-        shadowView?.frame = NSRect(origin: .zero, size: frame.size)
-        shadowView?.needsLayout = true
-    }
-
-    private func positionTopCenter(_ window: NSPanel) {
-        guard let screen = NSScreen.main else { return }
-        let visible = screen.visibleFrame
-        if let host = hostingView {
-            host.layoutSubtreeIfNeeded()
-            host.reportCurrentSize()
+    private func glow(for stage: VoiceIsland.Stage?) {
+        let red = NSColor(MW.live)
+        if stage != .error { errorShaken = false }
+        switch stage {
+        case .seed, .listening: shadowView?.glow(red, opacity: 0.38)
+        case .error: shadowView?.glow(red, opacity: 0.2)
+        default: shadowView?.glow(nil, opacity: 0)
         }
-        let size = window.frame.size
-        // Pill top sits `shadowPadding` below the visible top — same optics as
-        // the old in-window 60pt envelope, and it leaves room for the halo.
-        let origin = NSPoint(
-            x: visible.midX - size.width / 2,
-            y: visible.maxY - size.height - shadowPadding
-        )
-        window.setFrameOrigin(origin)
+    }
+
+    /// An error shakes the whole island once, as in the design, after it has
+    /// taken the error's shape — a shake running beside that move would leave
+    /// the island where the move began. The shadow window, a child, moves with
+    /// it. Not with Reduce Motion.
+    private func shake() {
+        guard let cardWindow, cardWindow.isVisible,
+              !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion else { return }
+        let origin = cardWindow.frame.origin
+        let shake = CAKeyframeAnimation()
+        shake.values = [0, -9, 8, -6, 4, -2, 0].map { NSValue(point: NSPoint(x: origin.x + $0, y: origin.y)) }
+        shake.duration = 0.5
+        shake.calculationMode = .linear
+        cardWindow.animations = ["frameOrigin": shake]
+        cardWindow.animator().setFrameOrigin(origin)
+        cardWindow.animations = [:]
+    }
+
+    /// The island took a new shape: both windows move to it, animated while
+    /// it shows (ITER-078).
+    private func apply(_ shape: VoiceIsland.Shape) {
+        guard let cardWindow, cardWindow.isVisible else { return }
+        placeTopCenter(shape, animated: true)
+    }
+
+    /// The island's frame on screen now, and its shadow window's (for tests).
+    var islandFrame: NSRect? { cardWindow?.frame }
+    var shadowFrame: NSRect? { shadowWindow?.frame }
+
+    /// Where `shape` belongs: top centre, just under the menu bar and clear of
+    /// the notch, no wider than the screen allows.
+    func targetFrame(for shape: VoiceIsland.Shape) -> NSRect? {
+        guard let screen = (cardWindow?.isVisible == true ? cardWindow?.screen : nil) ?? NSScreen.main else {
+            return nil
+        }
+        let visible = screen.visibleFrame
+        let fitted = shape.fitting(width: visible.width - 40)
+        let top = VoiceIsland.top(visibleTop: visible.maxY, screenTop: screen.frame.maxY,
+                                  safeAreaTop: screen.safeAreaInsets.top, gap: gapUnderMenuBar)
+        return NSRect(x: (visible.midX - fitted.width / 2).rounded(), y: top - fitted.height,
+                      width: fitted.width, height: fitted.height)
+    }
+
+    /// Moves both windows to `shape`'s frame, animated while the island shows.
+    private func placeTopCenter(_ shape: VoiceIsland.Shape, animated: Bool) {
+        guard let cardWindow, let shadowWindow, let target = targetFrame(for: shape) else { return }
+        let shadowTarget = target.insetBy(dx: -shadowPadding, dy: -shadowPadding)
+        shadowView?.cornerRadius = min(shape.cornerRadius, target.height / 2)
+        let moves = animated && !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+        placement += 1
+        let thisPlacement = placement
+        // A shake still running would put the island back where it began:
+        // stop it first.
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = 0
+            cardWindow.animator().setFrameOrigin(cardWindow.frame.origin)
+        }
+        // Through the animator either way: a frame set directly would not stop
+        // a move still running.
+        NSAnimationContext.runAnimationGroup({ context in
+            context.duration = moves ? 0.45 : 0
+            // Eases out, as the design's spring settles: a window's frame
+            // animation does not go past its target, so there is no bounce.
+            context.timingFunction = CAMediaTimingFunction(controlPoints: 0.2, 0.9, 0.2, 1)
+            context.allowsImplicitAnimation = moves
+            cardWindow.animator().setFrame(target, display: true)
+            shadowWindow.animator().setFrame(shadowTarget, display: true)
+        }, completionHandler: { [weak self] in
+            // An error shakes once it has settled in its shape, and only after
+            // the latest move: an older move can reach its own target before
+            // it formally ends, and its end may come just after the error's
+            // move has begun.
+            MainActor.assumeIsolated {
+                guard let self, thisPlacement == self.placement, self.presenter.stage == .error,
+                      !self.errorShaken, self.cardWindow?.frame == target else { return }
+                self.errorShaken = true
+                self.shake()
+            }
+        })
     }
 
     // MARK: - Esc / Space keyboard handling
@@ -274,4 +351,11 @@ final class FloatingVoiceWindowController {
             globalEscMonitor = nil
         }
     }
+}
+
+/// The island's shadow window reaches above the menu bar by its padding, and
+/// macOS would move it down, so the shadow and the glow fell 50 pt below the
+/// island (ITER-078 review). Its frame is taken exactly as given.
+final class IslandShadowPanel: NSPanel {
+    override func constrainFrameRect(_ frameRect: NSRect, to screen: NSScreen?) -> NSRect { frameRect }
 }

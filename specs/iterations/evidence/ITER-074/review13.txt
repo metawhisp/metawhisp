@@ -1,0 +1,18 @@
+ITER-074 review round 13 (Codex on dc0fb05), fixes — 2026-09-24 21:34 CEST
+Code by GLM-5.3-Flash from the orchestrator's instructions (review13-instructions.md). Its first phase-B
+run could not start the GLM backend (Operation not permitted) and wrote nothing; the retry applied it.
+One compile error (a missing line of step B3.2) was fed back and fixed by GLM.
+Round 13 confirmed fixed: Stop ownership, paid calls, the step-ceiling correction.
+
+Findings (all confirmed in the code before fixing):
+  1. an action whose reply was lost after the page acted was never recorded -> sent once the script goes out
+  2. controls inside a sensitive field were reported with their own words -> not reported
+  3. a label naming cookies exempted any grant -> only a label of nothing but cookie-consent words is exempt
+
+--- red
+AgentRunTests testAnActionWhoseReplyIsLostIsStillRecordedAndChecked failed (0.677 seconds).
+ObserverFormsTests testAControlInsideASensitiveFieldIsNotReported failed (0.073 seconds).
+ObserverFormsTests testAnImageInAHiddenOrSensitiveFieldNamesNothing failed (0.074 seconds).
+SafetyGuardTests testALabelThatGrantsMoreThanCookiesIsAGrant failed (0.000 seconds).
+--- green (agent suites)
+	 Executed 205 tests, with 0 failures (0 unexpected) in 13.077 (13.092) seconds

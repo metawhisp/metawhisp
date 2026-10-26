@@ -1,5 +1,6 @@
 import Foundation
 import IOKit
+import Security
 
 /// Manages Pro license state: activation via deep link, persistence, and verification.
 @MainActor
@@ -20,10 +21,34 @@ final class LicenseService: ObservableObject {
     @Published var email: String?
     @Published var licenseKey: String?
     @Published var plan: String?
+    /// A2 — the subscription's billing period, "year" or "month", from the session answer (server S2); nil until
+    /// a session answer says it. Every license row says plan "pro", so the plan name cannot tell.
+    @Published var billingInterval: String?
     @Published var renewalDate: Date?
     @Published var cancelAtPeriodEnd: Bool = false
     @Published var isActivating: Bool = false
     @Published var lastError: String?
+    /// Set while a saved Pro item exists but can't be read (ITER-075 step 0,
+    /// US-0.4). Nothing is signed out or deleted while it is set.
+    @Published var keychainProblem: String?
+    /// Set when this session's sign-in could not be saved to the keychain; the
+    /// sign-in banner says so instead of "Pro activated".
+    @Published var unsavedSignIn: OSStatus?
+
+    /// A non-secret note that the last sign-in could not be saved, so the next
+    /// launch can say why the owner is signed out. Cleared by a sign-in that
+    /// saves, a readable license key, or a sign-out.
+    private static let unsavedSignInKey = "license.unsavedSignInStatus"
+    private static var unsavedSignInStatus: OSStatus? {
+        get { (UserDefaults.standard.object(forKey: unsavedSignInKey) as? Int).map { OSStatus(truncatingIfNeeded: $0) } }
+        set {
+            if let newValue {
+                UserDefaults.standard.set(Int(newValue), forKey: unsavedSignInKey)
+            } else {
+                UserDefaults.standard.removeObject(forKey: unsavedSignInKey)
+            }
+        }
+    }
 
     /// LIC-1 — when the server last confirmed an active subscription. Drives the
     /// cached-Pro grace TTL (see `LicenseEntitlement`). Persisted in the Keychain.
@@ -46,7 +71,7 @@ final class LicenseService: ObservableObject {
         NSLog("[License] 72h grace-expiry re-verify tick — cached Pro is dropped unless the server confirms now")
             Task { @MainActor in
                 let s = LicenseService.shared
-                if let t = KeychainHelper.load(key: "com.metawhisp.sessionToken"), !t.isEmpty {
+                if let t = s.tokenForReverify(), !t.isEmpty {
                     await s.verify(token: t)
                 }
             }
@@ -54,31 +79,16 @@ final class LicenseService: ObservableObject {
     }
 
     private init() {
-        // Restore from secure storage
-        let token = KeychainHelper.load(key: "com.metawhisp.sessionToken")
-        email = KeychainHelper.load(key: "com.metawhisp.proEmail")
-        licenseKey = KeychainHelper.load(key: "com.metawhisp.licenseKey")
-        plan = KeychainHelper.load(key: "com.metawhisp.proPlan")
-        lastVerifiedAt = Self.loadLastVerified()
-        // LIC-1 — cached Pro is trusted only within the grace TTL when the flag is
-        // on; with the flag off (default) this is exactly `key present` — today's
-        // behaviour. `verify()` below re-confirms with the server when online.
+        // Restore from secure storage. An item that exists but can't be read is
+        // a keychain problem, never a sign-out (ITER-075 step 0, US-0.4).
+        let token = restoreFromKeychain()
         let hasKey = licenseKey != nil && !(licenseKey?.isEmpty ?? true)
-        isPro = LicenseEntitlement.cachedProIsTrusted(
-            hasActiveKey: hasKey,
-            lastVerifiedAt: lastVerifiedAt,
-            now: Date(),
-            enforce: AppSettings.shared.enforceProEntitlementTTL
-        )
 
-        // Auto-switch to cloud if Pro (skip loading 3-4 GB local model)
-        if isPro && AppSettings.shared.transcriptionEngine == "ondevice" {
-            AppSettings.shared.transcriptionEngine = "cloud"
-            NSLog("[License] ☁️ Pro user detected at launch — auto-switched to cloud")
-        }
+        // A1 — a restored Pro session was activated on this Mac before: the user's engine choice stays.
+        ProCloudDefault.launched(proRestored: isPro)
 
         // Verify license is still valid on launch
-        NSLog("[License] Launch state: pro=%@, key=%@, stamp=%@, launchVerify=%@", isPro ? "YES" : "NO", hasKey ? "present" : "none", lastVerifiedAt.map { String(format: "%.1fh ago", Date().timeIntervalSince($0) / 3600) } ?? "never", (token?.isEmpty == false) ? "scheduled" : "skipped (no session token)")
+        NSLog("[License] Launch state: pro=%@, key=%@, stamp=%@, keychain=%@, launchVerify=%@", isPro ? "YES" : "NO", hasKey ? "present" : "none", lastVerifiedAt.map { String(format: "%.1fh ago", Date().timeIntervalSince($0) / 3600) } ?? "never", keychainProblem == nil ? "ok" : "UNREADABLE", (token?.isEmpty == false) ? "scheduled" : "skipped (no session token, or the keychain is unreadable)")
         if let token, !token.isEmpty {
             Task { await verify(token: token) }
         }
@@ -93,18 +103,83 @@ final class LicenseService: ObservableObject {
         NSLog("[License] 12h re-verify tick")
             Task { @MainActor in
                 let s = LicenseService.shared
-                if let t = KeychainHelper.load(key: "com.metawhisp.sessionToken"), !t.isEmpty {
+                if let t = s.tokenForReverify(), !t.isEmpty {
                     await s.verify(token: t)
                 }
             }
         }
     }
 
-    /// Activate Pro via deep link token from website.
-    func activate(token: String) async {
+    /// Reads the saved Pro session and returns its token, if any.
+    ///
+    /// An item that exists but can't be read sets `keychainProblem` and
+    /// changes nothing else: no field is cleared, nothing is deleted, and no
+    /// verification runs — a verify could end in `signOut()`, which deletes
+    /// the very items that could not be read. The next read that succeeds
+    /// clears the problem: the 12h re-verify reads again while it is set, and
+    /// so does every launch.
+    private func restoreFromKeychain() -> String? {
+        var reads: [String: KeychainRead] = [:]
+        for account in LicenseRestore.accounts { reads[account] = KeychainHelper.read(account) }
+        let decision = LicenseRestore.decide(reads)
+        let launch = LicenseRestore.launchPlan(decision, unsavedStatus: Self.unsavedSignInStatus)
+        if launch.clearUnsavedMarker { Self.unsavedSignInStatus = nil }
+        switch decision {
+        case .unreadable(let account, let status):
+            keychainProblem = launch.message
+            lastError = launch.message
+            NSLog("[License] ❌ keychain item %@ unreadable (status %d) — nothing deleted, verify skipped", account, status)
+        case .restored(_, let restoredEmail, let restoredKey, let restoredPlan, let stamp):
+            if let problem = keychainProblem {
+                NSLog("[License] keychain readable again — Pro session restored")
+                if lastError == problem { lastError = nil }
+            }
+            keychainProblem = nil
+            if let message = launch.message {
+                lastError = message
+                NSLog("[License] the last sign-in was not saved to the keychain — signed out, and the owner is told why")
+            }
+            email = restoredEmail
+            licenseKey = restoredKey
+            plan = restoredPlan
+            lastVerifiedAt = stamp.flatMap { TimeInterval($0) }.map { Date(timeIntervalSince1970: $0) }
+            // LIC-1 — cached Pro is trusted only within the grace TTL when the flag is
+            // on; with the flag off (default) this is exactly `key present` — today's
+            // behaviour. `verify()` re-confirms with the server when online.
+            let hasKey = licenseKey != nil && !(licenseKey?.isEmpty ?? true)
+            isPro = LicenseEntitlement.cachedProIsTrusted(
+                hasActiveKey: hasKey,
+                lastVerifiedAt: lastVerifiedAt,
+                now: Date(),
+                enforce: AppSettings.shared.enforceProEntitlementTTL
+            )
+        }
+        return launch.verifyToken
+    }
+
+    /// The session token for a scheduled re-verify. While the keychain was
+    /// unreadable, every Pro item is read again first — a read that succeeds
+    /// now is what ends the problem (every gate needs a release).
+    private func tokenForReverify() -> String? {
+        keychainProblem != nil ? restoreFromKeychain() : KeychainHelper.load(key: "com.metawhisp.sessionToken")
+    }
+
+    /// The activation's request to the session endpoint: the network in the app; a test's own answer in tests.
+    nonisolated static let networkActivation: @Sendable (URLRequest) async throws -> (Data, URLResponse) = { request in
+        try await URLSession.shared.data(for: request)
+    }
+    var sendActivation: @Sendable (URLRequest) async throws -> (Data, URLResponse) = LicenseService.networkActivation
+
+    /// Activate Pro via deep link token from website. True when the server accepted the token — the account is
+    /// signed in for this session, whether or not the keychain kept it (a refusal is told through `unsavedSignIn` and
+    /// `lastError`); false when the server refused it, its answer could not be read, or there was none. A sign-in
+    /// link's press is spent on true and given back on false (A3).
+    @discardableResult
+    func activate(token: String) async -> Bool {
         isActivating = true
         NSLog("[License] Activation START — deep-link token %d chars", token.count)
         lastError = nil
+        unsavedSignIn = nil
 
         // AUD-025 — never log token material (NSLog goes to a durable file).
         do {
@@ -114,7 +189,7 @@ final class LicenseService: ObservableObject {
             var request = URLRequest(url: url)
             request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
             request.timeoutInterval = 15
-            let (data, response) = try await URLSession.shared.data(for: request)
+            let (data, response) = try await sendActivation(request)
 
             guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
                 let body = String(data: data, encoding: .utf8) ?? ""
@@ -122,34 +197,36 @@ final class LicenseService: ObservableObject {
                 NSLog("[License] ❌ HTTP error — %@", LLMRequestBody.proxyReason(data))
                 lastError = "Activation failed. Try signing in again."
                 isActivating = false
-                return
+                return false
             }
 
             let result = try JSONDecoder().decode(SessionResponse.self, from: data)
 
-            // Save to Keychain
-            KeychainHelper.save(key: "com.metawhisp.sessionToken", value: token)
-            KeychainHelper.save(key: "com.metawhisp.proEmail", value: result.email)
-
-            email = result.email
+            // Save to Keychain. Every write is checked: a sign-in the keychain
+            // refused must not report success and then vanish at the next launch.
+            // The durable credential (the license key) is written first and the
+            // one-time session token last, so a save cut short leaves a usable
+            // key — never a lone token whose next 401 would sign out.
+            var failedWrite: OSStatus?
+            func note(_ status: OSStatus) {
+                if status != errSecSuccess, failedWrite == nil { failedWrite = status }
+            }
 
             if let license = result.license, license.status == "active" {
-                KeychainHelper.save(key: "com.metawhisp.licenseKey", value: license.licenseKey)
-                KeychainHelper.save(key: "com.metawhisp.proPlan", value: license.plan)
+                note(KeychainHelper.save(key: "com.metawhisp.licenseKey", value: license.licenseKey))
+                note(KeychainHelper.save(key: "com.metawhisp.proPlan", value: license.plan))
                 licenseKey = license.licenseKey
                 plan = license.plan
                 isPro = true
-                recordVerified()   // LIC-1 — server confirmed active now
+                note(recordVerified())   // LIC-1 — server confirmed active now
+                billingInterval = result.subscription?.interval
                 // Store subscription dates
                 if let sub = result.subscription, let end = sub.currentPeriodEnd {
                     renewalDate = Date(timeIntervalSince1970: end)
                     cancelAtPeriodEnd = sub.cancelAtPeriodEnd ?? false
                 }
-                // Auto-switch to cloud transcription for Pro (saves ~3-4 GB RAM)
-                if AppSettings.shared.transcriptionEngine == "ondevice" {
-                    AppSettings.shared.transcriptionEngine = "cloud"
-                    NSLog("[License] ☁️ Auto-switched to cloud transcription for Pro user")
-                }
+                // A1 — cloud on this Mac's first Pro activation; the user's choice on any later one.
+                ProCloudDefault.activated()
                 NSLog("[License] ✅ Pro activated — plan=%@ (account identified, address not logged)", license.plan)
             } else {
                 // Signed in but no active subscription.
@@ -157,13 +234,53 @@ final class LicenseService: ObservableObject {
                 clearInactiveLicense()
                 NSLog("[License] signed in — no active subscription (address not logged)")
             }
+            note(KeychainHelper.save(key: "com.metawhisp.proEmail", value: result.email))
+            note(KeychainHelper.save(key: "com.metawhisp.sessionToken", value: token))
+            email = result.email
 
+            // The server has answered: this session is newer than anything the
+            // keychain held, so a problem found at launch no longer applies, and a
+            // re-verify tick must not "restore" over it.
+            keychainProblem = nil
+            unsavedSignIn = failedWrite
+            Self.unsavedSignInStatus = failedWrite
+            if let message = LicenseRestore.activationMessage(isPro: isPro, failedWrite: failedWrite) {
+                lastError = message
+                NSLog("[License] ❌ sign-in not saved — keychain status %d; it lasts this session only", failedWrite ?? 0)
+            }
             isActivating = false
+            return true
         } catch {
             NSLog("[License] ❌ Activation error: %@", error.localizedDescription)
             lastError = "Connection error. Check your internet."
             isActivating = false
+            return false
         }
+    }
+
+    /// A3 — the account a sign-in link's token belongs to, asked without signing in: the session endpoint with no
+    /// machine id, so no licence is bound to this Mac, and nothing here is stored or published.
+    func account(ofSignInToken token: String) async -> SignInLink.Account {
+        guard let url = URL(string: "\(api)/api/auth/session") else { return .unreachable }
+        var request = URLRequest(url: url)
+        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")   // AUD-025: never in the URL
+        request.timeoutInterval = 15
+        do {
+            let (data, response) = try await URLSession.shared.data(for: request)
+            return Self.signInAccount(status: (response as? HTTPURLResponse)?.statusCode ?? -1, data: data)
+        } catch {
+            NSLog("[License] sign-in link lookup failed: %@", error.localizedDescription)
+            return .unreachable
+        }
+    }
+
+    /// The lookup's answer: the session's address; a token the server refuses (missing, invalid or expired, its
+    /// account gone) is a bad link; anything else could not be checked.
+    nonisolated static func signInAccount(status: Int, data: Data) -> SignInLink.Account {
+        if [400, 401, 403, 404].contains(status) { return .rejected }
+        guard status == 200, let email = try? JSONDecoder().decode(SessionResponse.self, from: data).email,
+              !email.isEmpty else { return .unreachable }
+        return .email(email)
     }
 
     /// ITER-050 B1.2 — sign-out policy for session verification. Pure and
@@ -350,15 +467,13 @@ final class LicenseService: ObservableObject {
                 plan = license.plan
                 KeychainHelper.save(key: "com.metawhisp.licenseKey", value: license.licenseKey)
                 KeychainHelper.save(key: "com.metawhisp.proPlan", value: license.plan)
-                // Match activate()/init: a verified Pro user runs on cloud (skips
-                // the local model) and onboarding readiness reacts to the switch.
-                if AppSettings.shared.transcriptionEngine == "ondevice" {
-                    AppSettings.shared.transcriptionEngine = "cloud"
-                }
+                // A1 — a verification confirms an earlier activation: the user's engine choice stays.
+                ProCloudDefault.confirmed()
                 if let sub = result.subscription, let end = sub.currentPeriodEnd {
                     renewalDate = Date(timeIntervalSince1970: end)
                     cancelAtPeriodEnd = sub.cancelAtPeriodEnd ?? false
                 }
+                billingInterval = result.subscription?.interval
             } else {
                 // AUD-026 — authoritative inactive response (HTTP 200, no active
                 // license): clear the PERSISTED license too, so a later offline
@@ -384,6 +499,7 @@ final class LicenseService: ObservableObject {
         isPro = false
         licenseKey = nil
         plan = nil
+        billingInterval = nil
         renewalDate = nil
         cancelAtPeriodEnd = false
         clearVerified()   // LIC-1 — no active subscription → drop the verified stamp
@@ -393,16 +509,11 @@ final class LicenseService: ObservableObject {
 
     // MARK: - LIC-1 — server-verification timestamp (Keychain-persisted)
 
-    private static func loadLastVerified() -> Date? {
-        guard let s = KeychainHelper.load(key: lastVerifiedKey),
-              let t = TimeInterval(s) else { return nil }
-        return Date(timeIntervalSince1970: t)
-    }
-
-    private func recordVerified() {
+    @discardableResult
+    private func recordVerified() -> OSStatus {
         let now = Date()
         lastVerifiedAt = now
-        KeychainHelper.save(key: Self.lastVerifiedKey, value: String(now.timeIntervalSince1970))
+        return KeychainHelper.save(key: Self.lastVerifiedKey, value: String(now.timeIntervalSince1970))
     }
 
     private func clearVerified() {
@@ -492,6 +603,15 @@ final class LicenseService: ObservableObject {
         NSLog("[License] ❌ meeting usage NOT booked after 3 tries — %.1f min left uncharged", minutes)
     }
 
+    /// Settings' plan line, from the billing period. No period known, no line — never a guessed "Monthly".
+    nonisolated static func planLabel(interval: String?) -> String? {
+        switch interval {
+        case "year": return "Annual plan"
+        case "month": return "Monthly plan"
+        default: return nil
+        }
+    }
+
     /// Sign out and clear all stored credentials.
     func signOut() {
     NSLog("[License] Sign-out START — was pro=%@, key=%@, stamp=%@", isPro ? "YES" : "NO", (licenseKey?.isEmpty == false) ? "present" : "none", lastVerifiedAt == nil ? "never" : "set")
@@ -503,16 +623,19 @@ final class LicenseService: ObservableObject {
         email = nil
         licenseKey = nil
         plan = nil
+        billingInterval = nil
         renewalDate = nil
         cancelAtPeriodEnd = false
         clearVerified()   // LIC-1
+        unsavedSignIn = nil
+        Self.unsavedSignInStatus = nil
         NSLog("[License] Signed out")
     }
 }
 
 // MARK: - API Response
 
-private struct SessionResponse: Decodable {
+struct SessionResponse: Decodable {
     let email: String
     let license: LicenseInfo?
     let subscription: SubscriptionInfo?
@@ -533,11 +656,14 @@ private struct SessionResponse: Decodable {
         let currentPeriodEnd: Double?
         let cancelAtPeriodEnd: Bool?
         let status: String?
+        /// "year" or "month" (server S2); absent from older servers.
+        let interval: String?
 
         enum CodingKeys: String, CodingKey {
             case currentPeriodEnd = "current_period_end"
             case cancelAtPeriodEnd = "cancel_at_period_end"
             case status
+            case interval
         }
     }
 }

@@ -1,0 +1,123 @@
+# A real `swift test` run of agent/merge (2026-09-30, the screen locked) with Google Chrome hidden
+# from the live Chrome tests, trimmed like locked.log.
+Test Case '-[MetaWhispTests.AgentServiceTests testABuildWithNoRunRefusesEveryErrand]' passed (0.000 seconds).
+Test Case '-[MetaWhispTests.AgentServiceTests testAFifthErrandIsRefusedAsTheQueueIsFull]' passed (0.002 seconds).
+Test Case '-[MetaWhispTests.AgentServiceTests testAnEmptyGoalIsRefused]' passed (0.000 seconds).
+Test Case '-[MetaWhispTests.AgentServiceTests testAnErrandCanRunOnlyWithARunForIt]' passed (0.000 seconds).
+Test Case '-[MetaWhispTests.AgentServiceTests testAnErrandStartsWhenNoneRuns]' passed (0.006 seconds).
+Test Case '-[MetaWhispTests.AgentServiceTests testARunIsLetGoOnceItsErrandEnds]' passed (0.013 seconds).
+Test Case '-[MetaWhispTests.AgentServiceTests testASecondErrandWaitsAtPositionOneAndStartsWhenTheFirstEnds]' passed (0.008 seconds).
+Test Case '-[MetaWhispTests.AgentServiceTests testTheRunsReportsAndEndAreTheErrandsEvents]' passed (0.007 seconds).
+Test Case '-[MetaWhispTests.AgentServiceTests testWithoutProNothingStartsAndNoBridgeOrRunIsMade]' passed (0.052 seconds).
+Tests/MetaWhispTests/Services/Agent/CDPTransportTests.swift:98: -[MetaWhispTests.ChromeBridgeLiveTests testAClickIsAPersonsClick] : Test skipped - needs Google Chrome
+Test Case '-[MetaWhispTests.ChromeBridgeLiveTests testAClickIsAPersonsClick]' skipped (0.001 seconds).
+Tests/MetaWhispTests/Services/Agent/CDPTransportTests.swift:98: -[MetaWhispTests.ChromeBridgeLiveTests testAControlInAShadowRootIsAimedAtOnlyWhenNothingCoversIt] : Test skipped - needs Google Chrome
+Test Case '-[MetaWhispTests.ChromeBridgeLiveTests testAControlInAShadowRootIsAimedAtOnlyWhenNothingCoversIt]' skipped (0.000 seconds).
+Tests/MetaWhispTests/Services/Agent/CDPTransportTests.swift:98: -[MetaWhispTests.ChromeBridgeLiveTests testAControlOffScreenIsBroughtOnAndClicked] : Test skipped - needs Google Chrome
+Test Case '-[MetaWhispTests.ChromeBridgeLiveTests testAControlOffScreenIsBroughtOnAndClicked]' skipped (0.000 seconds).
+Tests/MetaWhispTests/Services/Agent/CDPTransportTests.swift:98: -[MetaWhispTests.ChromeBridgeLiveTests testAControlWhoseFaceIsSomethingElseIsAimedAt] : Test skipped - needs Google Chrome
+Test Case '-[MetaWhispTests.ChromeBridgeLiveTests testAControlWhoseFaceIsSomethingElseIsAimedAt]' skipped (0.000 seconds).
+Tests/MetaWhispTests/Services/Agent/CDPTransportTests.swift:98: -[MetaWhispTests.ChromeBridgeLiveTests testACoveredControlIsNotClicked] : Test skipped - needs Google Chrome
+Test Case '-[MetaWhispTests.ChromeBridgeLiveTests testACoveredControlIsNotClicked]' skipped (0.000 seconds).
+Tests/MetaWhispTests/Services/Agent/CDPTransportTests.swift:98: -[MetaWhispTests.ChromeBridgeLiveTests testADeleteInsideAComponentAtARowsCentreIsNeverClicked] : Test skipped - needs Google Chrome
+Test Case '-[MetaWhispTests.ChromeBridgeLiveTests testADeleteInsideAComponentAtARowsCentreIsNeverClicked]' skipped (0.000 seconds).
+Tests/MetaWhispTests/Services/Agent/CDPTransportTests.swift:98: -[MetaWhispTests.ChromeBridgeLiveTests testADeleteNothingNamesAControlIsNeverClickedForItsRow] : Test skipped - needs Google Chrome
+Test Case '-[MetaWhispTests.ChromeBridgeLiveTests testADeleteNothingNamesAControlIsNeverClickedForItsRow]' skipped (0.000 seconds).
+Tests/MetaWhispTests/Services/Agent/CDPTransportTests.swift:98: -[MetaWhispTests.ChromeBridgeLiveTests testADisabledControlOrAReadOnlyFieldIsNotAimedAt] : Test skipped - needs Google Chrome
+Test Case '-[MetaWhispTests.ChromeBridgeLiveTests testADisabledControlOrAReadOnlyFieldIsNotAimedAt]' skipped (0.000 seconds).
+Tests/MetaWhispTests/Services/Agent/CDPTransportTests.swift:98: -[MetaWhispTests.ChromeBridgeLiveTests testAFilePickerThePageOpensIsNeverShown] : Test skipped - needs Google Chrome
+Test Case '-[MetaWhispTests.ChromeBridgeLiveTests testAFilePickerThePageOpensIsNeverShown]' skipped (0.000 seconds).
+Tests/MetaWhispTests/Services/Agent/CDPTransportTests.swift:98: -[MetaWhispTests.ChromeBridgeLiveTests testAFramesPasswordShownAsTextStillStopsItsFormInChrome] : Test skipped - needs Google Chrome
+Test Case '-[MetaWhispTests.ChromeBridgeLiveTests testAFramesPasswordShownAsTextStillStopsItsFormInChrome]' skipped (0.000 seconds).
+Tests/MetaWhispTests/Services/Agent/CDPTransportTests.swift:98: -[MetaWhispTests.ChromeBridgeLiveTests testAfterAMoveToAnotherSiteScriptsStillRunInTheAgentsWorld] : Test skipped - needs Google Chrome
+Test Case '-[MetaWhispTests.ChromeBridgeLiveTests testAfterAMoveToAnotherSiteScriptsStillRunInTheAgentsWorld]' skipped (0.000 seconds).
+Tests/MetaWhispTests/Services/Agent/CDPTransportTests.swift:98: -[MetaWhispTests.ChromeBridgeLiveTests testALoginFormThatComesWithTheScrollDoesNotStopAStepOutsideIt] : Test skipped - needs Google Chrome
+Test Case '-[MetaWhispTests.ChromeBridgeLiveTests testALoginFormThatComesWithTheScrollDoesNotStopAStepOutsideIt]' skipped (0.000 seconds).
+Tests/MetaWhispTests/Services/Agent/CDPTransportTests.swift:98: -[MetaWhispTests.ChromeBridgeLiveTests testAnAutofilledPasswordStopsAButtonOutsideItsForm] : Test skipped - needs Google Chrome
+Test Case '-[MetaWhispTests.ChromeBridgeLiveTests testAnAutofilledPasswordStopsAButtonOutsideItsForm]' skipped (0.000 seconds).
+Tests/MetaWhispTests/Services/Agent/CDPTransportTests.swift:98: -[MetaWhispTests.ChromeBridgeLiveTests testAPageCannotEndTheConnectionWithAHugeAnswer] : Test skipped - needs Google Chrome
+Test Case '-[MetaWhispTests.ChromeBridgeLiveTests testAPageCannotEndTheConnectionWithAHugeAnswer]' skipped (0.000 seconds).
+Tests/MetaWhispTests/Services/Agent/CDPTransportTests.swift:98: -[MetaWhispTests.ChromeBridgeLiveTests testAPageCannotForgeWhatTheAgentReads] : Test skipped - needs Google Chrome
+Test Case '-[MetaWhispTests.ChromeBridgeLiveTests testAPageCannotForgeWhatTheAgentReads]' skipped (0.000 seconds).
+Tests/MetaWhispTests/Services/Agent/CDPTransportTests.swift:98: -[MetaWhispTests.ChromeBridgeLiveTests testARowIsClickedOnItsOwnWordsNeverOnAControlInsideIt] : Test skipped - needs Google Chrome
+Test Case '-[MetaWhispTests.ChromeBridgeLiveTests testARowIsClickedOnItsOwnWordsNeverOnAControlInsideIt]' skipped (0.000 seconds).
+Tests/MetaWhispTests/Services/Agent/CDPTransportTests.swift:98: -[MetaWhispTests.ChromeBridgeLiveTests testASearchBoxThatTurnsIntoAPasswordOnFocusIsAWallInChrome] : Test skipped - needs Google Chrome
+Test Case '-[MetaWhispTests.ChromeBridgeLiveTests testASearchBoxThatTurnsIntoAPasswordOnFocusIsAWallInChrome]' skipped (0.000 seconds).
+Tests/MetaWhispTests/Services/Agent/CDPTransportTests.swift:98: -[MetaWhispTests.ChromeBridgeLiveTests testASecretFieldStaysSecretWhenThePageShowsItsText] : Test skipped - needs Google Chrome
+Test Case '-[MetaWhispTests.ChromeBridgeLiveTests testASecretFieldStaysSecretWhenThePageShowsItsText]' skipped (0.000 seconds).
+Tests/MetaWhispTests/Services/Agent/CDPTransportTests.swift:98: -[MetaWhispTests.ChromeBridgeLiveTests testAStoppedCallerStillClosesItsTab] : Test skipped - needs Google Chrome
+Test Case '-[MetaWhispTests.ChromeBridgeLiveTests testAStoppedCallerStillClosesItsTab]' skipped (0.000 seconds).
+Tests/MetaWhispTests/Services/Agent/CDPTransportTests.swift:98: -[MetaWhispTests.ChromeBridgeLiveTests testATabWhoseSetUpFailsOrIsStoppedIsClosed] : Test skipped - needs Google Chrome
+Test Case '-[MetaWhispTests.ChromeBridgeLiveTests testATabWhoseSetUpFailsOrIsStoppedIsClosed]' skipped (0.000 seconds).
+Tests/MetaWhispTests/Services/Agent/CDPTransportTests.swift:98: -[MetaWhispTests.ChromeBridgeLiveTests testAWallThatComesWithTheScrollStopsTheAim] : Test skipped - needs Google Chrome
+Test Case '-[MetaWhispTests.ChromeBridgeLiveTests testAWallThatComesWithTheScrollStopsTheAim]' skipped (0.000 seconds).
+Tests/MetaWhispTests/Services/Agent/CDPTransportTests.swift:98: -[MetaWhispTests.ChromeBridgeLiveTests testAWindowOpenedAWhileAfterTheClickIsClosed] : Test skipped - needs Google Chrome
+Test Case '-[MetaWhispTests.ChromeBridgeLiveTests testAWindowOpenedAWhileAfterTheClickIsClosed]' skipped (0.000 seconds).
+Tests/MetaWhispTests/Services/Agent/CDPTransportTests.swift:98: -[MetaWhispTests.ChromeBridgeLiveTests testAWindowThePageOpensOnTheAgentsClickIsClosed] : Test skipped - needs Google Chrome
+Test Case '-[MetaWhispTests.ChromeBridgeLiveTests testAWindowThePageOpensOnTheAgentsClickIsClosed]' skipped (0.000 seconds).
+Tests/MetaWhispTests/Services/Agent/CDPTransportTests.swift:98: -[MetaWhispTests.ChromeBridgeLiveTests testFramesInsideAFormAreCountedInChrome] : Test skipped - needs Google Chrome
+Test Case '-[MetaWhispTests.ChromeBridgeLiveTests testFramesInsideAFormAreCountedInChrome]' skipped (0.000 seconds).
+Tests/MetaWhispTests/Services/Agent/CDPTransportTests.swift:98: -[MetaWhispTests.ChromeBridgeLiveTests testJ1CollectsTheSitesThroughChrome] : Test skipped - needs Google Chrome
+Test Case '-[MetaWhispTests.ChromeBridgeLiveTests testJ1CollectsTheSitesThroughChrome]' skipped (0.000 seconds).
+Tests/MetaWhispTests/Services/Agent/CDPTransportTests.swift:98: -[MetaWhispTests.ChromeBridgeLiveTests testOpensReadsAndClosesItsOwnTab] : Test skipped - needs Google Chrome
+Test Case '-[MetaWhispTests.ChromeBridgeLiveTests testOpensReadsAndClosesItsOwnTab]' skipped (0.000 seconds).
+Tests/MetaWhispTests/Services/Agent/CDPTransportTests.swift:98: -[MetaWhispTests.ChromeBridgeLiveTests testRefusesAnAddressThatIsNotAWebPage] : Test skipped - needs Google Chrome
+Test Case '-[MetaWhispTests.ChromeBridgeLiveTests testRefusesAnAddressThatIsNotAWebPage]' skipped (0.000 seconds).
+Tests/MetaWhispTests/Services/Agent/CDPTransportTests.swift:98: -[MetaWhispTests.ChromeBridgeLiveTests testTheAgentsWorldIsMadeWithoutThePagesConsole] : Test skipped - needs Google Chrome
+Test Case '-[MetaWhispTests.ChromeBridgeLiveTests testTheAgentsWorldIsMadeWithoutThePagesConsole]' skipped (0.000 seconds).
+Tests/MetaWhispTests/Services/Agent/CDPTransportTests.swift:98: -[MetaWhispTests.ChromeBridgeLiveTests testTypingIsAPersonsTyping] : Test skipped - needs Google Chrome
+Test Case '-[MetaWhispTests.ChromeBridgeLiveTests testTypingIsAPersonsTyping]' skipped (0.000 seconds).
+Tests/MetaWhispTests/Services/Agent/CDPTransportTests.swift:98: -[MetaWhispTests.ChromeBridgeLiveTests testTypingWaitsForItsFieldToHoldTheFocus] : Test skipped - needs Google Chrome
+Test Case '-[MetaWhispTests.ChromeBridgeLiveTests testTypingWaitsForItsFieldToHoldTheFocus]' skipped (0.000 seconds).
+Tests/MetaWhispTests/Services/Agent/CDPTransportTests.swift:98: -[MetaWhispTests.ChromeConnectionLiveTests testAnUnknownMethodIsAnErrorNotASilence] : Test skipped - needs Google Chrome
+Test Case '-[MetaWhispTests.ChromeConnectionLiveTests testAnUnknownMethodIsAnErrorNotASilence]' skipped (0.000 seconds).
+Tests/MetaWhispTests/Services/Agent/CDPTransportTests.swift:98: -[MetaWhispTests.ChromeConnectionLiveTests testConnectsToChromeAndAsksItSomething] : Test skipped - needs Google Chrome
+Test Case '-[MetaWhispTests.ChromeConnectionLiveTests testConnectsToChromeAndAsksItSomething]' skipped (0.000 seconds).
+Test Case '-[MetaWhispTests.ChromeLinkTests testABrowserThatRefusesAtOnceIsNotAskedAgain]' passed (0.004 seconds).
+Tests/MetaWhispTests/Services/Agent/CDPTransportTests.swift:98: -[MetaWhispTests.ChromeLinkTests testAConnectionThatEndedIsOpenedAgain] : Test skipped - needs Google Chrome
+Test Case '-[MetaWhispTests.ChromeLinkTests testAConnectionThatEndedIsOpenedAgain]' skipped (0.000 seconds).
+Test Case '-[MetaWhispTests.ChromeLinkTests testADeclinedAllowIsNotAllowed]' passed (1.556 seconds).
+Test Case '-[MetaWhispTests.ChromeLinkTests testAnOpenConnectionIsKeptWhileTheBrowserIsSlow]' passed (0.003 seconds).
+Test Case '-[MetaWhispTests.ChromeLinkTests testAPortFileAClosedBrowserLeftIsPassedOver]' passed (0.002 seconds).
+Tests/MetaWhispTests/Services/Agent/CDPTransportTests.swift:98: -[MetaWhispTests.ChromeLinkTests testAPortNothingAnswersOnIsPassedForTheNextBrowser] : Test skipped - needs Google Chrome
+Test Case '-[MetaWhispTests.ChromeLinkTests testAPortNothingAnswersOnIsPassedForTheNextBrowser]' skipped (0.000 seconds).
+Tests/MetaWhispTests/Services/Agent/CDPTransportTests.swift:98: -[MetaWhispTests.ChromeLinkTests testAPortThatAnswersNotFoundIsPassedForTheNextBrowser] : Test skipped - needs Google Chrome
+Test Case '-[MetaWhispTests.ChromeLinkTests testAPortThatAnswersNotFoundIsPassedForTheNextBrowser]' skipped (0.000 seconds).
+Test Case '-[MetaWhispTests.ChromeLinkTests testARunningBrowserThatDoesNotAnswerHasRemoteDebuggingOff]' passed (0.512 seconds).
+Test Case '-[MetaWhispTests.ChromeLinkTests testAStopWhileTheBrowserAsksEndsTheQuestion]' passed (1.333 seconds).
+Test Case '-[MetaWhispTests.ChromeLinkTests testAStopWhileTheBrowserHasNoPortYetEndsTheAttempt]' passed (0.327 seconds).
+Tests/MetaWhispTests/Services/Agent/CDPTransportTests.swift:98: -[MetaWhispTests.ChromeLinkTests testConnectsOnceAndKeepsTheConnection] : Test skipped - needs Google Chrome
+Test Case '-[MetaWhispTests.ChromeLinkTests testConnectsOnceAndKeepsTheConnection]' skipped (0.000 seconds).
+Test Case '-[MetaWhispTests.ChromeLinkTests testNoBrowserIsNotRunning]' passed (0.001 seconds).
+Test Case '-[MetaWhispTests.ChromeLinkTests testWaitsForTheUsersAllowAndDoesNotAskAgainOnItsOwn]' passed (2.052 seconds).
+Tests/MetaWhispTests/Views/VoiceIslandTests.swift:293: -[MetaWhispTests.IslandWindowTests testAnErrorLandsWhereItBelongs] : Test skipped - needs a screen that is awake and unlocked
+Test Case '-[MetaWhispTests.IslandWindowTests testAnErrorLandsWhereItBelongs]' skipped (0.001 seconds).
+Tests/MetaWhispTests/Views/VoiceIslandTests.swift:293: -[MetaWhispTests.IslandWindowTests testAnErrorRightAfterAMoveLandsWhereItBelongs] : Test skipped - needs a screen that is awake and unlocked
+Test Case '-[MetaWhispTests.IslandWindowTests testAnErrorRightAfterAMoveLandsWhereItBelongs]' skipped (0.000 seconds).
+Tests/MetaWhispTests/Views/VoiceIslandTests.swift:293: -[MetaWhispTests.IslandWindowTests testAShakeStillRunningNeverMovesTheNextQuestion] : Test skipped - needs a screen that is awake and unlocked
+Test Case '-[MetaWhispTests.IslandWindowTests testAShakeStillRunningNeverMovesTheNextQuestion]' skipped (0.000 seconds).
+Tests/MetaWhispTests/Services/System/LayoutCorpusBenchmarkTests.swift:15: -[MetaWhispTests.LayoutCorpusBenchmarkTests test_externalFrequencyCorporaHaveNoObservedFalseCorrections] : Test skipped - Set METAWHISP_EN_CORPUS and METAWHISP_RU_CORPUS for corpus preflight.
+Test Case '-[MetaWhispTests.LayoutCorpusBenchmarkTests test_externalFrequencyCorporaHaveNoObservedFalseCorrections]' skipped (0.000 seconds).
+Tests/MetaWhispTests/Services/LLM/LocalLLMQualityTests.swift:62: -[MetaWhispTests.LocalLLMQualityTests testRealisticDictationQualityAndLatency] : Test skipped - Set MW_LOCAL_STRESS=1 to run (loads 2 GB weights, real inference)
+Test Case '-[MetaWhispTests.LocalLLMQualityTests testRealisticDictationQualityAndLatency]' skipped (0.000 seconds).
+Tests/MetaWhispTests/Services/LLM/LocalLLMStressTests.swift:44: -[MetaWhispTests.LocalLLMStressTests testF11LocalDictationPathUnderLoad] : Test skipped - Set MW_LOCAL_STRESS=1 to run (loads 2 GB weights, real inference)
+Test Case '-[MetaWhispTests.LocalLLMStressTests testF11LocalDictationPathUnderLoad]' skipped (0.000 seconds).
+Tests/MetaWhispTests/Services/LLM/LocalLLMTokenizerDiagTests.swift:16: -[MetaWhispTests.LocalLLMTokenizerDiagTests testTokenizerIdsMatchReference] : Test skipped - diagnostic — MW_LOCAL_STRESS=1 only
+Test Case '-[MetaWhispTests.LocalLLMTokenizerDiagTests testTokenizerIdsMatchReference]' skipped (0.000 seconds).
+Test Case '-[MetaWhispTests.SchemaMigrationTests test_aV4StoreOpensUnderTheLatestSchema]' passed (0.436 seconds).
+Test Case '-[MetaWhispTests.SchemaMigrationTests test_v3StoreOpensAsV4WithEverythingIntact]' passed (0.078 seconds).
+Test Case '-[MetaWhispTests.SchemaMigrationTests testARunCannotBeMeasuredTwice]' passed (0.010 seconds).
+Test Case '-[MetaWhispTests.SchemaMigrationTests testFreshStoreCreatesUnderV3]' passed (0.006 seconds).
+Test Case '-[MetaWhispTests.SchemaMigrationTests testFrozenMemoryShapeIsStable]' passed (0.001 seconds).
+Test Case '-[MetaWhispTests.SchemaMigrationTests testFrozenV1ObservationShapeIsStable]' passed (0.001 seconds).
+Test Case '-[MetaWhispTests.SchemaMigrationTests testFrozenV2TaskItemShapeIsStable]' passed (0.000 seconds).
+Test Case '-[MetaWhispTests.SchemaMigrationTests testFrozenV5ItemShapeIsStable]' passed (0.000 seconds).
+Tests/MetaWhispTests/Services/Data/SchemaMigrationTests.swift:329: -[MetaWhispTests.SchemaMigrationTests testRealStoreCopyOpensUnderLatest] : Test skipped - Set MW_REAL_STORE_COPY to a copy of the real store to run this proof
+Test Case '-[MetaWhispTests.SchemaMigrationTests testRealStoreCopyOpensUnderLatest]' skipped (0.000 seconds).
+Test Case '-[MetaWhispTests.SchemaMigrationTests testV1StoreMigratesToLatestWithDataIntact]' passed (0.076 seconds).
+Test Case '-[MetaWhispTests.SchemaMigrationTests testV2StoreMigratesToV3WithTasksIntact]' passed (0.073 seconds).
+Test Case '-[MetaWhispTests.SchemaMigrationTests testV5StoreMigratesToV6WithItemsIntactAndJournalsEmpty]' passed (0.077 seconds).
+Test Case '-[MetaWhispTests.SchemaMigrationTests testV6StoreMigratesToV7WithJournalIntactAndVisitsEmpty]' passed (0.080 seconds).
+Test Case '-[MetaWhispTests.SchemaMigrationTests testV7StoreMigratesToV8WithExistingMemoriesStillTrusted]' passed (0.080 seconds).
+Test Case '-[MetaWhispTests.SchemaMigrationTests testV8StoreMigratesToV9WithTheJournalIntactAndNoMetricsInvented]' passed (0.074 seconds).
+	 Executed 2463 tests, with 44 tests skipped and 0 failures (0 unexpected) in 191.936 (192.083) seconds

@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Site One Hundred Eighty-Three</title>
+<style>
+  body { margin: 0; font: 16px sans-serif; }
+  main { padding: 24px 40px; }
+  #filler { display: none; }
+  /* A secret field is marked by its structure: it draws dots (ITER-076 I-09, round 5). */
+  .dots { -webkit-text-security: disc; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Traveller</h1>
+  <!-- A secret widget whose field, first inside it, names its lists; the
+       5,200 parts after it use up a walk that looks at its last parts first. -->
+  <div id="id-card" class="dots" role="combobox" aria-label="Identity card number" aria-expanded="true">
+    <input id="id-input" aria-autocomplete="list" aria-controls="saved-ids saved-plain">
+    <div id="filler"></div>
+  </div>
+  <!-- A second secret field, in a component's shadow root, names a plain
+       list drawn in the page: the walk never reaches it. -->
+  <id-field></id-field>
+  <div id="saved-shadow"><button type="button">IJ9900112</button></div>
+  <p><button type="button">Continue</button></p>
+  <!-- Its saved numbers: a list of options. -->
+  <ul id="saved-ids" role="listbox" aria-label="Saved">
+    <li role="option">AB1234567</li>
+    <li role="option">CD7654321</li>
+  </ul>
+  <!-- A plain one of buttons, in a card whose own button's row reads it. -->
+  <article>
+    <div id="saved-plain"><button type="button">EF1122334</button></div>
+    <button type="button">Edit travellers</button>
+  </article>
+</main>
+<script>
+  customElements.define('id-field', class extends HTMLElement {
+    constructor() {
+      super();
+      const root = this.attachShadow({ mode: 'open' });
+      root.innerHTML = '<label for="number">Passport number</label>' +
+        '<input id="number" style="-webkit-text-security: disc" aria-autocomplete="list" aria-controls="saved-shadow">';
+    }
+  });
+  const filler = document.getElementById('filler');
+  for (let i = 0; i < 5200; i++) filler.appendChild(document.createElement('span'));
+</script>
+</body>
+</html>

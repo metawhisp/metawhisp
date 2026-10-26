@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Site One Hundred Seventy-Three</title>
+<style>
+  body { margin: 0; font: 16px sans-serif; }
+  main { padding: 16px 40px; }
+  .frame { position: absolute; left: 40px; width: 300px; height: 60px; border: 0; }
+  .cover { position: absolute; left: 40px; width: 300px; height: 60px; background: rgba(255,255,255,0.01); }
+</style>
+</head>
+<body>
+<main>
+  <h1>Two widgets, one under a layer</h1>
+  <!-- The same widget twice: its controls are twins but for their frame. -->
+  <iframe class="frame" style="top:80px" src="https://site-172.test/"></iframe>
+  <iframe class="frame" style="top:160px" src="https://site-172.test/"></iframe>
+  <!-- A widget the page lays a layer over: a click there reaches the layer. -->
+  <iframe class="frame" style="top:240px" srcdoc="<button onclick=&quot;document.title = 'covered pressed'&quot;>Under the layer</button>"></iframe>
+  <div class="cover" style="top:240px" onclick="document.title = 'layer pressed'"></div>
+</main>
+</body>
+</html>

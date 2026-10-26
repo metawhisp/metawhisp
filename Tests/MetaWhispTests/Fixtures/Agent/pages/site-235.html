@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Site Two Hundred Thirty-Five</title>
+<style>
+  html, body { height: 100%; margin: 0; overflow: hidden; }
+  main { display: flex; height: 100%; }
+  nav { width: 200px; }
+  #results { flex: 1; height: 100%; overflow-y: auto; }
+  #results li { height: 60px; }
+  #tiny { width: 120px; height: 60px; overflow-y: auto; }
+  #tiny li { height: 40px; }
+</style></head>
+<body>
+<main>
+  <nav><ul id="tiny"><li>A</li><li>B</li><li>C</li><li>D</li></ul></nav>
+  <ul id="results"></ul>
+</main>
+<script>
+  // A page that never scrolls: its results are in a tall panel that does,
+  // beside a small list that does too.
+  for (let i = 1; i <= 100; i++) {
+    const item = document.createElement('li');
+    item.textContent = 'Result ' + i;
+    document.getElementById('results').appendChild(item);
+  }
+</script>
+</body>
+</html>

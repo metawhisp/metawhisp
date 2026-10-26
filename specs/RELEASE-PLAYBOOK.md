@@ -81,14 +81,17 @@ bash release.sh
 ```
 
 This script chains:
-1. `bash build.sh --no-launch` — `swift build -c release`, packages `.app`,
+1. `bash build.sh` — `swift build -c release`, packages `.app`,
    re-signs Sparkle nested components + outer bundle with Developer ID +
    `--timestamp` (with retry-on-TSA-flake — added 2026-05-03 because Apple's
    TSA endpoint silently dropped timestamps once and notarization rejected).
-2. `bash make-dmg-manual.sh` — packages `~/Applications/MetaWhisp.app` into
-   `MetaWhisp.dmg` via `hdiutil`. **CONTRACT:** uses `~/Applications/...`,
-   NOT `.build/release/...`. If you re-sign artifacts after build.sh you must
-   `ditto $SRC ~/Applications/MetaWhisp.app` before running this step.
+   Since ITER-075 0.6a it installs, stops and launches nothing: the signed
+   bundle stays at `.build/arm64-apple-macosx/release/MetaWhisp.app`
+   (`MW_RELEASE_APP` in `scripts/lib/app-install.sh`).
+2. `bash make-dmg-manual.sh` — packages that release bundle into
+   `MetaWhisp.dmg` via `hdiutil`. **CONTRACT:** it reads `MW_RELEASE_APP`.
+   If you re-sign the bundle by hand after build.sh, re-sign it in place
+   there; never copy it into `~/Applications`.
 3. `xcrun notarytool submit ... --wait` — sends to Apple, waits 5-15 min.
    If status is `Invalid`, fetch the log:
    ```bash
@@ -245,11 +248,10 @@ curl -X POST -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
    with 8s sleep. Without this, Apple notarization rejects with a generic
    "signature is invalid" error and you waste 30 minutes diagnosing.
 
-2. **`make-dmg-manual.sh` uses `~/Applications/MetaWhisp.app`.** If you sign
-   `.build/release/MetaWhisp.app` manually for some reason, you must `ditto`
-   the result to `~/Applications/MetaWhisp.app` before re-running the DMG
-   step or you'll re-package the OLD signed bundle and notarization will
-   fail again with the same errors.
+2. **`make-dmg-manual.sh` packages the bundle build.sh leaves in `.build`**
+   (`.build/arm64-apple-macosx/release/MetaWhisp.app`, since ITER-075 0.6a).
+   If you sign it manually for some reason, sign that copy in place before
+   re-running the DMG step. A copy anywhere else is not what gets packaged.
 
 3. **Cloudflare Pages atomic deploy = full state replace.** Anything not in
    your local `_site/` will be deleted on the live site. Never deploy without

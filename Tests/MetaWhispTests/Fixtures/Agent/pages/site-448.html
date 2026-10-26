@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Site Four Forty-Eight</title></head>
+<body>
+<main>
+  <!-- ITER-076 stage 7: a demo form a script gathers without a form tag, its
+       fields in one box and its button in another beside it: the button is in
+       no group of the fields', yet its script sends what they hold. -->
+  <h1>Talk to us</h1>
+  <div class="card">
+    <div class="fields">
+      <label for="name">Full name</label><input id="name" autocomplete="name">
+      <label for="mail">Email</label><input id="mail" type="email">
+    </div>
+    <div class="actions">
+      <button type="button" id="go">Send request</button>
+    </div>
+  </div>
+</main>
+<script>
+  window.sent = 0;
+  document.getElementById('go').addEventListener('click', () => {
+    window.sent += 1;
+    document.querySelector('.card').innerHTML = '<p>Thanks.</p>';
+  });
+</script>
+</body>
+</html>

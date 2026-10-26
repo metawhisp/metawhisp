@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Site Two Hundred Ninety-Six</title>
+<style>body { margin: 0; font: 16px sans-serif; } main { padding: 16px 40px; }
+  #many button { display: block; width: 4px; height: 4px; padding: 0; border: 0; }</style>
+</head>
+<body>
+<main>
+  <h1>Profile</h1>
+  <p>Public words stay</p>
+  <!-- ITER-076 I-09, round 5: a field only its words name, outside any form,
+       beside a control outside any form; a form whose only field stands past
+       what the walk reads. -->
+  <label>Password <input name="p1" value="pw-shown-1"></label>
+  <button type="button">Help</button>
+  <form id="late" action="https://site-296.test/send" method="post"><button type="submit">Send</button></form>
+  <div id="many"></div>
+  <!-- Past the walk: a field the page marks secret by the dots it draws, and
+       the late form's field, which only its words name, filled in - empty, it
+       would send nothing (2026-10-21). -->
+  <div role="listbox" aria-label="Codes" tabindex="0" style="-webkit-text-security: disc">SECRET-PAST</div>
+  <input form="late" aria-label="Password" value="pw-past-2">
+</main>
+<script>
+  const many = document.getElementById('many');
+  for (let i = 0; i < 5100; i++) {
+    const button = document.createElement('button');
+    button.type = 'button';
+    many.appendChild(button);
+  }
+</script>
+</body>
+</html>

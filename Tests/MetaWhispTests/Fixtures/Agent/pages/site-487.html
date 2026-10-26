@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Site Four Hundred Eighty Seven</title></head>
+<body>
+<main>
+  <h1>Book a pick-up</h1>
+  <!-- The brain's form (2026-10-19): a POST form its own button sends — a navigation to /book, which the tests
+       read — and whose payment-method list names a payment and pays nothing. -->
+  <form id="book" action="/book" method="post">
+    <label for="name">Full name</label>
+    <input id="name" name="name" type="text">
+    <label for="method">Payment method</label>
+    <select id="method" name="method">
+      <option>Choose...</option>
+      <option>cash on delivery</option>
+      <option>card</option>
+    </select>
+    <button type="submit" id="send">Send</button>
+  </form>
+  <p><a href="/unsubscribe">Stop all our mail</a></p>
+</main>
+</body>
+</html>

@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Site Two Hundred Ninety-One</title>
+<style>body { margin: 0; font: 16px sans-serif; } input { display: block; margin: 2px 0; }</style>
+</head>
+<body>
+<div id="page"></div>
+<p id="log"></p>
+<script>
+  // ITER-076 I-09, round 5: what site-290 frames. Each field's words name
+  // nothing on /signin and /card: it is secret by its type, its autocomplete
+  // or the dots it draws. On /words a sign-in is named only by its words.
+  const page = document.getElementById('page');
+  if (location.pathname === '/card') {
+    page.innerHTML = '<form><label>Holder <input name="g0" value="Sam Doe"></label>' +
+      '<label>Entry F <input name="g1" autocomplete="cc-number" value="4111111111111111"></label>' +
+      '<label>Entry G <input name="g2" autocomplete="cc-csc" value="8462"></label>' +
+      '<label>Entry H <input name="g3" autocomplete="cc-exp" value="08/31"></label>' +
+      '<button type="button" onclick="log(\'kept\')">Keep</button></form>';
+  } else if (location.pathname === '/words') {
+    page.innerHTML = '<form><label>Email <input name="f0" value="sam@example.com"></label>' +
+      '<label>Password <input name="f1" value="vW-8854q"></label>' +
+      '<button type="button" onclick="log(\'entered\')">Go on</button></form>';
+  } else {
+    page.innerHTML = '<form><label>Email <input name="f0" value="sam@example.com"></label>' +
+      '<label>Entry A <input name="f1" type="password" value="vA-4417q"></label>' +
+      '<label>Entry B <input name="f2" autocomplete="current-password" value="vB-5521q"></label>' +
+      '<label>Entry C <input name="f3" autocomplete="new-password" value="vC-6632q"></label>' +
+      '<label>Entry D <input name="f4" autocomplete="one-time-code" value="738204"></label>' +
+      '<label>Entry E <input name="f5" style="-webkit-text-security: disc" value="vE-7743q"></label>' +
+      '<button type="button" onclick="log(\'entered\')">Go on</button></form>';
+  }
+  function log(text) { document.getElementById('log').textContent += text + ';'; }
+</script>
+</body>
+</html>

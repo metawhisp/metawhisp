@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Site Two Hundred Seventy-Seven</title>
+<style>body { margin: 0; font: 16px sans-serif; } main { padding: 16px 40px; } iframe { display: block; border: 0; }</style>
+</head>
+<body>
+<div id="controls"></div>
+<main id="page"></main>
+<p id="log"></p>
+<script>
+  // ITER-076 I-09, review round 4, part A, decision 4: hide, then cut,
+  // everywhere. The code shows unnamed here; only a frame of another site
+  // names it.
+  const page = document.getElementById('page');
+  const controls = document.getElementById('controls');
+  window.log = (text) => { document.getElementById('log').textContent += text + ';'; };
+  const frame = '<iframe style="width:400px;height:40px" src="https://site-276.test/code"></iframe>';
+  // Words of exactly `length` UTF-16 units, a face in each run — two units,
+  // one character — ending in a space.
+  const words = (length) => {
+    let out = '';
+    while (out.length + 18 <= length - 2) out += 'the quiet pond \u{1F600} ';
+    while (out.length < length - 1) out += 'b';
+    return out + ' ';
+  };
+  if (location.pathname === '/row') {
+    // A row longer than the 80 characters a row is cut to, the code inside
+    // what is kept.
+    page.innerHTML = '<ul><li>Device 481920 waiting for approval on your phone, opened in Chrome on macOS today at ' +
+      'noon <button type="button" onclick="log(\'details\')">Details</button></li></ul>' + frame;
+  } else if (location.pathname === '/straddle') {
+    // The code at the row's 77th to 82nd characters: the cut at 80 falls
+    // inside it.
+    page.innerHTML = '<ul><li>Device waiting for approval on your phone, opened in Chrome on a Mac at six 481920 ' +
+      'now <button type="button" onclick="log(\'details\')">Details</button></li></ul>' + frame;
+  } else if (location.pathname === '/owner') {
+    // A made-up dropdown and its option in a row the cut at 80 falls inside
+    // the code of: who the dropdown is is read in its whole row, hidden,
+    // then cut.
+    page.innerHTML = '<ul><li>Device waiting for approval on your phone, opened in Chrome on a Mac at six 481920 ' +
+      'now <div role="combobox" aria-label="Way" aria-expanded="true" aria-controls="ways" tabindex="0">Pick</div>' +
+      '<div id="ways" role="listbox"><div role="option" tabindex="0" onclick="log(\'picked\')">Use it</div></div>' +
+      '</li></ul>' + frame;
+  } else if (location.pathname === '/text') {
+    // The code inside the page text's cut (6,000) and the writer's (3,000),
+    // faces before each.
+    controls.innerHTML = '<button type="button">Help</button>';
+    page.innerHTML = '<p>' + words(2997) + '481920 ' + words(5997 - 3004) + '481920 ' + words(300) + '</p>';
+    document.body.insertAdjacentHTML('beforeend', frame);
+  }
+</script>
+</body>
+</html>

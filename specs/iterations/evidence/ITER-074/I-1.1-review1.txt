@@ -1,0 +1,50 @@
+ITER-074 I-1.1 review round 1 fixes — 2026-09-24 17:44 CEST, orchestrator (GLM quota exhausted)
+
+--- red: 34 tests, the 10 new ones failing
+SafetyGuardTests testAGrantDialogIsNotACookieBanner failed (0.562 seconds).
+SafetyGuardTests testAPlannedSearchMustLookLikeOne failed (0.000 seconds).
+SafetyGuardTests testAYesIsBoundToTheExactActionTabPageAndWording failed (0.000 seconds).
+SafetyGuardTests testAnAnswerOutsideTheRealWindowDoesNotCount failed (0.001 seconds).
+SafetyGuardTests testAnEncodedQueryFailsTheNavigationCheck failed (0.000 seconds).
+SafetyGuardTests testNegationsAndScopesAreRead failed (0.001 seconds).
+SafetyGuardTests testOnlyBackScrollWaitAndPlannedSearchesAreAlwaysReversible failed (0.000 seconds).
+SafetyGuardTests testTheLexiconFindsIrreversibleActionWords failed (0.001 seconds).
+SafetyGuardTests testTheLexiconReadsAddressesIncludingCamelCase failed (0.000 seconds).
+SheetCellsTests testThePlaceholderIsCanonicalToo failed (0.000 seconds).
+--- green
+SafetyGuardTests testACookieBannerIsRecognisedByItsTextAndConsentButtons passed (0.000 seconds).
+SafetyGuardTests testAGrantDialogIsNotACookieBanner passed (0.000 seconds).
+SafetyGuardTests testALateYesDoesNotCount passed (0.000 seconds).
+SafetyGuardTests testAPlannedSearchIsAlwaysReversible passed (0.000 seconds).
+SafetyGuardTests testAPlannedSearchMustLookLikeOne passed (0.000 seconds).
+SafetyGuardTests testAYesInsideTheWindowApproves passed (0.000 seconds).
+SafetyGuardTests testAYesIsBoundToTheExactActionTabPageAndWording passed (0.001 seconds).
+SafetyGuardTests testAcceptOnlyWhenTheBannerBlocksThePage passed (0.001 seconds).
+SafetyGuardTests testActionWordsFailTheNavigationCheck passed (0.001 seconds).
+SafetyGuardTests testAnAnswerOutsideTheRealWindowDoesNotCount passed (0.000 seconds).
+SafetyGuardTests testAnEncodedQueryFailsTheNavigationCheck passed (0.000 seconds).
+SafetyGuardTests testAnOrdinaryLinkPassesTheNavigationCheck passed (0.000 seconds).
+SafetyGuardTests testLeavingOrUndoingNeedsAYes passed (0.000 seconds).
+SafetyGuardTests testNegationsAndScopesAreRead passed (0.000 seconds).
+SafetyGuardTests testNonWebAddressesFailTheNavigationCheck passed (0.000 seconds).
+SafetyGuardTests testOnlyBackScrollWaitAndPlannedSearchesAreAlwaysReversible passed (0.000 seconds).
+SafetyGuardTests testSilenceBecomesANoWhenTheWindowCloses passed (0.000 seconds).
+SafetyGuardTests testSilenceIsStillWaitingInsideTheWindow passed (0.000 seconds).
+SafetyGuardTests testTheLeastPermissiveOptionWins passed (0.000 seconds).
+SafetyGuardTests testTheLexiconFindsIrreversibleActionWords passed (0.000 seconds).
+SafetyGuardTests testTheLexiconIgnoresOrdinaryWordsAndNouns passed (0.000 seconds).
+SafetyGuardTests testTheLexiconReadsAddressesIncludingCamelCase passed (0.000 seconds).
+SafetyGuardTests testTheWholeActionIsReadNotJustItsName passed (0.000 seconds).
+SheetCellsTests testAJoinedEmojiSurvives passed (0.000 seconds).
+SheetCellsTests testAReadBackOfTheCanonicalValuesMatches passed (0.000 seconds).
+SheetCellsTests testAnEmptyValueBecomesTheRequestsPlaceholder passed (0.000 seconds).
+SheetCellsTests testAnyDifferenceIsAMismatch passed (0.000 seconds).
+SheetCellsTests testFormulaLikeStartsGetAnApostrophe passed (0.000 seconds).
+SheetCellsTests testLineBreaksTabsAndControlCharactersBecomeSpaces passed (0.000 seconds).
+SheetCellsTests testOrdinaryValuesAreLeftAlone passed (0.000 seconds).
+SheetCellsTests testRowsBecomeTabSeparatedTextThatCannotGrowColumnsOrRows passed (0.000 seconds).
+SheetCellsTests testRunsOfSpacesCollapseAndTheEndsAreTrimmed passed (0.000 seconds).
+SheetCellsTests testTheOrderIsCanonicalThenEscape passed (0.000 seconds).
+SheetCellsTests testThePlaceholderIsCanonicalToo passed (0.000 seconds).
+SheetCellsTests testUnicodeLineAndParagraphSeparatorsBecomeSpaces passed (0.000 seconds).
+	 Executed 35 tests, with 0 failures (0 unexpected) in 0.005 (0.008) seconds

@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Site Two Hundred Seventy-Two</title>
+<style>body { margin: 0; font: 16px sans-serif; } main { padding: 16px 40px; } label { display: block; margin: 6px 0; }</style>
+</head>
+<body>
+<main>
+  <h1>Your plan</h1>
+  <p>Yearly: $99 a year. Monthly: $9 a month.</p>
+  <div role="radiogroup" aria-label="Plan">
+    <label><input type="radio" name="plan" id="yearly"> Yearly</label>
+    <label><input type="radio" name="plan" id="monthly" checked> Monthly</label>
+  </div>
+</main>
+<p id="log"></p>
+<script>
+  // A plan switch of no form whose own change is the send: the plan is
+  // changed, and charged, as it is chosen (Claude review c8 of I-09, #23).
+  const log = (text) => { document.getElementById('log').textContent += text + ';'; };
+  document.getElementById('yearly').addEventListener('change', () => log('charged'));
+</script>
+</body>
+</html>

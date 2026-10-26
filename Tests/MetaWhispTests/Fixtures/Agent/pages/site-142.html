@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Site One Hundred Forty-Two</title>
+<style>
+  body { margin: 0; font: 16px sans-serif; }
+  main { padding: 24px 40px; }
+  .select { display: inline-block; width: 260px; height: 36px; line-height: 36px; padding: 0 8px; border: 1px solid #777;
+            cursor: pointer; }
+  .menu { position: absolute; left: 40px; width: 278px; border: 1px solid #777; background: #fff; }
+  .menu [role=option] { height: 32px; line-height: 32px; padding: 0 8px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Shipping</h1>
+  <!-- A made-up dropdown as a React select draws it: a box that shows the
+       choice, and a list rendered at the end of the page only while it is
+       open, closed by a press anywhere else. -->
+  <span id="country-label">Country</span>
+  <div id="country" class="select" role="combobox" tabindex="0" aria-labelledby="country-label"
+       aria-haspopup="listbox" aria-expanded="false" aria-controls="country-list">Choose a country</div>
+  <p id="log"></p>
+</main>
+<script>
+  const countries = ['Estonia', 'Latvia', 'Lithuania', 'Finland'];
+  let box = document.getElementById('country');
+  const redraw = location.search.includes('redraw');
+  const log = (text) => { document.getElementById('log').textContent += text + ';'; };
+  let menu = null;
+  const close = () => {
+    if (!menu) return;
+    menu.remove();
+    menu = null;
+    box.setAttribute('aria-expanded', 'false');
+  };
+  const open = () => {
+    if (menu) return;
+    menu = document.createElement('div');
+    menu.id = 'country-list';
+    menu.className = 'menu';
+    menu.setAttribute('role', 'listbox');
+    menu.style.top = (box.getBoundingClientRect().bottom + scrollY + 2) + 'px';
+    for (const name of countries) {
+      const option = document.createElement('div');
+      option.setAttribute('role', 'option');
+      option.textContent = name;
+      option.addEventListener('click', () => {
+        box.textContent = name;
+        log('chose ' + name);
+        close();
+        // A framework drawing the box anew: a new node, the same control.
+        if (redraw) {
+          const fresh = box.cloneNode(true);
+          box.replaceWith(fresh);
+          box = fresh;
+          bind();
+        }
+      });
+      menu.appendChild(option);
+    }
+    document.body.appendChild(menu);
+    box.setAttribute('aria-expanded', 'true');
+    log('opened');
+  };
+  const bind = () => box.addEventListener('click', () => (menu ? close() : open()));
+  bind();
+  document.addEventListener('mousedown', (event) => {
+    if (menu && !menu.contains(event.target) && event.target !== box) close();
+  });
+</script>
+</body>
+</html>

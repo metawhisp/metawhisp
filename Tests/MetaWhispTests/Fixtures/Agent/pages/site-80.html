@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Site Eighty</title></head>
+<body>
+<main id="root"><h1>Deep</h1></main>
+<script>
+  let parent = document.getElementById('root');
+  const depth = Number(new URLSearchParams(location.search).get('depth') || 3000);
+  for (let i = 0; i < depth; i++) {
+    const span = document.createElement('span');
+    span.setAttribute('role', 'button');
+    span.style.visibility = 'hidden';
+    parent.appendChild(span);
+    parent = span;
+  }
+  const button = document.createElement('button');
+  button.textContent = 'Deep action';
+  button.style.visibility = 'visible';
+  parent.appendChild(button);
+</script>
+</body>
+</html>

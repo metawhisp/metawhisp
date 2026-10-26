@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Site Five Hundred Forty-Four</title>
+<style>
+  #compose { position: fixed; left: 40px; top: 80px; width: 360px; padding: 16px; background: #fff; border: 1px solid #888; }
+  #toast { position: fixed; right: 20px; bottom: 20px; width: 220px; padding: 12px; background: #eee; border: 1px solid #888; }
+</style>
+</head>
+<body>
+<main><h1>Messages</h1><p>Inbox</p></main>
+<!-- A box with a form whose Send (2026-10-21, Codex review 3, P1-2) opens a second box beside it — "Sending…" — and
+     leaves the first as it was: an answer of the page's, not the proof the message went. -->
+<div id="compose" role="dialog" aria-modal="true" aria-labelledby="compose-title">
+  <h2 id="compose-title">New message</h2>
+  <form id="message" onsubmit="event.preventDefault(); document.getElementById('toast').hidden = false;">
+    <label for="to">To</label>
+    <input id="to" name="to" type="text" value="sam@example.test">
+    <button type="submit" id="send">Send</button>
+  </form>
+</div>
+<div id="toast" role="dialog" aria-labelledby="toast-title" hidden>
+  <p id="toast-title">Sending…</p>
+  <button type="button" id="dismiss" onclick="document.getElementById('toast').hidden = true">Dismiss</button>
+</div>
+</body>
+</html>

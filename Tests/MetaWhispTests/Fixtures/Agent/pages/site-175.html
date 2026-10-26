@@ -1,0 +1,14 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Site One Hundred Seventy-Five</title><style>body { margin: 0; font: 16px sans-serif; } main { padding: 16px 40px; } iframe { display: block; border: 0; }</style></head>
+<body>
+<main>
+  <h1>Checkout</h1>
+  <!-- A card form hosted by a payment provider, in its own frame. -->
+  <iframe style="width:420px;height:160px" src="https://site-176.test/"></iframe>
+  <!-- The page's own button: no payment word, judged by the page it is on. -->
+  <button type="button" onclick="document.getElementById('log').textContent += 'paid;'">Confirm</button>
+  <p id="log"></p>
+</main>
+</body>
+</html>

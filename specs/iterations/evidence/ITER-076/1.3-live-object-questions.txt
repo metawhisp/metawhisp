@@ -1,0 +1,113 @@
+ITER-076 1.3 — OpenRouter takes structured instructions and criteria (live, 2026-09-27)
+
+Why: jev-ultrafast sends a step's instructions as an object ({goal, rules} and {goal, operation,
+rules: [NEXT_ACTION, TARGET]}) and describes each target as an object. The Pro server passes questions
+through as they come (decisionsRequestProblem checks only each question's type), so the one open
+point was OpenRouter's alpha decisions endpoint.
+
+Call: POST https://openrouter.ai/api/alpha/decisions, straight to OpenRouter with the owner's
+OpenRouter key from the keychain (not printed, not stored). A made-up page; no user data.
+Result: HTTP 200 in 0.53 s.
+
+Request (the rules texts are shortened here; they are the pinned NEXT_ACTION and TARGET):
+{
+  "model": "typesafe/jev-1.13",
+  "state": {
+    "page": {
+      "url": "https://acme.test/",
+      "title": "Acme Notes",
+      "text": "Acme Notes. Features. Pricing. Blog."
+    },
+    "elements": [
+      {
+        "index": "1",
+        "label": "Features",
+        "operations": [
+          "CLICK"
+        ]
+      },
+      {
+        "index": "2",
+        "label": "Pricing",
+        "operations": [
+          "CLICK"
+        ]
+      }
+    ],
+    "recent_actions": []
+  },
+  "questions": {
+    "operation": {
+      "type": "choice",
+      "instructions": {
+        "goal": "Open the pricing page of Acme Notes",
+        "rules": "<NEXT_ACTION, 1108 chars>"
+      },
+      "criteria": {
+        "CLICK": "Click an element, button, menu option, autocomplete suggestion, or calendar day.",
+        "WAIT": "Wait for the page to update",
+        "DONE": "Every requirement is visibly satisfied.",
+        "BLOCKED": "No supported operation can progress."
+      }
+    },
+    "click_target": {
+      "type": "choice",
+      "instructions": {
+        "goal": "Open the pricing page of Acme Notes",
+        "operation": "CLICK",
+        "rules": [
+          "<NEXT_ACTION, 1108 chars>",
+          "<TARGET, 379 chars>"
+        ]
+      },
+      "criteria": {
+        "1": {
+          "element": "[1] Features",
+          "current_value": ""
+        },
+        "2": {
+          "element": "[2] Pricing",
+          "current_value": ""
+        }
+      }
+    }
+  }
+}
+
+Response:
+{
+  "model": "typesafe/jev-1.13-20260917",
+  "answers": {
+    "operation": {
+      "type": "choice",
+      "choice": "CLICK",
+      "probabilities": {
+        "WAIT": 0,
+        "CLICK": 0.99,
+        "DONE": 0.01,
+        "BLOCKED": 0
+      },
+      "confidence": 0.98
+    },
+    "click_target": {
+      "type": "choice",
+      "choice": "2",
+      "probabilities": {
+        "1": 0,
+        "2": 1
+      },
+      "confidence": 1
+    }
+  },
+  "usage": {
+    "input_tokens": 1103,
+    "output_tokens": 76,
+    "cost": 4.6326e-05
+  },
+  "id": "gen-dec-1790467420-2g8lo36mdqvYCJyTe3yS",
+  "provider": "TypeSafe"
+}
+
+Read: the object instructions and object criteria were accepted. The operation question answered
+CLICK at 0.98, and the target question chose "2" (Pricing) at 1.0, the right answer for the goal.
+Cost 1,103 input tokens, $0.0000463 (usage.cost).

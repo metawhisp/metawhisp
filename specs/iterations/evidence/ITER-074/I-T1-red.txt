@@ -1,0 +1,15 @@
+ITER-074 I-T1 — red run, 2026-09-24 16:28 CEST, stubs from phase A
+command: swift test --filter WebViewBridgeTests
+
+WebViewBridgeTests testAClickRunsThePagesOwnScript failed (0.643 seconds).
+WebViewBridgeTests testAClosedTabIsGone failed (0.000 seconds).
+WebViewBridgeTests testAFixturePageLoadsAndRunsJavaScript failed (0.000 seconds).
+WebViewBridgeTests testAScriptErrorIsReportedNotSwallowed failed (0.000 seconds).
+WebViewBridgeTests testASearchAddressRoutesToTheResultsPage failed (0.001 seconds).
+WebViewBridgeTests testAnUnknownAddressGetsTheNotFoundPage failed (0.000 seconds).
+WebViewBridgeTests testNonWebURLsAreRefusedBeforeAnythingLoads failed (0.000 seconds).
+WebViewBridgeTests testThePageBelievesItIsAtItsAddress failed (0.000 seconds).
+WebViewBridgeTests testTheResultsPageHasThreeResults failed (0.000 seconds).
+WebViewBridgeTests testUndefinedComesBackAsEmptyText failed (0.000 seconds).
+
+	 Executed 10 tests, with 12 failures (8 unexpected) in 0.647 (0.649) seconds

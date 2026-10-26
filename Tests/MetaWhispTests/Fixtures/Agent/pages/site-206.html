@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Site Two Hundred Six</title>
+<style>body { margin: 0; font: 16px sans-serif; } main { padding: 16px 40px; position: relative; height: 200px; }
+  #moving { position: absolute; top: 80px; left: 40px; width: 160px; height: 40px; }</style>
+</head>
+<body>
+<main>
+  <h1>A button that never stands still</h1>
+  <!-- It moves at every frame the page draws, and every few milliseconds between: no measure of it holds. -->
+  <button type="button" id="moving" onclick="document.getElementById('log').textContent += 'caught;'">Catch me</button>
+  <p id="log" style="margin-top: 140px"></p>
+</main>
+<script>
+  let left = 40;
+  const move = () => {
+    left = left >= 400 ? 40 : left + 3;
+    document.getElementById('moving').style.left = left + 'px';
+    requestAnimationFrame(move);
+  };
+  requestAnimationFrame(move);
+  setInterval(() => {
+    left = left >= 400 ? 40 : left + 3;
+    document.getElementById('moving').style.left = left + 'px';
+  }, 1);
+</script>
+</body>
+</html>

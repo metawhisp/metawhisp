@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Site One Hundred Forty-Nine</title>
+<style>
+  body { margin: 0; font: 16px sans-serif; }
+  main { padding: 24px 40px; }
+  form { margin: 16px 0; padding: 12px; border: 1px solid #777; width: 360px; }
+  .row { margin: 8px 0; }
+  input:not([type=file]) { width: 220px; height: 28px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Applications</h1>
+  <!-- A form that cannot go without a file from the user's disk. -->
+  <form id="apply" action="/apply" method="get" novalidate>
+    <div class="row"><label for="applicant">Full name</label> <input id="applicant" name="applicant"></div>
+    <div class="row"><label for="cv">Your CV</label> <input id="cv" name="cv" type="file" required></div>
+    <button type="submit">Send application</button>
+  </form>
+  <!-- A form whose file is optional. -->
+  <form id="note" action="/note" method="get" novalidate>
+    <div class="row"><label for="picture">Picture</label> <input id="picture" name="picture" type="file"></div>
+    <div class="row"><label for="words">Note</label> <input id="words" name="words"></div>
+    <button type="submit">Send note</button>
+  </form>
+  <p id="log"></p>
+</main>
+<script>
+  const log = (text) => { document.getElementById('log').textContent += text + ';'; };
+  for (const input of document.querySelectorAll('input[type=file]')) {
+    input.addEventListener('click', () => log('file ' + input.id));
+  }
+</script>
+</body>
+</html>

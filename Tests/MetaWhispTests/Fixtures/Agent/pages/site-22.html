@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Site Twenty-Two</title></head>
+<body>
+<main id="list">
+  <h1>A long page with a password at the end</h1>
+  <input aria-label="Early field" value="early value">
+</main>
+<script>
+  const list = document.getElementById('list');
+  for (let i = 0; i < 6000; i++) {
+    const a = document.createElement('a');
+    a.href = '/item/' + i; a.textContent = 'Item ' + i; a.style.display = 'block';
+    list.appendChild(a);
+  }
+  const pw = document.createElement('input');
+  pw.type = 'password'; pw.setAttribute('aria-label', 'Late password');
+  list.appendChild(pw);
+</script>
+</body>
+</html>

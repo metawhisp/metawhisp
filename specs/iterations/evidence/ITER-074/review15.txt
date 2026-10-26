@@ -1,0 +1,15 @@
+ITER-074 review round 15 (Codex on 6d688bf), fixes — 2026-09-24 21:55 CEST
+Code by GLM-5.3-Flash from the orchestrator's instructions (review15-instructions.md).
+Round 15 confirmed fixed: a submitter inside a sensitive field no longer names its form.
+
+Findings (both confirmed in the code):
+  1. a submitter that is itself sensitive still named its form -> the check includes the submitter itself
+  2. a label drawn in a component's shadow root did not mark its field sensitive -> labels are read through
+     open shadow roots, whole, without recursion, failing closed when out of time
+
+--- red
+ObserverFormsTests testALabelDrawnInAShadowRootStillMarksAFieldSensitive failed (0.613 seconds).
+ObserverFormsTests testASensitiveSubmitButtonNeverNamesItsForm failed (0.069 seconds).
+ObserverFormsTests testASubmitButtonInsideASensitiveFieldNeverNamesItsForm failed (0.072 seconds).
+--- green (agent suites)
+	 Executed 208 tests, with 0 failures (0 unexpected) in 13.032 (13.046) seconds

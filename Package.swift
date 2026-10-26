@@ -26,6 +26,7 @@ let package = Package(
         .executableTarget(
             name: "MetaWhisp",
             dependencies: [
+                "ObjCExceptionCatcher",
                 "WhisperKit",
                 "Sparkle",
                 .product(name: "MLX", package: "mlx-swift"),
@@ -51,6 +52,12 @@ let package = Package(
                 // (5th entry in `AppSettings.pillStyle`, 2026-05-02).
                 .copy("Resources/shrek-pill.mov"),
             ]
+        ),
+        // 2026-10-14 — the one place Swift can catch an Objective-C exception. AVFAudio raises one for a device it can
+        // no longer use; escaped from a main-actor job it stopped the main queue and crashed the app at the next wake.
+        .target(
+            name: "ObjCExceptionCatcher",
+            path: "Sources/ObjCExceptionCatcher"
         ),
         // TDD test target (spec://specs/TDD.md). `swift test` runs this.
         // Uses `@testable import MetaWhisp` to reach internal symbols.

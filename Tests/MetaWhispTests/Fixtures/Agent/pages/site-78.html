@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Site Seventy-Eight</title></head>
+<body>
+<main>
+  <h1>Account</h1>
+  <form action="/account?op=delete" method="get">
+    <input type="hidden" name="id" value="7">
+    <button type="button" onclick="location.assign(this.form.action + '&amp;id=7')">Go</button>
+  </form>
+  <form action="/app#/orders/cancel" method="get">
+    <button type="button">Continue</button>
+  </form>
+  <form method="get">
+    <select aria-label="Sort by" name="orderby"><option>Relevance</option><option>Price</option></select>
+  </form>
+  <form action="#" method="get">
+    <select aria-label="Sort order" name="sort"><option>Newest</option><option>Oldest</option></select>
+  </form>
+</main>
+</body>
+</html>

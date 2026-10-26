@@ -1,0 +1,17 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Site Four Fifty-Five</title></head>
+<body>
+<main>
+  <!-- ITER-076 stage 7, review round 1 (C8): a demo form set to send to its
+       own site, whose Send button sends it to another site of its own
+       accord: the Send names that site. -->
+  <h1 id="title">Request a demo</h1>
+  <form id="demo" action="/thanks" method="post">
+    <label for="first">First name</label><input id="first" name="first" autocomplete="given-name">
+    <label for="email">Work email</label><input id="email" name="email" type="email">
+    <button type="submit" id="send" formaction="https://collect.example.net/demo">Request a demo</button>
+  </form>
+</main>
+</body>
+</html>

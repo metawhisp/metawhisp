@@ -1,0 +1,15 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Site Four Hundred Seventeen</title></head>
+<body>
+<main>
+  <h1>Contact us</h1>
+  <form id="contact" action="/contact" method="post" onsubmit="return false;">
+    <label for="message">Message</label>
+    <textarea id="message" name="message"></textarea>
+  </form>
+  <!-- Sends at once and shows nothing: whether it went cannot be seen. -->
+  <button type="button" id="send" onclick="window.sent = (window.sent || 0) + 1;">Send message</button>
+</main>
+</body>
+</html>

@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Site One Hundred Sixty-Nine</title>
+<style>
+  body { margin: 0; font: 16px sans-serif; }
+  main { padding: 24px 40px; }
+  form { margin: 12px 0; }
+  .select { display: inline-block; width: 260px; height: 36px; line-height: 36px; padding: 0 8px; border: 1px solid #777; }
+  [role=option] { height: 32px; line-height: 32px; padding: 0 8px; border: 1px solid #ccc; width: 260px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Files</h1>
+  <!-- A dropdown whose form's own button says what sending it does. -->
+  <form id="files" action="/files" method="get">
+    <span id="what-label">What to clear</span>
+    <div id="what" class="select" role="combobox" aria-labelledby="what-label" aria-haspopup="listbox"
+         aria-expanded="true" aria-controls="whats">Choose</div>
+    <button type="submit">Delete files</button>
+  </form>
+  <!-- Its open list, drawn inside a search form. -->
+  <form id="find" action="/find" method="get">
+    <input name="q" aria-label="Find a file">
+    <div id="whats" role="listbox"><div role="option">Everything</div></div>
+  </form>
+  <!-- A dropdown whose form leaves the browser; its list drawn in no form. -->
+  <form id="mail" action="mailto:help" method="get">
+    <span id="to-label">Send to</span>
+    <div id="to" class="select" role="combobox" aria-labelledby="to-label" aria-haspopup="listbox"
+         aria-expanded="true" aria-controls="tos">Choose</div>
+  </form>
+  <div id="tos" role="listbox"><div role="option">Support team</div></div>
+  <!-- A dropdown whose form's button says it grants; its list drawn in no form. -->
+  <form id="app" action="/apps" method="get">
+    <span id="app-label">App</span>
+    <div id="app-box" class="select" role="combobox" aria-labelledby="app-label" aria-haspopup="listbox"
+         aria-expanded="true" aria-controls="app-list">Choose</div>
+    <button type="submit">Authorize the app</button>
+  </form>
+  <div id="app-list" role="listbox"><div role="option">Notes app</div></div>
+  <!-- A dropdown whose form's address carries an access request. -->
+  <form id="link" action="/connect?client_id=app-3&amp;redirect_uri=https%3A%2F%2Fsite-169.test%2Fback" method="get">
+    <span id="link-label">Account</span>
+    <div id="link-box" class="select" role="combobox" aria-labelledby="link-label" aria-haspopup="listbox"
+         aria-expanded="true" aria-controls="link-list">Choose</div>
+  </form>
+  <div id="link-list" role="listbox"><div role="option">Work account</div></div>
+</main>
+</body>
+</html>

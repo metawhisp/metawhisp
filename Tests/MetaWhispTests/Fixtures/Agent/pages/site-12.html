@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Checkout</title></head>
+<body>
+<main>
+  <h1>Checkout</h1>
+  <form id="pay" action="/pay" method="post">
+    <label for="receipt">Email for the receipt</label>
+    <input id="receipt" type="email" autocomplete="email">
+    <label for="card">Card number</label>
+    <input id="card" type="text" autocomplete="cc-number">
+    <label for="exp">Expiry</label>
+    <input id="exp" type="text" autocomplete="cc-exp">
+    <label for="cvc">Security code</label>
+    <input id="cvc" type="text" name="cvv">
+    <label for="verify">Verification</label>
+    <input id="verify" type="text" name="cvc">
+    <button type="submit">Pay now</button>
+  </form>
+</main>
+</body>
+</html>

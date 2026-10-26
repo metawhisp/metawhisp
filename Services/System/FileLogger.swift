@@ -29,13 +29,13 @@ enum FileLogger {
         let logsDir = FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent("Library/Logs", isDirectory: true)
         try? FileManager.default.createDirectory(at: logsDir, withIntermediateDirectories: true)
-        let logFile = logsDir.appendingPathComponent("MetaWhisp.log")
+        let logFile = logsDir.appendingPathComponent(AppIdentity.current.logFileName)
 
         if let attrs = try? FileManager.default.attributesOfItem(atPath: logFile.path),
            let size = attrs[.size] as? Int,
            plan(size: size) == .rotate
         {
-            rotate(logFile, to: logsDir.appendingPathComponent("MetaWhisp.log.1"))
+            rotate(logFile, to: logsDir.appendingPathComponent(AppIdentity.current.logFileName + ".1"))
         }
 
         if let fh = FileHandle(forWritingAtPath: logFile.path) {

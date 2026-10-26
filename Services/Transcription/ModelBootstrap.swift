@@ -2,9 +2,9 @@ import Foundation
 
 /// ITER-058.3 — quick-start model bootstrap: «the user must never wait for 950 MB».
 ///
-/// Mechanism: when onboarding's model page appears, Base (~80 MB, 10–30 s on
-/// typical Wi-Fi) starts downloading automatically — the user dictates within a
-/// minute. Large V3 Turbo then installs in the background and hot-swaps in when
+/// Mechanism: when the onboarding opens (`ModelPreparer`), Base (~80 MB, 10–30 s
+/// on typical Wi-Fi) starts downloading automatically — the user dictates within
+/// a minute. Large V3 Turbo then installs in the background and hot-swaps in when
 /// ready (driven by `AppDelegate.driveModelUpgrade()` off the download-phase
 /// sink + a launch-time resume).
 ///
@@ -25,23 +25,25 @@ enum ModelBootstrap {
 
     enum UpgradeAction: Equatable {
         case none
-        /// Cloud/Pro became the active path — the local upgrade plan is moot.
+        /// The cloud engine became the active path — the local upgrade plan is moot.
         case cancelPlan
         case startDownload
         case swapNow
         case skipLowDisk
     }
 
-    /// Should the onboarding model page auto-start the quick model?
-    /// No for Pro (cloud path needs no local model), no when any model already
-    /// exists or a download is in flight, no on a nearly-full disk.
+    /// Should the onboarding auto-start the quick model?
+    /// Only for the on-device engine — the cloud one needs no local model, and
+    /// Pro alone is no reason to skip (C5: a Pro user may keep transcribing on
+    /// the Mac). No when any model already exists or a download is in flight,
+    /// no on a nearly-full disk.
     static func shouldQuickStart(
         anyModelDownloaded: Bool,
         isDownloading: Bool,
-        isPro: Bool,
+        engineIsCloud: Bool,
         freeBytes: Int64
     ) -> Bool {
-        guard !isPro else { return false }
+        guard !engineIsCloud else { return false }
         guard !anyModelDownloaded, !isDownloading else { return false }
         return freeBytes >= minFreeBytesForQuick
     }
@@ -52,8 +54,10 @@ enum ModelBootstrap {
     /// successful swap).
     ///
     /// Review-hardened invariants:
-    /// - Pro / cloud engine active → `.cancelPlan` (never download ~1 GB for a
-    ///   user who doesn't transcribe locally, never a false success note).
+    /// - Cloud engine active → `.cancelPlan` (never download ~1 GB for a user
+    ///   who doesn't transcribe locally, never a false success note). Keyed on
+    ///   the engine, not on Pro (C5): Pro alone used to cancel it, leaving a
+    ///   Pro user who kept the on-device engine on Base for good.
     /// - Quick model not WORKING yet → `.none`: Base always comes first. Not
     ///   merely "on disk" (Codex review): a corrupt Base that fails to load
     ///   used to let the 950 MB download start, putting the user right back
@@ -64,12 +68,11 @@ enum ModelBootstrap {
         quickModelLoaded: Bool,
         bestDownloaded: Bool,
         isDownloading: Bool,
-        isPro: Bool,
         engineIsCloud: Bool,
         freeBytes: Int64
     ) -> UpgradeAction {
         guard pending, selectedModel == quickModelId else { return .none }
-        if isPro || engineIsCloud { return .cancelPlan }
+        if engineIsCloud { return .cancelPlan }
         if bestDownloaded { return .swapNow }
         guard quickModelLoaded else { return .none }
         if isDownloading { return .none }   // a download is already in flight
@@ -90,7 +93,7 @@ enum ModelBootstrap {
         return quickStartOwned && model == quickModelId
     }
 
-    /// Free bytes on the user's home volume (the models land under ~/Documents).
+    /// Free bytes on the user's home volume, where the model folder is (`ModelFolder`).
     static func freeDiskBytes() -> Int64 {
         let home = FileManager.default.homeDirectoryForCurrentUser
         let values = try? home.resourceValues(forKeys: [.volumeAvailableCapacityForImportantUsageKey])

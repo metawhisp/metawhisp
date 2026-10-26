@@ -1,0 +1,18 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Site Two Hundred Ninety</title>
+<style>body { margin: 0; font: 16px sans-serif; } main { padding: 16px 40px; } iframe { display: block; border: 0; }</style>
+</head>
+<body>
+<main id="page"></main>
+<script>
+  // ITER-076 I-09, round 5: a frame of another site holding fields it marks
+  // secret by structure alone, filled in (/signin, /card); or a sign-in it
+  // names only by its words (/words).
+  const kind = ['/signin', '/card', '/words'].includes(location.pathname) ? location.pathname : '/signin';
+  document.getElementById('page').innerHTML = '<h1>Checkout</h1><p>Finish here, then come back.</p>' +
+    '<iframe style="width:520px;height:320px" src="https://site-291.test' + kind + '"></iframe>' +
+    '<a href="https://site-290.test/help">Help</a>';
+</script>
+</body>
+</html>

@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Site Two Hundred Ninety-Three</title></head>
+<body>
+<main>
+  <h1>Notes</h1>
+  <!-- ITER-076 I-09, round 5: a field whose words are too long to read. It
+       gives no payment evidence, and a person sees what it holds. -->
+  <form action="https://site-293.test/notes" method="post">
+    <label for="c" id="long"></label>
+    <input id="c" value="4000 1234">
+    <select aria-label="Topic"><option>First topic</option><option>Second topic</option></select>
+    <button type="submit">Send</button>
+  </form>
+</main>
+<script>
+  document.getElementById('long').textContent = 'Card number ' + 'note '.repeat(24000);
+</script>
+</body>
+</html>

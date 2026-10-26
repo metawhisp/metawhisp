@@ -48,7 +48,7 @@ That's it. Works in any app that accepts paste: editors, browsers, terminals, me
 - Pro adds a daily summary, weekly patterns (off by default) and search by meaning
 
 **Screen Context** (off by default)
-- Reads text from the window in front, in every app except the ones you exclude (or only the apps you list), so MetaChat can answer about it; with Pro, Screen Agent adds hints from your screen
+- Reads text from the window in front, in every app except the ones you exclude (or only the apps you list), so MetaChat can answer about it
 - The Apple Passwords, Keychain Access, 1Password and Bitwarden apps are never read
 
 **Keyboard Layout Fix**
@@ -90,10 +90,11 @@ cd MetaWhisp
 # Build (release mode for ML performance)
 swift build -c release
 
-# Create app bundle
+# Create the signed app bundle (needs a Developer ID certificate)
 bash build.sh
 
-# App is installed to ~/Applications/MetaWhisp.app
+# The bundle is at .build/arm64-apple-macosx/release/MetaWhisp.app
+# To install a build over /Applications/MetaWhisp.app, keeping the replaced one for --rollback: bash hot-swap.sh
 ```
 
 ### Dependencies
@@ -154,7 +155,7 @@ The app records audio at 16kHz mono PCM, transcribes it with WhisperKit on the G
 
 ## Configuration
 
-During setup (skipped with Pro), MetaWhisp downloads the Base model, then the default one (about 3.2 GB), to `~/Documents/huggingface/models/argmaxinc/whisperkit-coreml/`.
+During setup MetaWhisp downloads the Base model, then the default one (about 3.2 GB). A new install keeps them in `~/Library/Application Support/MetaWhisp/huggingface/models/argmaxinc/whisperkit-coreml/`; an install from before 1.4 keeps using `~/Documents/huggingface/models/argmaxinc/whisperkit-coreml/`.
 
 **Free** (no account needed):
 - Unlimited on-device transcription, all models
@@ -166,16 +167,16 @@ During setup (skipped with Pro), MetaWhisp downloads the Base model, then the de
 **Pro** ($7.77/month or $30/year):
 - Cloud transcription (Whisper large-v3-turbo on Groq): 5,400 minutes a month; after that, meetings stop and short dictations keep working
 - Built-in cloud AI, no keys needed
-- Daily summary, weekly patterns, search by meaning, screen hints, natural voices
+- Daily summary, weekly patterns, search by meaning, natural voices
 
 ## Privacy
 
 With on-device transcription and the local AI model, nothing leaves your Mac: not your audio, not your text. Data goes out only through something you add:
-- **Pro:** audio goes to MetaWhisp's server, which passes it to Groq. Text for the built-in AI goes there too: titles and recaps of your dictations and meetings, tasks, the daily summary, search by meaning, and any AI feature you use. With Pro, the app switches back to cloud transcription each time it starts. While you're signed in, it checks your license at launch and every 12 hours, sending your Mac's hardware ID, and reports the length of each meeting transcribed through Pro.
+- **Pro:** audio goes to MetaWhisp's server, which passes it to Groq. Text for the built-in AI goes there too: titles and recaps of your dictations and meetings, tasks, the daily summary, search by meaning, and any AI feature you use. Pro switches transcription to the cloud once, the first time it is turned on on a Mac; if you pick on-device afterwards, it stays. While you're signed in, it checks your license at launch and every 12 hours, sending your Mac's hardware ID, and reports the length of each meeting transcribed through Pro.
 - **Your own Groq or OpenAI key, with Cloud transcription on:** audio goes to that provider.
 - **Your own OpenAI or Cerebras key:** text goes to that provider for Structured mode, translation, MetaChat, titles and recaps, and tasks (on by default), plus any AI feature you turn on. An OpenAI key added for transcription is used here too, unless Cerebras is your AI provider.
 - **Your own Deepgram or Gemini key:** meeting audio goes to that provider, even with on-device transcription.
-- **Screen Context with a cloud AI:** screen text goes to that provider. Visual mode (Pro, separate permission) can send a downscaled image of the focused window to MetaWhisp's server.
+- **Screen Context with a cloud AI:** screen text goes to that provider.
 - **MCP server (off by default):** the app you connect, such as Claude Desktop, gets the memories, tasks and conversation summaries it asks for.
 
 Two kinds of request carry none of your audio or text: automatic update checks (Sparkle, via metawhisp.com and GitHub) and Hugging Face, for model files. The app has no analytics or crash-reporting SDK.

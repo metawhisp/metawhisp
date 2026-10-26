@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Site Four Forty-Three</title></head>
+<body>
+<main>
+  <!-- ITER-076 stage 7 (№ 225): a demo form of eight fields — text, a list,
+       a date and a consent box. It posts to /thanks. -->
+  <h1 id="title">Get a demo</h1>
+  <form id="demo" action="/thanks" method="post">
+    <label for="first">First name</label><input id="first" name="first" autocomplete="given-name" required>
+    <label for="last">Last name</label><input id="last" name="last" autocomplete="family-name" required>
+    <label for="email">Work email</label><input id="email" name="email" type="email" required>
+    <label for="company">Company</label><input id="company" name="company" autocomplete="organization">
+    <label for="phone">Phone</label><input id="phone" name="phone" type="tel">
+    <label for="country">Country</label>
+    <select id="country" name="country"><option value="">Choose</option><option>Germany</option><option>France</option></select>
+    <label for="day">Preferred day</label><input id="day" name="day" type="date">
+    <label><input id="agree" name="agree" type="checkbox"> I agree to be contacted</label>
+    <button type="submit" id="send">Get my demo</button>
+  </form>
+  <p id="thanks" hidden>Thank you.</p>
+</main>
+<script>
+  if (location.pathname === '/thanks') {
+    document.getElementById('demo').remove();
+    document.getElementById('title').textContent = 'Thanks';
+    document.getElementById('thanks').hidden = false;
+  }
+</script>
+</body>
+</html>

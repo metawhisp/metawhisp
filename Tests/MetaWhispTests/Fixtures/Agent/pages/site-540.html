@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Sign in to Archive</title></head>
+<body>
+  <script>
+    // The archive's timeline sends the browser on to its sign-on, as a site does: the address the errand opened
+    // carries no OAuth request, the one it lands on does.
+    if (location.pathname === '/timeline') {
+      location.replace('/auth?client_id=timeline&redirect_uri=https%3A%2F%2Fsite-540.test%2Fcb&response_type=code');
+    }
+  </script>
+  <h1>Sign in to Archive</h1>
+  <p>Archive Timeline wants to use your account. Sign in to continue.</p>
+  <form id="consent" action="/approve" method="post">
+    <input type="hidden" name="client_id" value="timeline">
+    <button type="submit" id="allow">Allow</button>
+    <!-- A button whose words name no grant: only the page, a consent page by its address, says what it does. -->
+    <button type="submit" id="continue" name="consent" value="yes">Continue</button>
+  </form>
+  <p><a href="/deny" id="deny">Not now</a></p>
+</body>
+</html>

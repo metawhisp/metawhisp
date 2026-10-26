@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Site One Hundred Fifty-Six</title>
+<style>
+  body { margin: 0; font: 16px sans-serif; }
+  main { padding: 24px 40px; }
+  .switch { display: inline-block; padding: 4px 8px; border: 1px solid #333; cursor: pointer; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Security</h1>
+  <!-- A styled toggle on a page with no form: its box is hidden. -->
+  <input id="tfa" type="checkbox" style="display: none"><label for="tfa" class="switch">Two-factor authentication</label>
+  <!-- A plain box whose words name a secret elsewhere: "pin". -->
+  <p><input id="pin" type="checkbox"> <label for="pin">Pin to top</label></p>
+  <p><button id="help" type="button">Help</button></p>
+  <p id="answer"></p>
+</main>
+<script>
+  document.getElementById('help').addEventListener('click', () => {
+    document.getElementById('answer').innerHTML = '<button type="button">Close help</button>';
+  });
+</script>
+</body>
+</html>

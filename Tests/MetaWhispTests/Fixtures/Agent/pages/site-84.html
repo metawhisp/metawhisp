@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Site Eighty-Four</title>
+<script>window.marker = 'the page itself';</script>
+</head>
+<body>
+<main>
+  <h1>A page with frames of its own</h1>
+  <form action="https://site-84.test/pay" method="post">
+    <label for="card">Card number</label>
+    <input id="card" name="card" autocomplete="cc-number">
+    <button type="submit">Pay now</button>
+  </form>
+  <script>
+    // Same-origin frames, each with a world this page writes: a script run in
+    // one of them reads what the page wants it to read.
+    for (let i = 0; i < 4; i++) {
+      const frame = document.createElement('iframe');
+      frame.style.cssText = 'width:10px;height:10px;border:0';
+      document.body.appendChild(frame);
+      frame.contentWindow.eval("window.marker = 'a frame the page wrote'; "
+        + "JSON.stringify = function () { return '{\"forged\":true}'; };");
+    }
+  </script>
+</main>
+</body>
+</html>

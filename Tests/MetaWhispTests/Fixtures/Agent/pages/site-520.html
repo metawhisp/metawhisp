@@ -1,0 +1,176 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Site Five Hundred Twenty</title>
+<style>
+  body { margin: 0; font: 16px sans-serif; }
+  main { padding: 24px 40px; min-height: 900px; }
+  #banner { position: fixed; bottom: 0; left: 0; right: 0; background: #fff; border-top: 1px solid #999; padding: 12px;
+            z-index: 2147483645; }
+  #filter { position: fixed; top: 0; bottom: 0; left: 0; width: 100%; height: 100%; background: rgba(0, 0, 0, .5);
+            z-index: 2147483646; }
+  #center { position: fixed; top: 5%; left: 0; right: 0; margin: 0 auto; width: 575px; height: 85%; overflow: auto;
+            background: #fff; z-index: 2147483647; }
+  #close-center { width: 24px; height: 24px; }
+  .hide { display: none !important; }
+  .cat { position: relative; border: 1px solid #d8d8d8; }
+  .cat > button { position: absolute; cursor: pointer; width: 100%; height: 100%; margin: 0; top: 0; left: 0; z-index: 1;
+                  border: none; background: transparent; }
+  .hdr { position: relative; min-height: 25px; padding: 11px 20px; display: flex; align-items: center;
+         justify-content: space-between; }
+  .hdr h4 { margin: 0; }
+  .tgl { position: relative; z-index: 1; }
+  .tgl input { position: absolute; opacity: 0; width: 0; height: 0; }
+  .switch { position: relative; display: inline-block; width: 45px; height: 25px; }
+  .nob { position: absolute; top: 0; left: 0; right: 0; bottom: 0; background: #767676; border-radius: 20px; }
+  .tgl input:checked + .switch .nob { background: #468254; }
+  .label-txt { display: none; }
+  .desc { display: none; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Award summary</h1>
+  <p>Three winners shared the award.</p>
+  <button id="show" type="button">Show the winners</button>
+  <p id="winners" hidden>Sam Taylor, Alex Kim and Robin Lee.</p>
+  <p id="log"></p>
+</main>
+<!-- A consent platform's two-layer cookie window, as a prize site drew it (blind task b08, 2026-10-21): its first layer
+     offers only its settings and its accept; the least consent is one layer down — the category switches, the
+     non-essential ones off unless ?on= names one, and the save. The settings keep the first layer open under a dark
+     filter, as the platform's own script does. Each category's header is a button over it that only shows its
+     description; the necessary one has no switch, it is always active.
+     ?reject=1 adds "Reject all" to the first layer; ?nosave=1 leaves the save out; ?dead=1 makes the settings button
+     open nothing. Each act is logged. -->
+<div id="banner" role="region" aria-label="Cookie banner">
+  <div role="dialog" aria-label="Privacy">
+    <p>By clicking “Accept all cookies”, you agree to the storing of cookies on your device to enhance site
+      navigation, analyze site usage, and assist in our marketing efforts.
+      <a href="/privacy#cookies" aria-label="More information about your privacy, opens in a new tab">Our cookie
+        policy.</a></p>
+    <div id="first"></div>
+  </div>
+</div>
+<div id="filter" class="hide"></div>
+<div id="center" class="hide" role="region" aria-label="Preference center">
+  <div role="dialog" aria-modal="true" aria-label="Privacy Preference Center">
+    <button id="close-center" type="button" aria-label="Close preference center"></button>
+    <h2>Privacy Preference Center</h2>
+    <p>When you visit any website, it may store or retrieve information on your browser, mostly in the form of
+      cookies. Because we respect your right to privacy, you can choose not to allow some types of cookies.
+      <a href="/privacy">More information</a></p>
+    <button id="allow-all" type="button">Allow All</button>
+    <h3>Manage Consent Preferences</h3>
+    <div id="categories"></div>
+    <div id="footer"></div>
+  </div>
+</div>
+<script>
+  const params = new URLSearchParams(location.search);
+  const on = (params.get('on') || '').split(',').filter(Boolean);
+  const log = (entry) => { document.getElementById('log').textContent += entry + ';'; };
+  const center = document.getElementById('center');
+  const filter = document.getElementById('filter');
+  const banner = document.getElementById('banner');
+  window.accepted = 0;
+  window.settingsClicks = 0;
+  const closeAll = () => { banner.classList.add('hide'); center.classList.add('hide'); filter.classList.add('hide'); };
+  const button = (label, id, onClick) => {
+    const made = document.createElement('button');
+    made.type = 'button';
+    made.id = id;
+    made.textContent = label;
+    made.addEventListener('click', onClick);
+    return made;
+  };
+  const first = document.getElementById('first');
+  if (params.get('reject') === '1') first.appendChild(button('Reject all', 'reject', () => { log('reject'); closeAll(); }));
+  first.appendChild(button('Cookies settings', 'settings', () => {
+    window.settingsClicks += 1;
+    log('settings');
+    if (params.get('dead') === '1') return;
+    center.classList.remove('hide');
+    filter.classList.remove('hide');
+  }));
+  first.appendChild(button('Accept all cookies', 'accept', () => { window.accepted += 1; log('accept'); closeAll(); }));
+  document.getElementById('allow-all').addEventListener('click', () => { window.accepted += 1; log('accept'); closeAll(); });
+  document.getElementById('close-center').addEventListener('click', () => {
+    log('close');
+    center.classList.add('hide');
+    filter.classList.add('hide');
+  });
+  const categories = [
+    { id: 'targeting', name: 'Targeting Cookies' },
+    { id: 'functional', name: 'Functional Cookies' },
+    { id: 'performance', name: 'Performance Cookies' },
+    { id: 'necessary', name: 'Strictly Necessary Cookies', always: true },
+  ];
+  const holder = document.getElementById('categories');
+  for (const category of categories) {
+    const item = document.createElement('div');
+    item.className = 'cat';
+    const header = document.createElement('button');
+    header.type = 'button';
+    header.setAttribute('aria-expanded', 'false');
+    header.setAttribute('aria-controls', 'desc-' + category.id);
+    header.setAttribute('aria-labelledby', 'hdr-' + category.id + (category.always ? ' status-' + category.id : ''));
+    item.appendChild(header);
+    const row = document.createElement('div');
+    row.className = 'hdr';
+    const title = document.createElement('h4');
+    title.id = 'hdr-' + category.id;
+    title.textContent = category.name;
+    row.appendChild(title);
+    if (category.always) {
+      const status = document.createElement('div');
+      status.id = 'status-' + category.id;
+      status.textContent = 'Always Active';
+      row.appendChild(status);
+    } else {
+      const toggle = document.createElement('div');
+      toggle.className = 'tgl';
+      const input = document.createElement('input');
+      input.type = 'checkbox';
+      input.id = 'sw-' + category.id;
+      input.setAttribute('role', 'switch');
+      input.setAttribute('aria-labelledby', 'hdr-' + category.id);
+      input.checked = on.includes(category.id);
+      input.addEventListener('change', () => log((input.checked ? 'on:' : 'off:') + category.id));
+      const label = document.createElement('label');
+      label.className = 'switch';
+      label.htmlFor = input.id;
+      label.innerHTML = '<span class="nob"></span><span class="label-txt"></span>';
+      label.querySelector('.label-txt').textContent = category.name;
+      toggle.appendChild(input);
+      toggle.appendChild(label);
+      row.appendChild(toggle);
+    }
+    item.appendChild(row);
+    const description = document.createElement('p');
+    description.className = 'desc';
+    description.id = 'desc-' + category.id;
+    description.textContent = 'What the ' + category.name.toLowerCase() + ' are for.';
+    item.appendChild(description);
+    header.addEventListener('click', () => {
+      const open = header.getAttribute('aria-expanded') !== 'true';
+      header.setAttribute('aria-expanded', String(open));
+      description.style.display = open ? 'block' : 'none';
+      log('expand:' + category.id);
+    });
+    holder.appendChild(item);
+  }
+  if (params.get('nosave') !== '1') {
+    document.getElementById('footer').appendChild(button('Confirm My Choices', 'confirm', () => {
+      const states = categories.filter((category) => !category.always)
+        .map((category) => category.id + '=' + (document.getElementById('sw-' + category.id).checked ? 'on' : 'off'));
+      log('save:' + states.join(','));
+      closeAll();
+    }));
+  }
+  document.getElementById('show').addEventListener('click', () => {
+    window.shown = (window.shown || 0) + 1;
+    document.getElementById('winners').hidden = false;
+  });
+</script>
+</body>
+</html>

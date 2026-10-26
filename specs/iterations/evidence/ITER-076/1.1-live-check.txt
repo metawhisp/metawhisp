@@ -1,0 +1,13 @@
+ITER-076 1.1 — live check of POST https://api.metawhisp.com/api/pro/decisions
+2026-09-26 22:44 UTC, after deploy 075e5fd (worker commit 0dfa0cf), secret OPENROUTER_API_KEY set.
+No license, key or email is recorded here.
+
+1. No license                → HTTP 401 (route live, Pro-gated).
+2. OpenRouter's tutorial body, with a Pro license, deadline_ms 10000
+                             → HTTP 200 in 0.595 s; model typesafe/jev-1.13-20260917;
+                               answers is_bug (noul 0.96), team (choice), urgency (score 1.99);
+                               usage 476 input / 70 output tokens — the same as the direct call on 2026-09-26.
+                               Every answer carries its `type`.
+3. 20 calls, one noul question, deadline_ms 10000
+                             → 20 × HTTP 200; p50 0.376 s, p95 0.646 s, min 0.352 s, max 0.697 s
+                               (curl time_total from the owner's Mac, UTC+2).

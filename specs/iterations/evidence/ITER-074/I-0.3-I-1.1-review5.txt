@@ -1,0 +1,68 @@
+ITER-074 review round 5 (Codex on 55bc590 + 593c776), fixes — 2026-09-24 18:13 CEST, orchestrator
+
+Findings (all four confirmed in the code before fixing):
+  1. a hidden aria-labelledby label hid a password field (sensitivity read visible text only)
+  2. a custom role=textbox's contents reached a neighbour's row context
+  3. a chip in a shadow root inside an editor was reported as a control (closest() stops at shadow roots)
+  4. a grant dialog that mentions cookies passed as a cookie banner; bare 'Allow' counted as consent
+
+--- red (new tests against the old code; the list-box and 'Allow all' siblings pass before and after)
+ObserverFormsTests testACustomTextFieldsContentsReachNoNeighbour failed (0.725 seconds).
+ObserverFormsTests testAFieldNamedOnlyByHiddenOrSecondaryWordsIsStillSensitive failed (0.067 seconds).
+ObserverFormsTests testAShadowChipInsideAnEditorIsNotAControl failed (0.070 seconds).
+SafetyGuardTests testAGrantThatMentionsCookiesIsNotACookieBanner failed (0.001 seconds).
+	 Executed 52 tests, with 9 failures (0 unexpected) in 2.756 (2.760) seconds
+--- green (observer, safety, candidate and page suites)
+ObserverFormsTests testACookieBannerIsADialog passed (0.070 seconds).
+ObserverFormsTests testACustomTextFieldsContentsReachNoNeighbour passed (0.080 seconds).
+ObserverFormsTests testADraftNeverLeaksThroughContextOrHeadings passed (0.079 seconds).
+ObserverFormsTests testAFieldNamedOnlyByHiddenOrSecondaryWordsIsStillSensitive passed (0.075 seconds).
+ObserverFormsTests testAFormControlCarriesItsFormsDestination passed (0.091 seconds).
+ObserverFormsTests testALoginFormIsFlaggedAndItsPasswordIsGone passed (0.071 seconds).
+ObserverFormsTests testAPasswordNamedByAriaLabelledByIsGone passed (0.071 seconds).
+ObserverFormsTests testAPaymentFormIsFlaggedAndItsCardFieldsAreGone passed (0.067 seconds).
+ObserverFormsTests testASelectListsItsOptionsAndItsChoice passed (0.073 seconds).
+ObserverFormsTests testAShadowChipInsideAnEditorIsNotAControl passed (0.073 seconds).
+ObserverFormsTests testAShadowPasswordLocksThePage passed (0.070 seconds).
+ObserverFormsTests testATextareasContentsReachNoLabelOrNeighbour passed (0.076 seconds).
+ObserverFormsTests testAVerificationCodeIsGoneWithoutAutocomplete passed (0.072 seconds).
+ObserverFormsTests testAnExpiryDateIsGoneWithoutAutocomplete passed (0.080 seconds).
+ObserverFormsTests testAnIncompleteScanReadsNoValues passed (0.123 seconds).
+ObserverFormsTests testAnOrdinaryPageRaisesNoFlags passed (0.075 seconds).
+ObserverFormsTests testAnOrdinarySearchBoxShowsWhatItHolds passed (0.075 seconds).
+ObserverFormsTests testChipsInsideAnEditorAreNotControlsOrHeadings passed (0.070 seconds).
+ObserverFormsTests testElementsOutsideAFormHaveNoFormFields passed (0.073 seconds).
+ObserverFormsTests testFormDestinationsResistClobberingAndOddTypes passed (0.076 seconds).
+ObserverFormsTests testHiddenInstructionsNeverBecomeElements passed (0.080 seconds).
+ObserverFormsTests testNoValueIsReadInsideALoginForm passed (0.074 seconds).
+ObserverFormsTests testOpenShadowRootsAreSeenAndClosedOnesAreNot passed (0.078 seconds).
+ObserverFormsTests testOptionsAreWithheldInsideALoginForm passed (0.068 seconds).
+ObserverFormsTests testOptionsInAListBoxAreStillControls passed (0.077 seconds).
+ObserverFormsTests testShadowLabelsResolveInTheirOwnRoot passed (0.096 seconds).
+ObserverFormsTests testTheFormsDestinationIsPartOfTheFingerprint passed (0.000 seconds).
+SafetyGuardTests testACookieBannerIsRecognisedByItsTextAndConsentButtons passed (0.000 seconds).
+SafetyGuardTests testAGrantDialogIsNotACookieBanner passed (0.000 seconds).
+SafetyGuardTests testAGrantThatMentionsCookiesIsNotACookieBanner passed (0.000 seconds).
+SafetyGuardTests testALateYesDoesNotCount passed (0.000 seconds).
+SafetyGuardTests testAPlannedSearchIsAlwaysReversible passed (0.000 seconds).
+SafetyGuardTests testAPlannedSearchMustLookLikeOne passed (0.000 seconds).
+SafetyGuardTests testAYesInsideTheWindowApproves passed (0.000 seconds).
+SafetyGuardTests testAYesIsBoundToTheExactActionTabPageAndWording passed (0.000 seconds).
+SafetyGuardTests testAcceptOnlyWhenTheBannerBlocksThePage passed (0.000 seconds).
+SafetyGuardTests testActionWordsFailTheNavigationCheck passed (0.000 seconds).
+SafetyGuardTests testAnAllowThatNamesItsScopeIsStillConsent passed (0.000 seconds).
+SafetyGuardTests testAnAnswerOutsideTheRealWindowDoesNotCount passed (0.000 seconds).
+SafetyGuardTests testAnEncodedQueryFailsTheNavigationCheck passed (0.000 seconds).
+SafetyGuardTests testAnOrdinaryLinkPassesTheNavigationCheck passed (0.000 seconds).
+SafetyGuardTests testLeavingOrUndoingNeedsAYes passed (0.000 seconds).
+SafetyGuardTests testNegationsAndScopesAreRead passed (0.000 seconds).
+SafetyGuardTests testNonWebAddressesFailTheNavigationCheck passed (0.000 seconds).
+SafetyGuardTests testOnlyBackScrollWaitAndPlannedSearchesAreAlwaysReversible passed (0.000 seconds).
+SafetyGuardTests testSilenceBecomesANoWhenTheWindowCloses passed (0.000 seconds).
+SafetyGuardTests testSilenceIsStillWaitingInsideTheWindow passed (0.000 seconds).
+SafetyGuardTests testTheLeastPermissiveOptionWins passed (0.000 seconds).
+SafetyGuardTests testTheLexiconFindsIrreversibleActionWords passed (0.000 seconds).
+SafetyGuardTests testTheLexiconIgnoresOrdinaryWordsAndNouns passed (0.000 seconds).
+SafetyGuardTests testTheLexiconReadsAddressesIncludingCamelCase passed (0.000 seconds).
+SafetyGuardTests testTheWholeActionIsReadNotJustItsName passed (0.000 seconds).
+	 Executed 107 tests, with 0 failures (0 unexpected) in 4.697 (4.705) seconds

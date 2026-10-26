@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Secrets 405</title>
+<style>.dots { -webkit-text-security: disc; }</style></head>
+<body>
+<main>
+  <!-- ITER-076 brain, step 2: what the reader must never be sent — a
+       password's value, a field's value, a card number in its field, what
+       someone wrote in a text area or an editor, text drawn as dots — beside
+       words a person reads. -->
+  <h1>Account jokes</h1>
+  <p>PUBLIC-WORDS-4050 a joke a person can read</p>
+  <form action="https://site-405.test/save" method="post">
+    <label>Password <input type="password" name="p" value="PASS-SECRET-4051"></label>
+    <label>Name <input type="text" name="n" value="TYPED-VALUE-4052"></label>
+    <label>Card <input name="c" autocomplete="cc-number" value="4111 1111 1111 1111"></label>
+    <textarea name="t" aria-label="Note">WRITTEN-NOTE-4053</textarea>
+  </form>
+  <p><span class="dots">DOTS-SECRET-4054</span></p>
+  <div contenteditable="true">EDITED-TEXT-4055</div>
+  <p>PUBLIC-WORDS-4056 the last line</p>
+</main>
+</body>
+</html>

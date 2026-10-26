@@ -69,19 +69,60 @@ final class ModelManagerService: ObservableObject {
 
     static let recommendedModels: [String] = models.map(\.id)
 
+    /// Where this install's speech models are downloaded to and found (F1).
+    let folder: ModelFolder
+
+    init(folder: ModelFolder = .current) {
+        self.folder = folder
+    }
+
     func fetchAvailableModels() async {
         refreshDownloaded()
     }
 
-    /// Default location where WhisperKit / HubApi stores downloaded models.
-    static let defaultHubPath = FileManager.default.homeDirectoryForCurrentUser
-        .appendingPathComponent("Documents/huggingface/models/argmaxinc/whisperkit-coreml")
+    typealias Download = (_ variant: String, _ downloadBase: URL, _ progress: @escaping (Progress) -> Void) async throws -> URL
+
+    /// The real download, into the install's model folder — or, under XCTest,
+    /// one that waits offline until it is cancelled, so no test ever writes
+    /// into the owner's models (ITER-075 step 0, 0.4).
+    static let defaultDownload: Download = NSClassFromString("XCTestCase") != nil
+        ? { _, _, _ in
+            // In steps: one sleep for "forever" overflows the dispatch deadline
+            // and returns at once.
+            while true { try await Task.sleep(nanoseconds: 60 * NSEC_PER_SEC) }
+        }
+        : { variant, downloadBase, progress in
+            try await WhisperKit.download(variant: variant, downloadBase: downloadBase, progressCallback: progress)
+        }
+
+    /// What `startDownload` calls; tests may swap it.
+    var download: Download = ModelManagerService.defaultDownload
+
+    /// Deletes a speech model that keeps failing to load. The Documents folder
+    /// is shared with every other copy of MetaWhisp, so only the owner's app
+    /// deletes there (ITER-075 step 0, 0.4); a copy's own folder is its own.
+    /// Returns whether it deleted.
+    @discardableResult
+    static func removeBrokenModel(variant: String, identity: AppIdentity = .current,
+                                  folder: ModelFolder = .current) -> Bool {
+        guard !folder.isShared || identity.mayDeleteSharedModels else {
+            NSLog("[ModelBootstrap] the broken model stays — only the owner's app deletes shared models")
+            return false
+        }
+        do {
+            try FileManager.default.removeItem(at: folder.speechModels.appendingPathComponent(variant))
+            return true
+        } catch {
+            return false
+        }
+    }
 
     func refreshDownloaded() {
         var allModels: [String] = []
 
-        // 1. WhisperKit default: ~/Documents/huggingface/models/argmaxinc/whisperkit-coreml/
-        let hubDir = Self.defaultHubPath
+        // 1. The install's model folder: ~/Documents/huggingface/… for one from
+        //    before 1.4, its own Application Support folder for a new one (F1).
+        let hubDir = folder.speechModels
         if let contents = try? FileManager.default.contentsOfDirectory(at: hubDir, includingPropertiesForKeys: nil) {
             allModels += contents.filter { $0.hasDirectoryPath }.map { $0.lastPathComponent }
         }
@@ -121,11 +162,14 @@ final class ModelManagerService: ObservableObject {
         // Capture self strongly — ModelManagerService is held by AppDelegate for app lifetime
         let manager = self
 
+        let download = self.download
+        let downloadBase = folder.base
         downloadTask = Task.detached(priority: .userInitiated) {
             do {
-                let url = try await WhisperKit.download(
-                    variant: variant,
-                    progressCallback: { progress in
+                let url = try await download(
+                    variant,
+                    downloadBase,
+                    { progress in
                         Task { @MainActor in
                             let frac = progress.fractionCompleted
                             manager.downloadProgress = frac
@@ -179,12 +223,25 @@ final class ModelManagerService: ObservableObject {
         }
     }
 
+    /// The model is installed: its folder is listed, and no download of it is running or stopped short. A download
+    /// moves the model's files into its folder one by one, so the folder is there from the first file on; a
+    /// download that failed after it left part of a model, which Try again then took for an installed one and
+    /// did not download again (Codex step-2 #2). `currentDownloadModel` names that download until one completes or
+    /// is cancelled — it stays set after a failure for the error row — so that model is not installed.
     func isDownloaded(_ modelId: String) -> Bool {
         guard let info = Self.models.first(where: { $0.id == modelId }) else { return false }
+        guard currentDownloadModel != modelId else { return false }
         // Exact match (ITER-058.3 review): the old contains-match made
         // "large-v3" report downloaded whenever large-v3_TURBO was on disk
         // ("openai_whisper-large-v3" is a substring of the turbo dir name).
         return downloadedModels.contains { $0 == info.variant }
+    }
+
+    /// The model whose download failed — the network went, the disk filled — with whatever part of it its folder
+    /// holds. Nil while a download runs and once one completes or is cancelled.
+    var failedDownloadModel: String? {
+        guard !isDownloading, case .failed = phase else { return nil }
+        return currentDownloadModel
     }
 
     /// ITER-058.3 — cancel the in-flight download (user switched to cloud/Pro

@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Site Four Fifty-Two</title></head>
+<body>
+<main>
+  <!-- ITER-076 stage 7, review round 1 (C3): a demo form whose Send button,
+       as it goes down, puts another control right over itself — one that acts
+       as the button comes up: a press bound to the Send never lands there. -->
+  <h1 id="title">Request a demo</h1>
+  <form id="demo" action="/thanks" method="post">
+    <label for="first">First name</label><input id="first" name="first" autocomplete="given-name">
+    <label for="email">Work email</label><input id="email" name="email" type="email">
+    <div id="spot" style="position: relative; display: inline-block">
+      <button type="submit" id="send">Request a demo</button>
+    </div>
+  </form>
+  <p id="thanks" hidden>Thank you.</p>
+</main>
+<script>
+  window.other = 0;
+  document.getElementById('send').addEventListener('pointerdown', () => {
+    if (document.getElementById('other')) return;
+    const other = document.createElement('button');
+    other.type = 'button';
+    other.id = 'other';
+    other.textContent = 'Subscribe';
+    other.style.cssText = 'position: absolute; inset: 0; z-index: 10';
+    other.addEventListener('pointerup', () => { window.other += 1; });
+    document.getElementById('spot').appendChild(other);
+  });
+  if (location.pathname === '/thanks') {
+    document.getElementById('demo').remove();
+    document.getElementById('title').textContent = 'Thanks';
+    document.getElementById('thanks').hidden = false;
+  }
+</script>
+</body>
+</html>

@@ -68,7 +68,7 @@ final class ScreenHistorySearchToolTests: XCTestCase {
     /// Registered end-to-end: advertised in schemas, marked read-only, executed.
     func test_tool_isAdvertisedAndReadOnly() {
         XCTAssertTrue(ChatToolExecutor.readOnlyTools.contains("searchScreenHistory"))
-        let names = ChatToolExecutor.toolSchemas.compactMap {
+        let names = ChatToolExecutor.toolSchemas(canRunErrands: false).compactMap {
             ($0["function"] as? [String: Any])?["name"] as? String
         }
         XCTAssertTrue(names.contains("searchScreenHistory"))

@@ -4,6 +4,14 @@ import CoreGraphics
 import Foundation
 import ScreenCaptureKit
 
+/// Proof that the user just did something that needs a permission — pressed
+/// a button, switched a feature on, pressed record. Launch, activation, timers
+/// and automatic starts never hold one, so they cannot show a system prompt:
+/// they read the permission and wait for the grant (PRD P0 1, step-1 review
+/// #1). Every call that can show a prompt takes one;
+/// `LaunchPermissionGuardTests` pins where one may be made.
+struct PermissionAsk {}
+
 /// Centralized permission management.
 /// Handles TCC prompts for Screen Recording, Microphone, and Accessibility.
 @MainActor
@@ -34,7 +42,7 @@ final class PermissionsService: ObservableObject {
     /// Request Screen Recording permission. Triggers the system dialog.
     /// Returns true if already granted, false if dialog was shown (user must respond).
     @discardableResult
-    func requestScreenRecording() async -> Bool {
+    func requestScreenRecording(_ ask: PermissionAsk) async -> Bool {
     NSLog("[Permissions] screen-recording request entered — preflight=%@", CGPreflightScreenCaptureAccess() ? "granted" : "denied")
         // 1. Classic TCC dialog — triggers "Screen Recording" prompt
         if !CGPreflightScreenCaptureAccess() {
@@ -74,7 +82,7 @@ final class PermissionsService: ObservableObject {
 
     /// Request microphone permission.
     @discardableResult
-    func requestMicrophone() async -> Bool {
+    func requestMicrophone(_ ask: PermissionAsk) async -> Bool {
         if #available(macOS 14.0, *) {
             let status = AVAudioApplication.shared.recordPermission
             if status == .granted { return true }
@@ -104,8 +112,22 @@ final class PermissionsService: ObservableObject {
 
     // MARK: - Accessibility
 
+    /// The Accessibility button. Launch no longer asks (PRD P0 1), and the
+    /// prompting call is what lists MetaWhisp under Privacy → Accessibility, so
+    /// the button asks first and then opens the pane.
+    static func askForAccessibility(
+        _ ask: PermissionAsk,
+        prompt: @MainActor (PermissionAsk) -> Void = { PermissionsService.shared.requestAccessibility($0) },
+        openPane: () -> Void = {
+            NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")!)
+        }
+    ) {
+        prompt(ask)
+        openPane()
+    }
+
     /// Request Accessibility via prompt. This opens a system dialog.
-    func requestAccessibility() {
+    func requestAccessibility(_ ask: PermissionAsk) {
         let opts = [kAXTrustedCheckOptionPrompt.takeRetainedValue(): true] as CFDictionary
         _ = AXIsProcessTrustedWithOptions(opts)
         refresh()

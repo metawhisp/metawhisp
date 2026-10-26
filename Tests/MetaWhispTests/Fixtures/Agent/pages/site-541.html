@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Site Five Hundred Forty-One</title>
+<style>
+  body { margin: 0; min-height: 2400px; font-family: sans-serif; }
+  /* A practice form's page (2026-10-21, blind b03): a banner fixed to the window's foot, over whatever the page
+     scrolls under it, and a field that sits there once the page is scrolled to it. */
+  #banner { position: fixed; left: 0; right: 0; bottom: 0; height: 110px; background: #333; color: #fff; }
+  #state { position: absolute; top: 1600px; left: 40px; width: 240px; }
+  #veil { position: fixed; inset: 0; background: rgba(0,0,0,0.5); display: none; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Student Registration Form</h1>
+  <label for="state">State</label>
+  <input id="state" type="text">
+  <p id="log"></p>
+</main>
+<div id="banner">Advertisement</div>
+<div id="veil"></div>
+<script>
+  // Only a person's input — a trusted event — counts here.
+  document.getElementById('state').addEventListener('click', (event) => {
+    if (event.isTrusted) document.getElementById('log').textContent = 'State pressed';
+  });
+  // ?veiled: a veil over the whole window, as a modal's backdrop is.
+  if (location.search.includes('veiled')) document.getElementById('veil').style.display = 'block';
+  // The field put at the window's foot, under the banner, as a page scrolled to it shows it.
+  window.addEventListener('load', () => {
+    const field = document.getElementById('state');
+    window.scrollTo(0, field.getBoundingClientRect().top + scrollY - (innerHeight - 60));
+  });
+</script>
+</body>
+</html>

@@ -1,0 +1,14 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Site Thirty-Two</title></head>
+<body>
+<main>
+  <h1>Profile</h1>
+  <x-field id="referenced"><span slot="caption">Password</span></x-field>
+</main>
+<script>
+  document.getElementById('referenced').attachShadow({ mode: 'open' }).innerHTML =
+    '<span id="cap"><slot name="caption"></slot></span><input aria-labelledby="cap" value="SECRET-SLOT-REF">';
+</script>
+</body>
+</html>

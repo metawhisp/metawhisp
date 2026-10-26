@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Site One Hundred Fifty-Eight</title>
+<style>
+  body { margin: 0; font: 16px sans-serif; }
+  main { padding: 24px 40px; }
+  .row { margin: 12px 0; height: 40px; }
+  .select { display: inline-block; width: 260px; height: 36px; line-height: 36px; padding: 0 8px; border: 1px solid #777;
+            cursor: pointer; }
+  .menu { position: absolute; left: 300px; top: 60px; width: 200px; border: 1px solid #777; background: #fff; }
+  .menu [role=option] { height: 32px; line-height: 32px; padding: 0 8px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Addresses</h1>
+  <!-- Two made-up dropdowns of one component, both naming the same list: the
+       open one draws it. -->
+  <div class="row"><span id="billing-label">Billing country</span>
+    <div id="billing" class="select" role="combobox" tabindex="0" aria-labelledby="billing-label"
+         aria-haspopup="listbox" aria-expanded="false" aria-controls="country-list">Choose</div></div>
+  <div class="row"><span id="shipping-label">Shipping country</span>
+    <div id="shipping" class="select" role="combobox" tabindex="0" aria-labelledby="shipping-label"
+         aria-haspopup="listbox" aria-expanded="false" aria-controls="country-list">Choose</div></div>
+</main>
+<script>
+  let menu = null;
+  let owner = null;
+  const close = () => {
+    if (!menu) return;
+    menu.remove();
+    menu = null;
+    owner.setAttribute('aria-expanded', 'false');
+    owner = null;
+  };
+  // Draws the list for `box`; used by the test too, to draw it with both open.
+  const draw = (box) => {
+    close();
+    owner = box;
+    menu = document.createElement('div');
+    menu.id = 'country-list';
+    menu.className = 'menu';
+    menu.setAttribute('role', 'listbox');
+    for (const name of ['Canada', 'Mexico', 'Chile']) {
+      const option = document.createElement('div');
+      option.setAttribute('role', 'option');
+      option.textContent = name;
+      option.addEventListener('click', () => { owner.textContent = name; close(); });
+      menu.appendChild(option);
+    }
+    document.body.appendChild(menu);
+    box.setAttribute('aria-expanded', 'true');
+  };
+  for (const box of document.querySelectorAll('[role=combobox]')) {
+    box.addEventListener('click', () => (owner === box ? close() : draw(box)));
+  }
+  document.addEventListener('mousedown', (event) => {
+    if (menu && !menu.contains(event.target) && !event.target.matches('[role=combobox]')) close();
+  });
+</script>
+</body>
+</html>

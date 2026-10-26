@@ -1,0 +1,27 @@
+ITER-074 I-T1 harness seal — green run, 2026-09-24 16:58 CEST, step C2 implemented by the orchestrator (GLM quota exhausted until ~20:00 CEST; owner chose this)
+command: swift test --filter WebViewBridgeTests (also repeated 3x: 22/22 each)
+
+WebViewBridgeTests testAClickRunsThePagesOwnScript passed (0.238 seconds).
+WebViewBridgeTests testAClosedTabIsGone passed (0.132 seconds).
+WebViewBridgeTests testAFixturePageLoadsAndRunsJavaScript passed (0.073 seconds).
+WebViewBridgeTests testAFrameGoingAnywhereIsBlocked passed (0.000 seconds).
+WebViewBridgeTests testANonWebAddressIsBlocked passed (0.000 seconds).
+WebViewBridgeTests testAPageCannotFetchFromTheNetwork passed (0.075 seconds).
+WebViewBridgeTests testAPageGoingToAWebAddressIsRoutedToAFixture passed (0.000 seconds).
+WebViewBridgeTests testARunThatOutlivesItsDeadlineTimesOut passed (0.473 seconds).
+WebViewBridgeTests testAScriptErrorIsReportedNotSwallowed passed (0.074 seconds).
+WebViewBridgeTests testASearchAddressRoutesToTheResultsPage passed (0.000 seconds).
+WebViewBridgeTests testAnEmptyFrameIsAllowed passed (0.000 seconds).
+WebViewBridgeTests testAnUnknownAddressGetsTheNotFoundPage passed (0.075 seconds).
+WebViewBridgeTests testClickingAResultLandsOnThatSitesFixture passed (0.142 seconds).
+WebViewBridgeTests testEveryPageCarriesTheNetworkLock passed (0.076 seconds).
+WebViewBridgeTests testGoingToARealHostLandsOnTheNotFoundFixture passed (0.134 seconds).
+WebViewBridgeTests testNonWebURLsAreRefusedBeforeAnythingLoads passed (0.002 seconds).
+WebViewBridgeTests testOurOwnLoadIsAllowed passed (0.000 seconds).
+WebViewBridgeTests testScriptsMustReturnText passed (0.068 seconds).
+WebViewBridgeTests testThePageBelievesItIsAtItsAddress passed (0.071 seconds).
+WebViewBridgeTests testTheResultsPageHasThreeResults passed (0.068 seconds).
+WebViewBridgeTests testTwoTabsAreIndependent passed (0.140 seconds).
+WebViewBridgeTests testUndefinedComesBackAsEmptyText passed (0.073 seconds).
+
+	 Executed 22 tests, with 0 failures (0 unexpected) in 1.918 (1.920) seconds

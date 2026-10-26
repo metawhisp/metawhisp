@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Site Five Hundred Forty-Three</title></head>
+<body>
+<main>
+  <h1>Fields typing goes into</h1>
+  <!-- Which fields the agent types in (2026-10-21, Codex review 3, P1-1): a writable text field, a combobox that
+       takes typing, a number field — and none of a read-only field, an aria-readonly one, a native select. -->
+  <form id="fields" action="/save" method="get">
+    <label for="plain">Plain</label>
+    <input id="plain" name="plain" type="text">
+    <label for="locked">Locked</label>
+    <input id="locked" name="locked" type="text" readonly value="kept">
+    <label for="aria">Aria locked</label>
+    <input id="aria" name="aria" type="text" aria-readonly="true">
+    <label for="list">Read-only list</label>
+    <select id="list" name="list" aria-readonly="true"><option>One</option><option>Two</option></select>
+    <label for="combo">Combo</label>
+    <input id="combo" name="combo" type="text" role="combobox" aria-autocomplete="list" aria-expanded="false">
+    <label for="count">Count</label>
+    <input id="count" name="count" type="number">
+    <button type="submit">Save</button>
+  </form>
+</main>
+</body>
+</html>

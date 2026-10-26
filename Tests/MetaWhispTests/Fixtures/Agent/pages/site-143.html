@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Site One Hundred Forty-Three</title>
+<style>
+  body { margin: 0; font: 16px sans-serif; }
+  main { padding: 24px 40px; }
+  .select { display: inline-block; width: 260px; height: 36px; line-height: 36px; padding: 0 8px; border: 1px solid #777;
+            cursor: pointer; }
+  .menu { position: absolute; left: 40px; width: 278px; max-height: 200px; overflow-y: auto; border: 1px solid #777;
+          background: #fff; }
+  .menu [role=option] { height: 32px; line-height: 32px; padding: 0 8px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Sizes</h1>
+  <!-- The same made-up dropdown with 300 options: its list shows six at a
+       time and scrolls to the rest. -->
+  <div id="size" class="select" role="combobox" tabindex="0" aria-label="Size" aria-haspopup="listbox"
+       aria-expanded="false" aria-controls="size-list">Choose a size</div>
+  <p id="log"></p>
+</main>
+<script>
+  const box = document.getElementById('size');
+  const log = (text) => { document.getElementById('log').textContent += text + ';'; };
+  let menu = null;
+  const close = () => {
+    if (!menu) return;
+    menu.remove();
+    menu = null;
+    box.setAttribute('aria-expanded', 'false');
+  };
+  const open = () => {
+    if (menu) return;
+    menu = document.createElement('div');
+    menu.id = 'size-list';
+    menu.className = 'menu';
+    menu.setAttribute('role', 'listbox');
+    menu.style.top = (box.getBoundingClientRect().bottom + scrollY + 2) + 'px';
+    for (let i = 1; i <= 300; i++) {
+      const option = document.createElement('div');
+      option.setAttribute('role', 'option');
+      option.textContent = 'Size ' + i;
+      option.addEventListener('click', () => { box.textContent = 'Size ' + i; log('chose Size ' + i); close(); });
+      menu.appendChild(option);
+    }
+    document.body.appendChild(menu);
+    box.setAttribute('aria-expanded', 'true');
+  };
+  box.addEventListener('click', () => (menu ? close() : open()));
+  document.addEventListener('mousedown', (event) => {
+    if (menu && !menu.contains(event.target) && event.target !== box) close();
+  });
+</script>
+</body>
+</html>

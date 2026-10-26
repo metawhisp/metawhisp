@@ -6,6 +6,9 @@ struct TranscriptionResult: Sendable {
     let duration: TimeInterval
     let processingTime: TimeInterval
     let segments: [Segment]
+    /// Transcribed through the Pro proxy — MetaWhisp's server — not on this Mac nor on the user's own key: what a
+    /// meeting books, chunk by chunk (`MeetingBooking`). Only the cloud engine's proxy path sets it.
+    var viaProProxy = false
 
     struct Segment: Sendable {
         let text: String

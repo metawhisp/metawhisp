@@ -14,11 +14,11 @@ final class HistoryService: ObservableObject {
     /// running on a throwaway in-memory store.
     @Published private(set) var health: StoreHealth = .healthy
 
-    /// Where SwiftData puts the named `"MetaWhisp"` store. Used only to preserve
+    /// Where SwiftData puts the named store (`AppIdentity.storeName`). Used only to preserve
     /// the file on a failed open — never to bypass SwiftData's own pathing.
     private static var storeURL: URL? {
-        FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first?
-            .appendingPathComponent("MetaWhisp.store")
+        FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
+            .map { AppIdentity.current.storeURL(applicationSupport: $0) }
     }
 
     init() {
@@ -27,7 +27,7 @@ final class HistoryService: ObservableObject {
             // ITER-067 — live shape is V4 (adds ScreenAgentItem); existing
             // V1/V2/V3 stores migrate through the plan's lightweight stages.
             let schema = Schema(versionedSchema: MetaWhispSchemaV9.self)
-            let config = ModelConfiguration("MetaWhisp", schema: schema)
+            let config = ModelConfiguration(AppIdentity.current.storeName, schema: schema)
             modelContainer = try ModelContainer(
                 for: schema, migrationPlan: MetaWhispMigrationPlan.self, configurations: [config])
             Self.log.info("History database ready")
@@ -56,6 +56,11 @@ final class HistoryService: ObservableObject {
                 fatalError("Cannot create any ModelContainer — app cannot function without data storage")
             }
         }
+    }
+
+    /// History on `container`, healthy: a store of its own, for tests.
+    init(container: ModelContainer) {
+        modelContainer = container
     }
 
     /// Save a transcription result to history. Returns the item for further modification.

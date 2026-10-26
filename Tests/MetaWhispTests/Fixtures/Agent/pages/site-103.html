@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Site One Hundred Three</title></head>
+<body>
+<main>
+  <h1>Welcome back</h1>
+  <form id="login" action="https://site-103.test/session" method="post">
+    <input name="user" aria-label="Email">
+    <input type="password" name="pw" id="pw" aria-label="Password">
+    <button type="submit">Log in</button>
+  </form>
+  <!-- The page's own search, in no form. -->
+  <div>
+    <input type="search" id="q" aria-label="Search the help">
+    <button type="button" id="go"
+            onclick="document.getElementById('log').textContent += 'searched;'; this.textContent = 'Search again'">Search</button>
+  </div>
+  <!-- A button in no form whose handler sends the login form. -->
+  <button type="button" id="outside"
+          onclick="document.getElementById('login').requestSubmit()">Sign in</button>
+  <p id="log"></p>
+</main>
+<script>
+  // "?filled": the password was typed in before the agent looked.
+  if (location.search.includes('filled')) document.getElementById('pw').value = 'hunter2-x';
+</script>
+</body>
+</html>

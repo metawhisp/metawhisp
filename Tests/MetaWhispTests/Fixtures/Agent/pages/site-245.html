@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Site Two Hundred Forty-Five</title></head>
+<body>
+<main>
+  <h1 id="heading">Lists</h1>
+  <button id="delete" type="button">Delete list</button>
+  <p><a href="https://site-241.test/">Next site</a></p>
+</main>
+<script>
+  // A button whose click leads to the page that did what it says: going
+  // back there would ask for it again.
+  if (location.pathname === '/deleted') {
+    document.getElementById('heading').textContent = 'List deleted';
+    document.getElementById('delete').remove();
+  } else {
+    document.getElementById('delete').addEventListener('click', () => location.assign('/deleted?list=1'));
+  }
+</script>
+</body>
+</html>

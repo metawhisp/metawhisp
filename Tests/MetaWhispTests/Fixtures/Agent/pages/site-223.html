@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Site Two Hundred Twenty-Three</title>
+<style>
+  body { margin: 0; font: 16px sans-serif; }
+  main { padding: 24px 40px; }
+  fancy-box { display: inline-block; border: 1px solid #333; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Settings</h1>
+  <fancy-box role="checkbox" aria-checked="false" aria-label="Notify me" tabindex="0"></fancy-box>
+  <p id="log"></p>
+</main>
+<script>
+  customElements.define('fancy-box', class extends HTMLElement {
+    constructor() {
+      super();
+      const root = this.attachShadow({ mode: 'open' });
+      root.innerHTML = '<style>label { display: block; padding: 8px 12px; }</style>' +
+        '<input id="i" type="checkbox" hidden><label for="i">Notify me</label>';
+      root.getElementById('i').addEventListener('change', (event) => {
+        this.setAttribute('aria-checked', String(event.target.checked));
+        document.getElementById('log').textContent += 'notify;';
+      });
+    }
+  });
+</script>
+</body>
+</html>

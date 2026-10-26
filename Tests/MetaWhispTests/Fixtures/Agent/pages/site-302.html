@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Site Three Hundred Two</title>
+<style>body { margin: 0; font: 16px sans-serif; } main { padding: 16px 40px; } button { display: block; width: 240px; height: 32px; }</style>
+</head>
+<body>
+<main id="page"></main>
+<p id="log"></p>
+<script>
+  // A Delete with no confirm of its own that loads the next page, which
+  // asks a bare confirmation as it loads (ITER-076 I-09, round 5, part C;
+  // Claude review c10, #13).
+  const page = document.getElementById('page');
+  const log = (text) => { document.getElementById('log').textContent += text + ';'; };
+  if (location.pathname === '/next') {
+    page.innerHTML = '<h1>Next</h1>';
+    log(confirm('Are you sure you want to continue?') ? 'continued' : 'not continued');
+  } else {
+    page.innerHTML = '<h1>Drafts</h1><button id="delete" type="button">Delete</button>';
+    document.getElementById('delete').addEventListener('click', () => location.assign('https://site-302.test/next'));
+  }
+</script>
+</body>
+</html>

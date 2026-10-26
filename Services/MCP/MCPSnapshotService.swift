@@ -34,7 +34,7 @@ final class MCPSnapshotService {
     /// from a known location without any IPC handshake.
     static var snapshotURL: URL {
         let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
-        let dir = appSupport.appendingPathComponent("MetaWhisp", isDirectory: true)
+        let dir = AppIdentity.current.supportDirectory(applicationSupport: appSupport)
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         return dir.appendingPathComponent("mcp-snapshot.json")
     }

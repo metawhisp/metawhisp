@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Site One Hundred Four</title></head>
+<body>
+<main>
+  <h1>Find</h1>
+  <input type="search" id="find" aria-label="Find a guide">
+  <input type="search" id="flip" aria-label="Quick find">
+  <input type="search" id="both" aria-label="Lookup">
+</main>
+<script>
+  // A search box that becomes a password box when it takes the focus.
+  document.getElementById('flip').addEventListener('focus', (event) => { event.target.type = 'password'; });
+  // One that changes its name too.
+  document.getElementById('both').addEventListener('focus', (event) => {
+    event.target.type = 'password';
+    event.target.setAttribute('aria-label', 'Kennung');
+  });
+</script>
+</body>
+</html>

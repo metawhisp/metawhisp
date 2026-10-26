@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Site One Hundred Eighty-Six</title>
+<style>
+  body { margin: 0; font: 16px sans-serif; }
+  main { padding: 24px 40px; }
+  #spacer { height: 2400px; }
+  form { margin: 16px 0; padding: 12px; border: 1px solid #777; width: 360px; }
+  .row { margin: 8px 0; }
+  input:not([type=file]) { width: 220px; height: 28px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Notes</h1>
+  <div id="spacer"></div>
+  <!-- A form below the fold whose file turns required as the page scrolls. -->
+  <form id="note" action="/note" method="get" novalidate>
+    <div class="row"><label for="picture">Picture</label> <input id="picture" name="picture" type="file"></div>
+    <div class="row"><label for="words">Note</label> <input id="words" name="words"></div>
+    <button type="submit">Send note</button>
+  </form>
+</main>
+<script>
+  const grow = new URLSearchParams(location.search).has('grow');
+  let grown = false;
+  window.addEventListener('scroll', () => {
+    document.getElementById('picture').required = true;
+    // ?grow: the form also grows past the controls its scan reads.
+    if (grow && !grown) {
+      grown = true;
+      const form = document.getElementById('note');
+      for (let i = 0; i < 210; i++) {
+        const h = document.createElement('input');
+        h.type = 'hidden';
+        h.name = 'x' + i;
+        form.prepend(h);
+      }
+    }
+  });
+</script>
+</body>
+</html>

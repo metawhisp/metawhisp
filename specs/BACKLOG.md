@@ -8,6 +8,30 @@
 
 ## ⏸ Parked — вернёмся позже
 
+- **Browser errands for Claude over MCP (owner, 2026-09-27: «отдельная фишка»).** Claude Desktop or Claude Code hands MetaWhisp a browser errand, for example "collect 10 competitors into a sheet" or "fill this form". MetaWhisp's own agent runs it in its own Chrome tab, and Jev decides each step.
+  - The safety rules are the same as for an errand started by voice or MetaChat. The agent never touches passwords, codes or card numbers, and nothing irreversible happens without [Yes] on the errand card.
+  - Today `metawhisp-mcp` (`Sources/MetaWhispMCP/main.swift`) is read-only. It serves a JSON snapshot of memories, tasks and conversations over stdio, and it cannot reach the running app. An errand tool needs a live channel from the MCP process to the app, because only the app holds the Pro license, the Chrome bridge and the errand card.
+  - It comes after ITER-076: Jev through the Pro server (1.1–1.2), the Chrome bridge and the errand card (Stage 3), and routing (Stage 4).
+  - Open decisions for later:
+    - which tools (start, status, stop);
+    - whether Claude gets the page text or only the results;
+    - how the owner confirms an errand that Claude started.
+
+- **Jev beyond the agent (owner, 2026-09-27: «в беклог»).** An analysis the owner pasted on 2026-09-27; its numbers and file references were not re-checked when this entry was written. Its recommendation is to start with item 1.
+  1. **Tasks from dictation.**
+     - Reported: 1,642 tasks; 494 open, 13 done (about 0.8%); 481 of the 494 open ones came from the microphone.
+     - Reported cause: voice tasks are saved as `committed`, skipping drafts (`TaskExtractor.swift:605`). Only the LLM prompt decides whether a task is needed; the code after it drops only descriptions over 15 words and due dates in the past (`:583-595`).
+     - Idea (Hypothesis): before saving, ask Jev four questions in one request: an action for the user to do; concrete; not a command to the AI; not a duplicate. Doubtful ones go to `staged` drafts.
+     - Run the same questions once over the open tasks; garbage becomes `dismissed` (an existing, reversible status). Ask the rest "can the agent do this in the browser?".
+     - First open decision: doubtful tasks go to drafts, or are dismissed at once. Related: ITER-043 below.
+  2. **Actions after a meeting.** Summaries, tasks and memories are already made after each meeting (`ConversationGrouper.swift:237-250`), and nothing leaves the Mac. A [Yes] is needed only for outbound actions (an email, a calendar invite; decision 7 in ITER-076). Proposal: a settings switch "Actions after meetings": local actions run by themselves, and an email draft to the participants is prepared, sent with one button.
+  3. **Scheduled errands** (a ticket watcher, a regular hotel search). Reported missing: nothing runs while the app is closed (no launchd job, no background scheduler); Mac sleep is not handled; an errand lasts 30 minutes at most, and a closed lid stops it; Chrome must run with debugging allowed; cards disappear after 6 s (`MWNotificationStack.swift:26`), and there is no push, email or Telegram delivery. Three things to build: a scheduler that catches up after wake; a card that stays until closed, plus a native macOS notification; later, delivery to the phone or Telegram.
+  4. **Hallucination filter.** Today it catches Whisper junk by English and Russian phrase lists (`WhisperKitEngine.swift:158-166`, `TranscriptionCoordinator.swift:602-863`). Idea: ask Jev only in doubtful cases (quiet audio, low confidence), since each ask adds about 0.4 s (p50 0.376 s through the Pro server, live check 2026-09-26). It would work in any language and remove the Russian lists from the code (decision 11).
+  5. **Dictionary and voice commands.**
+     - The dictionary learns a correction only on its second sighting (`CorrectionDictionary.swift:222-298`). Jev could tell a recognition fix from a rewritten thought, so it could learn from the first one.
+     - No voice commands exist: `AgentRouter` is called only from tests. Proposal: Right ⌘ → Jev routing → "remind" (a task with a due date), "to the calendar" (EventKit), "note" (Apple Notes or Obsidian), "find what I said about…" (existing search tools), "timer" (a new card).
+  6. **Three more ideas.** Screen-derived tasks, now off (`ScreenDerivedTaskPolicy.swift:33`), could reach drafts after a Jev check. Browser errands from Claude over MCP (the entry above). Meeting cleanup (another language, echo between channels) is the same Jev question as item 4.
+
 - **Second Brain (сделать приложение «умнее»)** — research + план 2026-06-04. Выбраны 3 направления: умный поиск/память · проактивные напоминания · готовые артефакты. План — в истории сессии.
 - **ITER-043 — Напоминания второго мозга** — полное ТЗ: `spec://iterations/ITER-043-reminders`. Аудит подсистемы (855 задач, ≈1% выполнено, скана просрочки нет нигде) + 7 под-итераций под TDD. Ждёт решений D1–D5, старт с 043.1 (чистое ядро + тесты).
 
@@ -476,6 +500,7 @@ Order rationale: 035 → 037A (free bonus from vault export) → 036 (independen
 
 - **Manual Add Memory** — user said "никто не будет пользоваться этим, надо auto" — **skipped**, focus на auto extraction paths (Phase 3 readers + Phase 2 screen pipeline)
 - **C1.1 started but not committed** — `Models/Conversation.swift` created, not yet wired. Must decide: continue or rewrite as part of Phase 1 restart with full C1.x plan
+- **Release tags v1.3.33–v1.3.37 point to `ea617e5` (2026-05-09), not to their release commits** (`git ls-remote --tags origin`, 2026-09-26; 1.3.37's release commit is `1356c96`). Users are unaffected: the update feed and the DMG are the release's own files. Moving a pushed tag is a force push — owner decision. The next release pushes an annotated tag on its own commit before `gh release create`.
 
 ---
 

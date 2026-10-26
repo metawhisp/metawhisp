@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Site Twenty-One</title></head>
+<body>
+<main>
+  <h1>Sign in with a widget</h1>
+  <form action="/login" method="post">
+    <input type="email" aria-label="Login email" value="someone@example.com">
+    <secret-field id="host"></secret-field>
+    <button type="submit">Sign in</button>
+  </form>
+  <span id="dup">Save</span>
+  <label-widget id="labelled"></label-widget>
+</main>
+<script>
+  document.getElementById('host').attachShadow({ mode: 'open' })
+    .innerHTML = '<input type="password" aria-label="Widget password">';
+  document.getElementById('labelled').attachShadow({ mode: 'open' })
+    .innerHTML = '<span id="dup">Delete account</span><button aria-labelledby="dup">x</button>';
+</script>
+</body>
+</html>

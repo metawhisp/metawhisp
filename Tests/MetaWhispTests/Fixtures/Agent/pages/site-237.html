@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Site Two Hundred Thirty-Seven</title>
+<style>button { display: block; height: 24px; }</style></head>
+<body>
+<main>
+  <h1>Six hundred controls</h1>
+  <div id="list"></div>
+</main>
+<script>
+  // More controls than a look reports, the page scrolled to its end: the
+  // ones on screen are the last in the document.
+  const list = document.getElementById('list');
+  for (let i = 1; i <= 600; i++) {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.textContent = 'Item ' + i;
+    list.appendChild(button);
+  }
+  window.scrollTo(0, document.documentElement.scrollHeight);
+</script>
+</body>
+</html>

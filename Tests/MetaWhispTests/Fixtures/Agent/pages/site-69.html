@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Site Sixty-Nine</title></head>
+<body>
+<main>
+  <h1>Usage report</h1>
+  <article id="report">
+    <h2>Chart</h2>
+    <svg id="chart" width="600" height="200"></svg>
+  </article>
+</main>
+<script>
+  const chart = document.getElementById('chart');
+  const ns = 'http://www.w3.org/2000/svg';
+  for (let i = 0; i < 100000; i++) {
+    const rect = document.createElementNS(ns, 'rect');
+    rect.setAttribute('x', String(i % 600));
+    rect.setAttribute('y', String(Math.floor(i / 600) % 200));
+    rect.setAttribute('width', '1');
+    rect.setAttribute('height', '1');
+    chart.appendChild(rect);
+  }
+  const report = document.getElementById('report');
+  for (let i = 0; i < 80; i++) {
+    const button = document.createElement('button');
+    button.textContent = 'Series ' + i;
+    report.appendChild(button);
+  }
+</script>
+</body>
+</html>

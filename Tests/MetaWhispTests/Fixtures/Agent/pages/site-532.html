@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Site Five Hundred Thirty Two</title></head>
+<body>
+<main>
+  <h1>Books</h1>
+  <!-- A list in no form whose change opens the sorted page by its address, as many shops' sort lists do: the page's
+       own GET, which the send hold keeps back (2026-10-21). The sorted page shows its order. -->
+  <label for="sort">Sort by</label>
+  <select id="sort" onchange="location.href = '/books?sort=' + encodeURIComponent(this.value)">
+    <option value="new">Newest</option>
+    <option value="cheap">Cheapest</option>
+  </select>
+  <p id="shown">Sorted: new</p>
+  <script>
+    const way = new URLSearchParams(location.search).get('sort');
+    if (way) {
+      document.getElementById('sort').value = way;
+      document.getElementById('shown').textContent = 'Sorted: ' + way;
+    }
+  </script>
+</main>
+</body>
+</html>

@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Site One Hundred Fifty-Three</title>
+<style>
+  body { margin: 0; font: 16px sans-serif; }
+  main { padding: 24px 40px; }
+  .choice { position: relative; margin: 14px 0; height: 28px; }
+  .choice input { position: absolute; left: 0; top: 4px; width: 20px; height: 20px; margin: 0; opacity: 0; }
+  .choice label { display: inline-block; padding-left: 30px; line-height: 28px; cursor: pointer; position: relative; }
+  .choice label::before { content: ''; position: absolute; left: 0; top: 4px; width: 18px; height: 18px;
+                          border: 1px solid #333; border-radius: 10px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Plans</h1>
+  <p>Total $29/mo</p>
+  <!-- A label with a handler of its own over a hidden radio: its click buys. -->
+  <div class="choice"><input id="pro" type="radio" name="plan"><label for="pro" onclick="buyPlan('pro')">Pro</label></div>
+</main>
+<script>
+  const buyPlan = (plan) => location.assign('/buy?plan=' + plan);
+</script>
+</body>
+</html>

@@ -39,4 +39,12 @@ struct StructuredFieldSet: Equatable {
     static func forcesFullRegeneration(isRegeneration: Bool, hasTitle: Bool) -> Bool {
         isRegeneration || !hasTitle
     }
+
+    /// ITER-075 step 1 (1.6) — a transcript too short to structure leaves a
+    /// real title and its fields alone; only a conversation with no real title
+    /// gets the placeholder.
+    static func keepsFieldsOnShortTranscript(title: String?) -> Bool {
+        guard let title, !title.isEmpty else { return false }
+        return title != "Quick note"
+    }
 }

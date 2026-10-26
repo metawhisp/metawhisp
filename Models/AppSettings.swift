@@ -15,9 +15,8 @@ final class AppSettings: ObservableObject {
     /// download-950MB → fail → delete → re-download forever).
     @AppStorage("bestModelUpgradeAttempts") var bestModelUpgradeAttempts: Int = 0
     /// Whisper identifies the language itself, so onboarding no longer asks —
-    /// see `OnboardingLanguageDefault`. Anyone who used the app before this
-    /// change is pinned to "ru" by the migration below, so only fresh installs
-    /// land on "auto".
+    /// see `OnboardingLanguageDefault`. Written only by the user's choice in
+    /// Settings and by onboarding's completion; nothing at launch touches it.
     @AppStorage("transcriptionLanguage") var transcriptionLanguage: String = OnboardingLanguageDefault.freshInstallDefault
 
     /// Audio input device override. Empty string = follow macOS default
@@ -33,6 +32,11 @@ final class AppSettings: ObservableObject {
     @AppStorage("layoutFixAutoEnabled_iter062") var layoutFixAutoEnabled: Bool = true
     @AppStorage("layoutFixDoubleShiftEnabled_iter062") var layoutFixDoubleShiftEnabled: Bool = true
     @AppStorage("layoutFixSwitchInputSource_iter062") var layoutFixSwitchInputSource: Bool = true
+    /// ITER-075 step 0 (0.4) — the global hotkeys, ⌘⌥O and the layout fix. On in
+    /// the owner's app, off by default in any other copy (the Dev app), so two
+    /// copies never answer one key press. No UI:
+    /// `defaults write <bundle id> globalInputEnabled -bool true` turns it on.
+    @AppStorage("globalInputEnabled") var globalInputEnabled: Bool = AppIdentity.current.globalInputByDefault
     @AppStorage("soundEnabled") var soundEnabled: Bool = true
     @AppStorage("autoSubmit") var autoSubmit: Bool = true
     @AppStorage("processingMode") var processingMode: String = "raw"
@@ -40,6 +44,8 @@ final class AppSettings: ObservableObject {
     @AppStorage("pillStyle") var pillStyle: String = "capsule" // capsule, dotglow, island, glow
     @AppStorage("llmProvider") var llmProvider: String = "openai" // openai, cerebras
     @AppStorage("transcriptionEngine") var transcriptionEngine: String = "ondevice" // ondevice, cloud
+    /// A1 — Pro was activated on this Mac, so its one automatic switch to cloud is spent (`ProCloudDefault`).
+    @AppStorage(ProCloudDefault.key) var proCloudDefaultApplied: Bool = false
     @AppStorage("cloudTranscriptionProvider") var cloudTranscriptionProvider: String = "groq" // groq, openai
     /// LIC-1 — feature flag (default OFF). When ON, a cached Pro state expires after
     /// `LicenseEntitlement.defaultGraceTTL` (72h) without a fresh server verify, so a
@@ -304,6 +310,20 @@ final class AppSettings: ObservableObject {
     /// Minute (0-59) at the scheduled hour. Default 0.
     @AppStorage("dailySummaryMinute") var dailySummaryMinute: Int = 0
 
+    /// ITER-076 stage 4b — which browser the agent uses: `AgentBrowser`'s raw
+    /// value — its own Chrome window by default, or the user's own Chrome.
+    /// Settings → Agent's "Use your own Chrome" writes it (stage 8b); the
+    /// errand service reads it as each errand begins.
+    @AppStorage("agentBrowser") var agentBrowser: String = AgentBrowser.ownWindow.rawValue
+    /// ITER-076 stage 8b — Settings → Agent's "Browser agent": on until the
+    /// user turns it off (owner decision 8.1). Off stops every errand and
+    /// starts none.
+    @AppStorage("browserAgentOn") var browserAgentOn: Bool = true
+    /// ITER-076 stage 8b — the user's Allow on the disclosure before the
+    /// first errand (8.2): written only by Allow, kept through off and on and
+    /// a cleared MetaChat. Until it, no errand asks for a browser.
+    @AppStorage("browserAgentAllowed") var browserAgentAllowed: Bool = false
+
     /// Parsed list of scanned folder paths.
     var indexedFolders: [String] {
         indexedFoldersCSV
@@ -431,24 +451,14 @@ final class AppSettings: ObservableObject {
         self.groqKey = KeychainHelper.load(key: "com.metawhisp.groqKey") ?? ""
         self.deepgramKey = KeychainHelper.load(key: "com.metawhisp.deepgramKey") ?? ""
         self.geminiKey = KeychainHelper.load(key: "com.metawhisp.geminiKey") ?? ""
-        Self.pinTranscriptionLanguageForExistingUsers()
     }
 
-    /// Runs once, before anything reads `transcriptionLanguage`.
-    ///
-    /// The code default moved from "ru" to "auto" when onboarding stopped asking
-    /// about language. `@AppStorage` writes a key only when something assigns
-    /// it, so a long-time user who never opened that setting has nothing stored
-    /// and would have been switched to auto without touching a thing. Write
-    /// their effective value down first; fresh installs fall through untouched.
-    private static func pinTranscriptionLanguageForExistingUsers() {
-        let defaults = UserDefaults.standard
-        guard let pinned = OnboardingLanguageDefault.valueToPersist(
-            storedLanguage: defaults.string(forKey: "transcriptionLanguage"),
-            hasCompletedOnboarding: defaults.bool(forKey: "hasCompletedOnboarding")
-        ) else { return }
-        defaults.set(pinned, forKey: "transcriptionLanguage")
-        NSLog("[Settings] Existing install pinned to transcriptionLanguage=%@ before the auto default", pinned)
+    /// Onboarding's last step. The language the user runs on is written down
+    /// first, so no install ever reads as "finished onboarding, no language".
+    static func recordOnboardingCompleted(in defaults: UserDefaults = .standard) {
+        let language = defaults.string(forKey: "transcriptionLanguage") ?? OnboardingLanguageDefault.freshInstallDefault
+        defaults.set(language, forKey: "transcriptionLanguage")
+        defaults.set(true, forKey: "hasCompletedOnboarding")
     }
 
     /// The active API key for the selected provider.
@@ -461,7 +471,8 @@ final class AppSettings: ObservableObject {
 
     var modelsDirectory: URL {
         let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
-        let dir = appSupport.appendingPathComponent("MetaWhisp/Models", isDirectory: true)
+        let dir = AppIdentity.current.supportDirectory(applicationSupport: appSupport)
+            .appendingPathComponent("Models", isDirectory: true)
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         return dir
     }
@@ -485,7 +496,7 @@ final class AppSettings: ObservableObject {
 /// Note: Keychain ACLs are bound to the code signature, so builds must keep a
 /// stable signing identity (release Developer ID + `hot-swap.sh` provide this).
 enum KeychainHelper {
-    private static let service = "com.metawhisp.secrets"
+    private static var service: String { AppIdentity.current.keychainService }
 
     /// ITER-053.1 (2026-07-16) — unit tests must NEVER touch the real
     /// keychain. A keychain item whose ACL doesn't trust the xctest binary
@@ -495,69 +506,89 @@ enum KeychainHelper {
     /// the user's real one either.
     private static let isUnitTest = NSClassFromString("XCTestCase") != nil
 
-    static func save(key: String, value: String) {
-        guard !isUnitTest else { return }
-        if value.isEmpty { keychainDelete(key); return }
-        keychainWrite(key: key, value: value)
-    }
+    /// The keychain the helper talks to. Under XCTest it is an empty one that
+    /// keeps nothing, so no test can reach the user's secrets; a test that
+    /// needs a keychain sets `backend` to a fake and puts this one back.
+    static let defaultBackend: KeychainBackend = isUnitTest ? EmptyKeychain() : SystemKeychain()
+    static var backend: KeychainBackend = defaultBackend
 
-    static func load(key: String) -> String? {
-        guard !isUnitTest else { return nil }
+    /// What the keychain holds for `key`. "Not there" and "there but
+    /// unreadable" are different answers (ITER-075 step 0, US-0.4).
+    static func read(_ key: String) -> KeychainRead {
         // SEC-1: migrate-on-first-read (idempotent, no-op once the legacy file
         // is gone) guarantees the Keychain is populated before ANY read — even
         // ones that fire before applicationDidFinishLaunching (AppSettings.init
         // reads keys). The permanent plaintext read fallback is REMOVED: the
         // legacy `.secrets` file is now only ever read by the migration itself,
         // so a planted file can no longer feed values into the app.
-        migrateLegacySecretsIfNeeded()
-        return keychainRead(key)
+        if !isUnitTest { migrateLegacySecretsIfNeeded() }
+        return lookup(key)
+    }
+
+    /// The stored value, or nil when there is none or it cannot be read. A
+    /// caller for which "cannot read" must not look like "not there" uses
+    /// `read` instead.
+    static func load(key: String) -> String? {
+        if case .value(let text) = read(key) { return text }
+        return nil
+    }
+
+    /// Stores `value`; an empty value removes the item. Returns the keychain
+    /// status, which is also logged when it is a failure.
+    @discardableResult
+    static func save(key: String, value: String) -> OSStatus {
+        value.isEmpty ? delete(key) : write(key, value)
+    }
+
+    /// Removes the item. An item that is already gone counts as removed.
+    @discardableResult
+    static func delete(_ key: String) -> OSStatus {
+        let status = backend.delete(service: service, account: key)
+        if status == errSecItemNotFound { return errSecSuccess }
+        if status != errSecSuccess { NSLog("[Keychain] ❌ delete %@ failed — status %d", key, status) }
+        return status
     }
 
     // MARK: - Keychain primitives
 
-    @discardableResult
-    private static func keychainWrite(key: String, value: String) -> Bool {
-        guard let data = value.data(using: .utf8) else { return false }
-        let base: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
-            kSecAttrAccount as String: key,
-        ]
-        SecItemDelete(base as CFDictionary)
-        var add = base
-        add[kSecValueData as String] = data
-        add[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
-        return SecItemAdd(add as CFDictionary, nil) == errSecSuccess
+    /// Update in place, or add when the item is missing — never delete first,
+    /// so a write that fails leaves the old value where it was. Deleting first
+    /// is how a keychain that refused access lost the Pro session on
+    /// 2026-09-25: the delete went through, the add did not, and its status
+    /// was thrown away.
+    private static func write(_ key: String, _ value: String) -> OSStatus {
+        guard let data = value.data(using: .utf8) else { return errSecParam }
+        var status = backend.update(service: service, account: key, data: data)
+        if status == errSecItemNotFound {
+            status = backend.add(service: service, account: key, data: data)
+        }
+        if status != errSecSuccess { NSLog("[Keychain] ❌ write %@ failed — status %d", key, status) }
+        return status
     }
 
-    private static func keychainRead(_ key: String) -> String? {
-        let query: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
-            kSecAttrAccount as String: key,
-            kSecReturnData as String: true,
-            kSecMatchLimit as String: kSecMatchLimitOne,
-        ]
-        var out: AnyObject?
-        guard SecItemCopyMatching(query as CFDictionary, &out) == errSecSuccess,
-              let data = out as? Data else { return nil }
-        return String(data: data, encoding: .utf8)
-    }
-
-    private static func keychainDelete(_ key: String) {
-        SecItemDelete([
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
-            kSecAttrAccount as String: key,
-        ] as CFDictionary)
+    /// A read without the legacy migration — the migration itself uses it.
+    private static func lookup(_ key: String) -> KeychainRead {
+        let (status, data) = backend.copy(service: service, account: key)
+        switch status {
+        case errSecSuccess:
+            guard let data, let text = String(data: data, encoding: .utf8) else {
+                NSLog("[Keychain] ❌ read %@ — the item is not text", key)
+                return .failed(errSecDecode)
+            }
+            return .value(text)
+        case errSecItemNotFound:
+            return .notFound
+        default:
+            NSLog("[Keychain] ❌ read %@ failed — status %d", key, status)
+            return .failed(status)
+        }
     }
 
     // MARK: - Legacy plaintext file (.secrets) — migration source ONLY (SEC-1)
 
     private static var legacyURL: URL {
         let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
-        return appSupport
-            .appendingPathComponent("MetaWhisp", isDirectory: true)
+        return AppIdentity.current.supportDirectory(applicationSupport: appSupport)
             .appendingPathComponent(".secrets")
     }
 
@@ -588,7 +619,7 @@ enum KeychainHelper {
         var allConfirmed = true
         for (k, v) in dict {
             // Write AND verify (read back) before trusting the Keychain copy.
-            if !(keychainWrite(key: k, value: v) && keychainRead(k) == v) {
+            if !(write(k, v) == errSecSuccess && lookup(k) == .value(v)) {
                 allConfirmed = false
             }
         }

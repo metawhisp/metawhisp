@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Search 403</title></head>
+<body>
+<main>
+  <form action="/search" autocomplete="off" method="GET" role="search">
+    <textarea name="q" role="combobox" aria-label="Search" rows="1" autocomplete="off"></textarea>
+    <input type="submit" value="Search 403" aria-label="Search 403" name="btnK" role="button">
+  </form>
+  <p id="results"></p>
+</main>
+<script>
+  if (location.pathname === '/search') {
+    document.title = 'Results 403';
+    document.getElementById('results').textContent = 'Results for ' + (new URLSearchParams(location.search).get('q') || '');
+  }
+</script>
+</body>
+</html>

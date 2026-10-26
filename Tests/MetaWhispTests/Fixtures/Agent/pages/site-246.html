@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Site Two Hundred Forty-Six</title></head>
+<body>
+<main>
+  <h1>Join the call</h1>
+  <button id="join" type="button" style="width: 200px; height: 40px">Join in the app</button>
+  <p id="log"></p>
+</main>
+<script>
+  // A page that hands itself to another app through a custom scheme: on a
+  // person's click, and — asked so — as soon as it loads.
+  const scheme = 'mwtest-nothing://join/1';
+  document.getElementById('join').addEventListener('click', () => {
+    document.getElementById('log').textContent += 'asked;';
+    location.href = scheme;
+  });
+  if (location.search === '?now=1') location.href = scheme;
+</script>
+</body>
+</html>

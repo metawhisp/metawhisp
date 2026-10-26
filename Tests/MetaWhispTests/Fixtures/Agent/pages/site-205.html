@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Site Two Hundred Five</title>
+<style>body { margin: 0; font: 16px sans-serif; } main { padding: 16px 40px; } select { display: block; margin: 8px 0; }</style>
+</head>
+<body>
+<main>
+  <h1>Your plan</h1>
+  <!-- A choice whose change the page asks to confirm. -->
+  <select aria-label="Plan" id="plan"><option>Monthly</option><option>Yearly</option></select>
+  <p id="log"></p>
+</main>
+<script>
+  function log(text) { document.getElementById('log').textContent += text + ';'; }
+  document.getElementById('plan').addEventListener('change', () => {
+    log(confirm('Cancel my subscription?') ? 'switched' : 'kept');
+  });
+</script>
+</body>
+</html>

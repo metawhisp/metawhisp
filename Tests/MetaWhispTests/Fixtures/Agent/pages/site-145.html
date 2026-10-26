@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Site One Hundred Forty-Five</title>
+<style>
+  body { margin: 0; font: 16px sans-serif; }
+  main { padding: 24px 40px; }
+  input { width: 260px; height: 28px; }
+  ul { list-style: none; margin: 0; padding: 0; width: 266px; border: 1px solid #777; }
+  ul:empty { display: none; }
+  li { height: 30px; line-height: 30px; padding: 0 6px; cursor: pointer; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Where to</h1>
+  <!-- An editable made-up dropdown: typed into, its suggestion clicked. -->
+  <label for="city">City</label>
+  <input id="city" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="cities">
+  <button id="recent" type="button">Recent cities</button>
+  <ul id="cities" role="listbox" aria-label="Cities"></ul>
+  <!-- One that only shows its choice: read-only, a click opens it. -->
+  <p><label for="airport">Airport</label>
+  <input id="airport" role="combobox" readonly aria-expanded="false" aria-controls="airports" value="Any airport"></p>
+  <ul id="airports" role="listbox" aria-label="Airports"></ul>
+  <p id="log"></p>
+</main>
+<script>
+  const log = (text) => { document.getElementById('log').textContent += text + ';'; };
+  const cities = ['Riga, Latvia', 'Rome, Italy', 'Oslo, Norway'];
+  const field = document.getElementById('city');
+  const list = document.getElementById('cities');
+  const show = (names) => {
+    list.innerHTML = '';
+    for (const name of names) {
+      const item = document.createElement('li');
+      item.setAttribute('role', 'option');
+      item.textContent = name;
+      // The press keeps the focus in the field, as such lists do.
+      item.addEventListener('mousedown', (event) => event.preventDefault());
+      item.addEventListener('click', () => { field.value = name; list.innerHTML = ''; log('chose ' + name); });
+      list.appendChild(item);
+    }
+    field.setAttribute('aria-expanded', String(list.children.length > 0));
+  };
+  field.addEventListener('input', () => {
+    const typed = field.value.toLowerCase();
+    show(cities.filter((city) => typed && city.toLowerCase().startsWith(typed)));
+  });
+  document.getElementById('recent').addEventListener('click', () => show(cities));
+  const airport = document.getElementById('airport');
+  const airports = document.getElementById('airports');
+  airport.addEventListener('click', () => {
+    airports.innerHTML = '<li role="option">Riga International</li><li role="option">Tallinn Airport</li>';
+    for (const item of airports.children) {
+      item.addEventListener('click', () => { airport.value = item.textContent; airports.innerHTML = ''; });
+    }
+    airport.setAttribute('aria-expanded', 'true');
+  });
+</script>
+</body>
+</html>

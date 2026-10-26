@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Site Two Hundred Seventy-One</title>
+<style>body { margin: 0; font: 16px sans-serif; }</style>
+</head>
+<body>
+<main id="page"></main>
+<script>
+  // The parts of another site's checkout a page frames (ITER-076 I-09,
+  // review round 3, part C): its total, and its order button, which tells
+  // the page that holds it it was pressed, and sends nothing.
+  const page = document.getElementById('page');
+  if (location.pathname === '/total') {
+    page.innerHTML = '<p>Total: 49,00 &euro;</p>';
+  } else if (location.pathname === '/order') {
+    page.innerHTML = '<form method="post" action="https://site-271.test/order" ' +
+      'onsubmit="event.preventDefault(); parent.postMessage(\'ordered\', \'*\')">' +
+      '<button type="submit">Bestellen</button></form>';
+  }
+</script>
+</body>
+</html>

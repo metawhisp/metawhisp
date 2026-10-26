@@ -6,6 +6,8 @@ import SwiftUI
 /// Dashboard — BLOCKS-styled status strip + full statistics below.
 struct DashboardView: View {
     @ObservedObject var coordinator: TranscriptionCoordinator
+    /// The engine readiness owner, for the card's next step.
+    let modelPreparer: ModelPreparer
 
     /// Min available width to keep the 2-column layout. Below this threshold the
     /// right-column cards stack vertically under DailySummaryCard. Picked based on
@@ -52,6 +54,9 @@ struct DashboardView: View {
                             .frame(maxWidth: .infinity)
                     }
                 }
+
+                // D6 — after setup: the one thing to do next.
+                ReadyCardView(coordinator: coordinator, preparer: modelPreparer)
 
                 // Today + Tomorrow split. Replaces the 14-day carousel — single
                 // ‹/› arrows in TodayCard navigate past days while data exists.
@@ -125,6 +130,166 @@ struct DashboardView: View {
         case .postProcessing: coordinator.translateNext ? "Translating" : "Processing"
         case .idle: "Ready"
         }
+    }
+}
+
+// MARK: - Ready card (D6)
+
+/// D6 / E4 — the Dashboard after setup (mockup v6 `readyBody`): one thing to do next, in the user's own apps.
+enum DashboardReadyCard {
+    struct Content: Equatable {
+        let title: String
+        /// "Right ⌘" in it is drawn as a key.
+        let detail: String?
+        /// The one button: Open Accessibility Settings.
+        let opensAccessibility: Bool
+        /// The one button: Try again, for the speech model.
+        let retriesModel: Bool
+        /// Where dictation runs — the engine in use, not the plan.
+        let footnote: String?
+        /// The PRO mark beside the title.
+        let showsPro: Bool
+    }
+
+    static let openAccessibility = "Open Accessibility Settings"
+    static let tryAgain = TryVoiceScreen.tryAgain
+
+    /// The engine first: while the speech model is on its way the card waits with its %, and when it could not be
+    /// got — "Skip for now" on a failed download or a full disk — the card says why, in the practice's words, with
+    /// Try again (Codex step-2 #4: it said "Ready for dictation" with nothing that could transcribe). Then
+    /// Accessibility off: what works, and the button that fixes the rest — until the grant. On: "Ready for
+    /// dictation" — Right ⌘ tapped, or held in push-to-talk — until the first dictation, then nothing. Free is
+    /// offered nothing.
+    static func content(model: ModelPreparer.State, rightCommand: RightCommand, cloud: Bool, isPro: Bool,
+                        hasDictated: Bool) -> Content? {
+        switch model {
+        case .downloading(let progress):
+            return Content(title: TryVoiceScreen.preparing, detail: "\(Int((progress * 100).rounded()))%",
+                           opensAccessibility: false, retriesModel: false, footnote: nil, showsPro: false)
+        case .loading:
+            return Content(title: TryVoiceScreen.preparing, detail: nil, opensAccessibility: false,
+                           retriesModel: false, footnote: nil, showsPro: false)
+        case .failed(let why):
+            return Content(title: why, detail: nil, opensAccessibility: false, retriesModel: true, footnote: nil,
+                           showsPro: false)
+        case .lowDisk:
+            return Content(title: ModelPreparer.lowDiskTitle, detail: ModelPreparer.lowDiskDetail,
+                           opensAccessibility: false, retriesModel: true, footnote: nil, showsPro: false)
+        case .ready:
+            break
+        }
+        guard rightCommand != .unavailable else {
+            return Content(title: "Dictation works in MetaWhisp",
+                           detail: "Turn on Accessibility to use Right ⌘ and type into other apps.",
+                           opensAccessibility: true, retriesModel: false, footnote: nil, showsPro: false)
+        }
+        guard !hasDictated else { return nil }
+        let key = rightCommand == .hold ? "hold" : "tap"
+        return Content(title: "Ready for dictation", detail: "Click in any text field, then \(key) Right ⌘.",
+                       opensAccessibility: false, retriesModel: false,
+                       footnote: cloud ? "Cloud dictation is on." : "Dictation runs on your Mac.", showsPro: isPro)
+    }
+}
+
+private struct ReadyCardView: View {
+    /// Which engine runs (A4: cloud only with Pro or the user's own key) — never the stored choice.
+    @ObservedObject var coordinator: TranscriptionCoordinator
+    /// Whether that engine can transcribe now, and the Try again that gets it there (C5).
+    @ObservedObject var preparer: ModelPreparer
+    @ObservedObject private var permissions = PermissionsService.shared
+    @ObservedObject private var settings = AppSettings.shared
+    @ObservedObject private var license = LicenseService.shared
+    /// One saved transcript is enough to know the user has dictated.
+    @Query private var transcripts: [HistoryItem]
+
+    init(coordinator: TranscriptionCoordinator, preparer: ModelPreparer) {
+        self.coordinator = coordinator
+        self.preparer = preparer
+        var first = FetchDescriptor<HistoryItem>()
+        first.fetchLimit = 1
+        _transcripts = Query(first)
+    }
+
+    var body: some View {
+        if let content = DashboardReadyCard.content(model: preparer.state,
+                                                    rightCommand: .current(accessibility: permissions.accessibilityGranted,
+                                                                           hotkeyMode: settings.hotkeyMode),
+                                                    cloud: coordinator.usesCloud,
+                                                    isPro: license.isPro, hasDictated: !transcripts.isEmpty) {
+            ReadyCardBody(content: content, openAccessibility: {
+                PermissionsService.askForAccessibility(PermissionAsk())
+            }, tryAgain: { preparer.retry() })
+        }
+    }
+}
+
+/// The card's look, from what it says (`DashboardReadyCard.Content`) and its two possible buttons — drawn alike in the
+/// Dashboard and in the render tests.
+struct ReadyCardBody: View {
+    let content: DashboardReadyCard.Content
+    let openAccessibility: () -> Void
+    let tryAgain: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: MW.sp12) {
+            HStack(spacing: MW.sp24) {
+                CommandKeyView()
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack(spacing: MW.sp10) {
+                        Text(content.title)
+                            .font(.system(size: 22, weight: .semibold))
+                            .foregroundStyle(MW.textPrimary)
+                        if content.showsPro {
+                            Text("PRO")
+                                .font(.system(size: 10, weight: .bold)).tracking(0.6)
+                                .foregroundStyle(MW.textPrimary)
+                                .padding(.horizontal, 7)
+                                .frame(height: 18)
+                                .background(Capsule().fill(Color.primary.opacity(0.16)))
+                        }
+                    }
+                    if let detail = content.detail {
+                        KeyedText(text: detail, font: .system(size: 15))
+                            .foregroundStyle(MW.textSecondary)
+                    }
+                }
+                Spacer(minLength: 0)
+                if content.opensAccessibility {
+                    Button(DashboardReadyCard.openAccessibility, action: openAccessibility)
+                        .buttonStyle(RowButtonStyle())
+                }
+                if content.retriesModel {
+                    Button(DashboardReadyCard.tryAgain, action: tryAgain)
+                        .buttonStyle(RowButtonStyle())
+                }
+            }
+            .padding(30)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .mwCard(radius: 24, elevation: .raised)
+            if let footnote = content.footnote {
+                Text(footnote)
+                    .font(.system(size: 13))
+                    .foregroundStyle(MW.textMuted)
+                    .padding(.horizontal, 2)
+            }
+        }
+    }
+}
+
+/// The right ⌘ key, as the card draws it.
+private struct CommandKeyView: View {
+    var body: some View {
+        ZStack(alignment: .topTrailing) {
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .fill(LinearGradient(colors: [Color(w: 0.23), Color(w: 0.16)], startPoint: .top, endPoint: .bottom))
+                .shadow(color: .black.opacity(0.45), radius: 9, y: 8)
+            Text("⌘").font(.system(size: 22)).foregroundStyle(.white).padding(.top, 9).padding(.trailing, 11)
+            Text("command").font(.system(size: 10)).foregroundStyle(.white.opacity(0.8))
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
+                .padding(.bottom, 8).padding(.trailing, 9)
+        }
+        .frame(width: 76, height: 66)
+        .accessibilityHidden(true)
     }
 }
 
@@ -1510,7 +1675,7 @@ private struct TomorrowCard: View {
             permissionTick += 1
             Task { @MainActor in
                 await loadEvents()
-                Task.detached { await AppDelegate.shared?.calendarReader.scanNow() }
+                Task.detached { await AppDelegate.shared?.calendarReader.scanNow(ask: PermissionAsk()) }
             }
             return
         }
@@ -1547,7 +1712,7 @@ private struct TomorrowCard: View {
                 connectFailedOnce = false
                 permissionTick += 1
                 await loadEvents()
-                Task.detached { await AppDelegate.shared?.calendarReader.scanNow() }
+                Task.detached { await AppDelegate.shared?.calendarReader.scanNow(ask: PermissionAsk()) }
             } else {
                 // TCC silently denied. Open Privacy pane — only path forward.
                 connectFailedOnce = true

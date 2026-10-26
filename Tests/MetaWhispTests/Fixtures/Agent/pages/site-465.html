@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Site Four Sixty-Five</title></head>
+<body>
+<main>
+  <!-- ITER-076 stage 7, review round 3 (R3-3): a demo form whose page sends
+       what the e-mail field holds by a beacon as it is left, and a pricing
+       page — reached through a redirect — that loads its prices by POST as
+       it starts, before anyone does anything: the agent's own navigation
+       away from the filled form goes, the beacon stays held, and the pricing
+       page's own request goes. -->
+  <h1 id="title">Request a demo</h1>
+  <form id="demo" action="/thanks" method="post">
+    <label for="first">First name</label><input id="first" name="first" autocomplete="given-name">
+    <label for="email">Work email</label><input id="email" name="email" type="email">
+    <button type="submit" id="send">Request a demo</button>
+  </form>
+  <p><a id="pricing" href="/redirect?to=https://site-465.test/pricing">Pricing</a></p>
+</main>
+<script>
+  if (location.pathname === '/pricing') {
+    fetch('/api/startup', { method: 'POST', body: '{}' }).catch(() => {});
+    document.getElementById('demo').remove();
+    document.getElementById('pricing').remove();
+    document.getElementById('title').textContent = 'Pricing';
+  }
+  window.addEventListener('pagehide', () => {
+    const email = document.getElementById('email');
+    if (email && email.value) navigator.sendBeacon('/api/left', email.value);
+  });
+</script>
+</body>
+</html>

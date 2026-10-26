@@ -397,7 +397,59 @@ final class LayoutSwitchControllerDispatchTests: XCTestCase {
         XCTAssertEqual(gateway.automaticRequests.first?.replacement, "машина")
         XCTAssertEqual(inputSource.selectedLayouts, [.russian])
     }
+
+    /// Sets the given defaults for one test and puts back exactly what was
+    /// there, absent keys included, so a default is never pinned by a test.
+    private func withDefaults(_ values: [String: Bool?], _ body: () -> Void) {
+        let defaults = UserDefaults.standard
+        let saved = values.keys.map { ($0, defaults.object(forKey: $0)) }
+        for (key, value) in values { defaults.set(value, forKey: key) }
+        defer { for (key, value) in saved { defaults.set(value, forKey: key) } }
+        body()
+    }
+
+    /// ITER-075 step 0, US-0.3 — the layout fix waits for the Accessibility
+    /// grant and starts when it arrives; the trust check is injected.
+    func test_theLayoutFixWaitsForTheAccessibilityGrant() {
+        withDefaults(["layoutFixEnabled_iter062": true, "layoutFixAutoEnabled_iter062": true,
+                      "layoutFixDoubleShiftEnabled_iter062": true, "globalInputEnabled": true]) {
+            var trusted = false
+            let controller = LayoutSwitchController(
+                textGateway: LayoutTextGatewaySpy(automaticOutcome: .replaced, manualOutcome: .skipped(.noConvertibleText)),
+                inputSourceService: LayoutInputSourceSpy(current: .englishUS),
+                isTrusted: { trusted }
+            )
+            defer { controller.stop() }
+            XCTAssertEqual(controller.start(), .needsAccessibility)
+            trusted = true
+            XCTAssertNotEqual(controller.start(), .needsAccessibility, "the grant is what lets it start")
+        }
+    }
+
+    /// ITER-075 step 0 (0.4) — with global input off, the Dev app's default, the
+    /// layout fix stays off even when trusted: two copies never rewrite one word.
+    func test_theLayoutFixStaysOffWithoutGlobalInput() {
+        withDefaults(["layoutFixEnabled_iter062": true, "layoutFixAutoEnabled_iter062": true,
+                      "globalInputEnabled": false]) {
+            let controller = LayoutSwitchController(
+                textGateway: LayoutTextGatewaySpy(automaticOutcome: .replaced, manualOutcome: .skipped(.noConvertibleText)),
+                inputSourceService: LayoutInputSourceSpy(current: .englishUS),
+                isTrusted: { true }
+            )
+            defer { controller.stop() }
+            XCTAssertEqual(controller.start(), .disabled)
+        }
+    }
+
+    /// ITER-075 step 0 (0.4) — the test runner is not the owner's app, so with
+    /// no saved choice global input is off, as it is in the Dev app.
+    func test_globalInputIsOffByDefaultOutsideTheOwnersApp() {
+        withDefaults(["globalInputEnabled": nil]) {
+            XCTAssertFalse(AppSettings.shared.globalInputEnabled)
+        }
+    }
 }
+
 
 @MainActor
 private final class LayoutTextGatewaySpy: LayoutTextCorrecting {

@@ -1,0 +1,15 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Site Ninety-Two</title></head>
+<body>
+<main>
+  <h1>Attachments</h1>
+  <button id="attach" type="button" style="width: 200px; height: 50px">Attach a file</button>
+  <input id="file" type="file" style="display: none">
+</main>
+<script>
+  // A person's click lets a page open the system's file picker.
+  document.getElementById('attach').addEventListener('click', () => document.getElementById('file').click());
+</script>
+</body>
+</html>

@@ -1,0 +1,12 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Site Eighty-Five</title>
+<script>
+  // A page that answers the question every waiting loop asks — is the page
+  // loaded? — with 70 MB, more than the connection takes in one message.
+  const big = 'x'.repeat(70 * 1024 * 1024);
+  Object.defineProperty(Document.prototype, 'readyState', { get() { return big; }, configurable: true });
+</script>
+</head>
+<body><main><h1>A heavy answer</h1></main></body>
+</html>

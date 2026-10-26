@@ -1,0 +1,15 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Site Four Hundred Ninety</title></head>
+<body>
+<main>
+  <h1>Send a gift</h1>
+  <!-- The brain's form whose Send is no control of it (2026-10-19): a button beside the form submits it by script. -->
+  <form id="gift" action="/gift" method="post">
+    <label for="to">Recipient</label>
+    <input id="to" name="to" type="text">
+  </form>
+  <button type="button" id="send" onclick="document.getElementById('gift').requestSubmit()">Send gift</button>
+</main>
+</body>
+</html>

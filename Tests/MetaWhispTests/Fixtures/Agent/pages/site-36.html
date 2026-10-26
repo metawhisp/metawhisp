@@ -1,0 +1,14 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Site Thirty-Six</title></head>
+<body>
+<main>
+  <h1>Verify</h1>
+  <label for="h"><x-icon id="unslotted">OTP</x-icon></label>
+  <input id="h" type="text" value="SECRET-HELD">
+</main>
+<script>
+  document.getElementById('unslotted').attachShadow({ mode: 'open' }).innerHTML = '<span aria-hidden="true">*</span>';
+</script>
+</body>
+</html>

@@ -1,0 +1,24 @@
+ITER-074 review round 8 (Codex on 49c845b + 87e99c4), fixes — 2026-09-24 18:43 CEST, orchestrator
+
+Findings (all confirmed in the code before fixing):
+  1. raw label text kept its whitespace: 'Verification<newline>    code' no longer matched (round-7 regression)
+     fix: every run of non-letters and non-digits becomes one space before matching, with no truncation
+  2. a span inside a submit button of a mailto: form was offered: only form controls reported their form
+     fix: an element reports the form of the submit button it sits in (composed ancestry)
+  3. a one-word request could start an errand; the spec's corner cases route it as a question
+  4. an answer after the deadline could win when the timer task started late
+     fix: the cut-off is a moment fixed before the engine is asked; every answer is checked against it
+  5. routing with no engine ignored a cancellation that had already happened
+Answered, not changed: values after a report cut short — every field was checked for secrets before the
+report began; the doc now says precisely when values are withheld.
+
+--- red
+AgentRouterTests testACancelledRoutingThrowsEvenWithoutAnEngine failed (0.566 seconds).
+AgentRouterTests testAOneWordRequestIsAQuestion failed (0.001 seconds).
+AgentRouterTests testAnAnswerAfterTheCutOffIsLateEvenBeforeTheTimerFires failed (0.004 seconds).
+CandidateBuilderTests testNothingThatLeadsOutOfTheBrowserIsOffered failed (0.272 seconds).
+ObserverFormsTests testAControlInsideALinkReportsTheLinksAddress failed (0.077 seconds).
+ObserverFormsTests testSensitivityReadsEveryLabelWhole failed (0.074 seconds).
+	 Executed 62 tests, with 27 failures (0 unexpected) in 3.359 (3.365) seconds
+--- green (observer, builder, router and action suites)
+	 Executed 103 tests, with 0 failures (0 unexpected) in 5.914 (5.923) seconds

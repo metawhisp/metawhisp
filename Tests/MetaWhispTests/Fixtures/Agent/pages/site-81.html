@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Site Eighty-One</title>
+<script>
+  // A hostile page: whatever the page's own world writes as JSON is forged.
+  JSON.stringify = function () { return '{"forged":true}'; };
+</script>
+</head>
+<body>
+<main>
+  <h1>Checkout</h1>
+  <form id="pay" action="/pay" method="post">
+    <label for="card">Card number</label>
+    <input id="card" type="text" autocomplete="cc-number">
+    <button type="submit">Pay now</button>
+  </form>
+</main>
+</body>
+</html>

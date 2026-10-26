@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Site Four Hundred Seventy-Three</title>
+<style>
+  body { margin: 0; font: 16px sans-serif; }
+  main { padding: 24px 40px; }
+  [hidden] { display: none; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Example: an element rendered after the fact</h1>
+  <!-- A practice site's dynamic loading: Start shows a loader, and the text comes 2.5 s later, past an act's settle. -->
+  <div id="start"><button type="button">Start</button></div>
+  <div id="loading" hidden>Loading...</div>
+  <div id="finish"></div>
+</main>
+<script>
+  document.querySelector('#start button').addEventListener('click', () => {
+    document.getElementById('start').hidden = true;
+    document.getElementById('loading').hidden = false;
+    setTimeout(() => {
+      document.getElementById('loading').hidden = true;
+      const done = document.createElement('h4');
+      done.textContent = 'Hello World!';
+      document.getElementById('finish').appendChild(done);
+    }, 2500);
+  });
+</script>
+</body>

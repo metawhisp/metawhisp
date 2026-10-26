@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Site Two Hundred Fifty-Two</title>
+<style>body { margin: 0; font: 16px sans-serif; } main { padding: 16px 40px; } [role=combobox] { display: inline-block; padding: 4px 8px; border: 1px solid #333; }</style>
+</head>
+<body>
+<main>
+  <h1>Your plan</h1>
+  <p>Pro $49/mo</p>
+  <p>Visa ending in 4242</p>
+  <!-- A dropdown in a POST form with no submit button: choosing sends the form
+       (Claude review of I-09, kept 14). -->
+  <form id="plan-form" action="https://site-252.test/billing/plan" method="post">
+    <div role="combobox" aria-label="Plan" aria-expanded="true" aria-controls="plans" tabindex="0" id="plan">Free</div>
+  </form>
+  <!-- The same dropdown in a form sent by its own button: choosing sends nothing. -->
+  <form id="seats-form" action="https://site-252.test/billing/seats" method="post">
+    <div role="combobox" aria-label="Seats" aria-expanded="true" aria-controls="seat-counts" tabindex="0" id="seats">1 seat</div>
+    <button type="submit">Save seats</button>
+  </form>
+  <p id="log"></p>
+</main>
+<ul id="plans" role="listbox"><li role="option">Pro</li></ul>
+<ul id="seat-counts" role="listbox"><li role="option">5 seats</li></ul>
+<script>
+  const log = (text) => { document.getElementById('log').textContent += text + ';'; };
+  for (const id of ['plan-form', 'seats-form']) {
+    document.getElementById(id).addEventListener('submit', (event) => { event.preventDefault(); log(id === 'plan-form' ? 'charged' : 'saved'); });
+  }
+  document.querySelector('#plans [role=option]').addEventListener('click', (event) => {
+    document.getElementById('plan').textContent = event.target.textContent;
+    document.getElementById('plan-form').requestSubmit();
+  });
+  document.querySelector('#seat-counts [role=option]').addEventListener('click', (event) => {
+    document.getElementById('seats').textContent = event.target.textContent;
+  });
+</script>
+</body>
+</html>

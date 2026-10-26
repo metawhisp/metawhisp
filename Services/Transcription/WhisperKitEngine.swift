@@ -9,23 +9,44 @@ final class WhisperKitEngine: TranscriptionEngine, @unchecked Sendable {
 
     private var whisperKit: WhisperKit?
     private let lock = NSLock()
+    /// The install's model folder (F1). WhisperKit finds the model and its
+    /// tokenizer under the base the download used; left to its default, a
+    /// load looks in ~/Documents/huggingface and downloads there again.
+    private let downloadBase: URL
 
+    init(downloadBase: URL = ModelFolder.current.base) {
+        self.downloadBase = downloadBase
+    }
+
+    /// The kit is kept only once its CoreML weights have loaded (`load: true`
+    /// below), so holding one is the model's real state.
     var isModelLoaded: Bool {
         lock.withLock { whisperKit != nil }
     }
 
-    /// Load a model by its variant name (e.g. "openai_whisper-large-v3_turbo").
-    func loadModel(_ variant: String, progressHandler: (@Sendable (Double) -> Void)?) async throws {
-        let config = WhisperKitConfig(
+    /// `load: true` — step-1 review #8. WhisperKit loads the weights in its
+    /// init only when asked, or when given a model folder; left alone it
+    /// loaded them at the first transcription, so readiness and a best-model
+    /// swap counted as done before the weights were ever read, and broken ones
+    /// failed on the user's first dictation instead.
+    static func config(variant: String, downloadBase: URL) -> WhisperKitConfig {
+        WhisperKitConfig(
             model: variant,
+            downloadBase: downloadBase,
             computeOptions: ModelComputeOptions(
                 audioEncoderCompute: .cpuAndGPU,
                 textDecoderCompute: .cpuAndGPU
             ),
-            verbose: false
+            verbose: false,
+            load: true
         )
+    }
 
-        let kit = try await WhisperKit(config)
+    /// Load a model by its variant name (e.g. "openai_whisper-large-v3_turbo").
+    /// Returns once the weights are loaded. Not isolated to an actor, so the
+    /// load runs off the main thread whoever awaits it.
+    func loadModel(_ variant: String, progressHandler: (@Sendable (Double) -> Void)?) async throws {
+        let kit = try await WhisperKit(Self.config(variant: variant, downloadBase: downloadBase))
 
         lock.withLock {
             self.whisperKit = kit

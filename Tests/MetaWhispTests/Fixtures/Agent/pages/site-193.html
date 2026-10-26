@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Site One Hundred Sixty-Three</title>
+<style>
+  body { margin: 0; font: 16px sans-serif; }
+  main { padding: 24px 40px; }
+  a { display: block; width: 260px; height: 36px; margin: 8px 0; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Files</h1>
+  <!-- Each link would save a file. -->
+  <a href="https://site-193.test/files/report.pdf?type=application%2Fpdf&attachment=1">The report</a>
+  <a href="https://site-193.test/files/data.bin?type=application%2Foctet-stream">The data</a>
+  <a href="https://site-193.test/files/notes.txt?type=text%2Fplain" download>The notes</a>
+  <a href="data:text/plain,inline%20words" download="words.txt">The words</a>
+  <a id="blob" download="made.txt">The made file</a>
+  <a href="https://site-1.test/">A page</a>
+</main>
+<script>
+  document.getElementById('blob').href = URL.createObjectURL(new Blob(['made here'], { type: 'text/plain' }));
+</script>
+</body>
+</html>

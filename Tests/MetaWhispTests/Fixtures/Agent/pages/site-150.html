@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Site One Hundred Fifty</title>
+<style>
+  body { margin: 0; font: 16px sans-serif; }
+  main { padding: 24px 40px; }
+  .select { position: relative; width: 300px; min-height: 36px; padding: 0 8px; border: 1px solid #777; cursor: pointer; }
+  .shown { display: block; height: 36px; line-height: 36px; }
+  .panel { border-top: 1px solid #777; padding: 6px 0; }
+  .panel [role=option] { height: 32px; line-height: 32px; }
+  .panel input, form input { width: 200px; height: 28px; }
+  form { margin-top: 24px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Checkout address</h1>
+  <!-- A made-up dropdown whose open panel holds a secret field: a PIN that
+       unlocks the saved addresses. -->
+  <div id="saved" class="select" role="combobox" tabindex="0" aria-label="Saved addresses" aria-haspopup="listbox"
+       aria-expanded="false"><span class="shown">Choose an address</span></div>
+  <!-- A made-up dropdown that is itself a secret field. -->
+  <form action="/cards" method="get">
+    <label for="card">Card number</label>
+    <input id="card" autocomplete="cc-number" role="combobox" aria-autocomplete="list" aria-controls="cards" aria-expanded="false">
+    <div id="cards" role="listbox" aria-label="Saved cards"></div>
+  </form>
+  <p id="log"></p>
+</main>
+<script>
+  const log = (text) => { document.getElementById('log').textContent += text + ';'; };
+  const saved = document.getElementById('saved');
+  saved.addEventListener('click', () => {
+    if (saved.querySelector('.panel')) return;
+    const panel = document.createElement('div');
+    panel.className = 'panel';
+    panel.innerHTML = '<label>PIN <input id="pin" type="password" inputmode="numeric"></label>' +
+      '<div role="listbox" aria-label="Addresses"><div role="option">Home</div><div role="option">Office</div></div>';
+    for (const option of panel.querySelectorAll('[role=option]')) {
+      option.addEventListener('click', (event) => {
+        event.stopPropagation();
+        saved.querySelector('.shown').textContent = option.textContent;
+        log('chose ' + option.textContent);
+      });
+    }
+    saved.appendChild(panel);
+    saved.setAttribute('aria-expanded', 'true');
+  });
+</script>
+</body>
+</html>

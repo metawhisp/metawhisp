@@ -1,0 +1,14 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Site Thirty-Four</title></head>
+<body>
+<main>
+  <h1>Verify</h1>
+  <span id="cap"><x-label id="referenced">OTP</x-label></span>
+  <input type="text" aria-labelledby="cap" value="SECRET-OTP-REF">
+</main>
+<script>
+  document.getElementById('referenced').attachShadow({ mode: 'open' }).innerHTML = '<slot></slot>';
+</script>
+</body>
+</html>

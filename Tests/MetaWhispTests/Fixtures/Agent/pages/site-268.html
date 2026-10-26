@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Site Two Hundred Sixty-Eight</title>
+<style>body { margin: 0; font: 14px sans-serif; }</style>
+</head>
+<body>
+<p id="note"></p>
+<script>
+  // A widget of another site, drawn by its path. `/widget` asks a bare
+  // confirmation of its own when the page that holds it says so, and tells
+  // the page what it was answered (ITER-076 I-09, review round 3, part C).
+  // `/blank` holds nothing: a frame beside a page's own controls.
+  if (location.pathname === '/widget') {
+    document.getElementById('note').textContent = 'Comments';
+    addEventListener('message', (event) => {
+      if (event.data !== 'ask') return;
+      parent.postMessage(confirm('Are you sure?') ? 'widget ok' : 'widget cancel', '*');
+    });
+  } else {
+    document.getElementById('note').textContent = 'An advert';
+  }
+</script>
+</body>
+</html>

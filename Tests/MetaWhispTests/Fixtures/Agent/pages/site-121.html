@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Site One Hundred Twenty-One</title>
+<style>
+  #overlay { position: fixed; inset: 60px; background: #fff; border: 2px solid #333; padding: 20px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Articles</h1>
+  <p>An article worth reading.</p>
+  <a href="https://site-121.test/next">Next article</a>
+</main>
+<!-- An overlay closed by its own close control, as a person closes it with the mouse. -->
+<div id="overlay" role="dialog" aria-modal="true" aria-label="Newsletter">
+  <p>Subscribe to our newsletter</p>
+  <button type="button" id="close">Close newsletter</button>
+</div>
+<script>
+  document.getElementById('close').addEventListener('click', () => document.getElementById('overlay')?.remove());
+</script>
+</body>
+</html>

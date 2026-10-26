@@ -72,7 +72,7 @@ final class MeetingObsidianWriter {
 
         // Ensure folder exists.
         let vaultURL = URL(fileURLWithPath: vault, isDirectory: true)
-        let dirURL = vaultURL.appendingPathComponent("MetaWhisp", isDirectory: true)
+        let dirURL = vaultURL.appendingPathComponent(ObsidianPath.rootSubdir, isDirectory: true)
             .appendingPathComponent("Meetings", isDirectory: true)
         do {
             try FileManager.default.createDirectory(at: dirURL, withIntermediateDirectories: true)
@@ -147,7 +147,7 @@ final class MeetingObsidianWriter {
 
         // Calendar back-link (if matched).
         if let eventId = conv.calendarEventId {
-            patchCalendarEventNotes(eventId: eventId, vaultName: vaultURL.lastPathComponent, relativePath: "MetaWhisp/Meetings/\(filename)")
+            patchCalendarEventNotes(eventId: eventId, vaultName: vaultURL.lastPathComponent, relativePath: "\(ObsidianPath.rootSubdir)/Meetings/\(filename)")
         }
     }
 

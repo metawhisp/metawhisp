@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Site Two Hundred Twenty-Two</title>
+<style>
+  body { margin: 0; font: 16px sans-serif; }
+  main { padding: 24px 40px; }
+  #row { position: relative; display: block; width: 420px; padding: 10px; border: 1px solid #333; cursor: pointer; }
+  #pick { position: relative; z-index: 2; }
+  #cover { position: absolute; left: 0; top: 0; right: 0; bottom: 0; z-index: 1; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Inbox</h1>
+  <!-- A row that opens its message, holding a box that selects it; a label
+       for the box covers the row. -->
+  <div id="row" role="button" tabindex="0">
+    <input id="pick" type="checkbox" aria-label="Select">
+    <span>Open the quarterly report</span>
+    <label id="cover" for="pick"></label>
+  </div>
+  <p id="log"></p>
+</main>
+<script>
+  const log = (text) => { document.getElementById('log').textContent += text + ';'; };
+  document.getElementById('row').addEventListener('click', (event) => { if (event.target.id !== 'pick') log('opened'); });
+  document.getElementById('pick').addEventListener('change', () => log('selected'));
+</script>
+</body>
+</html>

@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Site Four Forty</title></head>
+<body>
+<main>
+  <!-- ITER-076 stage 7: a "request a demo" form of six fields, by structure:
+       two names and a company by their autocomplete, an e-mail and a phone by
+       their type, a message as a text area. It posts to /thanks, where the
+       same page shows only its thanks: the form was received. -->
+  <h1 id="title">Request a demo</h1>
+  <form id="demo" action="/thanks" method="post">
+    <label for="first">First name</label>
+    <input id="first" name="firstname" autocomplete="given-name" required>
+    <label for="last">Last name</label>
+    <input id="last" name="lastname" autocomplete="family-name">
+    <label for="email">Work email</label>
+    <input id="email" name="email" type="email" required>
+    <label for="company">Company</label>
+    <input id="company" name="company" autocomplete="organization" required>
+    <label for="phone">Phone</label>
+    <input id="phone" name="phone" type="tel">
+    <label for="message">How can we help?</label>
+    <textarea id="message" name="message"></textarea>
+    <button type="submit" id="send">Request a demo</button>
+  </form>
+  <p id="thanks" hidden>Thank you. We will be in touch.</p>
+</main>
+<script>
+  if (location.pathname === '/thanks') {
+    document.getElementById('demo').remove();
+    document.getElementById('title').textContent = 'Thanks';
+    document.getElementById('thanks').hidden = false;
+  }
+</script>
+</body>
+</html>

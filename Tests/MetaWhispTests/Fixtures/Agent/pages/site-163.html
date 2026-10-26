@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Site One Hundred Sixty-Three</title>
+<style>
+  body { margin: 0; font: 16px sans-serif; }
+  main { padding: 24px 40px; }
+  form { margin: 12px 0; padding: 8px; border: 1px solid #777; width: 420px; }
+  .select { display: inline-block; width: 260px; height: 36px; line-height: 36px; padding: 0 8px; border: 1px solid #777; }
+  [role=option] { height: 32px; line-height: 32px; padding: 0 8px; border: 1px solid #ccc; width: 260px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Forms that need a file</h1>
+  <!-- Native submit buttons that name a role a click only sets. -->
+  <form id="roles" action="/roles" method="post" novalidate>
+    <p><label for="photo">Photo</label> <input id="photo" name="photo" type="file" required></p>
+    <button type="submit" role="option">Send as option</button>
+    <button type="submit" role="checkbox" aria-checked="false">Send as box</button>
+  </form>
+  <!-- A dropdown whose open list, drawn outside the form, sends it. -->
+  <form id="auto" action="/auto" method="post" novalidate>
+    <p><label for="scan">Scan</label> <input id="scan" name="scan" type="file" required></p>
+    <span id="plan-label">Plan</span>
+    <div id="plan" class="select" role="combobox" aria-labelledby="plan-label" aria-haspopup="listbox"
+         aria-expanded="true" aria-controls="plans">Choose</div>
+  </form>
+  <div id="plans" role="listbox"><div role="option">Basic plan</div><div role="option">Full plan</div></div>
+</main>
+<script>
+  for (const option of document.querySelectorAll('#plans [role=option]')) {
+    option.addEventListener('click', () => document.getElementById('auto').requestSubmit());
+  }
+</script>
+</body>
+</html>

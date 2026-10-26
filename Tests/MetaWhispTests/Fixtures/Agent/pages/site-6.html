@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Site Six</title>
+<style>.box { display:inline-block; min-width:40px; min-height:20px; }</style></head>
+<body>
+<main>
+  <h2>Names</h2>
+  <button id="title-vs-content" title="Details">Delete</button>
+  <span id="lbl">Right name</span>
+  <a id="labelledby" href="/labelled" aria-labelledby="lbl" aria-label="Wrong name">Link text</a>
+  <a id="logo" href="/logo"><img alt="Company logo" width="40" height="20" src="data:image/gif;base64,R0lGODlhAQABAAAAACw="></a>
+  <label for="city">City</label> <input id="city" type="text">
+  <label>Zip <input id="zip" type="text"></label>
+  <h2 style="display:none">Hidden heading</h2>
+  <h2 style="opacity:0">Faded heading</h2>
+  <button id="icon" class="box" title="Close"></button>
+  <h2>Roles</h2>
+  <div class="box" role="slider" aria-label="Volume" tabindex="0"></div>
+  <div class="box" role="spinbutton" aria-label="Quantity" tabindex="0"></div>
+  <div class="box" role="radio" aria-label="Small" tabindex="0"></div>
+  <div class="box" role="menuitemcheckbox" aria-label="Bold" tabindex="0"></div>
+  <div class="box" role="option" aria-label="Red" tabindex="0"></div>
+  <span class="box" role="unknownrole button">Fallback</span>
+  <span class="box" role="heading button" tabindex="0">Heading first</span>
+  <div class="box" contenteditable="true" aria-label="Rich editor"><a href="/draft">Private draft link</a> and more words</div>
+  <div class="box" contenteditable="plaintext-only" aria-label="Notes"></div>
+  <div class="box" contenteditable="true" aria-label="Compose">Private draft text</div>
+  <input id="seats" type="number" aria-label="Seats">
+  <input id="brightness" type="range" aria-label="Brightness">
+  <select id="tags" multiple aria-label="Tags"><option>One</option><option>Two</option></select>
+  <h2>Invisible</h2>
+  <button style="opacity:0">Ghost</button>
+  <div style="opacity:0"><a href="/ghost">Ghost link</a></div>
+  <button style="visibility:collapse">Collapsed</button>
+  <aside><a href="/side">Related</a></aside>
+</main>
+</body>
+</html>

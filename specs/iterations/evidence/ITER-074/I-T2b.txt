@@ -1,0 +1,48 @@
+ITER-074 I-T2b — plan, rows, record, engines, excerpt, fixture sheet, 2026-09-24 18:50 CEST, orchestrator
+
+User stories: US-9 (every row keeps its source; one row per site; canonical cells), §6.5 record without page
+text, §6.6 excerpt without writing or hidden text, §12.1 fixture sheet that behaves like Sheets on paste.
+
+--- red: 20 tests, 14 failing (the 6 passing are 'nothing leaks' / 'nothing happens' sides of do-nothing stubs)
+AgentPlanTests testAPlanThatCannotRunIsRefused failed (0.605 seconds).
+AgentPlanTests testAQueryCannotEscapeItsParameter failed (0.001 seconds).
+AgentPlanTests testASearchAddressIsBuiltFromTheQuery failed (0.000 seconds).
+AgentPlanTests testAWholePlanIsAccepted failed (0.000 seconds).
+AgentPlanTests testAnEmptyQueryBuildsNothing passed (0.000 seconds).
+AgentPlanTests testEachRowHasItsSubgoalAndTheLastRepeats failed (0.000 seconds).
+AgentPlanTests testOnlyWebSearchesAreKept failed (0.000 seconds).
+ErrandRecordTests testAStepKeepsWhatWasDoneButNoPageText failed (0.002 seconds).
+ErrandRecordTests testTheRecordRoundTrips passed (0.000 seconds).
+ExcerptScriptTests testHiddenTextStaysOut passed (0.231 seconds).
+ExcerptScriptTests testTheExcerptIsBounded passed (0.142 seconds).
+ExcerptScriptTests testTheExcerptIsTheMainContentsVisibleText failed (0.070 seconds).
+ExcerptScriptTests testWritingStaysOut passed (0.071 seconds).
+FixtureSheetTests testASheetThatWasNotCreatedCannotBeUsed failed (0.001 seconds).
+FixtureSheetTests testAnEscapedPasteReadsBackAsItsCanonicalValues failed (0.003 seconds).
+FixtureSheetTests testAnUnescapedFormulaIsCaught passed (0.000 seconds).
+ScratchpadTests testARowKeepsItsSourceAndCanonicalCells failed (0.002 seconds).
+ScratchpadTests testARowMustFitTheColumns failed (0.000 seconds).
+ScratchpadTests testASecondRowFromTheSameSiteIsSkipped failed (0.000 seconds).
+ScratchpadTests testASourceMustBeAWebAddress failed (0.000 seconds).
+--- green (these suites plus observer and action suites)
+AgentPlanTests testAPlanThatCannotRunIsRefused passed (0.001 seconds).
+AgentPlanTests testAQueryCannotEscapeItsParameter passed (0.000 seconds).
+AgentPlanTests testASearchAddressIsBuiltFromTheQuery passed (0.000 seconds).
+AgentPlanTests testAWholePlanIsAccepted passed (0.000 seconds).
+AgentPlanTests testAnEmptyQueryBuildsNothing passed (0.000 seconds).
+AgentPlanTests testEachRowHasItsSubgoalAndTheLastRepeats passed (0.000 seconds).
+AgentPlanTests testOnlyWebSearchesAreKept passed (0.000 seconds).
+ErrandRecordTests testAStepKeepsWhatWasDoneButNoPageText passed (0.000 seconds).
+ErrandRecordTests testTheRecordRoundTrips passed (0.000 seconds).
+ExcerptScriptTests testHiddenTextStaysOut passed (0.077 seconds).
+ExcerptScriptTests testTheExcerptIsBounded passed (0.068 seconds).
+ExcerptScriptTests testTheExcerptIsTheMainContentsVisibleText passed (0.067 seconds).
+ExcerptScriptTests testWritingStaysOut passed (0.067 seconds).
+FixtureSheetTests testASheetThatWasNotCreatedCannotBeUsed passed (0.000 seconds).
+FixtureSheetTests testAnEscapedPasteReadsBackAsItsCanonicalValues passed (0.002 seconds).
+FixtureSheetTests testAnUnescapedFormulaIsCaught passed (0.000 seconds).
+ScratchpadTests testARowKeepsItsSourceAndCanonicalCells passed (0.000 seconds).
+ScratchpadTests testARowMustFitTheColumns passed (0.000 seconds).
+ScratchpadTests testASecondRowFromTheSameSiteIsSkipped passed (0.000 seconds).
+ScratchpadTests testASourceMustBeAWebAddress passed (0.000 seconds).
+	 Executed 92 tests, with 0 failures (0 unexpected) in 5.769 (5.777) seconds

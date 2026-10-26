@@ -8,13 +8,14 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "$SCRIPT_DIR"
+source "$SCRIPT_DIR/scripts/lib/app-install.sh"
 
 APP_NAME="MetaWhisp"
 ZIP_NAME="$APP_NAME.zip"
-INSTALLED_APP="$HOME/Applications/$APP_NAME.app"
+INSTALLED_APP="$MW_RELEASE_APP"
 
 echo "==> Building $APP_NAME..."
-bash build.sh --no-launch
+bash build.sh
 
 if [ ! -d "$INSTALLED_APP" ]; then
     echo "ERROR: $INSTALLED_APP not found"
@@ -27,9 +28,7 @@ rm -f "$SCRIPT_DIR/$ZIP_NAME"
 # ditto preserves macOS metadata + extended attributes (signing, entitlements)
 # better than `zip` — required so the app stays signed after extraction.
 echo "==> Packing into $ZIP_NAME..."
-cd "$HOME/Applications"
-ditto -c -k --keepParent "$APP_NAME.app" "$SCRIPT_DIR/$ZIP_NAME"
-cd "$SCRIPT_DIR"
+ditto -c -k --keepParent "$INSTALLED_APP" "$SCRIPT_DIR/$ZIP_NAME"
 
 ZIP_SIZE=$(du -h "$ZIP_NAME" | cut -f1)
 echo "==> Done! $ZIP_NAME ($ZIP_SIZE)"

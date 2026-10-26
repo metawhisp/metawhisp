@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Site Two Hundred Seven</title>
+<style>
+  body { margin: 0; font: 16px sans-serif; }
+  main { padding: 24px 40px; }
+  button { display: block; width: 240px; height: 32px; margin: 6px 0; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Your workspace</h1>
+  <button type="button" id="renew">Renew</button>
+  <button type="button" id="renew-plan">Renew plan</button>
+  <button type="button" id="archive">Archive</button>
+  <button type="button" id="delete">Delete</button>
+  <button type="button" id="remove">Remove</button>
+  <button type="button" id="loeschen">L&ouml;schen</button>
+  <button type="button" id="rename">Rename</button>
+  <button type="button" id="extend">Extend</button>
+  <p id="log"></p>
+</main>
+<script>
+  const log = (text) => { document.getElementById('log').textContent += text + ';'; };
+  const on = (id, run) => document.getElementById(id).addEventListener('click', run);
+  // A charge in plain words, no amount (Codex review 1 of I-09, P1-3).
+  on('renew', () => log(confirm('Charge the saved card?') ? 'charged' : 'not charged'));
+  // An amount written with its currency's name, and a word the Yes shares.
+  on('renew-plan', () => log(confirm('Renew for 49.99 dollars?') ? 'renewed' : 'not renewed'));
+  // A confirm about another act than the one approved.
+  // It shows a control of its own whatever the answer: the page changed, the
+  // act did not happen.
+  on('archive', () => {
+    log(confirm('Send the report to all members?') ? 'sent' : 'not sent');
+    if (!document.getElementById('details')) {
+      const details = document.createElement('button');
+      details.type = 'button';
+      details.id = 'details';
+      details.textContent = 'Show details';
+      document.querySelector('main').append(details);
+    }
+  });
+  // Confirms bound to the act: a shared word, a bare confirmation, a shared
+  // word in another language.
+  on('delete', () => log(confirm('Delete this draft?') ? 'deleted' : 'kept'));
+  on('remove', () => log(confirm('Are you sure?') ? 'removed' : 'not removed'));
+  on('loeschen', () => log(confirm('Wirklich l\u00f6schen?') ? 'geloescht' : 'behalten'));
+  on('rename', () => log(prompt('A new name?', 'Draft') === null ? 'not renamed' : 'renamed'));
+  // A payment asked for, then a flood of alerts (Claude review of I-09, kept 2).
+  on('extend', () => {
+    log(confirm('Allow Acme to access your calendar?') ? 'granted' : 'not granted');
+    for (let i = 0; i < 300; i++) alert('One more thing');
+    log('done');
+  });
+</script>
+</body>
+</html>

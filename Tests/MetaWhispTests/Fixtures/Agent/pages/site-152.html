@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="fr">
+<head><meta charset="utf-8"><title>Site One Hundred Fifty-Two</title>
+<style>
+  body { margin: 0; font: 16px sans-serif; }
+  main { padding: 24px 40px; }
+  .select { display: inline-block; width: 260px; height: 36px; line-height: 36px; padding: 0 8px; border: 1px solid #777;
+            cursor: pointer; }
+  .menu { position: absolute; left: 40px; width: 278px; border: 1px solid #777; background: #fff; }
+  .menu [role=option] { height: 32px; line-height: 32px; padding: 0 8px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Utilisateur 42</h1>
+  <!-- A made-up dropdown in a POST form whose list is drawn at the end of the
+       page; choosing an option sends the form. -->
+  <form id="user" action="/admin/users/42" method="post">
+    <span id="access-label">Access</span>
+    <div id="access" class="select" role="combobox" tabindex="0" aria-labelledby="access-label" aria-haspopup="listbox"
+         aria-expanded="false" aria-controls="access-list">Lecture seule</div>
+    <button type="submit">Enregistrer</button>
+  </form>
+</main>
+<script>
+  const box = document.getElementById('access');
+  let menu = null;
+  const close = () => { if (menu) { menu.remove(); menu = null; box.setAttribute('aria-expanded', 'false'); } };
+  box.addEventListener('click', () => {
+    if (menu) { close(); return; }
+    menu = document.createElement('div');
+    menu.id = 'access-list';
+    menu.className = 'menu';
+    menu.setAttribute('role', 'listbox');
+    menu.style.top = (box.getBoundingClientRect().bottom + scrollY + 2) + 'px';
+    for (const name of ['Lecture seule', "Supprimer l'accès"]) {
+      const option = document.createElement('div');
+      option.setAttribute('role', 'option');
+      option.textContent = name;
+      option.addEventListener('click', () => { box.textContent = name; close(); document.getElementById('user').requestSubmit(); });
+      menu.appendChild(option);
+    }
+    document.body.appendChild(menu);
+    box.setAttribute('aria-expanded', 'true');
+  });
+</script>
+</body>
+</html>

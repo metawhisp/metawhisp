@@ -1,0 +1,84 @@
+# locked.log as the same run reads on an awake, unlocked screen: the three island tests that
+# need one pass instead of skipping (written from locked.log; the Mac was locked for the real run).
+Test Case '-[MetaWhispTests.AgentServiceTests testABuildWithNoRunRefusesEveryErrand]' passed (0.000 seconds).
+Test Case '-[MetaWhispTests.AgentServiceTests testAFifthErrandIsRefusedAsTheQueueIsFull]' passed (0.002 seconds).
+Test Case '-[MetaWhispTests.AgentServiceTests testAnEmptyGoalIsRefused]' passed (0.000 seconds).
+Test Case '-[MetaWhispTests.AgentServiceTests testAnErrandCanRunOnlyWithARunForIt]' passed (0.000 seconds).
+Test Case '-[MetaWhispTests.AgentServiceTests testAnErrandStartsWhenNoneRuns]' passed (0.007 seconds).
+Test Case '-[MetaWhispTests.AgentServiceTests testARunIsLetGoOnceItsErrandEnds]' passed (0.014 seconds).
+Test Case '-[MetaWhispTests.AgentServiceTests testASecondErrandWaitsAtPositionOneAndStartsWhenTheFirstEnds]' passed (0.010 seconds).
+Test Case '-[MetaWhispTests.AgentServiceTests testTheRunsReportsAndEndAreTheErrandsEvents]' passed (0.007 seconds).
+Test Case '-[MetaWhispTests.AgentServiceTests testWithoutProNothingStartsAndNoBridgeOrRunIsMade]' passed (0.057 seconds).
+Test Case '-[MetaWhispTests.ChromeBridgeLiveTests testAClickIsAPersonsClick]' passed (0.822 seconds).
+Test Case '-[MetaWhispTests.ChromeBridgeLiveTests testAControlInAShadowRootIsAimedAtOnlyWhenNothingCoversIt]' passed (0.423 seconds).
+Test Case '-[MetaWhispTests.ChromeBridgeLiveTests testAControlOffScreenIsBroughtOnAndClicked]' passed (0.543 seconds).
+Test Case '-[MetaWhispTests.ChromeBridgeLiveTests testAControlWhoseFaceIsSomethingElseIsAimedAt]' passed (0.472 seconds).
+Test Case '-[MetaWhispTests.ChromeBridgeLiveTests testACoveredControlIsNotClicked]' passed (0.403 seconds).
+Test Case '-[MetaWhispTests.ChromeBridgeLiveTests testADeleteInsideAComponentAtARowsCentreIsNeverClicked]' passed (0.396 seconds).
+Test Case '-[MetaWhispTests.ChromeBridgeLiveTests testADeleteNothingNamesAControlIsNeverClickedForItsRow]' passed (0.480 seconds).
+Test Case '-[MetaWhispTests.ChromeBridgeLiveTests testADisabledControlOrAReadOnlyFieldIsNotAimedAt]' passed (0.437 seconds).
+Test Case '-[MetaWhispTests.ChromeBridgeLiveTests testAFilePickerThePageOpensIsNeverShown]' passed (0.398 seconds).
+Test Case '-[MetaWhispTests.ChromeBridgeLiveTests testAFramesPasswordShownAsTextStillStopsItsFormInChrome]' passed (0.420 seconds).
+Test Case '-[MetaWhispTests.ChromeBridgeLiveTests testAfterAMoveToAnotherSiteScriptsStillRunInTheAgentsWorld]' passed (0.458 seconds).
+Test Case '-[MetaWhispTests.ChromeBridgeLiveTests testALoginFormThatComesWithTheScrollDoesNotStopAStepOutsideIt]' passed (0.415 seconds).
+Test Case '-[MetaWhispTests.ChromeBridgeLiveTests testAnAutofilledPasswordStopsAButtonOutsideItsForm]' passed (0.431 seconds).
+Test Case '-[MetaWhispTests.ChromeBridgeLiveTests testAPageCannotEndTheConnectionWithAHugeAnswer]' passed (0.387 seconds).
+Test Case '-[MetaWhispTests.ChromeBridgeLiveTests testAPageCannotForgeWhatTheAgentReads]' passed (0.378 seconds).
+Test Case '-[MetaWhispTests.ChromeBridgeLiveTests testARowIsClickedOnItsOwnWordsNeverOnAControlInsideIt]' passed (0.417 seconds).
+Test Case '-[MetaWhispTests.ChromeBridgeLiveTests testASearchBoxThatTurnsIntoAPasswordOnFocusIsAWallInChrome]' passed (0.500 seconds).
+Test Case '-[MetaWhispTests.ChromeBridgeLiveTests testASecretFieldStaysSecretWhenThePageShowsItsText]' passed (0.405 seconds).
+Test Case '-[MetaWhispTests.ChromeBridgeLiveTests testAStoppedCallerStillClosesItsTab]' passed (0.430 seconds).
+Test Case '-[MetaWhispTests.ChromeBridgeLiveTests testATabWhoseSetUpFailsOrIsStoppedIsClosed]' passed (0.382 seconds).
+Test Case '-[MetaWhispTests.ChromeBridgeLiveTests testAWallThatComesWithTheScrollStopsTheAim]' passed (0.397 seconds).
+Test Case '-[MetaWhispTests.ChromeBridgeLiveTests testAWindowOpenedAWhileAfterTheClickIsClosed]' passed (1.899 seconds).
+Test Case '-[MetaWhispTests.ChromeBridgeLiveTests testAWindowThePageOpensOnTheAgentsClickIsClosed]' passed (0.415 seconds).
+Test Case '-[MetaWhispTests.ChromeBridgeLiveTests testFramesInsideAFormAreCountedInChrome]' passed (0.543 seconds).
+Test Case '-[MetaWhispTests.ChromeBridgeLiveTests testJ1CollectsTheSitesThroughChrome]' passed (0.622 seconds).
+Test Case '-[MetaWhispTests.ChromeBridgeLiveTests testOpensReadsAndClosesItsOwnTab]' passed (0.391 seconds).
+Test Case '-[MetaWhispTests.ChromeBridgeLiveTests testRefusesAnAddressThatIsNotAWebPage]' passed (0.315 seconds).
+Test Case '-[MetaWhispTests.ChromeBridgeLiveTests testTheAgentsWorldIsMadeWithoutThePagesConsole]' passed (0.880 seconds).
+Test Case '-[MetaWhispTests.ChromeBridgeLiveTests testTypingIsAPersonsTyping]' passed (0.425 seconds).
+Test Case '-[MetaWhispTests.ChromeBridgeLiveTests testTypingWaitsForItsFieldToHoldTheFocus]' passed (0.414 seconds).
+Test Case '-[MetaWhispTests.ChromeConnectionLiveTests testAnUnknownMethodIsAnErrorNotASilence]' passed (0.299 seconds).
+Test Case '-[MetaWhispTests.ChromeConnectionLiveTests testConnectsToChromeAndAsksItSomething]' passed (0.301 seconds).
+Test Case '-[MetaWhispTests.ChromeLinkTests testABrowserThatRefusesAtOnceIsNotAskedAgain]' passed (0.004 seconds).
+Test Case '-[MetaWhispTests.ChromeLinkTests testAConnectionThatEndedIsOpenedAgain]' passed (0.352 seconds).
+Test Case '-[MetaWhispTests.ChromeLinkTests testADeclinedAllowIsNotAllowed]' passed (1.598 seconds).
+Test Case '-[MetaWhispTests.ChromeLinkTests testAnOpenConnectionIsKeptWhileTheBrowserIsSlow]' passed (0.002 seconds).
+Test Case '-[MetaWhispTests.ChromeLinkTests testAPortFileAClosedBrowserLeftIsPassedOver]' passed (0.002 seconds).
+Test Case '-[MetaWhispTests.ChromeLinkTests testAPortNothingAnswersOnIsPassedForTheNextBrowser]' passed (0.324 seconds).
+Test Case '-[MetaWhispTests.ChromeLinkTests testAPortThatAnswersNotFoundIsPassedForTheNextBrowser]' passed (0.320 seconds).
+Test Case '-[MetaWhispTests.ChromeLinkTests testARunningBrowserThatDoesNotAnswerHasRemoteDebuggingOff]' passed (0.517 seconds).
+Test Case '-[MetaWhispTests.ChromeLinkTests testAStopWhileTheBrowserAsksEndsTheQuestion]' passed (1.331 seconds).
+Test Case '-[MetaWhispTests.ChromeLinkTests testAStopWhileTheBrowserHasNoPortYetEndsTheAttempt]' passed (0.334 seconds).
+Test Case '-[MetaWhispTests.ChromeLinkTests testConnectsOnceAndKeepsTheConnection]' passed (0.323 seconds).
+Test Case '-[MetaWhispTests.ChromeLinkTests testNoBrowserIsNotRunning]' passed (0.002 seconds).
+Test Case '-[MetaWhispTests.ChromeLinkTests testWaitsForTheUsersAllowAndDoesNotAskAgainOnItsOwn]' passed (2.011 seconds).
+Test Case '-[MetaWhispTests.IslandWindowTests testAnErrorLandsWhereItBelongs]' passed (0.412 seconds).
+Test Case '-[MetaWhispTests.IslandWindowTests testAnErrorRightAfterAMoveLandsWhereItBelongs]' passed (0.412 seconds).
+Test Case '-[MetaWhispTests.IslandWindowTests testAShakeStillRunningNeverMovesTheNextQuestion]' passed (0.412 seconds).
+Tests/MetaWhispTests/Services/System/LayoutCorpusBenchmarkTests.swift:15: -[MetaWhispTests.LayoutCorpusBenchmarkTests test_externalFrequencyCorporaHaveNoObservedFalseCorrections] : Test skipped - Set METAWHISP_EN_CORPUS and METAWHISP_RU_CORPUS for corpus preflight.
+Test Case '-[MetaWhispTests.LayoutCorpusBenchmarkTests test_externalFrequencyCorporaHaveNoObservedFalseCorrections]' skipped (0.000 seconds).
+Tests/MetaWhispTests/Services/LLM/LocalLLMQualityTests.swift:62: -[MetaWhispTests.LocalLLMQualityTests testRealisticDictationQualityAndLatency] : Test skipped - Set MW_LOCAL_STRESS=1 to run (loads 2 GB weights, real inference)
+Test Case '-[MetaWhispTests.LocalLLMQualityTests testRealisticDictationQualityAndLatency]' skipped (0.000 seconds).
+Tests/MetaWhispTests/Services/LLM/LocalLLMStressTests.swift:44: -[MetaWhispTests.LocalLLMStressTests testF11LocalDictationPathUnderLoad] : Test skipped - Set MW_LOCAL_STRESS=1 to run (loads 2 GB weights, real inference)
+Test Case '-[MetaWhispTests.LocalLLMStressTests testF11LocalDictationPathUnderLoad]' skipped (0.000 seconds).
+Tests/MetaWhispTests/Services/LLM/LocalLLMTokenizerDiagTests.swift:16: -[MetaWhispTests.LocalLLMTokenizerDiagTests testTokenizerIdsMatchReference] : Test skipped - diagnostic — MW_LOCAL_STRESS=1 only
+Test Case '-[MetaWhispTests.LocalLLMTokenizerDiagTests testTokenizerIdsMatchReference]' skipped (0.000 seconds).
+Test Case '-[MetaWhispTests.SchemaMigrationTests test_aV4StoreOpensUnderTheLatestSchema]' passed (0.280 seconds).
+Test Case '-[MetaWhispTests.SchemaMigrationTests test_v3StoreOpensAsV4WithEverythingIntact]' passed (0.076 seconds).
+Test Case '-[MetaWhispTests.SchemaMigrationTests testARunCannotBeMeasuredTwice]' passed (0.012 seconds).
+Test Case '-[MetaWhispTests.SchemaMigrationTests testFreshStoreCreatesUnderV3]' passed (0.006 seconds).
+Test Case '-[MetaWhispTests.SchemaMigrationTests testFrozenMemoryShapeIsStable]' passed (0.001 seconds).
+Test Case '-[MetaWhispTests.SchemaMigrationTests testFrozenV1ObservationShapeIsStable]' passed (0.000 seconds).
+Test Case '-[MetaWhispTests.SchemaMigrationTests testFrozenV2TaskItemShapeIsStable]' passed (0.000 seconds).
+Test Case '-[MetaWhispTests.SchemaMigrationTests testFrozenV5ItemShapeIsStable]' passed (0.000 seconds).
+Tests/MetaWhispTests/Services/Data/SchemaMigrationTests.swift:329: -[MetaWhispTests.SchemaMigrationTests testRealStoreCopyOpensUnderLatest] : Test skipped - Set MW_REAL_STORE_COPY to a copy of the real store to run this proof
+Test Case '-[MetaWhispTests.SchemaMigrationTests testRealStoreCopyOpensUnderLatest]' skipped (0.000 seconds).
+Test Case '-[MetaWhispTests.SchemaMigrationTests testV1StoreMigratesToLatestWithDataIntact]' passed (0.076 seconds).
+Test Case '-[MetaWhispTests.SchemaMigrationTests testV2StoreMigratesToV3WithTasksIntact]' passed (0.075 seconds).
+Test Case '-[MetaWhispTests.SchemaMigrationTests testV5StoreMigratesToV6WithItemsIntactAndJournalsEmpty]' passed (0.075 seconds).
+Test Case '-[MetaWhispTests.SchemaMigrationTests testV6StoreMigratesToV7WithJournalIntactAndVisitsEmpty]' passed (0.078 seconds).
+Test Case '-[MetaWhispTests.SchemaMigrationTests testV7StoreMigratesToV8WithExistingMemoriesStillTrusted]' passed (0.075 seconds).
+Test Case '-[MetaWhispTests.SchemaMigrationTests testV8StoreMigratesToV9WithTheJournalIntactAndNoMetricsInvented]' passed (0.073 seconds).
+	 Executed 2463 tests, with 5 tests skipped and 0 failures (0 unexpected) in 208.096 (208.244) seconds

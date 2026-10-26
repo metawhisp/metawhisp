@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Site Four Fifty-Nine</title></head>
+<body>
+<main>
+  <!-- ITER-076 stage 7, review round 2 (R2-1): a demo form whose own script
+       sends what its e-mail field holds as it is typed in — by fetch, by
+       XHR and by a beacon — and reads one page by GET: while the form is
+       filled, nothing it sends goes out; what it reads still comes. -->
+  <h1 id="title">Request a demo</h1>
+  <form id="demo" action="/thanks" method="post">
+    <label for="first">First name</label><input id="first" name="first" autocomplete="given-name">
+    <label for="email">Work email</label><input id="email" name="email" type="email">
+    <label for="company">Company</label><input id="company" name="company" autocomplete="organization">
+    <button type="submit" id="send">Request a demo</button>
+  </form>
+</main>
+<script>
+  const email = document.getElementById('email');
+  email.addEventListener('input', () => {
+    const body = JSON.stringify({ email: email.value });
+    fetch('/api/fetch', { method: 'POST', body }).catch(() => {});
+    const xhr = new XMLHttpRequest();
+    xhr.open('POST', '/api/xhr');
+    xhr.send(body);
+    navigator.sendBeacon('/api/beacon', body);
+    fetch('/api/read').catch(() => {});
+  });
+</script>
+</body>
+</html>

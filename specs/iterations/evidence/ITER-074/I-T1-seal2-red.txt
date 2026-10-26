@@ -1,0 +1,31 @@
+ITER-074 I-T1 harness seal round 2 — red run, 2026-09-24 17:06 CEST, new tests before the fix (orchestrator; GLM quota exhausted)
+command: swift test --filter WebViewBridgeTests
+
+WebViewBridgeTests testAClickRunsThePagesOwnScript passed (0.199 seconds).
+WebViewBridgeTests testAClosedTabIsGone passed (0.077 seconds).
+WebViewBridgeTests testAFixturePageLoadsAndRunsJavaScript passed (0.070 seconds).
+WebViewBridgeTests testAFrameGoingAnywhereIsBlocked passed (0.000 seconds).
+WebViewBridgeTests testANonWebAddressIsBlocked passed (0.000 seconds).
+WebViewBridgeTests testAPageCannotFetchFromTheNetwork passed (0.070 seconds).
+WebViewBridgeTests testAPageGoingToAWebAddressIsRoutedToAFixture passed (0.000 seconds).
+WebViewBridgeTests testARunThatOutlivesItsDeadlineTimesOut passed (0.472 seconds).
+WebViewBridgeTests testAScriptErrorIsReportedNotSwallowed passed (0.070 seconds).
+WebViewBridgeTests testASearchAddressRoutesToTheResultsPage passed (0.000 seconds).
+WebViewBridgeTests testAStoppedLoadDoesNotHangTheWait failed (3.614 seconds).
+WebViewBridgeTests testAWaitNeverOverrunsItsDeadline failed (1.566 seconds).
+WebViewBridgeTests testAnEmptyFrameIsAllowed passed (0.000 seconds).
+WebViewBridgeTests testAnUnknownAddressGetsTheNotFoundPage passed (0.070 seconds).
+WebViewBridgeTests testClickingAResultLandsOnThatSitesFixture passed (0.132 seconds).
+WebViewBridgeTests testClosingATabSettlesItsPendingRun passed (0.069 seconds).
+WebViewBridgeTests testEveryPageCarriesTheNetworkLock failed (0.735 seconds).
+WebViewBridgeTests testEveryTabBlocksResourceLoads failed (0.073 seconds).
+WebViewBridgeTests testGoingToARealHostLandsOnTheNotFoundFixture passed (0.133 seconds).
+WebViewBridgeTests testNonWebURLsAreRefusedBeforeAnythingLoads passed (0.002 seconds).
+WebViewBridgeTests testOurOwnLoadIsAllowed passed (0.000 seconds).
+WebViewBridgeTests testScriptsMustReturnText passed (0.067 seconds).
+WebViewBridgeTests testThePageBelievesItIsAtItsAddress passed (0.065 seconds).
+WebViewBridgeTests testTheResultsPageHasThreeResults passed (0.067 seconds).
+WebViewBridgeTests testTwoTabsAreIndependent passed (0.143 seconds).
+WebViewBridgeTests testUndefinedComesBackAsEmptyText passed (0.073 seconds).
+
+	 Executed 26 tests, with 16 failures (0 unexpected) in 7.768 (7.771) seconds

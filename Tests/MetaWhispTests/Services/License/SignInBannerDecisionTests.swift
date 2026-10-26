@@ -44,4 +44,19 @@ final class SignInBannerDecisionTests: XCTestCase {
         XCTAssertNil(SignInBannerDecision.resolve(isPro: false, lastError: nil, email: nil))
         XCTAssertNil(SignInBannerDecision.resolve(isPro: false, lastError: "  ", email: "   "))
     }
+
+    // MARK: - A sign-in the keychain refused to save (ITER-075 step 0, US-0.4)
+
+    /// Pro works now but will not survive a relaunch — never "Pro activated".
+    func testAnUnsavedProSignInSaysItIsForThisSessionOnly() {
+        let b = SignInBannerDecision.resolve(isPro: true, lastError: nil, email: "sam@example.com", unsavedStatus: -25293)
+        XCTAssertEqual(b?.title, "Pro on for this session only")
+        XCTAssertEqual(b?.body, LicenseRestore.writeProblemMessage(status: -25293))
+    }
+
+    func testAnUnsavedSignInWithoutProSaysItWasNotSaved() {
+        let b = SignInBannerDecision.resolve(isPro: false, lastError: nil, email: "sam@example.com", unsavedStatus: -25293)
+        XCTAssertEqual(b?.title, "Sign-in not saved")
+        XCTAssertEqual(b?.body, LicenseRestore.signInNotSavedMessage(status: -25293))
+    }
 }

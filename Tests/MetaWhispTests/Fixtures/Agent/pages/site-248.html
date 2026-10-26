@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Site Two Hundred Forty-Eight</title></head>
+<body>
+<main>
+  <h1>A page with a policy of its own</h1>
+  <img id="pic" alt="dot" src="data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7">
+  <button id="share" type="button" style="width: 200px; height: 40px">Share this</button>
+  <p id="log"></p>
+</main>
+<script>
+  // Its scripts run; whether its picture loads is its own policy's to say,
+  // and whether a window opens is the agent's tab's.
+  document.getElementById('log').textContent += 'ran;';
+  document.getElementById('share').addEventListener('click', () => {
+    document.getElementById('log').textContent += (window.open('/elsewhere', '_blank') ? 'opened' : 'blocked') + ';';
+  });
+</script>
+</body>
+</html>

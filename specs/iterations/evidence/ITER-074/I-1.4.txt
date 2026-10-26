@@ -1,0 +1,50 @@
+ITER-074 I-1.4 — AgentRouter + AgentQueue, 2026-09-24 18:23 CEST, orchestrator (GLM quota exhausted)
+
+User stories: US-1 (the app itself tells an errand from a question; anything unsure is a question; Esc starts nothing),
+US-8 (a second errand waits and starts when the first ends; a fourth is refused; 30-minute wait limit; update freeze).
+
+--- red: 20 tests, 13 failing (the 7 passing are the 'is a question' sides of a stub that always says question)
+AgentQueueTests testASecondErrandWaitsAndStartsWhenTheFirstEnds failed (0.000 seconds).
+AgentQueueTests testAWaitingErrandExpiresAfterThirtyMinutes failed (0.000 seconds).
+AgentQueueTests testAnExpiredErrandFreesItsPlace failed (0.564 seconds).
+AgentQueueTests testAnUpdateLetsTheRunningErrandFinishAndStartsNothingNew failed (0.001 seconds).
+AgentQueueTests testAtMostThreeWaitAndAFourthIsRefused failed (0.001 seconds).
+AgentQueueTests testErrandsStartAgainOnceTheUpdateIsWithdrawn failed (0.000 seconds).
+AgentQueueTests testErrandsStartInTheOrderTheyWereAskedFor failed (0.000 seconds).
+AgentQueueTests testStopAllClearsTheQueue failed (0.000 seconds).
+AgentQueueTests testTheFirstErrandStarts failed (0.000 seconds).
+AgentRouterTests testALateAnswerIsDiscardedWithoutWaitingForIt passed (0.000 seconds).
+AgentRouterTests testAMalformedAnswerIsAQuestion passed (0.000 seconds).
+AgentRouterTests testAQuestionIsAQuestion passed (0.000 seconds).
+AgentRouterTests testAnAnswerInTimeIsRouted failed (0.001 seconds).
+AgentRouterTests testAnEmptyTranscriptIsNeverAnErrand passed (0.000 seconds).
+AgentRouterTests testAnEngineErrorIsAQuestion passed (0.000 seconds).
+AgentRouterTests testAnErrandFromPointEightIsAnErrand failed (0.000 seconds).
+AgentRouterTests testEscWhileRoutingStartsNothing failed (0.053 seconds).
+AgentRouterTests testNoAnswerIsAQuestion passed (0.000 seconds).
+AgentRouterTests testNoEngineIsAQuestion passed (0.000 seconds).
+AgentRouterTests testTheGoalIsTheTranscriptTrimmed failed (0.000 seconds).
+--- mutation: no cancellation handler -> Esc waits for the 5 s deadline
+AgentRouterTests testEscWhileRoutingStartsNothing failed (5.678 seconds).
+--- green
+AgentQueueTests testASecondErrandWaitsAndStartsWhenTheFirstEnds passed (0.000 seconds).
+AgentQueueTests testAWaitingErrandExpiresAfterThirtyMinutes passed (0.000 seconds).
+AgentQueueTests testAnExpiredErrandFreesItsPlace passed (0.001 seconds).
+AgentQueueTests testAnUpdateLetsTheRunningErrandFinishAndStartsNothingNew passed (0.000 seconds).
+AgentQueueTests testAtMostThreeWaitAndAFourthIsRefused passed (0.000 seconds).
+AgentQueueTests testErrandsStartAgainOnceTheUpdateIsWithdrawn passed (0.000 seconds).
+AgentQueueTests testErrandsStartInTheOrderTheyWereAskedFor passed (0.000 seconds).
+AgentQueueTests testStopAllClearsTheQueue passed (0.000 seconds).
+AgentQueueTests testTheFirstErrandStarts passed (0.000 seconds).
+AgentRouterTests testALateAnswerIsDiscardedWithoutWaitingForIt passed (0.105 seconds).
+AgentRouterTests testAMalformedAnswerIsAQuestion passed (0.000 seconds).
+AgentRouterTests testAQuestionIsAQuestion passed (0.000 seconds).
+AgentRouterTests testAnAnswerInTimeIsRouted passed (0.000 seconds).
+AgentRouterTests testAnEmptyTranscriptIsNeverAnErrand passed (0.000 seconds).
+AgentRouterTests testAnEngineErrorIsAQuestion passed (0.000 seconds).
+AgentRouterTests testAnErrandFromPointEightIsAnErrand passed (0.000 seconds).
+AgentRouterTests testEscWhileRoutingStartsNothing passed (0.052 seconds).
+AgentRouterTests testNoAnswerIsAQuestion passed (0.000 seconds).
+AgentRouterTests testNoEngineIsAQuestion passed (0.000 seconds).
+AgentRouterTests testTheGoalIsTheTranscriptTrimmed passed (0.000 seconds).
+	 Executed 20 tests, with 0 failures (0 unexpected) in 0.159 (0.162) seconds

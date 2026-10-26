@@ -46,9 +46,26 @@ final class TranscriptionCoordinatorRecoveryTests: XCTestCase {
         }
         defer { try? FileManager.default.removeItem(at: url) }
         let path = url.path
-        XCTAssertTrue(path.contains("/MetaWhisp/Recovery/"),
-                      "Expected path to contain /MetaWhisp/Recovery/, got: \(path)")
+        // The running app's own Recovery folder: "MetaWhisp" in the owner's app
+        // (pinned in AppIdentityTests), "MetaWhisp Dev" under the test runner.
+        let folder = "/\(AppIdentity.current.supportFolderName)/Recovery/"
+        XCTAssertTrue(path.contains(folder),
+                      "Expected path to contain \(folder), got: \(path)")
         XCTAssertTrue(path.hasSuffix(".wav"),
                       "Expected .wav extension, got: \(path)")
+    }
+
+    /// The owner's app keeps its Recovery folder where support docs and
+    /// audit-daily.sh look (…/MetaWhisp/Recovery); any other bundle gets its own.
+    func test_recoveryDirectory_followsTheAppIdentity() {
+        let base = FileManager.default.temporaryDirectory
+            .appendingPathComponent("mw-recovery-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: base) }
+        let production = TranscriptionCoordinator.recoveryDirectory(
+            identity: AppIdentity(bundleIdentifier: "com.metawhisp.app"), applicationSupport: base)
+        XCTAssertEqual(production?.path, base.appendingPathComponent("MetaWhisp/Recovery").path)
+        let dev = TranscriptionCoordinator.recoveryDirectory(
+            identity: AppIdentity(bundleIdentifier: "com.metawhisp.app.dev"), applicationSupport: base)
+        XCTAssertEqual(dev?.path, base.appendingPathComponent("MetaWhisp Dev/Recovery").path)
     }
 }

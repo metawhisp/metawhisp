@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Site Four Hundred Ninety-One</title></head>
+<body>
+<main>
+  <h1>Send a gift</h1>
+  <!-- The brain's form whose Send sits beside it in one box (Codex review 3 of 2026-10-19, P1): the box holds the
+       form's two fields, so the button's group is the box's, not the form's; its script submits the form. -->
+  <div class="card">
+    <form id="gift" action="/gift" method="post">
+      <label for="to">Recipient</label>
+      <input id="to" name="to" type="text">
+      <label for="note">Message</label>
+      <textarea id="note" name="note"></textarea>
+    </form>
+    <button type="button" id="send" onclick="document.getElementById('gift').requestSubmit()">Send gift</button>
+  </div>
+</main>
+</body>
+</html>

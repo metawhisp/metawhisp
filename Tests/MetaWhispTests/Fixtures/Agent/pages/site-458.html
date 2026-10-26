@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Site Four Fifty-Eight</title></head>
+<body>
+<main>
+  <!-- ITER-076 stage 7, review round 1 (C2): a demo form that sends itself
+       into a frame of the page — as some sites send a form unseen — the
+       moment its e-mail field is typed in: Fill never lets it go. -->
+  <h1 id="title">Request a demo</h1>
+  <form id="demo" action="/thanks" method="post" target="sink">
+    <label for="first">First name</label><input id="first" name="first" autocomplete="given-name">
+    <label for="email">Work email</label><input id="email" name="email" type="email">
+    <label for="company">Company</label><input id="company" name="company" autocomplete="organization">
+    <button type="submit" id="send">Request a demo</button>
+  </form>
+  <iframe name="sink" id="sink" src="about:blank"></iframe>
+</main>
+<script>
+  document.getElementById('email').addEventListener('input', () => document.getElementById('demo').submit());
+</script>
+</body>
+</html>

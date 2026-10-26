@@ -2,13 +2,24 @@
 set -euo pipefail
 
 # MetaWhisp Release Script
-# Builds app, creates DMG, signs for Sparkle, copies to website downloads
+# Builds the app, packages a DMG, notarizes it, and signs for Sparkle.
+# Publishing comes after it, by hand and on GitHub only (the steps it prints at
+# the end); it never touches metawhisp.com and never deploys the API.
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "$SCRIPT_DIR"
+source "$SCRIPT_DIR/scripts/lib/app-install.sh"
+# On any exit a self-check still running is stopped and the smoke copy goes
+# (scripts/lib/app-install.sh).
+mw_trap_exit 'rm -rf "${SMOKE_APP_COPY:-}"'
+
+# Preflight: refuse a release while a tracked file is modified or staged
+# (untracked files are allowed — the owner keeps some in the main tree), or
+# while the regression gate does not pass. Runs before bash build.sh.
+mw_release_preflight
 
 echo "==> Step 1: Building app..."
-bash build.sh --no-launch
+bash build.sh
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Step 1b: Bundle integrity assertions
@@ -19,7 +30,8 @@ bash build.sh --no-launch
 # build pipeline had no invariant check for that file; users hit "MLX error"
 # on first launch. These asserts make that class of failure impossible —
 # the release aborts here, not at the user.
-ASSEMBLED_APP="$HOME/Applications/MetaWhisp.app"
+# build.sh leaves the signed release bundle in .build; nothing is installed.
+ASSEMBLED_APP="$MW_RELEASE_APP"
 echo "==> Step 1b: Bundle integrity check..."
 required=(
     "$ASSEMBLED_APP/Contents/Info.plist"
@@ -55,10 +67,8 @@ echo "    Codesign chain valid"
 echo ""
 echo "==> Step 2: Creating DMG (TCC-safe via /tmp staging)..."
 # `make-dmg-manual.sh` stages in /tmp and uses plain hdiutil — survives in any
-# shell. Pre-step: kill running app — it holds the /Volumes/MetaWhisp mount-name
-# lock and would block hdiutil otherwise.
-pkill -x MetaWhisp 2>/dev/null || true
-sleep 1
+# shell. It mounts its image under /tmp/mw-mount, never /Volumes, so the working
+# app keeps running: a release never stops it (ITER-075 step 0, US-0.2).
 bash make-dmg-manual.sh
 
 DMG="$SCRIPT_DIR/MetaWhisp.dmg"
@@ -147,15 +157,26 @@ else
 fi
 
 # ──────────────────────────────────────────────────────────────────────────────
-# Step 3b: Smoke test — mount fresh DMG, launch, assert process survives 5s
+# Step 3b: Smoke test — mount fresh DMG, run the app's self-check
 # ──────────────────────────────────────────────────────────────────────────────
 # Notarization Accepted ≠ working. The 2026-05-21 incident shipped an
 # Accepted DMG that crashed on first eval(). This step actually RUNS the
-# binary from the DMG in isolation and checks it doesn't die. Catches any
-# class of bundle-broken-at-runtime issue (missing metallib, broken
-# Frameworks rpath, entitlement mismatch, etc).
+# binary from the DMG with `--self-check` (SelfCheck.swift):
+#   - dyld must load it and Sparkle, so a broken Frameworks rpath stops it here;
+#   - macOS must accept its signature at launch;
+#   - mlx.metallib must sit next to it;
+#   - MLX must run two tiny GPU computations, one with a kernel from the metallib.
+# It exits by itself before the app exists: no store, keychain, log, network or
+# capture, only macOS's shared GPU shader cache for the bundle id. So it runs
+# beside the working app, which a release never stops (ITER-075 step 0, US-0.2).
+# Not covered:
+#   - the app's own startup code. A test build swapped onto the owner's Mac
+#     (hot-swap.sh) runs it first, before a release, with the working app's own
+#     identity;
+#   - an entitlement dropped from the signature, which macOS only enforces when
+#     the app uses it.
 echo ""
-echo "==> Step 3b: Smoke test — mount DMG and launch..."
+echo "==> Step 3b: Smoke test — mount DMG and run the self-check..."
 SMOKE_MOUNT="/tmp/mw-smoke-mount"
 SMOKE_APP_COPY="/tmp/MetaWhisp-smoke.app"
 hdiutil detach "$SMOKE_MOUNT/MetaWhisp" -force >/dev/null 2>&1 || true
@@ -169,36 +190,13 @@ ditto "$SMOKE_MOUNT/MetaWhisp/MetaWhisp.app" "$SMOKE_APP_COPY"
 hdiutil detach "$SMOKE_MOUNT/MetaWhisp" -force >/dev/null 2>&1 || true
 rmdir "$SMOKE_MOUNT" 2>/dev/null || true
 
-# Capture log baseline so we can grep for new errors written during the
-# smoke launch window only.
-LOG_BASELINE_LINES=$(wc -l < ~/Library/Logs/MetaWhisp.log 2>/dev/null || echo 0)
-# Launch without taking focus.
-"$SMOKE_APP_COPY/Contents/MacOS/MetaWhisp" >/tmp/mw-smoke.stdout 2>/tmp/mw-smoke.stderr &
-SMOKE_PID=$!
-disown $SMOKE_PID 2>/dev/null || true
-sleep 5
-if ! kill -0 $SMOKE_PID 2>/dev/null; then
-    echo "==> ❌ Smoke test FAILED — app died within 5s"
-    echo "--- stdout ---"
-    cat /tmp/mw-smoke.stdout | tail -20
-    echo "--- stderr ---"
-    cat /tmp/mw-smoke.stderr | tail -20
+if ! mw_self_check "$SMOKE_APP_COPY/Contents/MacOS/MetaWhisp"; then
+    echo "==> ❌ Smoke test FAILED"
     rm -rf "$SMOKE_APP_COPY"
     exit 1
 fi
-# Look for fatal-class messages written DURING the smoke window only.
-fatal_grep=$(tail -n +$((LOG_BASELINE_LINES + 1)) ~/Library/Logs/MetaWhisp.log 2>/dev/null | grep -iE "(Fatal error|MLX error:|SIGSEGV|abort\(\))" | head -5 || true)
-if [ -n "$fatal_grep" ]; then
-    echo "==> ❌ Smoke test FAILED — fatal-class message in log:"
-    echo "$fatal_grep"
-    kill $SMOKE_PID 2>/dev/null || true
-    rm -rf "$SMOKE_APP_COPY"
-    exit 1
-fi
-kill $SMOKE_PID 2>/dev/null || true
-wait $SMOKE_PID 2>/dev/null || true
-rm -rf "$SMOKE_APP_COPY" /tmp/mw-smoke.stdout /tmp/mw-smoke.stderr
-echo "    Smoke test passed (PID $SMOKE_PID survived 5s, no fatal errors)"
+rm -rf "$SMOKE_APP_COPY"
+echo "    Smoke test passed (the DMG's app ran its self-check)"
 
 echo ""
 echo "============================================"
@@ -207,8 +205,12 @@ echo "============================================"
 echo "  DMG size: $DMG_SIZE bytes"
 echo "  $SIGNATURE"
 echo ""
-echo "  Next steps:"
-echo "  1. Update website/src/appcast.xml with signature + size"
-echo "  2. Deploy website: cd website && npm run deploy"
-echo "  3. Deploy API if changed: cd api && npx wrangler deploy"
+echo "  Next steps (GitHub-only):"
+echo "  1. Build appcast.xml: prepend this version's item (with the signature"
+echo "     and length printed above) to the current appcast.xml."
+echo "  2. gh release create vX.Y.Z --latest MetaWhisp.dmg appcast.xml"
+echo "  3. Verify: curl -L https://metawhisp.com/appcast.xml — the new"
+echo "     version must be at the top."
+echo ""
+echo "  Never touch the website or deploy the API from here."
 echo "============================================"

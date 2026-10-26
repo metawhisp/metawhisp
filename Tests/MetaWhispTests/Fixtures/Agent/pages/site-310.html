@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Site Three Hundred Ten</title>
+<style>body { margin: 0; font: 16px sans-serif; } main, aside { padding: 8px 40px; } form { margin: 8px 0; }</style>
+</head>
+<body>
+<main>
+  <h1>Checkout</h1>
+  <p>Pay with Visa ending in 4242</p>
+  <form id="card"></form>
+  <form method="post" action="https://site-310.test/next"><button type="submit">Confirm</button></form>
+</main>
+<aside><p>Total: $42.00</p></aside>
+<p id="log"></p>
+<script>
+  // ITER-076 I-09, round 7 (Claude review c11, #3): a card's detail the page
+  // marks secret by its structure, named a card's only by its words — a
+  // security code typed as a password (/cvv), a card number drawn as dots
+  // (/dotted) — in a form of its own; "Confirm" sends another form, and the
+  // total stands beside the page's main content only. /remembered: a card
+  // number a field shows, which a test then draws as dots.
+  const fields = {
+    '/dotted': '<label>Card number <input name="pan" style="-webkit-text-security: disc"></label>',
+    '/remembered': '<label>Number <input name="n" value="4111 1111 1111 1111"></label>'
+  };
+  document.getElementById('card').innerHTML = fields[location.pathname] ||
+    '<label>CVV <input type="password" name="cvv"></label>';
+  for (const sent of document.querySelectorAll('form')) {
+    sent.addEventListener('submit', (event) => {
+      event.preventDefault();
+      document.getElementById('log').textContent += 'paid;';
+    });
+  }
+</script>
+</body>
+</html>

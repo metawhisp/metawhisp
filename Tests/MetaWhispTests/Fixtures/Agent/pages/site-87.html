@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Site Eighty-Seven</title>
+<style> body { min-height: 3000px; } #more { position: absolute; top: 2000px; left: 40px; } </style>
+</head>
+<body>
+<main>
+  <h1>An article</h1>
+  <button id="more" type="button">Continue reading</button>
+  <p id="log"></p>
+</main>
+<script>
+  // Scrolling down asks the reader for a password in no form: any button
+  // outside a form could send it.
+  addEventListener('scroll', () => {
+    const wall = document.createElement('div');
+    wall.innerHTML = '<label>Password <input type="password" name="password"></label>';
+    document.querySelector('main').prepend(wall);
+  }, { once: true });
+  document.getElementById('more').addEventListener('click', () => {
+    document.getElementById('log').textContent += 'read on;';
+  });
+</script>
+</body>
+</html>

@@ -1,0 +1,16 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>New tab 480</title></head>
+<body>
+<nav><a href="https://site-480.test/link">New tab link</a></nav>
+<main id="page"></main>
+<script>
+  // A side menu's link to the page itself, named like the task's, beside the link that opens the new page
+  // (qa-practice new tab, 2026-10-16).
+  const page = document.getElementById('page');
+  page.innerHTML = location.pathname === '/new_page'
+    ? '<h1>New page</h1><p>I am a new page in a new tab</p>'
+    : '<h1>New tab link</h1><p><a href="https://site-480.test/new_page" target="_blank">New page will be opened on a new tab</a></p>';
+</script>
+</body>
+</html>

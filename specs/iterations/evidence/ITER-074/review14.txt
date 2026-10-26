@@ -1,0 +1,12 @@
+ITER-074 review round 14 (Codex on 6acdc90), fix — 2026-09-24 21:44 CEST
+Code by GLM-5.3-Flash from the orchestrator's instructions (review14-instructions.md).
+Round 14 confirmed fixed: lost replies, mixed grant labels.
+
+Finding (confirmed in the code): a form's submit label came from its first submit control, even one inside
+someone's writing or a sensitive field, so its words reached every other control's formSubmitLabel.
+Fix: only a submitter that could itself be reported names its form.
+
+--- red
+ObserverFormsTests testASubmitButtonInsideASensitiveFieldNeverNamesItsForm failed (0.642 seconds).
+--- green (agent suites)
+	 Executed 206 tests, with 0 failures (0 unexpected) in 13.170 (13.185) seconds

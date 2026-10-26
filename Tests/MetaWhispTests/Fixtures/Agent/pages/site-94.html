@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Site Ninety-Four</title></head>
+<body>
+<header>
+  <form id="login" action="/session" method="post">
+    <input name="user" aria-label="Username" value="sam">
+    <input type="password" aria-label="Password" value="correct-horse">
+    <button type="submit">Sign in</button>
+  </form>
+</header>
+<main>
+  <h1>Guides</h1>
+  <form id="search" action="/search" method="get">
+    <input type="search" aria-label="Search guides" value="voice notes">
+    <button type="submit">Search</button>
+  </form>
+  <select aria-label="Sort by"><option>Newest</option><option selected>Popular</option></select>
+  <textarea aria-label="Feedback">Great guides</textarea>
+  <a href="https://site-94.test/help">Help</a>
+  <div role="button" tabindex="0" id="continue" onclick="document.title = 'Continued'">Continue</div>
+</main>
+</body>
+</html>

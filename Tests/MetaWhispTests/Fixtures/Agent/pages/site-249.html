@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Site Two Hundred Forty-Nine</title></head>
+<body>
+<main>
+  <h1>Your list</h1>
+  <button id="export" type="button" style="width: 200px; height: 40px">Export the list</button>
+  <p id="log"></p>
+</main>
+<script>
+  // The usual export: a file made in the page on a person's click, saved
+  // through a download link the page clicks itself.
+  document.getElementById('export').addEventListener('click', () => {
+    const link = document.createElement('a');
+    link.href = URL.createObjectURL(new Blob(['one, two'], { type: 'text/csv' }));
+    link.download = 'list.csv';
+    document.body.appendChild(link);
+    link.click();
+    document.getElementById('log').textContent += 'exported;';
+  });
+</script>
+</body>
+</html>

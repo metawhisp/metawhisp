@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Site Ninety-One</title></head>
+<body>
+<main>
+  <h1>Share</h1>
+  <button id="share" type="button" style="width: 200px; height: 50px">Share later</button>
+  <p id="log"></p>
+</main>
+<script>
+  // A window opened a while after the person's click, once some work is done.
+  document.getElementById('share').addEventListener('click', () => {
+    setTimeout(() => {
+      const opened = window.open('about:blank', '_blank');
+      document.getElementById('log').textContent += (opened ? 'opened' : 'blocked') + ';';
+    }, 600);
+  });
+</script>
+</body>
+</html>

@@ -52,6 +52,21 @@ final class CloudWhisperEngine: TranscriptionEngine, @unchecked Sendable {
         // No-op
     }
 
+    /// The chosen provider and the user's own key for it — what a transcription
+    /// without Pro is sent with.
+    @MainActor static func ownKey(settings: AppSettings) -> (provider: CloudTranscriptionProvider, key: String) {
+        let provider = CloudTranscriptionProvider(rawValue: settings.cloudTranscriptionProvider) ?? .groq
+        switch provider {
+        case .groq: return (provider, settings.groqKey)
+        case .openai: return (provider, settings.openaiKey)
+        }
+    }
+
+    /// Whether `transcribe` has what it needs: the Pro proxy, or the user's own key.
+    @MainActor static func hasCredential(settings: AppSettings, proxyAvailable: Bool) -> Bool {
+        proxyAvailable || !ownKey(settings: settings).key.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
     func transcribe(audioSamples: [Float], language: String?, promptWords: [String], countUsage: Bool) async throws -> TranscriptionResult {
         let settings = await MainActor.run { AppSettings.shared }
         let isPro = await MainActor.run { LicenseService.shared.isPro }
@@ -63,15 +78,7 @@ final class CloudWhisperEngine: TranscriptionEngine, @unchecked Sendable {
         }
 
         // Free users → direct API call with own key
-        let providerName = await MainActor.run { settings.cloudTranscriptionProvider }
-        let provider = CloudTranscriptionProvider(rawValue: providerName) ?? .groq
-
-        let apiKey: String = await MainActor.run {
-            switch provider {
-            case .groq: return settings.groqKey
-            case .openai: return settings.openaiKey
-            }
-        }
+        let (provider, apiKey) = await MainActor.run { Self.ownKey(settings: settings) }
 
         guard !apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             throw TranscriptionError.noAPIKey
@@ -204,7 +211,8 @@ final class CloudWhisperEngine: TranscriptionEngine, @unchecked Sendable {
             language: result.language ?? language,
             duration: audioDuration,
             processingTime: processingTime,
-            segments: segments
+            segments: segments,
+            viaProProxy: true
         )
     }
 

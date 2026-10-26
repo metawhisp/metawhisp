@@ -1,6 +1,16 @@
 import Foundation
 import NaturalLanguage
 
+/// What the transcription coordinator asks of post-processing (ITER-079):
+/// `TextProcessor` in the app; tests hold one, to close a question while it runs.
+@MainActor
+protocol TranscriptPostProcessor: AnyObject {
+    var needsProcessing: Bool { get }
+    func process(_ text: String, translate: Bool) async throws -> (String, Bool)
+}
+
+extension TextProcessor: TranscriptPostProcessor {}
+
 /// Orchestrates text post-processing: filler removal, polishing, translation.
 @MainActor
 final class TextProcessor {

@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Site Two Hundred Sixty-One</title>
+<style>body { margin: 0; font: 16px sans-serif; } main, aside { padding: 16px 40px; }</style>
+</head>
+<body>
+<main id="page"></main>
+<p id="log"></p>
+<script>
+  // ITER-076 I-09, review round 3, part A.
+  const page = document.getElementById('page');
+  window.log = (text) => { document.getElementById('log').textContent += text + ';'; };
+  const ids = (prefix, count) => Array.from({ length: count }, (_, i) => prefix + (i + 1)).join(' ');
+  if (location.pathname === '/claims') {
+    // Two dropdowns claim one list (Codex review 2, P1-2): its owner names
+    // more lists than anyone uses, in a POST form beside a total; the other
+    // is an ordinary dropdown. Whose the list is cannot be known for either.
+    page.innerHTML = '<form id="order" action="https://site-261.test/order" method="post"><p>Total: EUR 49.00</p>' +
+      '<div role="combobox" aria-label="Size" aria-expanded="true" aria-controls="' + ids('s', 69) + ' sizes" ' +
+      'tabindex="0">Pick</div></form>' +
+      '<div role="combobox" aria-label="Colour" aria-expanded="false" aria-controls="sizes" tabindex="0">Pick</div>' +
+      '<ul id="sizes" role="listbox"><li role="option" tabindex="0" ' +
+      'onclick="log(\'ordered\'); document.getElementById(\'order\').requestSubmit()">Large</li></ul>' +
+      '<button type="button">Help</button>';
+    document.getElementById('order').addEventListener('submit', (event) => event.preventDefault());
+  } else if (location.pathname === '/saved-card') {
+    // A saved card's last digits end the main text; the next region begins
+    // with a code's word (Claude review c8, #5) — one no ordinary code's
+    // phrase holds: "Promo-Code" names nothing since round 4, decision 2.
+    // No card field, no total beside the button, and a button outside the
+    // payment words.
+    page.innerHTML = '<h1>Checkout</h1><p>Pay with Visa •••• 4242</p>' +
+      '<form action="https://site-261.test/place" method="post"><button type="submit">Continue</button></form>';
+    document.body.insertAdjacentHTML('beforeend', '<aside><p>Gift-Code</p><input aria-label="Voucher"></aside>');
+  } else if (location.pathname === '/saved-card-code') {
+    // The same, a code's word right after the last digits in the main text.
+    page.innerHTML = '<h1>Checkout</h1><p>Pay with Visa •••• 4242 · Gift code</p>' +
+      '<form action="https://site-261.test/place" method="post"><button type="submit">Continue</button></form>';
+  } else if (location.pathname === '/shapes') {
+    // The secret shapes, each beside the words that name it (decision 10).
+    page.innerHTML = '<section id="groups"><p>Your one-time code: 123 456</p>' +
+      '<p>Your verification code is 482-913</p><p>Enter code 12 34 56 to sign in.</p></section>' +
+      '<section id="documents"><p>Passport number: 123456789</p><p>Social security number 987-65-4321</p>' +
+      '<p>Licence 1234567890</p></section>' +
+      '<section id="recovery"><p>Your recovery codes: a1b2c-3d4e5 f6a7b-8c9d0</p><p>Backup key Q7RT9XKZ2M</p></section>' +
+      '<section id="kept"><p>Prices: $1,299.00 and EUR 1299.</p><p>Founded in 2026.</p>' +
+      '<p>Call 555-1234 or +1 415 555 0123.</p><p>Order 12345678 and order #246813579 shipped.</p>' +
+      '<p>Model XR2000-PRO in stock.</p></section>' +
+      '<button type="button">Help</button>';
+  }
+</script>
+</body>
+</html>

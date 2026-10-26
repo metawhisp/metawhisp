@@ -11,10 +11,15 @@ enum GatePurpose: String, Codable, Equatable {
 }
 
 /// Wire shape for `POST /api/pro/gate`.
+///
+/// No `recent_topics` (2026-10-20): the worker put the list in the prompt as
+/// RECENT_TOPICS, and the gate read that do-not-repeat list as live facts —
+/// in the owner's log that day 95 proactive fires cited a "recent topic".
+/// The gate judges the context it is given; repeats are the dedup's job,
+/// after the model. The worker reads a missing list as empty.
 struct GateRequest: Encodable {
     let context: String
     let purpose: String
-    let recent_topics: [String]
     let service_id: String
 }
 
@@ -51,16 +56,18 @@ enum GateClient {
     static func buildRequest(
         context: String,
         purpose: GatePurpose,
-        recentTopics: [String],
         serviceId: String
     ) -> GateRequest {
         return GateRequest(
             context: context,
             purpose: purpose.rawValue,
-            recent_topics: recentTopics,
             service_id: serviceId
         )
     }
+
+    /// What the gate answered, and whether the answer is the gate's own or a
+    /// fail-open stand-in.
+    typealias Verdict = (shouldFire: Bool, score: Double, reasoning: String, failedOpen: Bool)
 
     /// Pure: threshold decision. NaN score → fail-open (fire). Tested.
     static func shouldFire(score: Double, threshold: Double) -> Bool {
@@ -77,11 +84,10 @@ enum GateClient {
     static func call(
         context: String,
         purpose: GatePurpose,
-        recentTopics: [String] = [],
         threshold: Double = defaultThreshold,
         serviceId: String,
         licenseKey: String
-    ) async -> (shouldFire: Bool, score: Double, reasoning: String, failedOpen: Bool) {
+    ) async -> Verdict {
         guard !context.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             return (false, 0, "empty context", false)
         }
@@ -95,7 +101,6 @@ enum GateClient {
         let body = buildRequest(
             context: context,
             purpose: purpose,
-            recentTopics: recentTopics,
             serviceId: serviceId
         )
         do {

@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Sign in</title></head>
+<body>
+<main>
+  <h1>Sign in to continue</h1>
+  <form id="login" action="/session" method="post">
+    <label for="user">Email</label>
+    <input id="user" type="text" autocomplete="username" value="someone@example.com">
+    <label for="pass">Password</label>
+    <input id="pass" type="password" autocomplete="current-password" value="not-a-real-secret">
+    <select aria-label="Account"><option>someone@example.com</option><option>another account</option></select>
+    <label for="key">Access key</label>
+    <input id="key" type="text" name="pwd">
+    <button type="submit">Sign in</button>
+  </form>
+</main>
+</body>
+</html>

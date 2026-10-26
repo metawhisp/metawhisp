@@ -1,0 +1,27 @@
+ITER-074 review round 21 (Codex on 1f9ae42 + fa34996), fix — 2026-09-24
+Code by GLM-5.3-Flash from the orchestrator's instructions (review21-instructions.md); compiled, run and
+reviewed line by line by the orchestrator.
+Round 21 confirmed fixed: points 1, 2, 3, 4, 6 of the round-20 sweep. Accepted with reasoning: 5 (a
+highlight on a short word inside a longer one flags the page) and 7b (a passport's expiry flags a payment
+page). Russian names stay with the owner.
+
+Findings (both confirmed in the code; both regressions of fa34996):
+  1. "card no" asked for a word end inside a phrase, but phrases are matched on the words read run together,
+     where a seam is read as nothing: "Card No" + a block "Required" read "Card NoRequired" and the card
+     number's value was reported. Fix: no phrase asks for a word end; "card no" and "cardno" are matched
+     standing alone, where a seam counts as a break.
+  2. "#" became " number " before the length limit was checked, so a field of "#" grew eightfold before its
+     rejection. Fix: the limit counts the words as the page wrote them; "#" is read after the check, so the
+     work after it is bounded by eight times the limit.
+Guards "Card No." and "cardNo" pass before and after.
+
+--- red (fa34996 + tests)
+Tests/MetaWhispTests/Services/Agent/ObserverFormsTests.swift:536: error: testCardNoBeforeASeamIsACardNumber] : XCTAssertTrue failed
+Tests/MetaWhispTests/Services/Agent/ObserverFormsTests.swift:537: error: testCardNoBeforeASeamIsACardNumber] : XCTAssertFalse failed
+Tests/MetaWhispTests/Services/Agent/ObserverFormsTests.swift:547: error: testTheLimitCountsTheWordsAsThePageWroteThem] : XCTAssertTrue failed
+--- green (ObserverFormsTests)
+	 Executed 50 tests, with 0 failures (0 unexpected) in 4.889 (4.894) seconds
+--- gate
+  ✅ 1801 tests, 0 failures
+  ✅ 88 critical suites ran
+PASS — safe to continue.

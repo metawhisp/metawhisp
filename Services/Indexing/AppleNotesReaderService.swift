@@ -17,6 +17,14 @@ final class AppleNotesReaderService: ObservableObject {
     private var modelContainer: ModelContainer?
     private var timerTask: Task<Void, Never>?
 
+    /// Runs the AppleScript: osascript in the app, a test's own in tests — so
+    /// no test can start Notes or show the Automation prompt.
+    var runScript: ((String) async throws -> String)?
+    /// Whether macOS already lets MetaWhisp drive Notes, read without asking.
+    var automationAllowed: () async -> Bool = {
+        await AutomationPermission.check(bundleID: "com.apple.Notes", askUserIfNeeded: false) == .allowed
+    }
+
     /// Max notes fetched per scan.
     private let maxNotesPerScan = 40
     /// Min content length to bother with LLM.
@@ -47,13 +55,27 @@ final class AppleNotesReaderService: ObservableObject {
         timerTask = nil
     }
 
-    /// Fetch Apple Notes via AppleScript + extract memories.
-    func scanNow() async {
+    /// Fetch Apple Notes via AppleScript + extract memories. The timer passes
+    /// no `ask`: the script itself would bring up the Automation prompt, so a
+    /// timed scan runs only when macOS already lets MetaWhisp drive Notes;
+    /// SCAN NOW passes one (step-1 review #1).
+    func scanNow(ask: PermissionAsk? = nil) async {
         guard !isRunning else { return }
         guard settings.appleNotesEnabled else { return }
         if !hasLLMAccess { NSLog("[AppleNotes] scan skipped: no LLM access (no API key, not Pro, local model not loaded)") }
         guard hasLLMAccess else { return }
         guard let container = modelContainer else { return }
+        if ask == nil, !(await automationAllowed()) {
+            lastError = "Press SCAN NOW to read Notes — a timed scan never asks for access."
+            NSLog("[AppleNotes] timed scan skipped — Notes access not confirmed without asking (or Notes is closed)")
+            return
+        }
+        // The check above awaits, and a SCAN NOW may have started meanwhile:
+        // checked again and claimed with no suspension between (round-2 N2).
+        guard !isRunning else {
+            NSLog("[AppleNotes] timed scan skipped — a scan started while it checked Notes access")
+            return
+        }
 
         isRunning = true
         NSLog("[AppleNotes] scan start: fetching up to %d notes via osascript", maxNotesPerScan)
@@ -156,7 +178,10 @@ final class AppleNotesReaderService: ObservableObject {
     }
 
     private func fetchNotes(limit: Int) async throws -> [AppleNotePayload] {
-        try await withCheckedThrowingContinuation { cont in
+        if let runScript {
+            return Self.parseAppleScriptOutput(try await runScript(Self.readNotesAppleScript(limit: limit)))
+        }
+        return try await withCheckedThrowingContinuation { cont in
             DispatchQueue.global(qos: .userInitiated).async {
                 let script = Self.readNotesAppleScript(limit: limit)
                 let process = Process()

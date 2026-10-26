@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Site Four Hundred Ninety-Nine</title></head>
+<body>
+<main>
+  <h1 id="title">Sign in</h1>
+  <!-- A real sign-in (2026-10-21): a required e-mail and a password the form needs - by default its autocomplete
+       names it the sign-in's own (current-password). Typing the e-mail is the errand's; a press of the form with
+       the password empty is the user's sign-in, handed over before any Yes. The query says how the form needs it:
+       "required", "aria" (aria-required), "new" (a registration's new-password), "otp" (a code's one-time-code);
+       "filled" types the password in before the look. -->
+  <form id="login" action="/session" method="post">
+    <label id="name-row" hidden>Full name <input name="name" id="name"></label>
+    <label id="email-row">Email <input type="email" name="email" id="email" autocomplete="username" required></label>
+    <label id="secret-row"><span id="secret-label">Password</span> <input type="password" name="password" id="password"></label>
+    <button type="submit" id="send">Sign in</button>
+  </form>
+  <p><a href="/help">Help</a></p>
+</main>
+<script>
+  const asked = new URLSearchParams(location.search);
+  const form = document.getElementById('login');
+  const secret = document.getElementById('password');
+  if (asked.has('required')) {
+    secret.required = true;
+  } else if (asked.has('aria')) {
+    secret.setAttribute('aria-required', 'true');
+  } else if (asked.has('new')) {
+    document.getElementById('title').textContent = 'Create an account';
+    document.getElementById('name-row').hidden = false;
+    form.action = '/register';
+    secret.setAttribute('autocomplete', 'new-password');
+    document.getElementById('send').textContent = 'Create account';
+  } else if (asked.has('otp')) {
+    document.getElementById('title').textContent = 'Verify it is you';
+    document.getElementById('email-row').remove();
+    form.action = '/verify';
+    document.getElementById('secret-label').textContent = 'Code';
+    secret.type = 'text';
+    secret.name = 'code';
+    secret.setAttribute('autocomplete', 'one-time-code');
+    document.getElementById('send').textContent = 'Verify';
+  } else {
+    secret.setAttribute('autocomplete', 'current-password');
+  }
+  if (asked.has('filled')) secret.value = 'site-pass-99';
+</script>
+</body>
+</html>

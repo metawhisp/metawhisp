@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Site Two Hundred Thirty-Two</title></head>
+<body>
+<main>
+  <h1 id="heading">Your details</h1>
+  <form id="details" action="/save" method="post" onsubmit="return false">
+    <label for="name">Your name</label>
+    <input id="name" name="name" type="text">
+  </form>
+  <p><a id="next" href="/next">Next page</a></p>
+</main>
+<script>
+  // The second page: the form is not on it.
+  if (location.pathname === '/next') {
+    document.getElementById('heading').textContent = 'Second page';
+    document.getElementById('details').remove();
+    document.getElementById('next').remove();
+  }
+</script>
+</body>
+</html>

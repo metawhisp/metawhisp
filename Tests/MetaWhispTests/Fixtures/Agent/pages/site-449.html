@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Site Four Forty-Nine</title></head>
+<body>
+<main>
+  <!-- ITER-076 stage 7, review round 1 (C1): a demo form whose e-mail and
+       web address the site filled in itself, beside one empty field. It is
+       still a form of the user's details: one Fill that shows every field —
+       the e-mail the user's own, the web address no detail holds left empty —
+       then one Send. -->
+  <h1 id="title">Request a demo</h1>
+  <form id="demo" action="/thanks" method="post">
+    <label for="name">Full name</label><input id="name" name="name" autocomplete="name">
+    <label for="email">Work email</label><input id="email" name="email" type="email" value="alex@example.test">
+    <label for="site">Website</label><input id="site" name="site" type="url" value="https://">
+    <button type="submit" id="send">Request a demo</button>
+  </form>
+  <p id="thanks" hidden>Thank you.</p>
+</main>
+<script>
+  if (location.pathname === '/thanks') {
+    document.getElementById('demo').remove();
+    document.getElementById('title').textContent = 'Thanks';
+    document.getElementById('thanks').hidden = false;
+  }
+</script>
+</body>
+</html>

@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Jokes 404</title></head>
+<body>
+<main>
+  <!-- ITER-076 brain, step 2: a page of jokes the reader reads — a heading,
+       ten list items, a paragraph a break splits, a paragraph with words in
+       markup, and a button that adds a joke, so the page's text changes. -->
+  <h1>Ten jokes</h1>
+  <ul>
+    <li>Joke 1: The calendar felt nervous because its days were numbered.</li>
+    <li>Joke 2: The bicycle fell over because it was two tired.</li>
+    <li>Joke 3: The scarecrow won an award for being outstanding in his field.</li>
+    <li>Joke 4: The math book looked sad because it had too many problems.</li>
+    <li>Joke 5: The skeleton skipped the party because it had no body to go with.</li>
+    <li>Joke 6: The coffee filed a police report because it got mugged.</li>
+    <li>Joke 7: The tomato turned red because it saw the salad dressing.</li>
+    <li>Joke 8: The golfer wore two pairs of pants in case he got a hole in one.</li>
+    <li>Joke 9: The pencil stayed home because it was pointless.</li>
+    <li>Joke 10: The ocean said nothing to the shore and simply waved.</li>
+  </ul>
+  <p>Knock knock.<br>Who is there?</p>
+  <p>By <b>Sam</b> the joke keeper</p>
+  <button id="more" type="button">More jokes</button>
+</main>
+<script>
+  let added = 0;
+  document.getElementById('more').addEventListener('click', () => {
+    added += 1;
+    const item = document.createElement('li');
+    item.textContent = 'Extra joke ' + added + ': the page changed.';
+    document.querySelector('ul').appendChild(item);
+  });
+</script>
+</body>
+</html>

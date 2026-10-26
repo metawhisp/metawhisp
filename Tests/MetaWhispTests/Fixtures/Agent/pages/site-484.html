@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Site Four Hundred Eighty Four</title></head>
+<body>
+<main>
+  <h1>Checkout</h1>
+  <!-- A card entry framed in no form, shown, and sandboxed: what it holds cannot be read, as another site's
+       cannot. A person may type a card into it; the page hides it once its next step comes (`hideCard`). -->
+  <iframe id="card" sandbox title="Card number" style="width:300px;height:60px;border:0"
+          srcdoc="<input aria-label=Number>"></iframe>
+  <button type="button">Continue</button>
+  <a href="https://site-484.test/help">Help</a>
+</main>
+<script>
+  window.hideCard = () => { document.getElementById('card').style.display = 'none'; return 'hidden'; };
+  // Hidden, and the words that named it taken away: what it holds cannot be read, and nothing names it now.
+  window.hideCardAndItsName = () => { hideCard(); document.getElementById('card').removeAttribute('title'); return 'hidden'; };
+</script>
+</body>
+</html>

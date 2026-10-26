@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Site Three Hundred Thirteen</title>
+<style>body { margin: 0; font: 16px sans-serif; } main { padding: 16px 40px; } label { display: block; margin: 4px 0; }</style>
+</head>
+<body>
+<main>
+  <h1>Plans</h1>
+  <!-- ITER-076 I-09, round 7 (Claude review c11, #11): a GET form beside its
+       price, which its radio sends by script; its only submit button, hidden,
+       still names it. -->
+  <form action="https://site-313.test/plan">
+    <p>Yearly: $99 a year.</p>
+    <label><input type="radio" name="plan" value="yearly" id="yearly"> Yearly</label>
+    <label><input type="radio" name="plan" value="monthly" checked> Monthly</label>
+    <input type="submit" value="Buy now" hidden>
+  </form>
+</main>
+<p id="log"></p>
+<script>
+  const form = document.querySelector('form');
+  document.getElementById('yearly').addEventListener('change', () => form.requestSubmit());
+  form.addEventListener('submit', (event) => {
+    event.preventDefault();
+    document.getElementById('log').textContent += 'charged;';
+  });
+</script>
+</body>
+</html>

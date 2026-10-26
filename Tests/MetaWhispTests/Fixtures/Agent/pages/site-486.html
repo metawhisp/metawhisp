@@ -1,0 +1,15 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Quotes 486</title></head>
+<body>
+<main id="list"></main>
+<script>
+  // A list of quotes over fifteen pages, each but the last with a pager's next: past the walk's ceiling (2026-10-18).
+  const page = Number((location.pathname.match(/\/page\/(\d+)/) || [0, 1])[1]);
+  const list = document.getElementById('list');
+  list.innerHTML = '<h1>Quotes, page ' + page + '</h1>' +
+    [1, 2].map((n) => '<p>Quote ' + page + '.' + n + ' by Sam</p>').join('') +
+    (page < 15 ? '<p><a href="https://site-486.test/page/' + (page + 1) + '/">Next →</a></p>' : '');
+</script>
+</body>
+</html>

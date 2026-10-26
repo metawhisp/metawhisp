@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Site Two Hundred Eighty-Nine</title>
+<style>body { margin: 0; font: 16px sans-serif; } main { padding: 16px 40px; }</style>
+</head>
+<body>
+<main>
+  <h1>Account</h1>
+  <!-- ITER-076 I-09, round 5: fields the page marks secret by structure
+       alone, filled in. Their words name nothing: each is secret only by its
+       type, its autocomplete or the dots it draws. -->
+  <form action="https://site-289.test/enter" method="post">
+    <label>Email <input name="f0" value="sam@example.com"></label>
+    <label>Entry A <input name="f1" type="password" value="vA-4417q"></label>
+    <label>Entry B <input name="f2" autocomplete="current-password" value="vB-5521q"></label>
+    <label>Entry C <input name="f3" autocomplete="new-password" value="vC-6632q"></label>
+    <label>Entry D <input name="f4" autocomplete="one-time-code" value="738204"></label>
+    <label>Entry E <input name="f5" style="-webkit-text-security: disc" value="vE-7743q"></label>
+    <button type="submit">Go on</button>
+  </form>
+  <form action="https://site-289.test/keep" method="post">
+    <label>Holder <input name="g0" value="Sam Doe"></label>
+    <label>Entry F <input name="g1" autocomplete="cc-number" value="4111111111111111"></label>
+    <label>Entry G <input name="g2" autocomplete="cc-csc" value="8462"></label>
+    <label>Entry H <input name="g3" autocomplete="cc-exp" value="08/31"></label>
+    <button type="submit">Keep</button>
+  </form>
+  <a href="https://site-289.test/help">Help</a>
+</main>
+</body>
+</html>

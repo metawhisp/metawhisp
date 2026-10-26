@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Site Four Hundred Eighty Nine</title></head>
+<body>
+<main>
+  <h1>Your account</h1>
+  <!-- The brain's reads (2026-10-19): secrets find_elements must never return — a password, a field drawn as dots,
+       a one-time-code box whose digits sit in spans — beside words it may read. -->
+  <form id="login" action="/login" method="post">
+    <label for="user">User</label>
+    <input id="user" name="user" type="text" value="river">
+    <label for="pass">Password</label>
+    <input id="pass" name="pass" type="password" value="hunter2-pass">
+    <label for="dots">PIN</label>
+    <input id="dots" name="dots" type="text" style="-webkit-text-security: disc" value="masked-pin-4411">
+  </form>
+  <div role="textbox" contenteditable="true" autocomplete="one-time-code" id="otp"><span>9</span><span>0</span><span>2</span><span>7</span><span>1</span><span>6</span></div>
+  <p class="note">Plain words anyone reads.</p>
+</main>
+</body>
+</html>

@@ -1,0 +1,17 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Site Ten</title></head>
+<body>
+<main id="list"><h1>A very long page</h1></main>
+<script>
+  const list = document.getElementById('list');
+  for (let i = 0; i < 3000; i++) {
+    const a = document.createElement('a');
+    a.href = '/item/' + i;
+    a.textContent = 'Item ' + i;
+    a.style.display = 'block';
+    list.appendChild(a);
+  }
+</script>
+</body>
+</html>

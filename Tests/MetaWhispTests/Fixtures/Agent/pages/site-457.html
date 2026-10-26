@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Site Four Fifty-Seven</title></head>
+<body>
+<main>
+  <!-- ITER-076 stage 7, review round 1 (C2): a demo form whose page loads a
+       frame of its own as the first field is typed in — a widget, as many
+       sites do: the page's own loading goes on while the form is filled. -->
+  <h1 id="title">Request a demo</h1>
+  <form id="demo" action="/thanks" method="post">
+    <label for="first">First name</label><input id="first" name="first" autocomplete="given-name">
+    <label for="email">Work email</label><input id="email" name="email" type="email">
+    <button type="submit" id="send">Request a demo</button>
+  </form>
+  <div id="widget"></div>
+</main>
+<script>
+  document.getElementById('first').addEventListener('input', () => {
+    if (document.getElementById('chat')) return;
+    const frame = document.createElement('iframe');
+    frame.id = 'chat';
+    frame.src = 'https://site-1.test/';
+    document.getElementById('widget').appendChild(frame);
+  });
+</script>
+</body>
+</html>

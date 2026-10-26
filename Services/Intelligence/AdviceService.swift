@@ -31,6 +31,61 @@ final class AdviceService: ObservableObject {
 
     private var timerTask: Task<Void, Never>?
 
+    /// U1b (owner, 2026-10-25) — AI Advice makes model calls from the user's activity, like the screen hints, so it
+    /// runs only behind the Ultra switch (`UltraFeatures`): off, nothing here runs and Settings hides its toggle. The
+    /// switch is read at each ask; the toggle is read, never written, so the switch on brings back what was set.
+    private let ultra: () -> Bool
+
+    /// `ultra`: the switch — the app's own; a test's in tests.
+    init(ultra: @escaping () -> Bool = { UltraFeatures.isOn() }) {
+        self.ultra = ultra
+    }
+
+    /// Where one generation's requests go and its advice is shown: the app's by default; a test's own in tests, so
+    /// nothing reaches the network or the screen.
+    struct Routes {
+        /// Pro, and its licence key: the memories' embeddings, the relevance gate and the Pro model need them.
+        var isPro: @MainActor () -> Bool
+        var licenseKey: @MainActor () -> String?
+        /// The query embedding the memories are ranked by; nil asks the embedding service.
+        var embed: (@MainActor (String) async throws -> [Float])?
+        /// The relevance gate in front of the Pro model.
+        var gate: @MainActor (_ context: String, _ licenseKey: String) async -> GateClient.Verdict
+        /// The Pro proxy's model.
+        var proModel: @MainActor (_ system: String, _ user: String, _ licenseKey: String) async throws -> String
+        /// Shows a new advice.
+        var show: @MainActor (AdviceItem) -> Void
+
+        static let app = Routes(
+            isPro: { LicenseService.shared.isPro },
+            licenseKey: { LicenseService.shared.licenseKey },
+            embed: nil,
+            gate: { context, licenseKey in
+                await GateClient.call(context: context, purpose: .advice, serviceId: AdviceService.llmServiceId,
+                                      licenseKey: licenseKey)
+            },
+            proModel: { system, user, licenseKey in
+                try await AdviceService.callProProxy(system: system, user: user, licenseKey: licenseKey)
+            },
+            show: { NotificationService.shared.postAdvice($0) })
+    }
+
+    var routes: Routes = .app
+
+    /// Whether advice may run now: the switch, then the user's toggle.
+    var isOn: Bool { ultra() && settings.adviceEnabled }
+
+    /// U1b — whether a run may go on after a wait (the memories' embeddings, the relevance gate, the model): Ultra or
+    /// the toggle may have gone off meanwhile (Codex, 1.4.0 review). Off, the run stops there — no further request,
+    /// nothing saved, nothing shown; a request already sent is only left to end.
+    private func stillOn(before step: String) -> Bool {
+        guard isOn else {
+            NSLog("[Advice] stopped before %@ — AI Advice was turned off while it waited", step)
+            return false
+        }
+        return true
+    }
+
     func configure(screenContext: ScreenContextService, modelContainer: ModelContainer) {
         self.screenContext = screenContext
         self.modelContainer = modelContainer
@@ -38,7 +93,7 @@ final class AdviceService: ObservableObject {
 
     /// Trigger advice after a transcription completes (non-periodic event trigger).
     func triggerOnTranscription(text: String, source: String) {
-        guard settings.adviceEnabled, hasLLMAccess else { return }
+        guard isOn, hasLLMAccess else { return }
         guard let contexts = screenContext?.recentContexts, !contexts.isEmpty else { return }
 
         Task {
@@ -49,7 +104,7 @@ final class AdviceService: ObservableObject {
     /// True if we can call an LLM: either user has their own API key, or they're Pro (server proxy).
     private var hasLLMAccess: Bool {
         !settings.activeAPIKey.isEmpty
-            || LicenseService.shared.isPro
+            || routes.isPro()
             || LocalLLMService.shared.isReady
     }
 
@@ -74,13 +129,21 @@ final class AdviceService: ObservableObject {
     /// Generate advice based on current context.
     @discardableResult
     func generateAdvice(extraContext: String? = nil) async -> AdviceItem? {
+        guard isOn else { return nil }
+        return await generate(contexts: screenContext?.recentContexts ?? [], extraContext: extraContext)
+    }
+
+    /// One generation from these screen contexts: memories, then the model (the relevance gate first on Pro), then
+    /// saved and shown.
+    func generate(contexts: [ScreenContextService.ScreenContextSnapshot], extraContext: String?) async -> AdviceItem? {
+        guard isOn else { return nil }
     if isGenerating { NSLog("[Advice] trigger dropped — previous generation still running") }
         guard !isGenerating else { return nil }
         guard hasLLMAccess else {
             NSLog("[Advice] No LLM access — skipping (need API key or Pro)")
             return nil
         }
-        guard let contexts = screenContext?.recentContexts, !contexts.isEmpty else {
+        guard !contexts.isEmpty else {
             NSLog("[Advice] No screen context available")
             return nil
         }
@@ -92,41 +155,42 @@ final class AdviceService: ObservableObject {
         // Build context: screen activity + transcripts + memories + previous advice
         // spec://iterations/ITER-001#architecture.advice-prompt
         // ITER-022 G3 — async because memory ranking can call embeddings endpoint.
-        let contextBlock = await buildAdviceUserContext(
+        let input = await buildAdviceUserContext(
             contexts: contexts,
             extraContext: extraContext
         )
+        // U1b — the memories' embeddings were awaited: the switch is read again
+        // before any gate or model request.
+        guard stillOn(before: "the model") else { return nil }
 
         do {
             // ITER-022 G4 — pick prompt based on coach-mode toggle. Read at fire
             // time so toggle changes take effect immediately, not on next launch.
             let prompt = Self.activePrompt
             let mode = settings.adviceCoachMode ? "coach" : "standard"
-            NSLog("[Advice] ▶️ generate — screenContexts=%d, prompt=%d chars, extra=%d chars, mode=%@", contexts.count, contextBlock.count, extraContext?.count ?? 0, mode)
+            NSLog("[Advice] ▶️ generate — screenContexts=%d, prompt=%d chars, extra=%d chars, mode=%@", contexts.count, input.forModel.count, extraContext?.count ?? 0, mode)
             let response: String
             // ITER-039 — local LLM takes priority when loaded.
             if LocalLLMService.shared.isReady {
                 NSLog("[Advice] Generating via local Phi (mode=%@)", mode)
                 response = try await LocalLLMService.shared.completeBlocking(
-                    system: prompt, user: contextBlock, maxTokens: 256
+                    system: prompt, user: input.forModel, maxTokens: 256
                 )
-            } else if LicenseService.shared.isPro, let licenseKey = LicenseService.shared.licenseKey {
+            } else if routes.isPro(), let licenseKey = routes.licenseKey() {
                 // ITER-041 Phase C — cheap relevance gate before the
                 // medium-tier advice generate. Skip when score < 0.65.
-                let gate = await GateClient.call(
-                    context: contextBlock,
-                    purpose: .advice,
-                    recentTopics: [],
-                    serviceId: Self.llmServiceId,
-                    licenseKey: licenseKey
-                )
+                // It reads the input without the previous advice — see
+                // `AdviceInput`.
+                let gate = await askGate(context: input.forGate, licenseKey: licenseKey)
                 guard gate.shouldFire else {
                     NSLog("[Advice] gate-skipped score=%.2f — %@",
                           gate.score, String(gate.reasoning.prefix(80)))
                     return nil
                 }
+                // …and again after the gate's answer, before the Pro model.
+                guard stillOn(before: "the Pro model") else { return nil }
                 NSLog("[Advice] Generating via Pro proxy (mode=%@)", mode)
-                response = try await callProProxy(system: prompt, user: contextBlock, licenseKey: licenseKey)
+                response = try await askProModel(system: prompt, user: input.forModel, licenseKey: licenseKey)
             } else {
                 let apiKey = settings.activeAPIKey
                 guard !apiKey.isEmpty else {
@@ -137,11 +201,14 @@ final class AdviceService: ObservableObject {
                 NSLog("[Advice] Generating via direct %@ API (mode=%@)", provider.displayName, mode)
                 response = try await llm.complete(
                     system: prompt,
-                    user: contextBlock,
+                    user: input.forModel,
                     apiKey: apiKey,
                     provider: provider
                 )
             }
+
+            // …and once the model has answered: off now, nothing is saved or shown.
+            guard stillOn(before: "saving and showing it") else { return nil }
 
             // Try parsing as no_advice first — LLM says nothing interesting to advise
             if let noAdviceReason = parseNoAdvice(response) {
@@ -154,6 +221,13 @@ final class AdviceService: ObservableObject {
                 return nil
             }
 
+            // A repeat is dropped here, after the model, before it is saved or
+            // shown — the gate no longer sees what was already said.
+            if Self.repeatsRecentAdvice(advice.content, recent: fetchPreviousAdvice(limit: 15).map(\.content)) {
+                NSLog("[Advice] dropped — repeats a recent advice (%d chars)", advice.content.count)
+                return nil
+            }
+
             // Persist
             if let container = modelContainer {
                 let ctx = ModelContext(container)
@@ -162,7 +236,7 @@ final class AdviceService: ObservableObject {
             }
 
             latestAdvice = advice
-            NotificationService.shared.postAdvice(advice)
+            routes.show(advice)
             NSLog("[Advice] ✅ generated — category=%@, confidence=%.2f, content=%d chars, headline=%@", advice.category, advice.confidence, advice.content.count, advice.headline == nil ? "NO" : "YES")
 
             NSLog("[Advice] ✅ generated (%d chars)", advice.content.count)
@@ -377,6 +451,17 @@ final class AdviceService: ObservableObject {
         "security", "career", "mental", "other",
     ]
 
+    /// What one generation sends where. The model reads everything, the
+    /// advice it must not repeat included. The relevance gate reads the same
+    /// minus that list: until 2026-10-20 it was given the list too and read it
+    /// as live commitments — 77 of 108 advice fires that day scored exactly
+    /// 0.95, and two reasons cite the "prior advice" outright. Repeats are
+    /// dropped after the model, by `repeatsRecentAdvice`.
+    struct AdviceInput: Equatable {
+        let forModel: String
+        let forGate: String
+    }
+
     /// Build user-content block: screen activity + transcripts + memories + previous advice.
     /// spec://iterations/ITER-001#architecture.advice-prompt
     /// ITER-022 G3 — memories are semantically ranked by cosine similarity to the
@@ -385,65 +470,93 @@ final class AdviceService: ObservableObject {
     private func buildAdviceUserContext(
         contexts: [ScreenContextService.ScreenContextSnapshot],
         extraContext: String?
-    ) async -> String {
-        var parts: [String] = []
-
+    ) async -> AdviceInput {
         // USER MEMORIES — semantic ranking (ITER-022 G3) when possible.
         // Query text = most recent screen context's OCR (capped) + extraContext.
         // Top 8 by cosine, threshold 0.45 to drop irrelevant. Falls back to
         // recent-15 when no embedding-service / no Pro / empty embeddings.
         let memories = await fetchMemoriesForAdvice(contexts: contexts, extraContext: extraContext, limit: 8)
+        return Self.assembleInput(
+            memories: memories.map(\.content),
+            previousAdvice: fetchPreviousAdvice(limit: 15).map(\.content),
+            contexts: contexts,
+            transcripts: fetchRecentTranscripts(limit: 3) ?? [],
+            extraContext: extraContext
+        )
+    }
+
+    /// Pure: both inputs from the fetched sections, in the order the model has
+    /// always read them — memories, previous advice, screen, voice, trigger.
+    static func assembleInput(
+        memories: [String],
+        previousAdvice: [String],
+        contexts: [ScreenContextService.ScreenContextSnapshot],
+        transcripts: [String],
+        extraContext: String?
+    ) -> AdviceInput {
+        var memoryLines: [String] = []
         if !memories.isEmpty {
-            parts.append("USER MEMORIES (durable facts — weave only when materially relevant):")
+            memoryLines.append("USER MEMORIES (durable facts — weave only when materially relevant):")
             for m in memories {
-                parts.append("- \(m.content)")
+                memoryLines.append("- \(m)")
             }
-            parts.append("")
+            memoryLines.append("")
         }
 
-        // PREVIOUS ADVICE — cap 15, truncate each to 80 chars
-        let previous = fetchPreviousAdvice(limit: 15)
-        if !previous.isEmpty {
-            parts.append("PREVIOUS ADVICE (do NOT repeat):")
-            for item in previous {
-                parts.append("- \"\(String(item.content.prefix(80)))\"")
+        // PREVIOUS ADVICE — cap 15, truncate each to 80 chars. The model's only.
+        var previousLines: [String] = []
+        if !previousAdvice.isEmpty {
+            previousLines.append("PREVIOUS ADVICE (do NOT repeat):")
+            for item in previousAdvice {
+                previousLines.append("- \"\(String(item.prefix(80)))\"")
             }
-            parts.append("")
+            previousLines.append("")
         }
 
         // CURRENT SCREEN — last 5 contexts with richer OCR (backend cap raised to 32KB).
         // More OCR = better context for LLM to find specific insights .
+        var rest: [String] = []
         let recentContexts = contexts.suffix(5)
-        parts.append("CURRENT SCREEN (last \(recentContexts.count) contexts):")
+        rest.append("CURRENT SCREEN (last \(recentContexts.count) contexts):")
         for ctx in recentContexts {
             let time = ctx.timestamp.formatted(date: .omitted, time: .shortened)
             let preview = String(ctx.ocrText.prefix(400)).replacingOccurrences(of: "\n", with: " ")
-            parts.append("[\(time)] \(ctx.appName) — \(ctx.windowTitle)")
+            rest.append("[\(time)] \(ctx.appName) — \(ctx.windowTitle)")
             if !preview.isEmpty {
-                parts.append("  \(preview)")
+                rest.append("  \(preview)")
             }
         }
 
         // RECENT TRANSCRIPTS — 3 transcripts, 250 chars each
-        if let transcripts = fetchRecentTranscripts(limit: 3), !transcripts.isEmpty {
-            parts.append("")
-            parts.append("RECENT VOICE INPUT:")
+        if !transcripts.isEmpty {
+            rest.append("")
+            rest.append("RECENT VOICE INPUT:")
             for t in transcripts {
-                parts.append("- \"\(String(t.prefix(250)))\"")
+                rest.append("- \"\(String(t.prefix(250)))\"")
             }
         }
 
         if let extra = extraContext {
-            parts.append("")
-            parts.append(String(extra.prefix(500)))
+            rest.append("")
+            rest.append(String(extra.prefix(500)))
         }
 
         // Safety cap — well under backend 32KB limit
-        let combined = parts.joined(separator: "\n")
-        if combined.count > 20000 {
-            return String(combined.prefix(20000))
+        func joined(_ parts: [String]) -> String {
+            let combined = parts.joined(separator: "\n")
+            return combined.count > 20000 ? String(combined.prefix(20000)) : combined
         }
-        return combined
+        return AdviceInput(forModel: joined(memoryLines + previousLines + rest),
+                           forGate: joined(memoryLines + rest))
+    }
+
+    /// After the model: whether an advice repeats a recent one — the last 15,
+    /// the list the model is told not to repeat — by the check the proactive
+    /// cards use after their model. 2026-10-20: the advice path had no check
+    /// after the model, and 12 of the 63 advices saved that day repeated one
+    /// of their last 15 almost word for word.
+    static func repeatsRecentAdvice(_ content: String, recent: [String]) -> Bool {
+        InsightDedupChecker.isDuplicate(content, of: recent)
     }
 
     /// Fetch UserMemory records for injection into prompts.
@@ -488,10 +601,11 @@ final class AdviceService: ObservableObject {
         guard !query.isEmpty else { return fetchUserMemories(limit: limit) }
 
         // Try semantic ranking via embeddings.
-        guard let svc = embeddingService, LicenseService.shared.isPro else {
+        guard let embed = routes.embed ?? embeddingService.map({ svc in { try await svc.embedOne($0) } }),
+              routes.isPro() else {
             return fetchUserMemories(limit: limit)
         }
-        guard let qVec = try? await svc.embedOne(String(query.prefix(1500))) else {
+        guard let qVec = try? await embed(String(query.prefix(1500))) else {
             return fetchUserMemories(limit: limit)
         }
 
@@ -544,11 +658,21 @@ final class AdviceService: ObservableObject {
 
     // MARK: - Pro Proxy
 
+    /// The relevance gate (`routes.gate`).
+    private func askGate(context: String, licenseKey: String) async -> GateClient.Verdict {
+        await routes.gate(context, licenseKey)
+    }
+
+    /// The Pro proxy's model (`routes.proModel`).
+    private func askProModel(system: String, user: String, licenseKey: String) async throws -> String {
+        try await routes.proModel(system, user, licenseKey)
+    }
+
     /// Call MetaWhisp Pro backend for advice generation.
     /// Endpoint: POST https://api.metawhisp.com/api/pro/advice
     /// Auth: Bearer {licenseKey}
     /// Body: { system, user } → Response: { text }
-    private func callProProxy(system: String, user: String, licenseKey: String) async throws -> String {
+    private static func callProProxy(system: String, user: String, licenseKey: String) async throws -> String {
         let url = URL(string: "https://api.metawhisp.com/api/pro/advice")!
         var request = URLRequest(url: url)
         request.httpMethod = "POST"

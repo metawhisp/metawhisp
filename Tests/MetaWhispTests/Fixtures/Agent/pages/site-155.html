@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Site One Hundred Fifty-Five</title>
+<style>
+  body { margin: 0; font: 16px sans-serif; overflow: hidden; }
+  #app { height: 100vh; overflow-y: auto; }
+  header { position: sticky; top: 0; height: 64px; line-height: 64px; padding: 0 40px; background: #fff;
+           border-bottom: 1px solid #777; }
+  main { padding: 0 40px; }
+  #compare { width: 200px; height: 40px; }
+  .bar { position: fixed; left: 0; right: 0; bottom: 0; height: 80px; line-height: 80px; padding: 0 40px;
+         background: #eee; }
+</style>
+</head>
+<body>
+<!-- An app that scrolls its own root, under a sticky header, over a fixed bar. -->
+<div id="app">
+  <header>Plans</header>
+  <main>
+    <h1>Compare</h1>
+    <div style="height: 3000px"></div>
+    <button id="compare" type="button">Compare plans</button>
+    <div style="height: 1500px"></div>
+  </main>
+</div>
+<div class="bar">Cookie notice <button type="button">Got it</button></div>
+<script>
+  document.getElementById('compare').addEventListener('click', (event) => {
+    if (event.isTrusted) event.target.textContent = 'Plans compared';
+  });
+</script>
+</body>
+</html>

@@ -1,0 +1,75 @@
+ITER-074 I-1.3 — AgentPolicy, 2026-09-24 17:59 CEST, orchestrator (GLM quota exhausted)
+
+--- red: 32 tests, 28 failing (the 4 passing are the 'does not fire' sides; each has a failing sibling)
+AgentPolicyTests testABABCycleIsStuck failed (0.578 seconds).
+AgentPolicyTests testAConfidentChoiceActsUnlessItIsIrreversible failed (0.001 seconds).
+AgentPolicyTests testAMalformedConfidenceIsReconsidered failed (0.001 seconds).
+AgentPolicyTests testAMalformedWorstCaseIsNotReserved failed (0.001 seconds).
+AgentPolicyTests testAMiddlingChoiceActsOnlyWhenItCanBeUndoneForFree failed (0.000 seconds).
+AgentPolicyTests testAMissingRiskAnswerMeansNoAction failed (0.001 seconds).
+AgentPolicyTests testANewRowOrAFinishedSubgoalIsProgress passed (0.000 seconds).
+AgentPolicyTests testANonsenseDurationIsIgnored failed (0.000 seconds).
+AgentPolicyTests testAReservationIsSettledOnlyOnce failed (0.000 seconds).
+AgentPolicyTests testAWeakChoiceIsAlwaysReconsidered failed (0.000 seconds).
+AgentPolicyTests testAnAlwaysReversibleActionNeedsNoRiskAnswer failed (0.000 seconds).
+AgentPolicyTests testAnyOtherDecisionBetweenReconsiderationsResetsTheCount passed (0.000 seconds).
+AgentPolicyTests testBackScrollAndWaitMayRepeat passed (0.000 seconds).
+AgentPolicyTests testEightStepsWithoutProgressFiresAnywayAfterEarlierProgress failed (0.000 seconds).
+AgentPolicyTests testEightStepsWithoutProgressIsStuck failed (0.000 seconds).
+AgentPolicyTests testGoalMetCountsFromPointEight failed (0.001 seconds).
+AgentPolicyTests testMissingUsageCountsTheWholeReservation failed (0.000 seconds).
+AgentPolicyTests testProgressStartsTheRepeatCountAgainAndItFiresAnywayAfter failed (0.000 seconds).
+AgentPolicyTests testSettlingGivesBackWhatWasNotSpent failed (0.000 seconds).
+AgentPolicyTests testTheAbsoluteExpiryFiresAnywayAfterThirtyMinutes failed (0.000 seconds).
+AgentPolicyTests testTheActiveTimeCeilingCountsWorkNotTheWallClock failed (0.000 seconds).
+AgentPolicyTests testTheLexiconAloneRequiresAYes failed (0.000 seconds).
+AgentPolicyTests testTheLexiconOutranksAlwaysReversible failed (0.000 seconds).
+AgentPolicyTests testTheRiskAnswerCountsAsYesFromPointTwo failed (0.000 seconds).
+AgentPolicyTests testTheSameActionThreeTimesAnywhereInTheRunIsStuck failed (0.000 seconds).
+AgentPolicyTests testTheSameActionThreeTimesIsStuck failed (0.000 seconds).
+AgentPolicyTests testTheSameElementWithANewPayloadIsANewAction passed (0.000 seconds).
+AgentPolicyTests testTheSecondReconsiderationInARowIsStuck failed (0.000 seconds).
+AgentPolicyTests testTheSpendCeiling failed (0.000 seconds).
+AgentPolicyTests testTheStepCeiling failed (0.000 seconds).
+AgentPolicyTests testTheWorstCaseIsReservedBeforeACall failed (0.000 seconds).
+AgentPolicyTests testTheWorstCaseOfACall failed (0.000 seconds).
+--- mutation: progress clears nothing -> the strengthened progress tests fail
+AgentPolicyTests testANewRowOrAFinishedSubgoalIsProgress failed (0.574 seconds).
+AgentPolicyTests testEightStepsWithoutProgressFiresAnywayAfterEarlierProgress failed (0.000 seconds).
+AgentPolicyTests testProgressBreaksACycleAndItFiresAnywayAfter failed (0.000 seconds).
+AgentPolicyTests testProgressStartsTheRepeatCountAgainAndItFiresAnywayAfter failed (0.000 seconds).
+--- green
+AgentPolicyTests testABABCycleIsStuck passed (0.001 seconds).
+AgentPolicyTests testAConfidentChoiceActsUnlessItIsIrreversible passed (0.000 seconds).
+AgentPolicyTests testAMalformedConfidenceIsReconsidered passed (0.000 seconds).
+AgentPolicyTests testAMalformedWorstCaseIsNotReserved passed (0.000 seconds).
+AgentPolicyTests testAMiddlingChoiceActsOnlyWhenItCanBeUndoneForFree passed (0.000 seconds).
+AgentPolicyTests testAMissingRiskAnswerMeansNoAction passed (0.001 seconds).
+AgentPolicyTests testANewRowOrAFinishedSubgoalIsProgress passed (0.000 seconds).
+AgentPolicyTests testANonsenseDurationIsIgnored passed (0.000 seconds).
+AgentPolicyTests testAReservationIsSettledOnlyOnce passed (0.000 seconds).
+AgentPolicyTests testAWeakChoiceIsAlwaysReconsidered passed (0.000 seconds).
+AgentPolicyTests testAnAlwaysReversibleActionNeedsNoRiskAnswer passed (0.000 seconds).
+AgentPolicyTests testAnyOtherDecisionBetweenReconsiderationsResetsTheCount passed (0.000 seconds).
+AgentPolicyTests testBackScrollAndWaitMayRepeat passed (0.000 seconds).
+AgentPolicyTests testEightStepsWithoutProgressFiresAnywayAfterEarlierProgress passed (0.000 seconds).
+AgentPolicyTests testEightStepsWithoutProgressIsStuck passed (0.000 seconds).
+AgentPolicyTests testGoalMetCountsFromPointEight passed (0.000 seconds).
+AgentPolicyTests testMissingUsageCountsTheWholeReservation passed (0.000 seconds).
+AgentPolicyTests testProgressBreaksACycleAndItFiresAnywayAfter passed (0.000 seconds).
+AgentPolicyTests testProgressStartsTheRepeatCountAgainAndItFiresAnywayAfter passed (0.000 seconds).
+AgentPolicyTests testSettlingGivesBackWhatWasNotSpent passed (0.000 seconds).
+AgentPolicyTests testTheAbsoluteExpiryFiresAnywayAfterThirtyMinutes passed (0.000 seconds).
+AgentPolicyTests testTheActiveTimeCeilingCountsWorkNotTheWallClock passed (0.000 seconds).
+AgentPolicyTests testTheLexiconAloneRequiresAYes passed (0.000 seconds).
+AgentPolicyTests testTheLexiconOutranksAlwaysReversible passed (0.000 seconds).
+AgentPolicyTests testTheRiskAnswerCountsAsYesFromPointTwo passed (0.000 seconds).
+AgentPolicyTests testTheSameActionThreeTimesAnywhereInTheRunIsStuck passed (0.000 seconds).
+AgentPolicyTests testTheSameActionThreeTimesIsStuck passed (0.000 seconds).
+AgentPolicyTests testTheSameElementWithANewPayloadIsANewAction passed (0.000 seconds).
+AgentPolicyTests testTheSecondReconsiderationInARowIsStuck passed (0.000 seconds).
+AgentPolicyTests testTheSpendCeiling passed (0.000 seconds).
+AgentPolicyTests testTheStepCeiling passed (0.000 seconds).
+AgentPolicyTests testTheWorstCaseIsReservedBeforeACall passed (0.000 seconds).
+AgentPolicyTests testTheWorstCaseOfACall passed (0.000 seconds).
+	 Executed 33 tests, with 0 failures (0 unexpected) in 0.005 (0.007) seconds

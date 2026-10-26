@@ -1,0 +1,160 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Site Five Hundred Ten</title>
+<style>
+  body { margin: 0; font: 16px sans-serif; }
+  main { padding: 24px 40px; }
+  .row { display: flex; align-items: center; gap: 12px; margin-top: 8px; }
+  .caption { width: 180px; }
+  .said { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(1px, 1px, 1px, 1px); }
+  .control { display: flex; min-width: 220px; border: 1px solid #ccc; }
+  .values { display: grid; flex: 1; }
+  .values > * { grid-area: 1 / 1; }
+  .placeholder { color: #888; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Practice Form</h1>
+  <h5>Student Registration Form</h5>
+  <!-- A practice form as a public one draws it (2026-10-21, a live run): each caption a `<label>` tied to no field,
+       its field in the row's other column, a select box drawn around a combobox input. -->
+  <form id="register" novalidate>
+    <!-- Two fields under one caption: which one it names is not known. -->
+    <div class="row">
+      <div class="caption"><label>Full name</label></div>
+      <div><input id="first" type="text"></div>
+      <div><input id="last" type="text"></div>
+    </div>
+    <!-- Named by its own label, and by its own placeholder: as before. -->
+    <div class="row">
+      <div class="caption"><label for="email">Email</label></div>
+      <div><input id="email" type="text"><small>We never share it</small></div>
+    </div>
+    <div class="row">
+      <div class="caption"><label>Mobile</label></div>
+      <div><input id="mobile" type="text" placeholder="Mobile Number"></div>
+    </div>
+    <!-- A date picker's input, four boxes below its row. -->
+    <div class="row">
+      <div class="caption"><label>Date of Birth</label></div>
+      <div id="dob"><div class="picker"><div class="picker-input">
+        <input id="dob-input" type="text" value="21 Oct 2026">
+      </div></div></div>
+    </div>
+    <!-- A select box whose placeholder says nothing: its caption is six boxes above its input. -->
+    <div class="row">
+      <div class="caption"><label>Subjects</label></div>
+      <div>
+        <div class="container" id="subjects">
+          <span class="said" id="subjects-said"></span>
+          <span class="said" aria-live="polite" role="log"></span>
+          <div class="control">
+            <div class="values">
+              <div class="placeholder" id="subjects-placeholder"></div>
+              <div><input id="subjects-input" type="text" role="combobox" aria-autocomplete="list"
+                          aria-expanded="false" aria-haspopup="true" aria-describedby="subjects-placeholder" value=""></div>
+            </div>
+            <div class="indicators"><span class="separator"></span></div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="row">
+      <div class="caption"><label>Picture</label></div>
+      <div><input id="picture" type="file"></div>
+    </div>
+    <!-- A hint after the field: what a person reads first is its caption. -->
+    <div class="row">
+      <div class="caption"><label>Nickname</label></div>
+      <div><input id="nickname" type="text"><small>Shown on your profile</small></div>
+    </div>
+    <!-- Words hidden from sight — not drawn, hidden or see-through — say nothing. -->
+    <div class="row">
+      <div class="caption"><span style="display: none">Old caption</span><span style="visibility: hidden">Unseen
+        caption</span><span style="opacity: 0">Faded caption</span><label>Pronouns</label></div>
+      <div><input id="pronouns" type="text"></div>
+    </div>
+    <!-- The tags chosen so far, a list the field names as its own, drawn before it: what it holds, never its name. -->
+    <div class="row">
+      <div class="caption"><label>Tags</label></div>
+      <div><div class="tags">
+        <div id="tag-list"><span>Science</span> <span>History</span></div>
+        <input id="tags-input" type="text" aria-controls="tag-list">
+      </div></div>
+    </div>
+    <!-- An announcement before the field says how its search went, not what it is. -->
+    <div class="row">
+      <div class="caption"><label>Country</label></div>
+      <div><span role="status">3 results available</span><input id="country" type="text" role="combobox" value="Ger"></div>
+    </div>
+    <!-- Another control's words, and a label of another control, before the field: theirs, not its. -->
+    <div class="row">
+      <div class="caption"><label>Quantity</label></div>
+      <div><button type="button">Less</button><input id="quantity" type="text"><button type="button">More</button></div>
+    </div>
+    <div class="row">
+      <div class="caption"><label>Gift note</label></div>
+      <div><input id="gift" type="checkbox"><label for="gift">Add a card</label><input id="note" type="text"></div>
+    </div>
+    <!-- Switched off: named by no group, as by no role, and never offered. -->
+    <div class="row">
+      <div class="caption"><label>Term</label></div>
+      <div><select id="term" disabled><option>Autumn</option><option>Spring</option></select></div>
+    </div>
+    <!-- A select with no words in its own group: named by its role, as before. -->
+    <div><select id="order"><option>Newest first</option><option>Oldest first</option></select></div>
+    <!-- Two select boxes in one row: each named by the placeholder it draws. The second is off, its input hidden. -->
+    <div class="row">
+      <div class="caption"><label>State and City</label></div>
+      <div>
+        <div class="container" id="state">
+          <span class="said" id="state-said"></span>
+          <span class="said" aria-live="polite" role="log"></span>
+          <div class="control">
+            <div class="values">
+              <div class="placeholder" id="state-placeholder">Select State</div>
+              <div><input id="state-input" type="text" role="combobox" aria-autocomplete="list" aria-expanded="false"
+                          aria-haspopup="true" aria-describedby="state-placeholder" value=""></div>
+            </div>
+            <div class="indicators"><span class="separator"></span><div aria-hidden="true"><svg width="20" height="20"
+              viewBox="0 0 20 20" aria-hidden="true"><path d="M4 7l6 6 6-6"></path></svg></div></div>
+          </div>
+        </div>
+      </div>
+      <div>
+        <div class="container" id="city">
+          <span class="said" id="city-said"></span>
+          <div class="control" aria-disabled="true">
+            <div class="values">
+              <div class="placeholder" id="city-placeholder">Select City</div>
+              <div><input id="city-input" type="text" role="combobox" disabled style="visibility: hidden"
+                          aria-describedby="city-placeholder" value=""></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="row"><button type="submit" id="submit">Submit</button></div>
+  </form>
+  <!-- A section of the page, by its tag or its role, is no field's group: its words before a lone field are the
+       page's. -->
+  <section>
+    <h2>Newsletter</h2>
+    <p>Monthly news from the school, never more.</p>
+    <div><input id="lone" type="text"></div>
+  </section>
+  <div role="complementary">
+    <p>Ask the office anything.</p>
+    <div><input id="ask" type="text"></div>
+  </div>
+  <!-- A secret field under a caption tied to it by nothing: withheld, and named by nothing of its group. -->
+  <form id="sign-in">
+    <div class="row">
+      <div class="caption"><label>Password</label></div>
+      <div><input id="secret" type="password"></div>
+    </div>
+  </form>
+</main>
+</body>
+</html>

@@ -21,6 +21,14 @@ final class CalendarReaderService: ObservableObject {
 
     private let store = EKEventStore()
 
+    /// Reads and asks for calendar access: EventKit's in the app, a test's own
+    /// in tests — so no test can show the prompt or read a real calendar.
+    var accessGranted: () -> Bool = {
+        let status = EKEventStore.authorizationStatus(for: .event)
+        return status == .fullAccess || status == .authorized
+    }
+    var askForAccess: (@MainActor (PermissionAsk) async -> Bool)?
+
     /// Look-back window for pattern analysis (memories).
     private let daysBack: Int = 30
     /// Look-forward window for task creation.
@@ -53,81 +61,42 @@ final class CalendarReaderService: ObservableObject {
 
     // MARK: - Live event helpers
 
-    /// ITER-026 v2 — returns a non-allday event whose `startDate` falls in
-    /// the window `(now - lookback, now]`. Used by the meeting auto-start
-    /// fast-tick loop to fire the countdown plashka the instant a calendar
-    /// event begins. `lookback` defaults to 65 sec so the 1-sec poll loop
-    /// catches every event boundary even if a tick was skipped, but events
-    /// older than that are not returned (no stale-event re-firing on launch).
-    /// A non-allday event that is running RIGHT NOW, whether or not it just
-    /// started. `eventStartingNow` only sees the first 65 seconds of an event,
-    /// so an auto-start that captured nothing had no way to be tried again
-    /// while the meeting itself was still going (2026-09-17 08:30).
-    func eventInProgress(maxDuration: TimeInterval = 4 * 3600) -> EKEvent? {
-        let status = EKEventStore.authorizationStatus(for: .event)
-        guard status == .fullAccess || status == .authorized else { return nil }
+    /// ITER-075 step 1 (1.1) — the calendar occurrence running right now,
+    /// whether or not it just started. `occurrenceStartingNow` only sees the
+    /// first 65 seconds of an event, so an auto-start that captured nothing
+    /// could not be tried again while the meeting itself was still going
+    /// (2026-09-17 08:30).
+    func occurrenceInProgress(maxDuration: TimeInterval = 4 * 3600) -> CalendarOccurrence? {
         let now = Date()
-        let predicate = store.predicateForEvents(withStart: now.addingTimeInterval(-maxDuration),
-                                                 end: now.addingTimeInterval(60),
-                                                 calendars: nil)
-        let candidates = store.events(matching: predicate).filter { ev in
-            if ev.isAllDay { return false }
-            if ev.status == .canceled { return false }
-            if let me = ev.attendees?.first(where: { $0.isCurrentUser }),
-               me.participantStatus == .declined { return false }
-            return ev.startDate <= now && ev.endDate > now
-        }
-        // Overlapping calendars: the one that started most recently is the one
-        // the user is in.
-        return candidates.sorted { $0.startDate > $1.startDate }.first
+        return CalendarOccurrencePicker.running(
+            in: candidates(from: now.addingTimeInterval(-maxDuration), to: now.addingTimeInterval(60)), at: now)
     }
 
-    func eventStartingNow(lookback: TimeInterval = 65) -> EKEvent? {
-        let status = EKEventStore.authorizationStatus(for: .event)
-        guard status == .fullAccess || status == .authorized else { return nil }
+    /// ITER-026 v2 — the occurrence that started within the last `lookback`
+    /// seconds and has not ended. Used by the meeting auto-start fast tick to
+    /// start the countdown the moment an event begins. `lookback` is 65 s so
+    /// the 1-second poll catches every start even if a tick was skipped, and
+    /// older events are not returned (no re-firing a stale event on launch).
+    func occurrenceStartingNow(lookback: TimeInterval = 65) -> CalendarOccurrence? {
         let now = Date()
-        let lookStart = now.addingTimeInterval(-lookback)
-        let lookEnd = now
-        let predicate = store.predicateForEvents(withStart: lookStart, end: lookEnd.addingTimeInterval(60), calendars: nil)
-        let candidates = store.events(matching: predicate).filter { ev in
-            if ev.isAllDay { return false }
-            if ev.status == .canceled { return false }
-            if let me = ev.attendees?.first(where: { $0.isCurrentUser }),
-               me.participantStatus == .declined { return false }
-            // Strictly: event must have started in the lookback window AND not yet ended.
-            return ev.startDate >= lookStart && ev.startDate <= lookEnd && ev.endDate >= now
+        return CalendarOccurrencePicker.startingNow(
+            in: candidates(from: now.addingTimeInterval(-lookback), to: now.addingTimeInterval(60)),
+            at: now, lookback: lookback)
+    }
+
+    /// The occurrences EventKit expands in the window, each with its own start
+    /// and end. Empty without calendar access.
+    private func candidates(from start: Date, to end: Date) -> [CalendarCandidate] {
+        let status = EKEventStore.authorizationStatus(for: .event)
+        guard status == .fullAccess || status == .authorized else { return [] }
+        let predicate = store.predicateForEvents(withStart: start, end: end, calendars: nil)
+        return store.events(matching: predicate).compactMap { ev in
+            guard let occurrence = CalendarOccurrence(eventID: ev.eventIdentifier, title: ev.title,
+                                                      start: ev.startDate, end: ev.endDate) else { return nil }
+            let declined = ev.attendees?.first(where: { $0.isCurrentUser })?.participantStatus == .declined
+            return CalendarCandidate(occurrence: occurrence, isAllDay: ev.isAllDay,
+                                     isCanceled: ev.status == .canceled, declinedByMe: declined)
         }
-        // If multiple events qualify (overlapping calendars), pick the most recent start.
-        return candidates.sorted { $0.startDate > $1.startDate }.first
-    }
-
-    /// Look up an EKEvent by its `eventIdentifier`. Used by AppDelegate's
-    /// ITER-034 calendar-end auto-stop to read `endDate` from the event the
-    /// gate just fired for. Returns nil if calendar access not granted, the
-    /// id is invalid, or the event has been deleted from the calendar.
-    func event(forIdentifier eventID: String) -> EKEvent? {
-        let status = EKEventStore.authorizationStatus(for: .event)
-        guard status == .fullAccess || status == .authorized else { return nil }
-        return store.event(withIdentifier: eventID)
-    }
-
-    /// Returns the calendar event currently in progress (if any) — start ≤ now ≤ end.
-    /// Used by AppDelegate's meeting auto-stop to schedule a hard stop at
-    /// `event.endDate + buffer`. No-op if calendar access wasn't granted.
-    func currentEvent(at date: Date = Date()) -> EKEvent? {
-        let status = EKEventStore.authorizationStatus(for: .event)
-        guard status == .fullAccess || status == .authorized else { return nil }
-        let cal = Calendar.current
-        let dayStart = cal.startOfDay(for: date)
-        let dayEnd = cal.date(byAdding: .day, value: 1, to: dayStart) ?? date.addingTimeInterval(86400)
-        let predicate = store.predicateForEvents(withStart: dayStart, end: dayEnd, calendars: nil)
-        let events = store.events(matching: predicate)
-        // Pick the SHORTEST overlapping event — if user has an all-day "Holiday"
-        // overlapping a 30-min meeting, the meeting wins.
-        return events
-            .filter { $0.startDate <= date && date <= $0.endDate && !$0.isAllDay }
-            .sorted { ($0.endDate.timeIntervalSince($0.startDate)) < ($1.endDate.timeIntervalSince($1.startDate)) }
-            .first
     }
 
     // MARK: - ITER-018 — Conversation ↔ EKEvent linker
@@ -307,7 +276,7 @@ final class CalendarReaderService: ObservableObject {
 
     /// Request Calendar permission (macOS 14+ uses requestFullAccessToEvents).
     @discardableResult
-    func requestAccess() async -> Bool {
+    func requestAccess(_ ask: PermissionAsk) async -> Bool {
         if #available(macOS 14.0, *) {
             do {
                 let granted = try await store.requestFullAccessToEvents()
@@ -326,7 +295,9 @@ final class CalendarReaderService: ObservableObject {
     }
 
     /// Main scan: creates tasks from upcoming events + memories from patterns.
-    func scanNow() async {
+    /// The timer passes no `ask`: it reads the access and waits for it; SCAN
+    /// NOW and Connect pass one (step-1 review #1).
+    func scanNow(ask: PermissionAsk? = nil) async {
         guard !isRunning else { return }
         if !settings.calendarReaderEnabled || !hasLLMAccess { NSLog("[Calendar] scan skipped: calendarEnabled=%@ llmAccess=%@ (no API key, not Pro, local model not loaded)", settings.calendarReaderEnabled ? "yes" : "no", hasLLMAccess ? "yes" : "no") }
         guard settings.calendarReaderEnabled else { return }
@@ -340,8 +311,13 @@ final class CalendarReaderService: ObservableObject {
             lastRun = Date()
         }
 
-        // 1. Access.
-        let granted = await requestAccess()
+        // 1. Access — asked only for the user's own press.
+        let granted: Bool
+        if let ask {
+            if let askForAccess { granted = await askForAccess(ask) } else { granted = await requestAccess(ask) }
+        } else {
+            granted = accessGranted()
+        }
         guard granted else {
             lastError = "Calendar access denied. Grant in System Settings → Privacy & Security → Calendars."
             NSLog("[Calendar] ❌ Access not granted")

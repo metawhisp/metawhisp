@@ -1,0 +1,18 @@
+ITER-074 review round 22 (Codex on ab6a131), fix — 2026-09-24
+Code by GLM-5.3-Flash from the orchestrator's instructions (review22-instructions.md); compiled, run and
+reviewed line by line by the orchestrator.
+Round 22 confirmed fixed: no phrase asks for a word end; the limit counts the page's own words.
+
+Finding (confirmed in the code; a regression of ab6a131): "card no" and "cardno" were matched standing
+alone, which asks for a word start too, so name="debitCardNo" was missed. Fix: they are matched wherever
+they start and only where a word ends (endingAWord) — "card note" still never matches.
+
+--- red (ab6a131 + test)
+Tests/MetaWhispTests/Services/Agent/ObserverFormsTests.swift:516: error: testTheUsualNamesOfASecretAreKnown] : XCTAssertTrue failed - debitCardNo
+Tests/MetaWhispTests/Services/Agent/ObserverFormsTests.swift:517: error: testTheUsualNamesOfASecretAreKnown] : XCTAssertFalse failed - debitCardNo
+--- green (ObserverFormsTests)
+	 Executed 50 tests, with 0 failures (0 unexpected) in 5.107 (5.112) seconds
+--- gate
+  ✅ 1801 tests, 0 failures
+  ✅ 88 critical suites ran
+PASS — safe to continue.

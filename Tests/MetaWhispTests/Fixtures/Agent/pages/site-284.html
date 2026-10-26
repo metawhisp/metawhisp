@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Site Two Hundred Eighty-Four</title>
+<style>body { margin: 0; font: 16px sans-serif; } main { padding: 16px 40px; } label, select { display: block; margin: 6px 0; }</style>
+</head>
+<body>
+<main id="page"></main>
+<p id="log"></p>
+<script>
+  // A plan change that no submit button sends: its own change is the send,
+  // and it charges (ITER-076 I-09, review round 4, part C; Claude review c9,
+  // #14). Each path one variant of site-272's switch.
+  const page = document.getElementById('page');
+  const log = (text) => { document.getElementById('log').textContent += text + ';'; };
+  const prices = '<h1>Your plan</h1><p>Yearly: $99 a year. Monthly: $9 a month.</p>';
+  if (location.pathname === '/select') {
+    // A native select of no form whose change charges.
+    page.innerHTML = prices + '<select aria-label="Plan" id="plan"><option>Monthly $9</option>' +
+      '<option>Yearly $99</option></select>';
+    document.getElementById('plan').addEventListener('change', () => log('charged'));
+  } else {
+    // The plan radios in a plain form: no method, no submit button.
+    page.innerHTML = prices + '<form><div role="radiogroup" aria-label="Plan">' +
+      '<label><input type="radio" name="plan" id="yearly"> Yearly</label>' +
+      '<label><input type="radio" name="plan" id="monthly" checked> Monthly</label></div></form>';
+    document.getElementById('yearly').addEventListener('change', () => log('charged'));
+  }
+</script>
+</body>
+</html>

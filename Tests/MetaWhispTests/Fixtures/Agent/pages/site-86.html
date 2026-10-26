@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Site Eighty-Six</title>
+<style>
+  body { margin: 0; }
+  .row { position: relative; margin: 16px 40px; width: 420px; height: 64px; border: 1px solid #999; }
+  .row .del { position: absolute; left: 190px; top: 12px; width: 40px; height: 40px; }
+  #card { position: relative; margin: 16px 40px; width: 320px; height: 100px; border: 1px solid #999; }
+  #card .del { position: absolute; left: 110px; top: 30px; width: 100px; height: 40px; }
+  x-btn { display: block; margin: 16px 40px; }
+  .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden;
+             clip: rect(0, 0, 0, 0); white-space: nowrap; border-width: 0; }
+  .track { display: inline-block; width: 44px; height: 24px; border-radius: 12px; background: #ccc; vertical-align: middle; }
+  .switch { display: inline-block; margin: 16px 40px; position: relative; cursor: pointer; }
+  .f { position: relative; margin: 16px 40px; width: 300px; }
+  .f input { width: 300px; height: 48px; font-size: 18px; box-sizing: border-box; }
+  .f label { position: absolute; left: 0; top: 0; width: 300px; height: 48px; line-height: 48px; padding-left: 8px;
+             box-sizing: border-box; color: #777; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Controls whose face is something else</h1>
+  <!-- A row a person opens by its words, with a Delete button at its centre. -->
+  <div class="row" role="button" tabindex="0" aria-label="Open conversation with Sam">
+    <span>Sam: see you tomorrow</span>
+    <button class="del" type="button" aria-label="Delete conversation"><svg width="16" height="16"><rect width="16" height="16"/></svg></button>
+  </div>
+  <div id="card" role="button" tabindex="0">Open the card
+    <button class="del" type="button">Delete card</button>
+  </div>
+  <!-- Buttons of a component, their words slotted in from the page. -->
+  <x-btn id="a"><span>Save changes</span></x-btn>
+  <x-btn id="b">Send message</x-btn>
+  <!-- A checkbox drawn by its label; the box itself is hidden. -->
+  <label class="switch"><input id="updates" type="checkbox" class="sr-only"><span class="track"></span> Email me updates</label>
+  <!-- A field with its own label drawn over it. -->
+  <div class="f"><label for="city">Your city</label><input id="city" type="text"></div>
+  <p id="log"></p>
+</main>
+<script>
+  const log = (text) => { document.getElementById('log').textContent += text + ';'; };
+  document.querySelector('.row').addEventListener('click', () => log('opened'));
+  document.querySelector('.row .del').addEventListener('click', (event) => { event.stopPropagation(); log('DELETED'); });
+  document.getElementById('card').addEventListener('click', () => log('card opened'));
+  document.querySelector('#card .del').addEventListener('click', (event) => { event.stopPropagation(); log('CARD DELETED'); });
+  customElements.define('x-btn', class extends HTMLElement {
+    constructor() {
+      super();
+      const root = this.attachShadow({ mode: 'open' });
+      root.innerHTML = '<style>button{width:240px;height:48px;font-size:18px}</style><button type="button"><slot></slot></button>';
+      root.querySelector('button').addEventListener('click', (event) => log(this.id + ' pressed trusted=' + event.isTrusted));
+    }
+  });
+  document.getElementById('updates').addEventListener('change', (event) => log('updates trusted=' + event.isTrusted));
+</script>
+</body>
+</html>

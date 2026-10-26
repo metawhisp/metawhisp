@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Site Ninety-Seven</title></head>
+<body>
+<main>
+  <h1>Account</h1>
+  <form id="shadow-login" action="/session" method="post">
+    <input aria-label="Account name" value="sam">
+    <secret-box></secret-box>
+    <button type="submit">Log on</button>
+  </form>
+  <form id="notes" action="/notes" method="post">
+    <div contenteditable="true" aria-label="Message editor">Hello <span contenteditable="false" role="textbox" aria-label="Password">hunter2x</span></div>
+    <button type="submit">Send note</button>
+  </form>
+  <form id="coupon" action="/order" method="post">
+    <input type="hidden" name="card" value="4111111111111111">
+    <input aria-label="Coupon" value="SPRING">
+    <button type="submit">Apply coupon</button>
+  </form>
+  <form id="karte" action="/karte" method="post">
+    <input aria-label="Kennwort" style="-webkit-text-security: disc" value="hunter2-geheim">
+    <input aria-label="Karte 1" value="4111"><input aria-label="Karte 2" value="1111">
+    <input aria-label="Karte 3" value="1111"><input aria-label="Karte 4" value="1111">
+    <input aria-label="Prüfziffer" value="737">
+    <input aria-label="Menge" value="2">
+    <button type="submit">Weiter</button>
+  </form>
+  <form id="contact" action="/contact" method="post">
+    <input type="email" aria-label="Email" value="alexander.richardson1985@example.com">
+    <input aria-label="Website" value="https://example.com/products/12345">
+    <textarea aria-label="About">See https://www.linkedin.com/in/alexander-richardson-1985 and order 12345</textarea>
+    <button type="submit">Send</button>
+  </form>
+  <form id="odd" action="/odd" method="post">
+    <input aria-label="Ref A" value="4111.1111.1111.1111">
+    <input aria-label="Ref B" value="4111_1111_1111_1111">
+    <input aria-label="Ref C" value="4111/1111/1111/1111">
+    <input aria-label="Ref D" value="４１１１ １１１１ １１１１ １１１１">
+    <input aria-label="Ref E" value="4111&#8203;1111&#8203;1111&#8203;1111">
+    <input aria-label="Plain" value="order 12">
+    <button type="submit">Keep</button>
+  </form>
+</main>
+<script>
+  customElements.define('secret-box', class extends HTMLElement {
+    constructor() {
+      super();
+      this.attachShadow({ mode: 'open' }).innerHTML = '<input type="password" aria-label="Secret" value="pa55word">';
+    }
+  });
+</script>
+</body>
+</html>

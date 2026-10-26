@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Site Sixty-Six</title></head>
+<body>
+<main>
+  <h1>Account</h1>
+  <x-button id="delete">Delete account</x-button>
+  <x-button id="mixed"><span style="visibility:hidden">Hidden words</span>Shown words</x-button>
+  <form action="https://site-66.test/search" method="get">
+    <input type="search" aria-label="Search the site" value="prefilled private words">
+    <textarea aria-label="Note">typed private note</textarea>
+    <select aria-label="Plan"><option>Basic</option><option selected>Premium</option></select>
+  </form>
+
+  <h2>Slots</h2>
+  <x-titled id="named"><span slot="title">Archive project</span><span>Words no slot shows</span></x-titled>
+  <x-outer id="nested">Remove member</x-outer>
+  <x-fallback id="fallback"></x-fallback>
+  <x-button id="hidden-part"><span hidden>Hidden part</span>Visible part</x-button>
+
+  <h2>Names without words of their own</h2>
+  <x-bare id="bare" role="button" tabindex="0"></x-bare>
+  <x-button id="trash"><img alt="Trash" width="16" height="16" src="data:image/gif;base64,R0lGODlhAQABAAAAACw="></x-button>
+  <button id="settings"><svg aria-label="Settings" width="16" height="16"><rect width="16" height="16"></rect></svg></button>
+  <button id="share"><svg width="16" height="16"><title>Share</title><rect width="16" height="16"></rect></svg></button>
+  <button id="remove"><svg aria-label="Delete" width="16" height="16"><rect width="16" height="16"></rect></svg> ProjectAlpha</button>
+  <form action="https://site-66.test/send" method="post"><input type="submit"></form>
+  <img id="next-photo" alt="Next photo" onclick="void 0" width="16" height="16" src="data:image/gif;base64,R0lGODlhAQABAAAAACw=">
+  <svg id="close-dialog" role="button" tabindex="0" width="16" height="16"><title>Close dialog</title><rect width="16" height="16"></rect></svg>
+  <form action="https://site-66.test/find" method="get"><input type="search" aria-label="Find a page"><input type="submit" style="display:none"></form>
+
+  <h2>Chosen options</h2>
+  <ul>
+    <li><div role="combobox" aria-label="Size" tabindex="0">Large</div><button>Apply size</button></li>
+    <li><x-plan></x-plan><button>Save plan</button></li>
+  </ul>
+
+  <h2>Words for the writer</h2>
+  <p><span style="display: contents">Contents words</span></p>
+</main>
+<script>
+  customElements.define('x-button', class extends HTMLElement {
+    constructor() {
+      super();
+      this.attachShadow({ mode: 'open' }).innerHTML = '<button part="base"><slot></slot></button>';
+    }
+  });
+  customElements.define('x-titled', class extends HTMLElement {
+    constructor() {
+      super();
+      this.attachShadow({ mode: 'open' }).innerHTML = '<button><slot name="title"></slot></button>';
+    }
+  });
+  customElements.define('x-outer', class extends HTMLElement {
+    constructor() {
+      super();
+      this.attachShadow({ mode: 'open' }).innerHTML = '<x-button><slot></slot></x-button>';
+    }
+  });
+  customElements.define('x-fallback', class extends HTMLElement {
+    constructor() {
+      super();
+      this.attachShadow({ mode: 'open' }).innerHTML = '<button><slot>Default action</slot></button>';
+    }
+  });
+  customElements.define('x-bare', class extends HTMLElement {
+    constructor() {
+      super();
+      this.attachShadow({ mode: 'open' }).textContent = 'Close panel';
+    }
+  });
+  customElements.define('x-plan', class extends HTMLElement {
+    constructor() {
+      super();
+      this.attachShadow({ mode: 'open' }).innerHTML =
+        '<div role="combobox" aria-label="Plan choice" tabindex="0">Gold tier</div>';
+    }
+  });
+</script>
+</body>
+</html>

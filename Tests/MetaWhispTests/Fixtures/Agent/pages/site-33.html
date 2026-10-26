@@ -1,0 +1,14 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Site Thirty-Three</title></head>
+<body>
+<main>
+  <h1>Verify</h1>
+  <label for="q"><x-label id="native">OTP</x-label></label>
+  <input id="q" type="text" value="SECRET-OTP">
+</main>
+<script>
+  document.getElementById('native').attachShadow({ mode: 'open' }).innerHTML = '<slot></slot>';
+</script>
+</body>
+</html>

@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Site Five Hundred Forty-Two</title></head>
+<body>
+<main>
+  <h1>Student Registration Form</h1>
+  <!-- A practice form (2026-10-21, blind b03): its Submit answers on the page itself — a box over the page thanks
+       the student and shows the values — and the address stays. Check does nothing at all. -->
+  <form id="student" onsubmit="event.preventDefault(); document.getElementById('thanks').hidden = false;">
+    <label for="name">Student name</label>
+    <input id="name" name="name" type="text">
+    <button type="button" id="check">Check</button>
+    <button type="submit" id="submit">Submit</button>
+  </form>
+</main>
+<div id="thanks" role="dialog" aria-modal="true" aria-labelledby="thanks-title" hidden>
+  <h2 id="thanks-title">Thanks for submitting the form</h2>
+  <p>Student Name: the name above</p>
+  <button type="button" id="close" onclick="document.getElementById('thanks').hidden = true">Close</button>
+</div>
+<script>
+  // ?shown: the box is over the page from the start; with &grow, Check adds a button to it — a box that was there
+  // gaining a control is no answer of the page's to the press.
+  if (location.search.includes('shown')) document.getElementById('thanks').hidden = false;
+  if (location.search.includes('grow')) {
+    document.getElementById('check').addEventListener('click', () => {
+      const more = document.createElement('button');
+      more.type = 'button';
+      more.textContent = 'More';
+      document.getElementById('thanks').appendChild(more);
+    });
+  }
+</script>
+</body>
+</html>

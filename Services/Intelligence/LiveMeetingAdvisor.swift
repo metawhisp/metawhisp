@@ -277,7 +277,6 @@ final class LiveMeetingAdvisor: ObservableObject {
                 let gate = await GateClient.call(
                     context: text,
                     purpose: .meetingCoach,
-                    recentTopics: [],
                     serviceId: MeetingCoachService.llmServiceId,
                     licenseKey: key
                 )

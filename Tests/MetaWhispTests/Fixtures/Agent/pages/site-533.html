@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Site Five Hundred Thirty Three</title></head>
+<body>
+<main>
+  <h1>Search quotes by tag</h1>
+  <!-- A POST form whose list of several choices sends it as it changes (2026-10-21): a choice added there cannot be
+       taken back by choosing again, so the held post leaves the form to the user. -->
+  <form id="search" action="/search" method="post">
+    <label for="tags">Tags</label>
+    <select id="tags" name="tags" multiple onchange="this.form.submit()">
+      <option value="love">love</option>
+      <option value="life">life</option>
+    </select>
+    <input type="submit" id="go" value="Search">
+  </form>
+</main>
+</body>
+</html>

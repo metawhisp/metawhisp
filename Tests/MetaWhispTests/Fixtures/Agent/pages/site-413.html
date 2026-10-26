@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Site Four Hundred Thirteen</title></head>
+<body>
+<main>
+  <h1>Today's menu</h1>
+  <p>Soup of the day: tomato.</p>
+  <p id="log"></p>
+</main>
+<div id="consent" role="dialog" aria-modal="true" aria-label="Privacy">
+  <p id="words">We use cookies to improve the site.</p>
+</div>
+<script>
+  // ?offer=reject,necessary,close,decline picks the buttons beside "Accept
+  // all" (none: ?offer=none); ?words= replaces the window's words; ?sticky=1
+  // keeps the window after a click. Each click is logged.
+  const params = new URLSearchParams(location.search);
+  const labels = { reject: 'Reject all', necessary: 'Necessary only', close: 'Close', accept: 'Accept all',
+                   decline: 'Decline' };
+  const offers = (params.get('offer') || 'reject').split(',').filter((offer) => offer in labels).concat(['accept']);
+  const sticky = params.get('sticky') === '1';
+  const consent = document.getElementById('consent');
+  if (params.get('words')) document.getElementById('words').textContent = params.get('words');
+  for (const offer of offers) {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.textContent = labels[offer];
+    button.addEventListener('click', () => {
+      document.getElementById('log').textContent += offer + ';';
+      if (!sticky) consent.remove();
+    });
+    consent.appendChild(button);
+  }
+</script>
+</body>
+</html>

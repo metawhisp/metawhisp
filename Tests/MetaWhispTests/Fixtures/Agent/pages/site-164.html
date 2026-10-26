@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Site One Hundred Sixty-Four</title>
+<style>
+  body { margin: 0; font: 16px sans-serif; }
+  main { padding: 24px 40px; }
+  .row { margin: 12px 0; }
+  input { width: 220px; height: 28px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Fields that close themselves</h1>
+  <!-- Each turns read-only in its own handler, as the person reaches it. -->
+  <div class="row"><label for="when">Delivery date</label> <input id="when" type="date"></div>
+  <div class="row"><label for="coupon">Coupon</label> <input id="coupon"></div>
+  <div class="row"><label for="nickname">Nickname</label> <input id="nickname"></div>
+</main>
+<script>
+  const events = { when: 0, coupon: 0, nickname: 0 };
+  for (const id of Object.keys(events)) {
+    const field = document.getElementById(id);
+    for (const name of ['input', 'change']) field.addEventListener(name, () => { events[id] += 1; });
+  }
+  document.getElementById('when').addEventListener('focus', (event) => { event.target.readOnly = true; });
+  document.getElementById('coupon').addEventListener('focus', (event) => {
+    event.target.setAttribute('aria-readonly', 'true');
+  });
+  document.getElementById('nickname').addEventListener('mousedown', (event) => { event.target.readOnly = true; });
+</script>
+</body>
+</html>

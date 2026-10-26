@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Site Four Sixty-Seven</title></head>
+<body>
+<main>
+  <!-- ITER-076 stage 7, review round 3 (R3-2): a demo form beside a frame of
+       another site — drawn in a process of its own — that the page takes
+       away as soon as the frame has loaded: the frame and its session are
+       gone before the Fill. The form's own script sends what its e-mail
+       field holds as it is typed in. -->
+  <h1 id="title">Request a demo</h1>
+  <form id="demo" action="/thanks" method="post">
+    <label for="first">First name</label><input id="first" name="first" autocomplete="given-name">
+    <label for="email">Work email</label><input id="email" name="email" type="email">
+    <label for="company">Company</label><input id="company" name="company" autocomplete="organization">
+    <button type="submit" id="send">Request a demo</button>
+  </form>
+  <iframe id="widget" title="Chat" src="https://site-468.test/widget" onload="this.remove()"></iframe>
+</main>
+<script>
+  const email = document.getElementById('email');
+  email.addEventListener('input', () => {
+    const body = JSON.stringify({ email: email.value });
+    fetch('/api/fetch', { method: 'POST', body }).catch(() => {});
+    navigator.sendBeacon('/api/beacon', body);
+  });
+</script>
+</body>
+</html>

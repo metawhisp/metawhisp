@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Site Two Hundred Twenty-Four</title>
+<style>
+  body { margin: 0; font: 16px sans-serif; }
+  main { padding: 24px 40px; }
+  #filler { display: none; }
+  /* A secret field is marked by its structure: it draws dots (ITER-076 I-09, round 5). */
+  .dots { -webkit-text-security: disc; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Traveller</h1>
+  <!-- A secret widget with more parts than the count of what fields own
+       reads: who owns what is not known, and the page is not checked whole. -->
+  <div id="id-card" class="dots" role="combobox" aria-label="Identity card number" aria-expanded="true">
+    <input id="id-input" aria-autocomplete="list" aria-controls="saved-ids">
+    <div id="filler"></div>
+  </div>
+  <p><button type="button">Continue</button></p>
+  <div id="saved-ids"><button type="button">UV2323232</button></div>
+</main>
+<script>
+  const filler = document.getElementById('filler');
+  const part = document.createElement('span');
+  for (let i = 0; i < 100500; i++) filler.appendChild(part.cloneNode());
+</script>
+</body>
+</html>

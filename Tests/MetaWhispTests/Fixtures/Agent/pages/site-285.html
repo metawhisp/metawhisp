@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Site Two Hundred Eighty-Five</title>
+<style>
+  body { margin: 0; font: 16px sans-serif; }
+  main { padding: 24px 40px; }
+  label { display: block; margin: 6px 0; }
+  iframe { display: block; border: 0; width: 420px; height: 60px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Drafts</h1>
+  <form method="post" action="https://site-285.test/save" id="form">
+    <label><input type="checkbox" id="archive"> Archive</label>
+    <button type="submit">Save</button>
+  </form>
+  <iframe src="https://site-286.test/pay"></iframe>
+</main>
+<p id="log"></p>
+<script>
+  // A box the user's Yes is for, in a form its own button sends, beside a
+  // widget of another site that asks for a payment of its own when the page
+  // says so (ITER-076 I-09, review round 4, part C; Claude review c9, #13,
+  // #15).
+  const log = (text) => { document.getElementById('log').textContent += text + ';'; };
+  document.getElementById('archive').addEventListener('change', () => log('ticked'));
+  document.getElementById('form').addEventListener('submit', (event) => { event.preventDefault(); log('saved'); });
+  addEventListener('message', (event) => log(String(event.data)));
+  window.ask = () => document.querySelector('iframe').contentWindow.postMessage('ask', '*');
+  window.askGrant = () => document.querySelector('iframe').contentWindow.postMessage('ask-grant', '*');
+</script>
+</body>
+</html>

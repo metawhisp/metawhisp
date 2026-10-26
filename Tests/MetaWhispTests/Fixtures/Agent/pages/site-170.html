@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Site One Hundred Seventy</title>
+<style>
+  body { margin: 0; font: 16px sans-serif; }
+  main { padding: 16px 40px; }
+  iframe { display: block; border: 0; margin: 8px 0; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Book a table</h1>
+  <button type="button" onclick="log('top')">Top button</button>
+  <!-- A frame of the page's own origin, with a form. -->
+  <iframe id="same" style="width:420px;height:90px" srcdoc="<style>body{margin:0;font:16px sans-serif}</style><form action=https://site-170.test/table><label>Guests <input name=guests></label> <select aria-label=Seating><option>Inside</option><option>Terrace</option></select> <button type=button onclick=&quot;parent.log('booked ' + document.querySelector('[name=guests]').value + ' ' + document.querySelector('select').value)&quot;>Book</button></form>"></iframe>
+  <!-- A booking widget from another site: its own process. -->
+  <iframe id="other" style="width:700px;height:330px" src="https://site-171.test/"></iframe>
+  <p id="log"></p>
+</main>
+<script>
+  // A function the page's own frame calls.
+  function log(text) { document.getElementById('log').textContent += text + ';'; }
+</script>
+</body>
+</html>

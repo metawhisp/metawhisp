@@ -1,0 +1,22 @@
+ITER-074 I-T2c — AgentRun and J1 end to end on fixtures, 2026-09-24 19:05 CEST, orchestrator
+
+User stories: US-1..US-6, US-9 at level 3 — J1 collects three sites into a new Sheet with a source on every
+row; an irreversible action waits for a Yes and a No cancels it; a login form hands the errand to the user;
+Stop before the first step does nothing. Every J1 run checks §12.1's outcomes: rows with sources, read-back
+equal, steps within the ceiling, every step by the engine, no page text in the step log, no tab left open.
+
+Found while making J1 pass: a navigation was judged finished by the address alone, so opening a link to the
+page already shown waited 15 s and failed. Now a marker of address + document start (performance.timeOrigin).
+The router's private first-of latch became the shared Deadline, which the loop's paid calls use too.
+
+--- red: 4 tests, 4 failing
+AgentRunTests testALoginFormHandsTheErrandToTheUser failed (0.588 seconds).
+AgentRunTests testAnIrreversibleActionWaitsForAYesAndANoCancelsIt failed (0.001 seconds).
+AgentRunTests testJ1CollectsTheSitesIntoANewSheet failed (0.001 seconds).
+AgentRunTests testStopBeforeTheFirstStepDoesNothing failed (0.000 seconds).
+--- green (loop and router suites)
+AgentRunTests testALoginFormHandsTheErrandToTheUser passed (0.268 seconds).
+AgentRunTests testAnIrreversibleActionWaitsForAYesAndANoCancelsIt passed (0.100 seconds).
+AgentRunTests testJ1CollectsTheSitesIntoANewSheet passed (0.374 seconds).
+AgentRunTests testStopBeforeTheFirstStepDoesNothing passed (0.002 seconds).
+	 Executed 18 tests, with 0 failures (0 unexpected) in 0.907 (0.910) seconds

@@ -1,0 +1,16 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Site One Hundred Fourteen</title></head>
+<body>
+<main>
+  <h1>A hosted field</h1>
+  <!-- A frame of another site inside the form: in Chrome it loads, and no
+       script here can read it. -->
+  <form action="https://site-114.test/checkout" method="post">
+    <input aria-label="Name on order" value="Sam">
+    <iframe src="https://site-2.test/" style="width:200px;height:60px;border:0"></iframe>
+    <button type="submit">Continue order</button>
+  </form>
+</main>
+</body>
+</html>

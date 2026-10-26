@@ -1,0 +1,28 @@
+ITER-074 review round 12 (Codex on 5854de5), fixes — 2026-09-24 21:17 CEST
+Code by GLM-5.3-Flash from the orchestrator's instructions (review12-instructions.md, then
+review12-correction-instructions.md); compiled, run and reviewed line by line by the orchestrator.
+
+Findings (all confirmed in the code before fixing):
+  1. the cancellable task ended before the Sheet; openTab had no check -> the Sheet runs inside it; checks before open, paste, read-back
+  2. an action that reached the page was logged after its check; Stop could lose it -> logged at once; postcondition checked even after Stop
+  3. paid calls ignored the ceilings and the time left -> checked first; deadline cut to the time left; a finished errand checked once more
+  4. image alt text bypassed the filters -> only shown images, outside writing and sensitive fields
+  5. a cookie word anywhere exempted a grant; only approved actions bound their words -> exemption per label; every action bound
+
+Correction (the orchestrator's own design error in the first instructions, caught by a round-11 test):
+the paid call's check counted the step just begun, so the step reaching the limit was blocked at its own
+Choose and an errand finishing on its last allowed step lost its Sheet. Only the check before a new step
+counts steps now.
+
+--- red
+ActionScriptTests testAnActionIsNotTakenWhenItsWordsChangedAfterTheCheck failed (0.642 seconds).
+AgentPolicyTests testTheStepCeilingCanBeLeftOutInsideAStep failed (0.561 seconds).
+AgentRunTests testAnActionThatReachedThePageIsRecordedEvenIfStopFollows failed (0.083 seconds).
+AgentRunTests testAtACeilingNoSheetIsWritten failed (0.144 seconds).
+AgentRunTests testNoPaidCallStartsAfterTheExpiry failed (1.295 seconds).
+AgentRunTests testStopDuringThePasteEndsTheErrandAsStopped failed (0.379 seconds).
+AgentRunTests testTheLastAllowedStepStillFinishesTheErrand failed (0.379 seconds).
+ObserverFormsTests testAnImageInAHiddenOrSensitiveFieldNamesNothing failed (0.069 seconds).
+SafetyGuardTests testACookieWordInAnAddressExemptsNothing failed (0.001 seconds).
+--- green (agent suites)
+	 Executed 202 tests, with 0 failures (0 unexpected) in 12.680 (12.696) seconds

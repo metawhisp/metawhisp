@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="de">
+<head><meta charset="utf-8"><title>Site One Hundred Fifteen</title></head>
+<body>
+<main>
+  <h1>Anmelden</h1>
+  <!-- The password sits in a frame of this page's own origin, inside the
+       form; the page can show its text ("show password"). -->
+  <form id="outer" action="https://site-115.test/outer" method="post">
+    <input aria-label="Spitzname" value="sam">
+    <iframe id="frame" style="width:200px;height:40px;border:0"
+            srcdoc="<input type=password id=feld aria-label=Feld value=ab12>"></iframe>
+    <button type="submit">Weiter</button>
+  </form>
+  <button type="button" id="show"
+          onclick="document.getElementById('frame').contentDocument.getElementById('feld').type = 'text'">Zeigen</button>
+</main>
+</body>
+</html>

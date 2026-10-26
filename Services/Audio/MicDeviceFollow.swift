@@ -32,4 +32,10 @@ enum MicDeviceFollow {
     static func shouldFollow(wasRecording: Bool, attempts: Int) -> Bool {
         wasRecording && attempts < maxAttempts
     }
+
+    /// A capture bound to one device does not move when the system default does; a recording on the default
+    /// follows it, one on the user's pick stays.
+    static func followsDefaultChange(boundToDefault: Bool, bound: UInt32, newDefault: UInt32) -> Bool {
+        boundToDefault && newDefault != 0 && newDefault != bound
+    }
 }

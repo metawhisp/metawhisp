@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Site One Hundred Sixty-One</title>
+<style>
+  body { margin: 0; font: 16px sans-serif; }
+  main { padding: 24px 40px; }
+  .select { display: inline-block; width: 260px; height: 36px; line-height: 36px; padding: 0 8px; border: 1px solid #777; }
+  [role=option] { height: 32px; line-height: 32px; padding: 0 8px; border: 1px solid #ccc; width: 260px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Settings</h1>
+  <!-- A dropdown in a POST form that grants nothing. -->
+  <form id="auth" action="/settings" method="post">
+    <span id="level-label">Access level</span>
+    <div id="level" class="select" role="combobox" aria-labelledby="level-label" aria-haspopup="listbox"
+         aria-expanded="true" aria-controls="levels">Choose</div>
+  </form>
+  <!-- An unrelated search form, where the page draws the dropdown's open list. -->
+  <form id="search" action="/search" method="get">
+    <input name="q" aria-label="Search the help">
+    <div id="levels" role="listbox"><div role="option">Read only</div><div role="option">Everything</div></div>
+  </form>
+</main>
+<script>
+  for (const option of document.querySelectorAll('[role=option]')) {
+    option.addEventListener('click', () => {
+      document.getElementById('level').textContent = option.textContent;
+      document.getElementById('auth').requestSubmit();
+    });
+  }
+</script>
+</body>
+</html>

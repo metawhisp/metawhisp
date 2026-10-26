@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Site Two Hundred Thirty</title></head>
+<body>
+<main>
+  <h1 id="heading">Offers</h1>
+  <button id="details" type="button" style="width: 200px; height: 40px">Open details</button>
+  <button id="router" type="button" style="width: 200px; height: 40px">Open router</button>
+  <button id="blank" type="button" style="width: 200px; height: 40px">Open blank</button>
+  <button id="asked" type="button" style="width: 200px; height: 40px">Open with a question</button>
+  <button id="offer" type="button" style="width: 200px; height: 40px">Open offer</button>
+  <p id="log"></p>
+</main>
+<script>
+  // The page a window opens shows where it is: the details page names itself.
+  if (location.pathname === '/details') document.getElementById('heading').textContent = 'Details';
+  const open = (address) => {
+    const opened = window.open(address, '_blank');
+    document.getElementById('log').textContent += (opened ? 'opened' : 'blocked') + ';';
+  };
+  document.getElementById('details').addEventListener('click', () => open('/details'));
+  document.getElementById('router').addEventListener('click', () => open('http://127.0.0.1:9/router'));
+  document.getElementById('blank').addEventListener('click', () => open('about:blank'));
+  // A window asked for, then a question about it: one the agent answers
+  // Cancel, and one that names a payment.
+  document.getElementById('asked').addEventListener('click', () => {
+    open('/details');
+    document.getElementById('log').textContent += (confirm('Go on?') ? 'went on' : 'stayed') + ';';
+  });
+  document.getElementById('offer').addEventListener('click', () => {
+    open('/details');
+    document.getElementById('log').textContent += (confirm('Pay 50 USD now?') ? 'paid' : 'not paid') + ';';
+  });
+</script>
+</body>
+</html>

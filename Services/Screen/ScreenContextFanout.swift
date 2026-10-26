@@ -21,13 +21,19 @@ enum ScreenContextFanout {
     /// them here would buy a model call every ceiling interval for a window
     /// nobody touched, which is the cost the gate was added to avoid, arriving
     /// through the fix for the gate.
+    ///
+    /// U1 — nor does any context while the Ultra switch is off (`ultra`, the
+    /// app's `UltraFeatures` read for each context): the screen hints and the
+    /// realtime task reactor are not part of Pro, and each is a model call.
+    /// Nothing else reaches the two consumers.
     static func dispatch(
         _ ctx: ScreenContext,
         isForcedReread: Bool = false,
+        ultra: Bool,
         toTaskReactor reactor: @escaping @MainActor (ScreenContext) async -> Void,
         toProactive proactive: @escaping @MainActor (ScreenContext) -> Void
     ) {
-        guard !isForcedReread else { return }
+        guard !isForcedReread, ultra else { return }
         Task { @MainActor in await reactor(ctx) }
         Task { @MainActor in proactive(ctx) }
     }

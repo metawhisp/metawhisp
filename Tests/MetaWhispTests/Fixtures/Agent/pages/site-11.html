@@ -1,0 +1,17 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Site Eleven</title></head>
+<body>
+<main>
+  <h1>Components</h1>
+  <open-widget id="open"></open-widget>
+  <closed-widget id="closed"></closed-widget>
+</main>
+<script>
+  const open = document.getElementById('open').attachShadow({ mode: 'open' });
+  open.innerHTML = '<button id="inner">Shadow action</button>';
+  const closed = document.getElementById('closed').attachShadow({ mode: 'closed' });
+  closed.innerHTML = '<button>Closed action</button>';
+</script>
+</body>
+</html>

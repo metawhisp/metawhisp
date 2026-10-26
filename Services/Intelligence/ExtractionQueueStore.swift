@@ -6,14 +6,15 @@ enum ExtractionOutcome {
     /// extract) — remove it from the queue.
     case completed
     /// Could not process now for ENVIRONMENTAL reasons (no LLM access yet,
-    /// model not loaded) — keep it queued, uncounted; retry on the next
-    /// enqueue / model-ready / launch.
+    /// model not loaded, the network or the service down) — keep it queued,
+    /// uncounted; retry on the next enqueue / model-ready / launch.
     case retryLater
     /// The attempt RAN and failed on the content (unparseable LLM output,
     /// thrown mid-generation). Counted — ITER-051 review fix: a
-    /// permanently-unparseable conversation is dropped after
-    /// `ExtractionQueueStore.maxFailedAttempts`, so it can't burn a full
-    /// local generation on every drain trigger forever.
+    /// permanently-unparseable conversation is dropped after its queue's limit
+    /// (`ExtractionQueueStore.maxFailedAttempts` unless the queue sets
+    /// another), so it can't burn a full local generation on every drain
+    /// trigger forever.
     case failedAttempt
 }
 
@@ -40,11 +41,17 @@ final class ExtractionQueueStore {
     /// Counted content-failures per queued id (see `ExtractionOutcome.failedAttempt`).
     private var attempts: [UUID: Int]
     static let maxFailedAttempts = 5
+    /// This queue's limit: the default above, unless its owner sets another
+    /// (the summary queue, ITER-075 step 1).
+    private let failedAttemptLimit: Int
 
     /// - Parameters:
     ///   - filename: JSON file name, e.g. `"memory-extraction-queue.json"`.
     ///   - directory: override for tests; defaults to `Application Support/MetaWhisp`.
-    init(filename: String, directory: URL? = nil) {
+    ///   - maxFailedAttempts: counted failures after which an id leaves the queue.
+    init(filename: String, directory: URL? = nil,
+         maxFailedAttempts: Int = ExtractionQueueStore.maxFailedAttempts) {
+        self.failedAttemptLimit = maxFailedAttempts
         let dir = directory ?? Self.defaultDirectory
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         self.fileURL = dir.appendingPathComponent(filename)
@@ -62,6 +69,26 @@ final class ExtractionQueueStore {
         persist()
     }
 
+    /// To the front: a conversation that just closed goes before older ones.
+    /// One already queued moves there.
+    func enqueueFirst(_ id: UUID) {
+        ids.removeAll { $0 == id }
+        ids.insert(id, at: 0)
+        persist()
+    }
+
+    /// Several at once, in their order, with one write (a one-time sweep
+    /// queues hundreds). Ids already queued are skipped. False when the write
+    /// failed: they are then queued for this session only.
+    @discardableResult
+    func enqueue(contentsOf newIds: [UUID]) -> Bool {
+        var seen = Set(ids)
+        let added = newIds.filter { seen.insert($0).inserted }
+        guard !added.isEmpty else { return true }
+        ids.append(contentsOf: added)
+        return persist()
+    }
+
     /// Remove a conversation from the queue (after it completes).
     func remove(_ id: UUID) {
         let before = ids.count
@@ -72,6 +99,9 @@ final class ExtractionQueueStore {
 
     /// Snapshot of currently-queued conversation IDs, in enqueue order.
     func pending() -> [UUID] { ids }
+
+    /// The counted failures of a queued id.
+    func failedAttempts(for id: UUID) -> Int { attempts[id] ?? 0 }
 
     /// Drain the queue serially: process each pending conversation **once**,
     /// removing it on `.completed` and keeping it on `.retryLater`. IDs enqueued
@@ -86,21 +116,29 @@ final class ExtractionQueueStore {
         var attempted = Set<UUID>()
         while let id = ids.first(where: { !attempted.contains($0) }) {
             attempted.insert(id)
-            switch await process(id) {
-            case .completed:
+            record(id, await process(id))
+        }
+    }
+
+    /// What the drain does with one outcome. A caller that runs an id outside
+    /// a drain, or learns only later how a run went (ITER-075 step 1), hands
+    /// the outcome here; a failure of an id no longer queued is not counted.
+    func record(_ id: UUID, _ outcome: ExtractionOutcome) {
+        switch outcome {
+        case .completed:
+            remove(id)
+        case .retryLater:
+            break   // environmental — uncounted, stays queued
+        case .failedAttempt:
+            guard ids.contains(id) else { return }
+            let n = (attempts[id] ?? 0) + 1
+            attempts[id] = n
+            if n >= failedAttemptLimit {
+                NSLog("[ExtractionQueue] ⚠️ dropping %@ after %d failed attempts (unparseable content)",
+                      id.uuidString.prefix(8) as CVarArg, n)
                 remove(id)
-            case .retryLater:
-                break   // environmental — uncounted, stays queued
-            case .failedAttempt:
-                let n = (attempts[id] ?? 0) + 1
-                attempts[id] = n
-                if n >= Self.maxFailedAttempts {
-                    NSLog("[ExtractionQueue] ⚠️ dropping %@ after %d failed attempts (unparseable content)",
-                          id.uuidString.prefix(8) as CVarArg, n)
-                    remove(id)
-                } else {
-                    persist()
-                }
+            } else {
+                persist()
             }
         }
     }
@@ -114,7 +152,9 @@ final class ExtractionQueueStore {
         let attempts: [String: Int]
     }
 
-    private func persist() {
+    /// False when the queue could not be written.
+    @discardableResult
+    private func persist() -> Bool {
         do {
             let payload = Persisted(
                 ids: ids,
@@ -122,11 +162,13 @@ final class ExtractionQueueStore {
             )
             let data = try JSONEncoder().encode(payload)
             try data.write(to: fileURL, options: .atomic)
+            return true
         } catch {
             // Make a durability failure observable instead of silently letting
             // the on-disk queue diverge (disk full / permissions / encode error).
             NSLog("[ExtractionQueue] ⚠️ failed to persist %@: %@",
                   fileURL.lastPathComponent, error.localizedDescription)
+            return false
         }
     }
 
@@ -147,6 +189,6 @@ final class ExtractionQueueStore {
     private static var defaultDirectory: URL {
         let appSupport = FileManager.default
             .urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
-        return appSupport.appendingPathComponent("MetaWhisp", isDirectory: true)
+        return AppIdentity.current.supportDirectory(applicationSupport: appSupport)
     }
 }

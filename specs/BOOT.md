@@ -29,9 +29,9 @@
 ## Сборка и тесты
 - **Dev build:** `swift build` (быстрая компиляция, нет .app)
 - **Tests:** `swift test` — TDD-loop, см. `specs/TDD.md`. Запускать на КАЖДЫЙ save во время работы над logic-кодом.
-- **Release build + install + launch:** `./build.sh` (полный цикл)
-- **Hot-swap (debug binary in running app, no TCC reset):** `bash hot-swap.sh`
-- **Где живёт app:** `~/Applications/MetaWhisp.app` (НЕ `/Applications`)
+- **Release bundle:** `bash build.sh` — собирает и подписывает `.build/arm64-apple-macosx/release/MetaWhisp.app`; ничего не ставит, не останавливает и не запускает (ITER-075 0.6a)
+- **Тестовая сборка:** `bash hot-swap.sh` (= `build.sh --swap`) ставит сборку поверх рабочей `/Applications/MetaWhisp.app` — отдельной копии больше нет (владелец, 2026-09-26). Подпись только Developer ID; не во время записи; заменённая сборка сохраняется, `bash hot-swap.sh --rollback` её возвращает (ITER-076 0.1)
+- **Рабочая копия владельца:** `/Applications/MetaWhisp.app` — меняется только `hot-swap.sh` (с проверками выше) или релизом (Sparkle или DMG)
 
 ## Протокол коммуникации
 - Адресуемость: `spec://<модуль>/<DOC>#<секция>.<подсекция>`

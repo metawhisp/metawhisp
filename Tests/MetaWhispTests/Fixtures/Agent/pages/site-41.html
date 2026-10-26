@@ -1,0 +1,14 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Site Forty-One</title></head>
+<body>
+<main>
+  <h1>Account</h1>
+  <label for="t">Pass<x-tail id="tail">word</x-tail></label>
+  <input id="t" type="text" value="SECRET-TAIL">
+</main>
+<script>
+  document.getElementById('tail').attachShadow({ mode: 'open' }).innerHTML = '<span aria-hidden="true">*</span>';
+</script>
+</body>
+</html>

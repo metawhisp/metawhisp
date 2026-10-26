@@ -1,0 +1,40 @@
+ITER-074 review round 20 (Codex on c92ff14, a sweep of the whole label reader), fix part 2 — 2026-09-24
+Code by GLM-5.3-Flash from the orchestrator's instructions (review20b-instructions.md). GLM left the
+paymentPhrases line of step B2 unchanged; the "Gift card note" test caught it, and a one-line correction
+(appended to the instructions) applied it. Compiled, run and reviewed line by line by the orchestrator.
+
+Part 2 closes the vocabulary points (all confirmed by a failing page first):
+  4. usual English names of a secret were missing — "CVV2", "CVC2", "MM/YYYY", "Card #" ("#" now reads as
+     "number"), "Authenticator code", "PIN", "Passphrase";
+  7a. "card no" matched "Gift card note" — "no" now needs a word end after it.
+Not changed, answered with reasoning in the round-21 request:
+  5. a highlight exactly on a short word inside a longer one ("H<mark>otp</mark>ot") flags the page — a
+     false flag hands the errand to the user (AgentRun.swift:156), a missed secret leaks it;
+  7b. "Passport expiry date" flags a payment page — expiry dates are in the spec's sensitive set, and a
+     passport's data is personal data the agent should hand to the user anyway.
+Open for the owner: Russian names ("Пароль", "Код из SMS") — adding them needs a test with Cyrillic text,
+and tests are English-only by the owner's rule.
+
+--- red (1f9ae42 + tests)
+Tests/MetaWhispTests/Services/Agent/ObserverFormsTests.swift:526: error: testAGiftCardNoteIsNotACardNumber] : XCTAssertFalse failed
+Tests/MetaWhispTests/Services/Agent/ObserverFormsTests.swift:527: error: testAGiftCardNoteIsNotACardNumber] : XCTAssertTrue failed
+Tests/MetaWhispTests/Services/Agent/ObserverFormsTests.swift:516: error: testTheUsualNamesOfASecretAreKnown] : XCTAssertTrue failed - CVV2
+Tests/MetaWhispTests/Services/Agent/ObserverFormsTests.swift:517: error: testTheUsualNamesOfASecretAreKnown] : XCTAssertFalse failed - CVV2
+Tests/MetaWhispTests/Services/Agent/ObserverFormsTests.swift:516: error: testTheUsualNamesOfASecretAreKnown] : XCTAssertTrue failed - CVC2
+Tests/MetaWhispTests/Services/Agent/ObserverFormsTests.swift:517: error: testTheUsualNamesOfASecretAreKnown] : XCTAssertFalse failed - CVC2
+Tests/MetaWhispTests/Services/Agent/ObserverFormsTests.swift:516: error: testTheUsualNamesOfASecretAreKnown] : XCTAssertTrue failed - MM/YYYY
+Tests/MetaWhispTests/Services/Agent/ObserverFormsTests.swift:517: error: testTheUsualNamesOfASecretAreKnown] : XCTAssertFalse failed - MM/YYYY
+Tests/MetaWhispTests/Services/Agent/ObserverFormsTests.swift:516: error: testTheUsualNamesOfASecretAreKnown] : XCTAssertTrue failed - Card #
+Tests/MetaWhispTests/Services/Agent/ObserverFormsTests.swift:517: error: testTheUsualNamesOfASecretAreKnown] : XCTAssertFalse failed - Card #
+Tests/MetaWhispTests/Services/Agent/ObserverFormsTests.swift:516: error: testTheUsualNamesOfASecretAreKnown] : XCTAssertTrue failed - Authenticator code
+Tests/MetaWhispTests/Services/Agent/ObserverFormsTests.swift:517: error: testTheUsualNamesOfASecretAreKnown] : XCTAssertFalse failed - Authenticator code
+Tests/MetaWhispTests/Services/Agent/ObserverFormsTests.swift:516: error: testTheUsualNamesOfASecretAreKnown] : XCTAssertTrue failed - PIN
+Tests/MetaWhispTests/Services/Agent/ObserverFormsTests.swift:517: error: testTheUsualNamesOfASecretAreKnown] : XCTAssertFalse failed - PIN
+Tests/MetaWhispTests/Services/Agent/ObserverFormsTests.swift:516: error: testTheUsualNamesOfASecretAreKnown] : XCTAssertTrue failed - Passphrase
+Tests/MetaWhispTests/Services/Agent/ObserverFormsTests.swift:517: error: testTheUsualNamesOfASecretAreKnown] : XCTAssertFalse failed - Passphrase
+--- green (ObserverFormsTests, after the correction)
+	 Executed 48 tests, with 0 failures (0 unexpected) in 4.708 (4.713) seconds
+--- gate
+  ✅ 1799 tests, 0 failures
+  ✅ 88 critical suites ran
+PASS — safe to continue.

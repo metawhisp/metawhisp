@@ -26,6 +26,18 @@ final class MeetingRecorder: ObservableObject {
     func markSniffStart() { sniffPeakRMS = 0 }
     @Published var audioBars: [Float] = Array(repeating: 0, count: 24)
     @Published var lastError: String?
+    /// C6 — the onboarding practice owns the microphone while its screen is
+    /// up; a meeting asks here first. Its refusal line goes when capture
+    /// comes back.
+    weak var captureArbiter: CaptureArbiter? {
+        didSet {
+            captureReturned = captureArbiter?.$practiceOwnsCapture.sink { [weak self] owns in
+                guard !owns, let self, lastError == CaptureArbiter.finishThePracticeFirst else { return }
+                lastError = nil
+            }
+        }
+    }
+    private var captureReturned: AnyCancellable?
     /// True if mic capture failed but system audio is still active (user will lose their own voice).
     @Published var micOnlyMode = false
 
@@ -363,8 +375,21 @@ final class MeetingRecorder: ObservableObject {
     /// disabled and a 2h heartbeat is armed instead. `manualMode = false`
     /// (default) means the auto-start gate triggered the recording, full
     /// guards apply.
-    func start(manualMode: Bool = false) {
-        guard !isRecording, !isStarting else { return }
+    ///
+    /// Refused while the onboarding practice holds the microphone. The
+    /// refusal goes on the line the popover shows before anything is reset:
+    /// a reset of the system-audio error reaches that line a run-loop turn
+    /// later through the relay, and erased a refusal written after it
+    /// (step-1 review #10). Returns whether the start went ahead — false when
+    /// it was refused or a meeting is already starting or recording.
+    @discardableResult
+    func start(manualMode: Bool = false, ask: PermissionAsk? = nil) -> Bool {
+        guard !isRecording, !isStarting else { return false }
+        if let refusal = captureArbiter?.refusal {
+            lastError = refusal
+            NSLog("[MeetingRecorder] ▶️ not started — the practice has the microphone")
+            return false
+        }
         forgetOutcome()
         micOnlyMode = false
         systemAudioDown = false
@@ -384,7 +409,7 @@ final class MeetingRecorder: ObservableObject {
             // 1. Start system audio first — it's the path with TCC prompts.
             //    `start()` returns immediately; actual stream setup is async inside it.
             do {
-                try self.systemAudio.start()
+                try self.systemAudio.start(leadingSilenceSeconds: 0, ask: ask)
             } catch {
                 self.lastError = "Meeting start failed: \(error.localizedDescription)"
                 self.isStarting = false
@@ -471,6 +496,7 @@ final class MeetingRecorder: ObservableObject {
                 NSLog("[MeetingRecorder] auto mode — silence guard %.1fm below %.4f RMS, max duration %.0fm", max(0.5, AppSettings.shared.meetingSilenceStopMinutes), Self.silenceRMSThreshold, max(5, AppSettings.shared.meetingMaxDurationMinutes))
             }
         }
+        return true
     }
 
     /// ITER-026 v2 — mark mic stream paused. User just triggered a dictation

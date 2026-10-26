@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Site Four Fifty-Three</title></head>
+<body>
+<main>
+  <!-- ITER-076 stage 7, review round 1 (C4): two forms a script gathers
+       without a form tag, each in its own box with its own button: the demo,
+       and "Talk to sales". The second's button sends the second's fields —
+       never under a Yes given for the first's. -->
+  <h1>Book a demo</h1>
+  <div class="demo" id="demo">
+    <label for="name">Full name</label><input id="name" autocomplete="name">
+    <label for="mail">Email</label><input id="mail" type="email">
+    <label for="note">Message</label><textarea id="note"></textarea>
+    <button type="button" id="book">Book my demo</button>
+  </div>
+  <div class="sales" id="sales">
+    <label for="who">Your name</label><input id="who" autocomplete="name">
+    <label for="work">Work email</label><input id="work" type="email">
+    <button type="button" id="talk">Talk to sales</button>
+  </div>
+</main>
+<script>
+  window.demoSent = 0;
+  window.salesSent = 0;
+  document.getElementById('book').addEventListener('click', () => { window.demoSent += 1; });
+  document.getElementById('talk').addEventListener('click', () => {
+    window.salesSent += 1;
+    window.salesValues = ['who', 'work'].map((id) => document.getElementById(id).value);
+  });
+</script>
+</body>
+</html>

@@ -1,0 +1,16 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Site One Hundred Thirty-Seven</title></head>
+<body>
+<main>
+  <h1>The offer</h1>
+  <p id="tick">0</p>
+</main>
+<script>
+  // Busy at first, then off to another site: it lands here, and ends there.
+  let ticks = 0;
+  setInterval(() => { document.getElementById('tick').textContent = String(++ticks); }, 50);
+  setTimeout(() => location.replace('https://site-138.test/'), 300);
+</script>
+</body>
+</html>

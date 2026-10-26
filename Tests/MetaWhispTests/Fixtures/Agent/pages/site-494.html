@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Site Four Hundred Ninety-Four</title>
+<style>
+  body { margin: 0; font: 16px sans-serif; }
+  .top { position: sticky; top: 0; background: #eee; padding: 8px; }
+  main { padding: 24px 40px; min-height: 1400px; }
+  #notice { position: fixed; bottom: 0; left: 0; right: 0; background: #333; color: #fff; padding: 12px; }
+  #notice a { color: #fff; margin-right: 16px; }
+</style>
+</head>
+<body>
+<!-- A sticky header is no cookie window, cookie policy link and all. -->
+<div class="top">
+  <a href="/policies/cookies">Cookie policy</a>
+  <button id="login" onclick="window.logins = (window.logins || 0) + 1">Log in</button>
+</div>
+<main>
+  <h1>Missions</h1>
+  <p>The probe landed in 2005.</p>
+</main>
+<!-- A cookie bar fixed to the bottom of the viewport, drawn with no dialog role (2026-10-19: a site's bar whose
+     least consent asked a Yes because the eyes did not read it as a window): its words and its links make it the
+     page's cookie window, and the least consent goes with no Yes. -->
+<div id="notice">
+  We use cookies to make the site work and to measure its use.
+  <a href="#accept" onclick="window.accepted = (window.accepted || 0) + 1; return false">Accept all cookies</a>
+  <a href="#decline" onclick="window.declined = (window.declined || 0) + 1; return false">Accept only essential cookies</a>
+</div>
+</body>
+</html>

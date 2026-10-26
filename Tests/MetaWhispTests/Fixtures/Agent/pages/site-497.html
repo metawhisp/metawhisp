@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Site Four Hundred Ninety-Seven</title></head>
+<body>
+<main>
+  <h1>Basic HTML form</h1>
+  <!-- A practice form as a test site draws one (2026-10-20, a blind errand): a user name, a password left empty, a
+       comment, a file, boxes, radios and a list, sent by POST to /submit. An empty password sends no secret: the
+       form's other controls are the errand's (owner decision 4, 2026-09-29). The query adds what could send one:
+       "filled" - the password typed in before the look; "card" - an empty card field the page marks by its
+       structure; "cvc" - an empty one only its words call a card's; "frame" - a frame of another origin; "big" -
+       more controls than a form is read to. And "code": an empty field only its words call a sign-in's. -->
+  <form id="practice" action="/submit" method="post">
+    <label>Username <input name="username" id="username" size="15"></label>
+    <label>Password <input type="password" name="password" id="password" size="15"></label>
+    <label>Comments <textarea name="comments" id="comments" cols="40" rows="3">Comments...</textarea></label>
+    <label>Filename <input type="file" name="filename"></label>
+    <input type="hidden" name="hiddenField" value="Hidden Field Value">
+    <label><input type="checkbox" name="checkboxes[]" value="cb1"> Checkbox 1</label>
+    <label><input type="checkbox" name="checkboxes[]" value="cb2"> Checkbox 2</label>
+    <label><input type="checkbox" name="checkboxes[]" value="cb3" checked> Checkbox 3</label>
+    <label><input type="radio" name="radioval" value="rd1"> Radio 1</label>
+    <label><input type="radio" name="radioval" value="rd2" checked> Radio 2</label>
+    <label>Dropdown
+      <select name="dropdown" id="dropdown">
+        <option value="dd1">Drop Down Item 1</option>
+        <option value="dd2">Drop Down Item 2</option>
+        <option value="dd3" selected>Drop Down Item 3</option>
+      </select>
+    </label>
+    <input type="reset" value="cancel">
+    <input type="submit" value="submit">
+  </form>
+  <p><a href="/help">Help</a></p>
+</main>
+<script>
+  const asked = new URLSearchParams(location.search);
+  const form = document.getElementById('practice');
+  if (asked.has('filled')) document.getElementById('password').value = 'hunter2-practice';
+  if (asked.has('card')) {
+    form.insertAdjacentHTML('beforeend', '<label>Card <input name="card" autocomplete="cc-number"></label>');
+  }
+  if (asked.has('cvc')) form.insertAdjacentHTML('beforeend', '<label>Security code <input name="cvc"></label>');
+  if (asked.has('code')) form.insertAdjacentHTML('beforeend', '<label>Backup code <input name="backup"></label>');
+  if (asked.has('frame')) {
+    form.insertAdjacentHTML('beforeend',
+      '<iframe sandbox srcdoc="<p>Words only</p>" style="width:200px;height:40px;border:0"></iframe>');
+  }
+  if (asked.has('big')) {
+    for (let i = 0; i < 200; i++) form.insertAdjacentHTML('beforeend', '<input type="hidden" name="h' + i + '" value="v">');
+  }
+</script>
+</body>
+</html>

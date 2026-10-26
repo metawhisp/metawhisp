@@ -1,6 +1,6 @@
 import SwiftUI
 
-@main
+/// Started by `Launch`, the entry point.
 struct MetaWhispApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
 

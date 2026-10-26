@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Site One Hundred Sixty-Six</title>
+<style>
+  body { margin: 0; font: 16px sans-serif; }
+  main { padding: 24px 40px; }
+  input, button { display: block; width: 240px; height: 36px; margin: 8px 0; }
+</style>
+</head>
+<body>
+<main>
+  <h1>A draft</h1>
+  <input aria-label="Draft title">
+  <button type="button" id="touch">Mark as changed</button>
+  <a href="https://site-1.test/">Somewhere else</a>
+  <p id="log"></p>
+</main>
+<script>
+  // The page asks before it is left once something changed.
+  let changed = false;
+  document.getElementById('touch').addEventListener('click', () => {
+    changed = true;
+    document.getElementById('log').textContent = 'changed';
+  });
+  window.addEventListener('beforeunload', (event) => {
+    if (!changed) return;
+    event.preventDefault();
+    event.returnValue = '';
+  });
+</script>
+</body>
+</html>

@@ -1,0 +1,26 @@
+# ITER-075 0.7 — first self-check on a real bundle (2026-09-26 01:15 CEST)
+# Built by: bash hot-swap.sh --no-launch (= build.sh --dev --debug --no-launch), commit 703c90a
+
+$ ~/Applications/MetaWhisp Dev.app/Contents/MacOS/MetaWhispDev --self-check
+self-check: Info.plist ok
+self-check: mlx.metallib ok
+self-check: MLX on the GPU ok
+SELF-CHECK OK
+exit=0
+
+$ codesign -dvv (identity lines)
+Identifier=com.metawhisp.app.dev
+Authority=Developer ID Application: <name> (6D6948Z4MW)
+TeamIdentifier=6D6948Z4MW
+
+$ Info.plist
+CFBundleIdentifier = com.metawhisp.app.dev
+CFBundleName = MetaWhisp Dev
+CFBundleExecutable = MetaWhispDev
+CFBundleURLTypes:0:CFBundleURLSchemes:0 = metawhisp-dev
+SUFeedURL = Print: Entry, ":SUFeedURL", Does Not Exist
+
+$ the working app is untouched
+running: 95329 /Applications/MetaWhisp.app/Contents/MacOS/MetaWhisp
+Identifier=com.metawhisp.app
+Timestamp=Sep 25, 2026 at 11:51:34 AM

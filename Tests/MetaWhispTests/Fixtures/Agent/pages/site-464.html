@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Site Four Sixty-Four</title></head>
+<body>
+<main>
+  <!-- ITER-076 stage 7, review round 2 (R2-3): a demo form whose plan list
+       stands outside the form's tag, joined to it by its `form` attribute:
+       the form sends it, its choice made — and no row shows a choice. -->
+  <h1 id="title">Request a demo</h1>
+  <form id="demo" action="/thanks" method="post">
+    <label for="first">First name</label><input id="first" name="first" autocomplete="given-name">
+    <label for="email">Work email</label><input id="email" name="email" type="email">
+    <button type="submit" id="send">Request a demo</button>
+  </form>
+  <section>
+    <label for="plan">Plan</label>
+    <select id="plan" name="plan" form="demo"><option value="pro" selected>Pro</option><option value="team">Team</option></select>
+  </section>
+</main>
+</body>
+</html>

@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Site One Hundred Forty-Six</title>
+<style>
+  body { margin: 0; font: 16px sans-serif; }
+  main { padding: 24px 40px; }
+  .choice { position: relative; margin: 14px 0; height: 28px; }
+  /* The real box is see-through; the label draws the one a person sees. */
+  .choice input { position: absolute; left: 0; top: 4px; width: 20px; height: 20px; margin: 0; opacity: 0; }
+  .choice label { display: inline-block; padding-left: 30px; line-height: 28px; cursor: pointer; position: relative; }
+  .choice label::before { content: ''; position: absolute; left: 0; top: 4px; width: 18px; height: 18px;
+                          border: 1px solid #333; }
+  .choice input:checked + label::before { background: #333; }
+  .gone, .choice .gone { display: none; }
+  /* A see-through box stretched over the whole of its label. */
+  .cover { position: relative; display: inline-block; margin: 14px 0; }
+  .cover input { position: absolute; left: 0; top: 0; width: 100%; height: 100%; margin: 0; opacity: 0; z-index: 1; }
+  .cover label { display: inline-block; padding: 4px 8px; border: 1px solid #333; }
+  .wrap { display: inline-block; margin: 14px 0; padding: 4px 8px; border: 1px solid #333; }
+  ul { list-style: none; padding: 0; }
+  li { position: relative; height: 32px; line-height: 32px; padding-left: 34px; }
+  /* A to-do's box: see-through, over a tick drawn beside it, and no label. */
+  li input { position: absolute; left: 0; top: 4px; width: 24px; height: 24px; margin: 0; opacity: 0; }
+  li .tick { position: absolute; left: 0; top: 4px; width: 22px; height: 22px; border: 1px solid #333;
+             border-radius: 12px; pointer-events: none; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Preferences</h1>
+  <!-- A consent box drawn by CSS over a see-through input, with a label. -->
+  <div class="choice"><input id="terms" type="checkbox"><label for="terms">I agree to the terms</label></div>
+  <!-- The same with its label hidden: the input itself is the target. -->
+  <div class="choice"><input id="news" type="checkbox"><label for="news" class="gone">Send me the news</label></div>
+  <!-- The same, switched off: never offered, through its label or itself. -->
+  <div class="choice"><input id="locked" type="checkbox" disabled><label for="locked">Locked choice</label></div>
+  <div class="choice"><input id="dim" type="checkbox" disabled aria-label="Dim choice"></div>
+  <!-- A radio whose input takes no box at all; its label is the target. -->
+  <div class="choice"><input id="yearly" type="radio" name="period" class="gone"><label for="yearly">Yearly billing</label></div>
+  <!-- A box laid over the whole of its label: the label and the input are
+       one target. -->
+  <div class="cover"><input id="offers" type="checkbox"><label for="offers">Show me offers</label></div>
+  <!-- A to-do list: each box is see-through and labelled by name only. -->
+  <ul>
+    <li><input id="milk" type="checkbox"><span class="tick"></span><span>Buy milk</span></li>
+    <!-- A see-through box that takes no pointer and has no label: nothing to click. -->
+    <li><input id="archived" type="checkbox" style="pointer-events: none"><span>Archived task</span></li>
+  </ul>
+  <!-- A control of its own around a hidden input and its label: one control. -->
+  <div id="weekly-box" class="wrap" role="checkbox" aria-checked="false" tabindex="0"><input id="weekly" type="checkbox" hidden><label for="weekly">Send me weekly news</label></div>
+  <p id="log"></p>
+</main>
+<script>
+  const log = (text) => { document.getElementById('log').textContent += text + ';'; };
+  for (const input of document.querySelectorAll('input')) {
+    input.addEventListener('change', () => log(input.id || input.getAttribute('aria-label')));
+  }
+  const wrap = document.getElementById('weekly-box');
+  wrap.addEventListener('click', () => setTimeout(() => {
+    wrap.setAttribute('aria-checked', String(document.getElementById('weekly').checked));
+  }, 0));
+</script>
+</body>
+</html>

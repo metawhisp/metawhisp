@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Long 406</title></head>
+<body>
+<main>
+  <!-- ITER-076 brain, step 2: a page longer than one reader call — a hundred
+       paragraphs of about 310 characters, three calls of at most 12,000 — and
+       a button that adds one, so the page's text changes. -->
+  <h1>A long page of jokes</h1>
+  <div id="list"></div>
+  <button id="more" type="button">More</button>
+</main>
+<script>
+  const list = document.getElementById('list');
+  const add = (n) => {
+    const paragraph = document.createElement('p');
+    paragraph.textContent = 'Paragraph ' + n + ' ' + 'word '.repeat(60);
+    list.appendChild(paragraph);
+  };
+  for (let n = 1; n <= 100; n++) add(n);
+  let next = 101;
+  document.getElementById('more').addEventListener('click', () => add(next++));
+</script>
+</body>
+</html>

@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Site Two Hundred Eighty-Seven</title>
+<style>body { margin: 0; font: 16px sans-serif; } main { padding: 16px 40px; } iframe { display: block; border: 0; }</style>
+</head>
+<body>
+<main id="page"></main>
+<p id="log"></p>
+<script>
+  // ITER-076 I-09, review round 4, part C.
+  const page = document.getElementById('page');
+  const log = (text) => { document.getElementById('log').textContent += text + ';'; };
+  const path = location.pathname;
+  if (path === '/start') {
+    // A page the agent leaves by a link, or comes back to (decision 13).
+    page.innerHTML = '<h1>Plans</h1><p><a href="https://site-287.test/upgraded">Upgrade</a></p>' +
+      '<p><a href="https://site-287.test/next">Next</a></p>';
+  } else if (path === '/upgraded' || path === '/next') {
+    page.innerHTML = '<h1>' + (path === '/next' ? 'Next' : 'Upgraded') + '</h1>';
+  } else {
+    // A checkout with no frame when it is looked at, whose order button
+    // sends nothing but this page's log; the page frames its total from
+    // another site's checkout, beside the button, when it says so
+    // (decision 12; Claude review c9 of I-09, #16).
+    page.innerHTML = '<h1>Kasse</h1><button id="order" type="button">Bestellen</button>';
+    document.getElementById('order').addEventListener('click', () => log('ordered'));
+    window.addTotal = () => {
+      const frame = document.createElement('iframe');
+      frame.style.cssText = 'width:420px;height:40px';
+      frame.src = 'https://site-271.test/total';
+      page.append(frame);
+    };
+  }
+</script>
+</body>
+</html>

@@ -1,0 +1,17 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Site Sixteen</title></head>
+<body>
+<main>
+  <h1>Oversized things</h1>
+  <div id="huge" onclick="void 0"></div>
+  <a id="long" href="#">Long address</a>
+</main>
+<script>
+  const words = [];
+  for (let i = 0; i < 100000; i++) words.push('word' + (i % 10));
+  document.getElementById('huge').textContent = words.join(' ');
+  document.getElementById('long').href = 'https://site-16.test/' + 'a'.repeat(5000);
+</script>
+</body>
+</html>

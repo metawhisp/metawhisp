@@ -1,0 +1,18 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Site Eighty-Eight</title></head>
+<body>
+<main>
+  <h1>Share</h1>
+  <button id="share" type="button" style="width: 200px; height: 50px">Share this</button>
+  <p id="log"></p>
+</main>
+<script>
+  // A person's click lets a page open a window; a script's does not.
+  document.getElementById('share').addEventListener('click', () => {
+    const opened = window.open('about:blank', '_blank');
+    document.getElementById('log').textContent += (opened ? 'opened' : 'blocked') + ';';
+  });
+</script>
+</body>
+</html>

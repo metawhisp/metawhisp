@@ -1,0 +1,18 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Site One Hundred Seventy-One</title>
+<style>body { margin: 0; font: 16px sans-serif; } iframe { display: block; border: 0; margin: 4px 0; }</style>
+</head>
+<body>
+<h2>Reserve with us</h2>
+<form>
+  <label>Email <input name="email"></label>
+  <button type="button" onclick="document.getElementById('log').textContent += 'reserved ' + document.querySelector('[name=email]').value + ';'">Reserve</button>
+</form>
+<p id="log"></p>
+<!-- A frame of this site's own, inside it. -->
+<iframe style="width:300px;height:40px" srcdoc="<button onclick=&quot;document.title = 'nested pressed'&quot;>Nested inside</button>"></iframe>
+<!-- A frame of a third site, inside this one. -->
+<iframe style="width:300px;height:60px" src="https://site-172.test/"></iframe>
+</body>
+</html>

@@ -57,15 +57,47 @@ final class WindowBehaviorGuardTests: XCTestCase {
         }
     }
 
-    /// `.moveToActiveSpace` is banned in code — it is the Space-switching
-    /// mechanic that threw the user to another Space on macOS 26.
-    func testMoveToActiveSpaceIsBanned() {
+    /// The main window comes to the user's Space: `MWWindowBehavior.main` carries
+    /// `.moveToActiveSpace` and `.fullScreenAuxiliary`, and is never sticky.
+    /// 2026-10-19: the transient join-all-Spaces + park design dropped
+    /// `.moveToActiveSpace`, and 9 of 10 re-opens on the owner's Mac landed on
+    /// the Space the window was parked on — the user dragged with it.
+    func testTheMainWindowComesToTheUsersSpace() throws {
+        let url = repoRoot.appendingPathComponent("Helpers/WindowBehavior.swift")
+        let src = try String(contentsOf: url, encoding: .utf8)
+        let main = try XCTUnwrap(codeLines(of: src).first { $0.line.contains("static let main") }?.line)
+        XCTAssertTrue(main.contains(".moveToActiveSpace"), "the main window must move to the user's Space when shown: \(main)")
+        XCTAssertTrue(main.contains(".fullScreenAuxiliary"), main)
+        XCTAssertFalse(main.contains(".canJoinAllSpaces"), "a sticky main window is its own regression: \(main)")
         for (path, src) in swiftSources(under: ["Views", "App", "Helpers"]) {
             for (n, line) in codeLines(of: src) {
-                XCTAssertFalse(line.contains(".moveToActiveSpace"),
-                               "\(path):\(n) uses .moveToActiveSpace — superseded by MWWindowBehavior (ITER-050 B2.1)")
+                XCTAssertFalse(line.contains("mainParked"), "\(path):\(n) parks a window — the park is what threw the user")
             }
         }
+    }
+
+    /// The main window's behavior is set once, when it is created, and never
+    /// changed afterwards: the transient re-set around the order-in was the
+    /// 2026-07-07 wrong turn.
+    func testTheMainWindowsBehaviorIsSetOnceAtCreation() throws {
+        let url = repoRoot.appendingPathComponent("Views/Windows/MainWindowController.swift")
+        let src = try String(contentsOf: url, encoding: .utf8)
+        let assignments = codeLines(of: src).filter { $0.line.contains("collectionBehavior =") }
+        XCTAssertEqual(assignments.map(\.n).count, 1, "the main window's behavior is assigned once: \(assignments.map(\.n))")
+    }
+
+    /// No window of the app is kept hidden (2026-10-19): the main window closes
+    /// for real — the delegate never turns a close into a hide — and the closed
+    /// window is released. The only order-outs are the two inside `show`, each
+    /// right before an order-front.
+    func testTheMainWindowIsNeverKeptHidden() throws {
+        let url = repoRoot.appendingPathComponent("Views/Windows/MainWindowController.swift")
+        let src = try String(contentsOf: url, encoding: .utf8)
+        let code = codeLines(of: src)
+        XCTAssertFalse(code.contains { $0.line.contains("windowShouldClose") }, "a close is never intercepted into a hide")
+        XCTAssertTrue(code.contains { $0.line.contains("func windowWillClose(") }, "the closed window is released")
+        let orderOuts = code.filter { $0.line.contains("orderOut(") }.map(\.n)
+        XCTAssertEqual(orderOuts.count, 2, "order-outs only inside show, before an order-front: lines \(orderOuts)")
     }
 
     // NOTE: aggressive `activate(ignoringOtherApps: true)` is guarded by the
@@ -78,7 +110,7 @@ final class WindowBehaviorGuardTests: XCTestCase {
             return XCTFail("Helpers/WindowBehavior.swift missing")
         }
         let constants = src.components(separatedBy: "\n").filter { $0.contains("static let") }
-        XCTAssertEqual(constants.count, 4, "unexpected constant count in MWWindowBehavior")
+        XCTAssertEqual(constants.count, 3, "unexpected constant count in MWWindowBehavior")
         for line in constants {
             XCTAssertTrue(line.contains(".fullScreenAuxiliary"),
                           "MWWindowBehavior constant without .fullScreenAuxiliary: \(line)")

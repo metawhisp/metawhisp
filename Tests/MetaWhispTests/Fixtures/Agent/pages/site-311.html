@@ -1,0 +1,18 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Site Three Hundred Eleven</title>
+<style>body { margin: 0; font: 16px sans-serif; } main { padding: 16px 40px; } iframe { display: block; border: 0; width: 420px; height: 90px; }</style>
+</head>
+<body>
+<main id="page"></main>
+<script>
+  // ITER-076 I-09, round 7 (Claude review c11, #4): a frame of another site
+  // the page names a card's field — by the label around it (/label), or by
+  // its title while it holds a form (/title) — whose own field no structure
+  // and no word of its own marks.
+  document.getElementById('page').innerHTML = '<h1>Checkout</h1>' + (location.pathname === '/title'
+    ? '<iframe title="Card number" src="https://site-312.test/form"></iframe>'
+    : '<label>Card number <iframe src="https://site-312.test/pan"></iframe></label>');
+</script>
+</body>
+</html>

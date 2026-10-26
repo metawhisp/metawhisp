@@ -56,6 +56,17 @@ final class ConversationGrouper {
         historyItem.conversationId = conv.id
         conv.updatedAt = historyItem.createdAt
         try? ctx.save()
+        // ITER-075 step 1 (1.5) — the link is saved where it was written. The
+        // item lives in its caller's context, and a fresh context (an
+        // extractor's, a moment after the close) read no link until that
+        // context saved on its own: a meeting's memories and tasks could be
+        // lost.
+        do {
+            try historyItem.modelContext?.save()
+        } catch {
+            NSLog("[ConversationGrouper] ⚠️ the link of HistoryItem %@ was not saved — %@",
+                  historyItem.id.uuidString.prefix(8) as CVarArg, error.localizedDescription)
+        }
 
         // Schedule structured-gen / extractors here (not inside
         // `activeOrNewConversation`) so we can pass the in-memory transcript
@@ -226,12 +237,16 @@ final class ConversationGrouper {
         Task { @MainActor [weak self] in
             try? await Task.sleep(for: .seconds(2))
             _ = self
-            await AppDelegate.shared?.structuredGenerator.generate(
-                conversationId: conversationId,
-                knownTranscript: knownTranscript
-            )
-            AppDelegate.shared?.memoryExtractor.triggerOnConversationClose(conversationId: conversationId)
-            AppDelegate.shared?.taskExtractor.triggerOnConversationClose(conversationId: conversationId)
+            guard let app = AppDelegate.shared else { return }
+            // ITER-075 step 1 (1.5) — the calendar link first: the task
+            // extractor reads it when it starts. Then this conversation's own
+            // summary, in its turn (the Library and the recap show it), and
+            // then its memories and tasks. The close waits for no other
+            // conversation's summary: the rest of that queue runs on its own.
+            await app.structuredGenerator.linkCalendar(conversationId)
+            await app.structuredGenerator.summarizeClosed(conversationId, knownTranscript: knownTranscript)
+            app.memoryExtractor.triggerOnConversationClose(conversationId: conversationId)
+            app.taskExtractor.triggerOnConversationClose(conversationId: conversationId)
         }
     }
 }

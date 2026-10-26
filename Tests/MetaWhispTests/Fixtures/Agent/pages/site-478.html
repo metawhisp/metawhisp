@@ -1,0 +1,15 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Quotes 478</title></head>
+<body>
+<main id="list"></main>
+<script>
+  // A list of quotes over three pages, each but the last with a pager's next (2026-10-16).
+  const page = Number((location.pathname.match(/\/page\/(\d+)/) || [0, 1])[1]);
+  const list = document.getElementById('list');
+  list.innerHTML = '<h1>Quotes, page ' + page + '</h1>' +
+    [1, 2].map((n) => '<p>Quote ' + page + '.' + n + ' by Sam</p>').join('') +
+    (page < 3 ? '<p><a href="https://site-478.test/page/' + (page + 1) + '/">Next →</a></p>' : '');
+</script>
+</body>
+</html>

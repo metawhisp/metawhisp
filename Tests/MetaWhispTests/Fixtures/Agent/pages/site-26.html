@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Site Twenty-Six</title>
+<style>main { min-height: 3000px; }</style></head>
+<body>
+<main>
+  <h1>Actions</h1>
+  <button id="reveal">Show details</button>
+  <input type="search" aria-label="Search the docs">
+  <select aria-label="Billing period"><option>Monthly</option><option>Yearly</option></select>
+  <a href="https://site-26.test/next">Next page</a>
+  <p><button class="twin">Delete</button> <button class="twin">Delete</button></p>
+  <button id="pay" aria-label="Confirm payment" onclick="document.title = 'Paid'">Pay $10</button>
+  <div id="notes" contenteditable="true" aria-label="Notes editor"
+       style="display:inline-block;min-width:40px;min-height:20px">old notes</div>
+</main>
+<script>
+  document.getElementById('reveal').addEventListener('click', () => {
+    document.getElementById('reveal').textContent = 'Hide details';
+  });
+  for (const twin of document.querySelectorAll('.twin')) {
+    twin.addEventListener('click', () => twin.remove());
+  }
+</script>
+</body>
+</html>

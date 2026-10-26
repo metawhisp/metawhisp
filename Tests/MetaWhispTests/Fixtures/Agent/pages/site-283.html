@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Site Two Hundred Eighty-Three</title>
+<style>
+  body { margin: 0; font: 16px sans-serif; }
+  main { padding: 24px 40px; }
+  button { display: block; width: 240px; height: 32px; margin: 6px 0; }
+</style>
+</head>
+<body>
+<main id="main"></main>
+<p id="log"></p>
+<script>
+  // A page's own confirm under the user's Yes that names a grant or a
+  // payment inside a word or in another form of it (ITER-076 I-09, review
+  // round 4, part C): each path one case, one button, one confirm.
+  const log = (text) => { document.getElementById('log').textContent += text + ';'; };
+  const main = document.getElementById('main');
+  const cases = {
+    '/giving': ['Renew', 'Renew by giving Acme access?', 'granted'],
+    '/sharing': ['Renew', 'Renew and keep sharing your data with Acme?', 'granted'],
+    '/prepaid': ['Renew', 'Renew the prepaid plan?', 'paid'],
+    '/autopay': ['Turn on autopay', 'Turn on autopay?', 'paid'],
+    '/preauthorize': ['Preauthorize renewal', 'Preauthorize the renewal?', 'granted'],
+    '/permission': ['Post', 'Give Acme permission to post?', 'granted'],
+    // Another act named in a sentence of its own, by a word of leaving or
+    // undoing, or the act's own word as a thing (Claude review c9, #11).
+    '/sentences': ['Remove', 'Remove this? Send it to all subscribers?', 'sent'],
+    '/unsubscribe': ['Delete', 'Delete this list and unsubscribe all contacts?', 'unsubscribed'],
+    '/limit': ['Send', 'Your send limit is reached. Upgrade to Pro now?', 'upgraded'],
+  };
+  const [label, message, done] = cases[location.pathname] || ['Renew', 'Renew now?', 'renewed'];
+  main.innerHTML = '<h1>Your plan</h1>';
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.textContent = label;
+  button.addEventListener('click', () => log(confirm(message) ? done : 'not ' + done));
+  main.append(button);
+</script>
+</body>
+</html>

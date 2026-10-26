@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Site One Hundred Eighty-Seven</title>
+<style>
+  body { margin: 0; font: 16px sans-serif; }
+  main { padding: 24px 40px; }
+  #many button { display: block; height: 20px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Travellers</h1>
+  <!-- A list of options no one in the page's light tree names, first; then
+       more controls than the walk reads, and after them a component whose
+       field, in its shadow root, names that list. Each field that names a
+       list draws dots: the page marks it secret by its structure. -->
+  <ul id="saved-ids" role="listbox" aria-label="Saved">
+    <li role="option">GH5566778</li>
+  </ul>
+  <p><button type="button">Continue</button></p>
+  <!-- A tab names its panel: no field's list. -->
+  <div role="tablist"><button type="button" role="tab" aria-selected="true" aria-controls="panel">Flights</button></div>
+  <div id="panel" role="tabpanel"><button type="button">Book now</button></div>
+  <!-- A plain list of buttons, named by a field in a second component that
+       stands, like the first, after what the walk reads. -->
+  <article>
+    <div id="saved-plain" aria-owns="older-plain"><button type="button">KL3344556</button></div>
+    <button type="button">Edit saved</button>
+  </article>
+  <!-- An ARIA list a field in a closed component names: no census sees that field,
+       and the page marks it secret by no structure. -->
+  <ul id="closed-saved" role="listbox" aria-label="Kept">
+    <li role="option">WX9898989</li>
+  </ul>
+  <!-- A list that list names in turn. -->
+  <div id="older-plain"><button type="button">OP1212121</button></div>
+  <!-- A list an editable region with no role names, from a third component. -->
+  <div id="saved-note"><button type="button">ST6767676</button></div>
+  <div id="many"></div>
+  <id-field></id-field>
+  <doc-field></doc-field>
+  <note-field></note-field>
+  <closed-field></closed-field>
+</main>
+<script>
+  const many = document.getElementById('many');
+  for (let i = 0; i < 5100; i++) {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.textContent = 'Row ' + i;
+    many.appendChild(button);
+  }
+  customElements.define('id-field', class extends HTMLElement {
+    constructor() {
+      super();
+      const root = this.attachShadow({ mode: 'open' });
+      root.innerHTML = '<label for="number">Passport number</label>' +
+        '<input id="number" style="-webkit-text-security: disc" role="combobox" aria-autocomplete="list" aria-controls="saved-ids">';
+    }
+  });
+  customElements.define('closed-field', class extends HTMLElement {
+    constructor() {
+      super();
+      const root = this.attachShadow({ mode: 'closed' });
+      root.innerHTML = '<input aria-label="Passport number" aria-autocomplete="list" aria-controls="closed-saved">';
+    }
+  });
+  customElements.define('note-field', class extends HTMLElement {
+    constructor() {
+      super();
+      const root = this.attachShadow({ mode: 'open' });
+      root.innerHTML = '<div contenteditable="true" style="-webkit-text-security: disc" aria-label="Passport number" aria-controls="saved-note"></div>';
+    }
+  });
+  customElements.define('doc-field', class extends HTMLElement {
+    constructor() {
+      super();
+      const root = this.attachShadow({ mode: 'open' });
+      root.innerHTML = '<label for="doc">Document number</label>' +
+        '<input id="doc" style="-webkit-text-security: disc" aria-autocomplete="list" aria-controls="saved-plain">';
+    }
+  });
+</script>
+</body>
+</html>

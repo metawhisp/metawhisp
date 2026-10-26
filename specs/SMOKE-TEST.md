@@ -1,6 +1,7 @@
 # Smoke Test Checklist
 
-**Run before every `swift build` + `bash hot-swap.sh`.**
+**Run before every `swift build` + `bash hot-swap.sh`** (which installs the build over the working app, keeping
+the replaced one for `--rollback` — ITER-076 0.1).
 Live verification of critical user stories. If anything below regresses,
 fix before shipping. Add new cases when bugs surface.
 
@@ -13,7 +14,7 @@ Last updated: 2026-05-01
 1. **Static check (free):** `swift build` — compile clean, no errors.
 2. **Unit tests (~30s):** `swift test` — all retroactive coverage green.
 3. **Live verify (5 min):** walk through Critical Path below in the running
-   app. If any step fails — DO NOT push to `~/Applications/MetaWhisp.app`.
+   app. If any step fails — DO NOT release it to the working app.
 4. **Commit smoke result:** "✓ smoke 2026-05-01" in the commit message
    (or session WAL note).
 

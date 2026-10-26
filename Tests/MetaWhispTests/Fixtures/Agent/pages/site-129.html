@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Site One Hundred Twenty-Nine</title></head>
+<body>
+<main>
+  <h1>Search the archive</h1>
+  <button type="button" id="search">Search</button>
+  <p id="status"></p>
+  <div id="results"></div>
+</main>
+<script>
+  // The answer is drawn in steps, each less than 200 ms after the last, with
+  // no loading indicator: only a page read once it has been quiet sees it whole.
+  document.getElementById('search').addEventListener('click', () => {
+    const status = document.getElementById('status');
+    [100, 250, 400, 550].forEach((at, step) => setTimeout(() => { status.textContent = 'Step ' + (step + 1); }, at));
+    setTimeout(() => {
+      document.getElementById('results').innerHTML = '<a href="https://site-129.test/b">Result B</a>';
+    }, 560);
+  });
+</script>
+</body>
+</html>

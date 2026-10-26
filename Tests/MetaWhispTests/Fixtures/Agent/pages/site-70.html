@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Site Seventy</title></head>
+<body>
+<main>
+  <h1>Orders</h1>
+  <ul>
+    <!-- bootstrap-select 1.13: the button carries the chosen text as its title -->
+    <li>
+      <div class="bootstrap-select">
+        <select aria-label="Condiment" style="display:none"><option>Ketchup</option><option selected>Mustard</option></select>
+        <button type="button" role="combobox" aria-haspopup="listbox" aria-expanded="false" title="Mustard"><span class="filter-option">Mustard</span></button>
+      </div>
+      <button>Save condiment</button>
+    </li>
+    <!-- select2 4.0: a read-only textbox titled with the choice inside the combobox -->
+    <li>
+      <span class="select2-selection" role="combobox" aria-haspopup="true" aria-expanded="false" tabindex="0"
+            aria-labelledby="select2-state-container">
+        <span id="select2-state-container" role="textbox" aria-readonly="true" title="Alaska">Alaska</span>
+        <span role="presentation"><b role="presentation"></b></span>
+      </span>
+      <button>Save state</button>
+    </li>
+    <!-- Choices.js 10, search off: a list box holds the chosen item and its remove button -->
+    <li>
+      <div class="choices" role="listbox" tabindex="0" aria-haspopup="true" aria-expanded="false">
+        <div class="choices__list choices__list--single">
+          <div class="choices__item" data-item aria-selected="true">Tokyo<button type="button" aria-label="Remove item: 'Tokyo'">Remove item</button></div>
+        </div>
+        <div class="choices__list choices__list--dropdown" style="display:none">
+          <div role="listbox"><div role="option">Tokyo</div><div role="option">Osaka</div></div>
+        </div>
+      </div>
+      <button>Book trip</button>
+    </li>
+    <!-- vue-select 3, multiple: deselect buttons named by the choice, a search box labelled by the combobox -->
+    <li>
+      <div id="vs1__combobox" role="combobox" aria-expanded="false" aria-owns="vs1__listbox" aria-label="Search for option">
+        <div>
+          <span>Canada<button type="button" aria-label="Deselect Canada">x</button></span>
+          <span>Mexico<button type="button" aria-label="Deselect Mexico">x</button></span>
+          <input type="search" aria-labelledby="vs1__combobox" autocomplete="off">
+        </div>
+        <button type="button" title="Clear Selected" aria-label="Clear Selected">x</button>
+      </div>
+      <button>Save countries</button>
+    </li>
+    <!-- a remove button with no type is a submitter: it must not name the form -->
+    <li>
+      <form method="post" action="https://site-70.test/book">
+        <div role="combobox" aria-expanded="false"><button aria-label="Remove Porto" title="Porto">x</button><input aria-label="Add a stop"></div>
+        <button>Book train</button>
+      </form>
+    </li>
+    <!-- a choice drawn as a button inside the combobox -->
+    <li>
+      <div role="combobox" aria-expanded="false"><button>Lisbon</button><input aria-label="Add a city"></div>
+      <button>Book flight</button>
+    </li>
+  </ul>
+</main>
+</body>
+</html>

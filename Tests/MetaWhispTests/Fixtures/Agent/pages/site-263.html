@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Site Two Hundred Sixty-Three</title>
+<style>
+  body { margin: 0; font: 16px sans-serif; }
+  iframe { position: absolute; left: 0; border: 0; width: 300px; height: 60px; }
+</style>
+</head>
+<body>
+<script>
+  // A page whose frames are laid out by its path, each at a place of its
+  // own: each path one case.
+  const clicks = [];
+  // What the widgets say they were pressed: a person's click reached them.
+  addEventListener('message', event => clicks.push(String(event.data)));
+  function frame(src, top) {
+    const made = document.createElement('iframe');
+    made.src = src;
+    made.style.top = top + 'px';
+    document.body.append(made);
+    return made;
+  }
+  // A second widget of another site that asks for a file, added when asked.
+  function more() {
+    frame('https://site-265.test/upload', 100);
+    return 'added';
+  }
+  const path = location.pathname;
+  if (path === '/upload') {
+    // A widget of another site that asks for a file, at the page's top.
+    frame('https://site-264.test/upload', 0);
+  } else if (path === '/held') {
+    // Eight widgets of another site, each in a process of its own.
+    for (let i = 0; i < 8; i++) frame('https://site-264.test/plain', 400 + i * 70);
+  }
+</script>
+</body>
+</html>

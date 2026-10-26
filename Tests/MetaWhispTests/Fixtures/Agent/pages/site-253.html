@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Site Two Hundred Fifty-Three</title>
+<style>body { margin: 0; font: 16px sans-serif; } main { padding: 16px 40px; } label { display: block; margin: 12px 0; } button { margin: 0 6px; }</style>
+</head>
+<body>
+<main>
+  <h1>Checkout</h1>
+  <!-- Native buttons inside a label for another control: a click on one runs
+       its own handler only, never the label's (Claude review of I-09, kept 16). -->
+  <label class="card"><input type="radio" name="address" value="1"> 12 Main St <button type="button" id="edit">Edit</button></label>
+  <label>Guests <button type="button" id="minus">-</button><input type="number" value="2" aria-label="Guest count"><button type="button" id="plus">+</button></label>
+  <p id="log"></p>
+</main>
+<script>
+  for (const id of ['edit', 'minus', 'plus']) {
+    document.getElementById(id).addEventListener('click', () => { document.getElementById('log').textContent += id + ';'; });
+  }
+</script>
+</body>
+</html>

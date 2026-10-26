@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Phones 476</title></head>
+<body>
+<main>
+  <fieldset><legend>Vendors</legend>
+    <label><input type="checkbox" id="apple"> Apple</label>
+    <label><input type="checkbox" id="google"> Google</label>
+  </fieldset>
+  <p id="count"></p>
+  <ul id="phones"></ul>
+</main>
+<script>
+  // A filter that redraws the list as each box is ticked, as a shop's does.
+  const phones = [['iPhone 12', 'apple', 799], ['iPhone XS', 'apple', 999], ['Pixel 2', 'google', 399], ['Pixel 3', 'google', 599]];
+  function draw() {
+    const on = ['apple', 'google'].filter((v) => document.getElementById(v).checked);
+    const shown = phones.filter((p) => on.length === 0 || on.includes(p[1]));
+    document.getElementById('count').textContent = shown.length + ' Product(s) found';
+    document.getElementById('phones').replaceChildren(...shown.map((p) => Object.assign(document.createElement('li'), { textContent: p[0] + ' $' + p[2] })));
+  }
+  for (const v of ['apple', 'google']) document.getElementById(v).addEventListener('change', draw);
+  draw();
+</script>
+</body>
+</html>

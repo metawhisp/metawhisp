@@ -1,0 +1,16 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Site Two Hundred Fifty-Four</title>
+<style>body { margin: 0; font: 16px sans-serif; } main { padding: 16px 40px; } iframe { display: block; border: 0; }</style>
+</head>
+<body>
+<main>
+  <h1>A project</h1>
+  <button type="button">Refresh</button>
+  <!-- A made-up dropdown in a frame, in a form sent by POST: choosing is asked
+       about; the page may add a control while the question waits (Claude review
+       of I-09, kept 17). -->
+  <iframe style="width:420px;height:160px" srcdoc="<style>body{margin:0;font:16px sans-serif}[role=combobox]{display:inline-block;padding:4px 8px;border:1px solid #333}</style><form method=post action=https://site-254.test/status onsubmit='event.preventDefault()'><div role=combobox aria-label=Status aria-expanded=true aria-controls=statuses tabindex=0 id=status>Draft</div><ul id=statuses role=listbox><li role=option>Archived</li><li role=option>Active</li></ul></form><script>for (const option of document.querySelectorAll('[role=option]')) option.addEventListener('click', () => { document.getElementById('status').textContent = option.textContent; });</script>"></iframe>
+</main>
+</body>
+</html>

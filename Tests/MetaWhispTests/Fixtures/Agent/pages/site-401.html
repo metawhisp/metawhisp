@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Search 401</title>
+<style>main { min-height: 10000px; }</style></head>
+<body>
+<main>
+  <form id="search" action="https://site-401.test/search" method="get">
+    <input type="search" name="q" aria-label="Search">
+    <button type="submit">Search</button>
+  </form>
+  <p id="results"></p>
+  <button id="tips" type="button">Show tips</button>
+  <a href="https://site-401.test/other">Other page</a>
+</main>
+<script>
+  if (location.pathname === '/search') {
+    const query = new URLSearchParams(location.search).get('q') || '';
+    document.title = 'Results 401';
+    document.getElementById('results').textContent = 'Results for ' + query;
+  }
+  document.getElementById('tips').addEventListener('click', () => {
+    document.getElementById('tips').textContent = 'Hide tips';
+  });
+</script>
+</body>
+</html>

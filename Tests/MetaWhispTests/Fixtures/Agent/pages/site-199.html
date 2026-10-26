@@ -1,0 +1,18 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Site One Hundred Ninety-Nine</title>
+<style>body { margin: 0; font: 16px sans-serif; } main { padding: 16px 40px; } iframe { display: block; border: 0; margin: 8px 0; } button { display: block; margin: 8px 0; }</style>
+</head>
+<body>
+<main>
+  <h1>The team</h1>
+  <button type="button" onclick="location.reload()">Reload the page</button>
+  <!-- An admin widget of the page's own site, in a frame: made anew, with a new id, at each load. -->
+  <iframe style="width:520px;height:60px" srcdoc="<style>body{margin:0;font:16px sans-serif}</style><button onclick=&quot;parent.log('removed')&quot;>Remove member</button>"></iframe>
+  <p id="log"></p>
+</main>
+<script>
+  function log(text) { document.getElementById('log').textContent += text + ';'; }
+</script>
+</body>
+</html>

@@ -1,0 +1,21 @@
+ITER-074 review round 10 (Codex on 44a622d + 962eacf), fixes — 2026-09-24 19:08 CEST, orchestrator
+962eacf (round-9 fixes): accepted.
+
+Findings on 44a622d (both confirmed in the code before fixing):
+  1. text slotted into a component's text field, and a component's own unshown text, reached the excerpt
+     cause: a text node was judged by its DOM parent; the same held for names and row contexts
+     fix: a text node's place is its slot or its parent, and an unslotted host child is not read at all
+  2. a custom control named 'Password' leaked its content into the excerpt and a neighbour's row context
+     cause: text exclusion covered writing places, not sensitive fields
+     fix: a sensitive field's content reaches no text; the excerpt runs after the check, and a page
+     whose fields could not all be checked gives no excerpt
+Also closed: the step log keeps a role only if the agent acts on it ('other' otherwise); an editor's
+selection must lie inside it at both ends; a behavioural test for typing into an editor.
+
+--- red
+ErrandRecordTests testARoleTheAgentDoesNotActOnIsNotRecorded failed (0.559 seconds).
+ExcerptScriptTests testAnIncompleteScanGivesNoExcerpt failed (0.091 seconds).
+ExcerptScriptTests testSlottedWritingUnrenderedTextAndSecretsStayOut failed (0.073 seconds).
+ObserverFormsTests testSlottedWritingAndSecretsInCustomControlsReachNoNeighbour failed (0.076 seconds).
+--- green (excerpt, observer, record, action, builder and loop suites)
+	 Executed 108 tests, with 0 failures (0 unexpected) in 7.280 (7.290) seconds

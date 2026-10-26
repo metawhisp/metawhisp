@@ -86,8 +86,10 @@ macOS НЕ показывает диалог разрешения только �
 
 `PermissionsService.requestScreenRecording()` делает оба вызова. Триггерится на toggle в Settings (не на первом клике Record).
 
-### 4.7. Один билд, в `~/Applications`, без sudo {#decisions.build}
-`build.sh` ставит `.app` в `~/Applications/MetaWhisp.app`. TCC привязан к bundle signature — при стабильном ad-hoc подписе разрешения сохраняются между rebuild'ами.
+### 4.7. Сборка без sudo; тестовая сборка ставится поверх рабочей {#decisions.build}
+- `build.sh` собирает и подписывает release-бандл в `.build/arm64-apple-macosx/release/MetaWhisp.app`. Он ничего не ставит, не останавливает и не запускает.
+- `build.sh --swap` (его запускает `hot-swap.sh`) ставит сборку поверх рабочей `/Applications/MetaWhisp.app`. Отдельной тестовой копии нет (владелец, 2026-09-26). Замена не идёт во время записи; заменённая сборка сохраняется, `hot-swap.sh --rollback` её возвращает (ITER-076 0.1).
+- TCC привязан к подписи, поэтому подпись только Developer ID. Ad-hoc запрещён: такая подпись меняется с каждой сборкой, и macOS сбрасывает разрешения.
 
 НЕ использовать sudo в build scripts — root-owned файлы блокируют последующие rebuild'ы до ручной очистки.
 

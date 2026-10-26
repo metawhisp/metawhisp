@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Site One Hundred Forty-Seven</title>
+<style>
+  body { margin: 0; font: 16px sans-serif; }
+  main { padding: 24px 40px; }
+  .picker a { display: inline-block; margin-right: 16px; padding: 4px 8px; border: 1px solid #777; cursor: pointer; }
+  .card { width: 280px; margin: 16px 0; padding: 12px; border: 1px solid #777; }
+  .decor { width: 280px; height: 40px; margin: 16px 0; background: #eee; cursor: pointer; }
+  p a { cursor: pointer; text-decoration: underline; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Things only a script makes clickable</h1>
+  <!-- A date picker's buttons, as jQuery UI draws them: anchors with no
+       address, whose clicks one handler on the page answers. -->
+  <div class="picker">
+    <a data-handler="prev" data-event="click">Earlier month</a>
+    <span id="month">October 2026</span>
+    <a data-handler="next" data-event="click">Later month</a>
+  </div>
+  <!-- An anchor with no address and a handler of its own, and one that says it
+       is a button. -->
+  <p><a onclick="log('added')">Add to list</a></p>
+  <p><a role="button" tabindex="0">Show more</a></p>
+  <!-- A product card clickable only by its own handler. -->
+  <div class="card" onclick="log('card')"><strong>Blue mug</strong> ceramic, 350 ml</div>
+  <!-- A decorative panel with a pointer cursor and no handler. -->
+  <div class="decor">Decorative panel</div>
+  <p id="log"></p>
+</main>
+<script>
+  const log = (text) => { document.getElementById('log').textContent += text + ';'; };
+  const months = ['September 2026', 'October 2026', 'November 2026'];
+  let shown = 1;
+  // One handler for every anchor that names one, as jQuery UI binds them.
+  document.querySelector('.picker').addEventListener('click', (event) => {
+    const handler = event.target.closest('[data-handler]');
+    if (!handler) return;
+    shown = Math.max(0, Math.min(2, shown + (handler.dataset.handler === 'next' ? 1 : -1)));
+    document.getElementById('month').textContent = months[shown];
+    log(handler.dataset.handler);
+  });
+</script>
+</body>
+</html>

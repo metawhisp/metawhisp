@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Site Ninety</title>
+<style>
+  body { margin: 0; }
+  .row { position: relative; margin: 12px 40px; width: 420px; height: 56px; border: 1px solid #999; }
+  .del { position: absolute; left: 190px; top: 8px; width: 40px; height: 40px; background: #eee; cursor: pointer; }
+  .frame { position: absolute; left: 160px; top: 4px; width: 100px; height: 48px; border: 0; }
+  .cover { position: absolute; left: 0; top: 0; width: 100%; height: 100%; border: 0; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Inbox</h1>
+  <!-- Each row is opened by its words; at its centre a Delete that no role,
+       tag or attribute names as a control. -->
+  <div class="row" id="a" role="button" tabindex="0" aria-label="Open thread A"><span>A: lunch at noon</span><span class="del">x</span></div>
+  <div class="row" id="b" role="button" tabindex="0" aria-label="Open thread B"><span>B: the report</span><span class="del">x</span></div>
+  <div class="row" id="c" role="button" tabindex="0" aria-label="Open thread C"><span>C: holiday plans</span><div class="del" tabindex="0" title="Delete"></div></div>
+  <div class="row" id="d" role="button" tabindex="0" aria-label="Open thread D"><span>D: invoices</span><x-closed class="del"></x-closed></div>
+  <div class="row" id="e" role="button" tabindex="0" aria-label="Open thread E"><span>E: new photos</span><iframe class="frame" srcdoc="<button style='width:100px;height:48px' onclick='parent.log(&quot;E DELETED&quot;)'>Delete</button>"></iframe></div>
+  <!-- A row a frame covers whole, as an ad laid over it: nothing of the row
+       itself is left to click. -->
+  <div class="row" id="f" role="button" tabindex="0" aria-label="Open thread F"><span>F: the ad</span><iframe class="cover" srcdoc="<button style='width:100%;height:100%' onclick='parent.log(&quot;AD CLICKED&quot;)'>Buy now</button>"></iframe></div>
+  <p id="log"></p>
+</main>
+<script>
+  const log = (text) => { document.getElementById('log').textContent += text + ';'; };
+  // A: one handler on the document decides by the target, as delegation does.
+  document.addEventListener('click', (event) => {
+    if (!event.target.closest('#a')) return;
+    log(event.target.closest('.del') ? 'A DELETED' : 'A opened');
+  });
+  // B and C: a listener of the icon's own, as a framework attaches it.
+  for (const id of ['b', 'c']) {
+    document.querySelector('#' + id + ' .del').addEventListener('click', (event) => {
+      event.stopPropagation();
+      log(id.toUpperCase() + ' DELETED');
+    });
+    document.getElementById(id).addEventListener('click', () => log(id.toUpperCase() + ' opened'));
+  }
+  // D: a component whose shadow root is closed to everyone else.
+  customElements.define('x-closed', class extends HTMLElement {
+    constructor() {
+      super();
+      const root = this.attachShadow({ mode: 'closed' });
+      root.innerHTML = '<style>button{width:40px;height:40px}</style><button type="button">Delete</button>';
+      root.querySelector('button').addEventListener('click', (event) => { event.stopPropagation(); log('D DELETED'); });
+    }
+  });
+  document.getElementById('d').addEventListener('click', () => log('D opened'));
+  document.getElementById('e').addEventListener('click', () => log('E opened'));
+</script>
+</body>
+</html>

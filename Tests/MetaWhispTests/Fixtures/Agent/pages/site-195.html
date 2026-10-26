@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Site One Hundred Sixty-Five</title>
+<style>
+  body { margin: 0; font: 16px sans-serif; }
+  main { padding: 24px 40px; }
+  button { display: block; width: 240px; height: 36px; margin: 8px 0; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Your account</h1>
+  <button type="button" id="delete">Delete everything</button>
+  <button type="button" id="rename">Rename the list</button>
+  <button type="button" id="loop">Show the tips</button>
+  <button type="button" id="renew">Renew</button>
+  <button type="button" id="finish">Finish</button>
+  <button type="button" id="connect">Connect Acme</button>
+  <button type="button" id="clear">Clear the draft</button>
+  <p id="log"></p>
+</main>
+<script>
+  const log = (text) => { document.getElementById('log').textContent += text + ';'; };
+  // The page's own confirm guards what cannot be undone.
+  document.getElementById('delete').addEventListener('click', () => {
+    if (!confirm('Delete everything?')) { log('kept'); return; }
+    log('deleted');
+    // What was deleted can be brought back for a while.
+    if (!document.getElementById('undo')) {
+      const undo = document.createElement('button');
+      undo.id = 'undo';
+      undo.type = 'button';
+      undo.textContent = 'Undo';
+      document.querySelector('main').append(undo);
+    }
+  });
+  document.getElementById('rename').addEventListener('click', () => {
+    const name = prompt('A new name?', 'Groceries');
+    log(name === null ? 'not renamed' : 'renamed');
+  });
+  // A page that shows its dialogs one after another.
+  document.getElementById('loop').addEventListener('click', () => {
+    setInterval(() => alert('One more tip'), 20);
+  });
+  // Confirms whose own words are the user's part: a charge by its amount, a
+  // purchase by its words, an access by its words (review of I-09, F4).
+  document.getElementById('renew').addEventListener('click', () => {
+    log(confirm('Your card ending 4242 will be charged EUR 99.00. Continue?') ? 'charged' : 'not charged');
+  });
+  document.getElementById('finish').addEventListener('click', () => {
+    log(confirm('Complete your purchase?') ? 'bought' : 'not bought');
+  });
+  document.getElementById('connect').addEventListener('click', () => {
+    log(confirm('Allow Acme to access your account?') ? 'granted' : 'not granted');
+  });
+  // A confirm a moment after the click: it comes while the step still runs.
+  document.getElementById('clear').addEventListener('click', () => {
+    setTimeout(() => log(confirm('Clear this draft?') ? 'cleared' : 'kept the draft'), 100);
+  });
+</script>
+</body>
+</html>

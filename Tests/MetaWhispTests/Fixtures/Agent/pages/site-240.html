@@ -1,0 +1,17 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Site Two Hundred Forty</title></head>
+<body>
+<main>
+  <h1>Orders</h1>
+  <form id="orders" action="/orders" method="post">
+    <label for="sort">Sort orders</label>
+    <select id="sort" name="sort" onchange="this.form.submit()">
+      <option>Newest</option>
+      <option>Oldest</option>
+    </select>
+    <button type="submit">Apply</button>
+  </form>
+</main>
+</body>
+</html>

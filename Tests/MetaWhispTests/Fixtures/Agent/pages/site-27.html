@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Site Twenty-Seven</title>
+<style>.box { display:inline-block; min-width:40px; min-height:20px; }</style></head>
+<body>
+<main>
+  <h1>Focus tricks</h1>
+  <input id="thief" type="text" aria-label="Redirecting field">
+  <div id="other" class="box" contenteditable="true" aria-label="Other editor">untouched</div>
+  <input id="turncoat" type="text" aria-label="Turncoat field">
+  <p><a id="long">Very long link</a></p>
+</main>
+<script>
+  document.getElementById('thief').addEventListener('focus', () => document.getElementById('other').focus());
+  document.getElementById('turncoat').addEventListener('focus', (event) => { event.target.type = 'password'; });
+  document.getElementById('long').href = 'https://site-27.test/?q=' + 'x'.repeat(2100);
+</script>
+</body>
+</html>

@@ -1,0 +1,13 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Site One Hundred Seventy-Six</title><style>body { margin: 0; font: 16px sans-serif; }</style></head>
+<body>
+<label>Card number <input autocomplete="cc-number" inputmode="numeric"></label>
+<label>Postal code <input name="postal"></label>
+<button type="button" onclick="log('card saved')">Save card</button>
+<!-- A control in a form of its own, which holds no secret: only its frame makes it the user's. -->
+<form><button type="button" onclick="log('coupon')">Apply a coupon</button></form>
+<p id="log"></p>
+<script>function log(text) { document.getElementById('log').textContent += text + ';'; }</script>
+</body>
+</html>

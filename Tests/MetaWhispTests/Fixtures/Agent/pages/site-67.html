@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Site Sixty-Seven</title></head>
+<body>
+<main>
+  <h1>Voice notes apps</h1>
+  <label for="sort">Sort by</label>
+  <select id="sort" onchange="history.replaceState(null, '', '/?sort=' + this.value)">
+    <option value="relevance">Relevance</option>
+    <option value="price">Price</option>
+  </select>
+  <ul>
+    <li>Recorder One</li>
+    <li>Recorder Two</li>
+  </ul>
+  <a href="/?again=1">See the list again</a>
+</main>
+</body>
+</html>

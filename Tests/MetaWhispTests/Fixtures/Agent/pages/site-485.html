@@ -1,0 +1,18 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Quotes 485</title></head>
+<body>
+<main id="list"></main>
+<script>
+  // A list of quotes over three pages whose pager is drawn above the list and below it: two "Next →" links to one
+  // address, under two headings (Codex review of 2026-10-18, P1-4).
+  const page = Number((location.pathname.match(/\/page\/(\d+)/) || [0, 1])[1]);
+  const next = page < 3 ? '<a href="https://site-485.test/page/' + (page + 1) + '/">Next →</a>' : '';
+  document.getElementById('list').innerHTML = '<h1>Quotes, page ' + page + '</h1>' +
+    '<nav aria-label="Pages above">' + next + '</nav>' +
+    '<h2>The quotes</h2>' +
+    [1, 2].map((n) => '<p>Quote ' + page + '.' + n + ' by Sam</p>').join('') +
+    '<nav aria-label="Pages below">' + next + '</nav>';
+</script>
+</body>
+</html>

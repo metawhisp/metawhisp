@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Site Five Hundred Eleven</title></head>
+<body>
+<main>
+  <h1>HTML Form</h1>
+  <!-- A practice form in a table, as a public one draws it (2026-10-21, a live run): a cell's words are plain text
+       tied to nothing — a caption on the line above its field, a box's or a radio's own words right after it. -->
+  <form id="practice" action="https://site-511.test/submit" method="post">
+    <table border="1" cellpadding="5">
+      <tr><td>Username:<br/><input type="text" name="username" size="15"/></td></tr>
+      <tr><td>TextArea Comment:<br/><textarea cols="40" name="comments" rows="3">Comments...</textarea></td></tr>
+      <tr>
+        <td>
+          Checkbox Items:<br/>
+          <input type="checkbox" name="checkboxes[]" value="cb1"/>Checkbox 1
+          <input type="checkbox" name="checkboxes[]" value="cb2"/>Checkbox 2
+          <input type="checkbox" name="checkboxes[]" value="cb3" checked/>Checkbox 3
+        </td>
+      </tr>
+      <tr>
+        <td>
+          Radio Items:<br/>
+          <input type="radio" name="radioval" value="rd1"/>radio 1
+          <input type="radio" name="radioval" value="rd2" checked/>radio 2
+          <input type="radio" name="radioval" value="rd3"/>radio 3
+        </td>
+      </tr>
+      <tr><td>Dropdown:<br/><select name="dropdown"><option>Drop Down Item 1</option><option>Drop Down Item 2</option></select></td></tr>
+      <!-- A box's words end at a line break or a block; words hidden from assistive technology are none of them. -->
+      <tr>
+        <td><input type="checkbox" name="notify"/><span aria-hidden="true">*</span>Notify me<br/>by email
+          <input type="checkbox" name="digest"/>Weekly digest<div>Sent on Mondays</div></td>
+      </tr>
+      <!-- Two fields on one line: each named by the words right before it. -->
+      <tr><td>First name: <input type="text" name="first" size="10"/> Last name: <input type="text" name="last" size="10"/></td></tr>
+      <tr><td><input type="reset" value="cancel"/> <input type="submit" value="submit"/></td></tr>
+    </table>
+  </form>
+  <!-- A sign-in in one cell: its field named by the line above it, its password withheld. -->
+  <form id="sign-in" action="https://site-511.test/sign-in" method="post">
+    <table border="1" cellpadding="5">
+      <tr><td>Email:<br/><input type="text" name="email" size="15"/><br/>Password:<br/><input type="password" name="password" size="15"/></td></tr>
+    </table>
+  </form>
+</main>
+</body>
+</html>

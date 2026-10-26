@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Site Two Hundred Fifty-Seven</title>
+<style>body { margin: 0; font: 16px sans-serif; } main { padding: 16px 40px; } iframe { display: block; border: 0; }</style>
+</head>
+<body>
+<main id="page"></main>
+<script>
+  // ITER-076 I-09, review round 3, part A: a secret one document shows is
+  // hidden in every other, and what is read for secrets is what a person
+  // reads a reported string with.
+  const page = document.getElementById('page');
+  // Ordinary words, far more than a frame's edge holds: no digit, no word
+  // that names a secret.
+  const filler = '<p>' + 'The garden path winds past the old stone wall and the quiet pond where ducks rest. '.repeat(8) +
+    '</p>';
+  const frame = (address, height) => '<iframe style="width:640px;height:' + height + 'px" src="' + address + '"></iframe>';
+  if (location.pathname === '/reverse') {
+    // A code in the page, alone on a button; its words in a frame of another
+    // site, past the frame's first and last words (decision 1, frame to page).
+    page.innerHTML = '<button type="button">735102</button>' + filler +
+      '<button type="button">Resend</button>' + frame('https://site-258.test/named', 260);
+  } else if (location.pathname === '/postal') {
+    // An address field's postal code beside a one-time code (Codex review 2,
+    // P2-2): the field's own words name no secret, its value stays.
+    page.innerHTML = '<form action="https://site-257.test/address"><label>Postal code ' +
+      '<input name="zip" value="94107"></label> <button type="button">Save address</button></form>' +
+      '<h2>Your one-time code</h2><button type="button">481920</button><button type="button">Help</button>';
+  } else if (location.pathname === '/field') {
+    // A code shown as the value of a field whose own words name a one-time
+    // code (`passwordPhrases`), and again on a button with no word beside it.
+    page.innerHTML = '<input aria-label="One-time code" readonly value="527391">' + filler +
+      '<button type="button">Copy 527391</button><button type="button">Help</button>';
+  } else if (location.pathname === '/drawn') {
+    // Words the browser draws from attributes and in drawings (Claude review
+    // c8, #1): an input button's value, a submit input's, an svg's text —
+    // their words in a paragraph beside them, no heading.
+    page.innerHTML = '<p>Your one-time code:</p><input type="button" value="481920"> ' +
+      '<form action="https://site-257.test/verify"><p>Your verification code:</p><input type="submit" value="735102"></form>' +
+      '<p>Your backup code:</p><button type="button"><svg width="90" height="24"><text x="0" y="18">629384</text></svg></button>' +
+      '<button type="button">Help</button>';
+  } else if (location.pathname === '/placeholder') {
+    // An empty field's placeholder names the code a button beside it shows.
+    page.innerHTML = '<input aria-label="Paste" placeholder="Paste the recovery code"><button type="button">918273</button>' +
+      '<button type="button">Help</button>';
+  } else if (location.pathname === '/drawn-split') {
+    // The same words in the page, the input button in a frame of it.
+    page.innerHTML = '<p>Your one-time code:</p><iframe style="width:300px;height:40px" srcdoc="<input type=button ' +
+      'value=481920> <input placeholder=&quot;Name&quot;>"></iframe><button type="button">Help</button>';
+  } else if (location.pathname === '/heading') {
+    // A name read with its heading (decision 9): the code only in the
+    // button's name, its words in the heading far above.
+    page.innerHTML = '<h2>Your one-time code</h2><p>Use it within ten minutes to finish signing in to your account ' +
+      'on the new device.</p><button type="button" aria-label="Copy 481920">Copy</button>' +
+      '<button type="button">Help</button>';
+  } else {
+    // A code in the page, its words beside it; the code again in a frame of
+    // another site, alone on a button and as a field's value, past every
+    // edge the frame and the page are read together by (decision 1, page to
+    // frame).
+    page.innerHTML = '<p>Your one-time code is 481920.</p>' + filler + '<button type="button">Resend</button>' +
+      frame('https://site-258.test/repeat', 300);
+  }
+</script>
+</body>
+</html>

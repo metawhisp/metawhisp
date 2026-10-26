@@ -1,0 +1,15 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Site One Hundred Seventy-Eight</title><style>body { margin: 0; font: 16px sans-serif; }</style></head>
+<body>
+<form>
+  <label>Email <input type="email" name="email"></label>
+  <label>Password <input type="password" name="password"></label>
+  <button type="button" onclick="log('signed in')">Next</button>
+</form>
+<!-- A control outside the sign-in's form: only its frame makes it the user's. -->
+<button type="button" onclick="log('help')">Trouble signing in</button>
+<p id="log"></p>
+<script>function log(text) { document.getElementById('log').textContent += text + ';'; }</script>
+</body>
+</html>

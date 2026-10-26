@@ -28,26 +28,33 @@ final class GateClientTests: XCTestCase {
         let req = GateClient.buildRequest(
             context: "Some context",
             purpose: .proactive,
-            recentTopics: ["topic1", "topic2"],
             serviceId: "InsightAssistantService"
         )
         XCTAssertEqual(req.context, "Some context")
         XCTAssertEqual(req.purpose, "proactive")
-        XCTAssertEqual(req.recent_topics, ["topic1", "topic2"])
         XCTAssertEqual(req.service_id, "InsightAssistantService")
     }
 
     func test_buildRequest_serializesToJSON() throws {
         let req = GateClient.buildRequest(
-            context: "c", purpose: .advice,
-            recentTopics: ["t"], serviceId: "S"
+            context: "c", purpose: .advice, serviceId: "S"
         )
         let data = try JSONEncoder().encode(req)
         let decoded = try JSONSerialization.jsonObject(with: data) as? [String: Any]
         XCTAssertEqual(decoded?["context"] as? String, "c")
         XCTAssertEqual(decoded?["purpose"] as? String, "advice")
-        XCTAssertEqual(decoded?["recent_topics"] as? [String], ["t"])
         XCTAssertEqual(decoded?["service_id"] as? String, "S")
+    }
+
+    /// 2026-10-20 — the gate takes no list of recent topics. The worker put
+    /// it in the prompt as RECENT_TOPICS and the model read that
+    /// do-not-repeat list as live facts. Repeats are the dedup's job, after
+    /// the model; the worker reads a missing list as empty.
+    func test_theWireCarriesNoRecentTopics() throws {
+        let req = GateClient.buildRequest(context: "c", purpose: .proactive, serviceId: "S")
+        let json = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: JSONEncoder().encode(req)) as? [String: Any])
+        XCTAssertEqual(Set(json.keys), ["context", "purpose", "service_id"])
     }
 
     // MARK: - shouldFire threshold logic

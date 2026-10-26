@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Site Twenty-Three</title>
+<style>.box { display:inline-block; min-width:40px; min-height:20px; }</style></head>
+<body>
+<main>
+  <h1>Account</h1>
+  <span id="hidden-label" hidden>Password</span>
+  <input type="text" aria-labelledby="hidden-label" placeholder="Field one" value="secret-one">
+  <label for="two" style="display:none">Passcode</label>
+  <input id="two" type="text" placeholder="Field two" value="secret-two">
+  <input type="text" title="Your passcode" value="secret-three">
+  <input type="text" autocomplete="current-password" placeholder="Field four" value="secret-four">
+  <ul>
+    <li><div class="box" role="textbox" aria-label="Password" tabindex="0"><span>secret-five</span></div> <button>Continue</button></li>
+    <li><div class="box" role="textbox" aria-label="Message" tabindex="0">private-message-six</div> <button>Send it</button></li>
+  </ul>
+  <div class="box" role="textbox" aria-label="Recipients" tabindex="0"><span>Alex</span> <button aria-label="Remove Alex">x</button></div>
+  <div class="box" contenteditable="true" aria-label="Composer"><chip-widget id="chip" contenteditable="false"></chip-widget> words</div>
+  <ul role="listbox" aria-label="Plan"><li role="option" tabindex="0">Monthly plan</li></ul>
+</main>
+<script>
+  document.getElementById('chip').attachShadow({ mode: 'open' }).innerHTML = '<button>Private shadow chip</button>';
+</script>
+</body>
+</html>

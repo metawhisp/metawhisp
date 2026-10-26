@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Site Two Hundred Fifty</title>
+<style>
+  body { margin: 0; font: 16px sans-serif; }
+  main { padding: 16px 40px; }
+  input, button { margin: 4px 0; }
+  section { margin: 8px 0; }
+</style>
+</head>
+<body>
+<main id="page">
+  <h1>Your documents</h1>
+  <form action="https://site-250.test/search" method="get"><button type="submit">Search</button></form>
+</main>
+<script>
+  // Every case the page shows is built here, at the place its address names.
+  // Each secret field is marked by its structure: it draws dots (ITER-076
+  // I-09, round 5).
+  const page = document.getElementById('page');
+  const add = (html) => { const part = document.createElement('section'); part.innerHTML = html; page.append(part); };
+  const ids = (prefix, count) => Array.from({ length: count }, (_, i) => prefix + (i + 1)).join(' ');
+  if (location.pathname === '/many') {
+    // A secret field that names more lists than anyone uses: who owns what
+    // is unknown, and the last one's numbers are withheld (Codex review 1 of
+    // I-09, P1-2).
+    add('<input aria-label="Passport number" style="-webkit-text-security: disc" role="combobox" aria-expanded="false" aria-controls="' +
+        ids('m', 69) + ' m70"><div id="m70"><button type="button">V3333333</button></div>');
+  } else if (location.pathname === '/claims') {
+    // A dropdown that names more lists than anyone uses: whose list is whose
+    // is unknown, and its options are withheld.
+    add('<form action="https://site-250.test/size" method="post"><div role="combobox" aria-label="Size" ' +
+        'aria-expanded="true" aria-controls="' + ids('s', 69) + ' sizes" tabindex="0">Pick</div></form>' +
+        '<ul id="sizes" role="listbox"><li role="option">Large</li></ul>');
+  } else {
+    // Eleven lists named — by aria-controls, by aria-owns, and split between
+    // them — the eleventh a plain list of buttons holding document numbers
+    // (Codex review 1 of I-09, P1-2).
+    add('<input aria-label="Passport number" style="-webkit-text-security: disc" role="combobox" aria-expanded="false" aria-controls="' + ids('a', 10) +
+        ' a11"><div id="a11"><button type="button">X1234567</button><button type="button">Y7654321</button></div>');
+    add('<input aria-label="Passport number" style="-webkit-text-security: disc" role="combobox" aria-expanded="false" aria-owns="' + ids('b', 10) +
+        ' b11"><div id="b11"><button type="button">Z1111111</button></div>');
+    add('<input aria-label="Passport number" style="-webkit-text-security: disc" role="combobox" aria-expanded="false" aria-controls="' + ids('c', 6) +
+        '" aria-owns="c7 c8 c9 c10 c11"><div id="c11"><button type="button">W2222222</button></div>');
+    // A hidden box inside a secret field's list, named by a document number,
+    // and its label outside the list (GLM review of I-09, P1-3).
+    add('<input aria-label="Passport number" style="-webkit-text-security: disc" role="combobox" aria-expanded="false" aria-controls="saved">' +
+        '<div id="saved"><input type="checkbox" id="keepdoc" aria-label="AB1234567" style="display:none"></div>' +
+        '<label for="keepdoc">Keep this document</label>');
+    // An option nested deeper than fifty levels in a secret field's list,
+    // named by its own words (Claude review of I-09, kept 13).
+    let deep = '<div role="option" tabindex="0" aria-label="Q9999999">Saved</div>';
+    for (let i = 0; i < 55; i++) deep = '<div>' + deep + '</div>';
+    add('<input aria-label="Passport number" style="-webkit-text-security: disc" aria-controls="deep">' +
+        '<div id="deep">' + deep + '</div>');
+    // A dropdown that names its list twice, and one whose list is the
+    // eleventh it names, in a form that sends by POST (Claude review of
+    // I-09, kept 15; Codex review 1 of I-09, P1-2).
+    add('<div role="combobox" aria-label="Status" aria-expanded="true" aria-controls="statuses" aria-owns="statuses" ' +
+        'tabindex="0">Pick</div><ul id="statuses" role="listbox"><li role="option">Archived</li></ul>');
+    add('<form action="https://site-250.test/billing" method="post"><div role="combobox" aria-label="Plan" ' +
+        'aria-expanded="true" aria-controls="' + ids('g', 10) + ' plans" tabindex="0">Pick</div></form>' +
+        '<ul id="plans" role="listbox"><li role="option">Pro</li></ul>');
+    // An option nested deeper than fifty levels in its dropdown's list (Claude
+    // review of I-09, kept 13).
+    let gold = '<div role="option" tabindex="0">Gold</div>';
+    for (let i = 0; i < 55; i++) gold = '<div>' + gold + '</div>';
+    add('<div role="combobox" aria-label="Tier" aria-expanded="true" aria-controls="tiers" tabindex="0">Pick</div>' +
+        '<div id="tiers" role="listbox">' + gold + '</div>');
+    // A field whose suggestions are the eleventh list it names.
+    // The first ten are empty lists of its own.
+    add('<form action="https://site-250.test/trip" method="get"><label>Destination <input id="destination" ' +
+        'aria-controls="' + ids('h', 10) + ' hints"></label></form>' +
+        Array.from({ length: 10 }, (_, i) => '<ul id="h' + (i + 1) + '"></ul>').join('') + '<ul id="hints"></ul>');
+    document.getElementById('destination').addEventListener('input', () => {
+      document.getElementById('hints').innerHTML = '<li>Paris</li>';
+    });
+  }
+</script>
+</body>
+</html>

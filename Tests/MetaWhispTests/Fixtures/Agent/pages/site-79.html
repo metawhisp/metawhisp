@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Site Seventy-Nine</title></head>
+<body>
+<svg id="hidden-sprite" style="display:none"></svg>
+<svg id="empty-sprite" width="0" height="0" style="position:absolute"></svg>
+<h1>Pricing</h1>
+<p>Plans start at ten dollars a month.</p>
+<script>
+  const ns = 'http://www.w3.org/2000/svg';
+  for (const id of ['hidden-sprite', 'empty-sprite']) {
+    const sprite = document.getElementById(id);
+    for (let i = 0; i < 22000; i++) {
+      const path = document.createElementNS(ns, 'path');
+      path.setAttribute('d', 'M0 0h1v1h-1z');
+      sprite.appendChild(path);
+    }
+  }
+</script>
+</body>
+</html>

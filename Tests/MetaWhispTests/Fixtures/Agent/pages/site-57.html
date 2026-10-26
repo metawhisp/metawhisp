@@ -1,0 +1,15 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Site Fifty-Seven</title></head>
+<body>
+<main>
+  <h1>A page that rewrites its own address</h1>
+  <a href="https://site-58.test/">Next site</a>
+</main>
+<script>
+  // The page plants an address the agent never opened: a later back must not
+  // send it (ITER-076 2.2, S1).
+  history.replaceState(null, '', '/delete-account');
+</script>
+</body>
+</html>

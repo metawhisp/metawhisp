@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Site Seven</title></head>
+<body>
+<main>
+  <h1>Contact us</h1>
+  <form id="message" action="https://site-7.test/send-message" method="post">
+    <textarea id="body" aria-label="Your message">Draft text already typed</textarea>
+    <button type="submit">Continue</button>
+  </form>
+  <form id="clobbered" action="https://site-7.test/real-destination" method="post">
+    <input name="action" value="https://site-7.test/fake" aria-label="Decoy">
+    <input name="method" value="get" aria-label="Decoy method">
+    <button type="bogus">Clobbered submit</button>
+    <button type="" formaction="https://site-7.test/override" formmethod="get">Override</button>
+  </form>
+  <form id="search" action="https://site-7.test/search" method="get">
+    <input id="q" type="search" aria-label="Search">
+    <button type="submit">Search</button>
+  </form>
+</main>
+</body>
+</html>

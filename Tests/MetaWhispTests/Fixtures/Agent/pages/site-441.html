@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Site Four Forty-One</title></head>
+<body>
+<header>
+  <label for="find">Find</label><input id="find" type="search" name="q">
+</header>
+<main>
+  <!-- ITER-076 stage 7: a demo form a script gathers without a form tag, as a
+       React page draws one: its fields and its button sit in one box, and the
+       button sends what they hold by script, then shows its thanks in their
+       place. A search box in the page's header is no part of it. -->
+  <h1>Book a demo</h1>
+  <div class="demo" id="demo">
+    <label for="name">Full name</label><input id="name" autocomplete="name">
+    <label for="mail">Email</label><input id="mail" type="email">
+    <label for="org">Company</label><input id="org">
+    <label for="note">Message</label><textarea id="note"></textarea>
+    <button type="button" id="go">Book my demo</button>
+  </div>
+</main>
+<script>
+  window.sent = 0;
+  document.getElementById('go').addEventListener('click', () => {
+    window.sent += 1;
+    window.sentValues = ['name', 'mail', 'org', 'note'].map((id) => document.getElementById(id).value);
+    document.getElementById('demo').innerHTML = '<p>Thanks, we will be in touch.</p>';
+  });
+</script>
+</body>
+</html>

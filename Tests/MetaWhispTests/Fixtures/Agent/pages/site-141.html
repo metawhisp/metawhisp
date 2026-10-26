@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Site One Hundred Forty-One</title>
+<style> input { width: 260px; height: 24px; } .row { margin: 14px 0; } </style>
+</head>
+<body>
+<main>
+  <h1>Suggestions, and a list that is not theirs</h1>
+  <!-- A list that has nothing to do with the fields: it gains an option
+       50 ms after any typing. -->
+  <ul id="unrelated" role="listbox" aria-label="Trending"></ul>
+  <!-- A field that owns its list: its suggestions come 600 ms after typing. -->
+  <div class="row"><input id="street" aria-label="Find a street" aria-controls="streets" aria-autocomplete="list"></div>
+  <ul id="streets" role="listbox" aria-label="Streets"></ul>
+  <!-- A search field that names no list of its own. -->
+  <div class="row"><input id="places" type="search" aria-label="Search places"></div>
+  <!-- A component whose field owns a list in its own shadow root. -->
+  <div class="row"><town-search></town-search></div>
+</main>
+<script>
+  let trends = 0;
+  const trending = () => setTimeout(() => {
+    document.getElementById('unrelated').insertAdjacentHTML('beforeend', '<li role="option">Trend ' + (++trends) + '</li>');
+  }, 50);
+  document.getElementById('street').addEventListener('input', () => {
+    trending();
+    setTimeout(() => {
+      document.getElementById('streets').innerHTML = '<li role="option">Elm Street</li>';
+    }, 600);
+  });
+  document.getElementById('places').addEventListener('input', trending);
+  customElements.define('town-search', class extends HTMLElement {
+    connectedCallback() {
+      const root = this.attachShadow({ mode: 'open' });
+      root.innerHTML = '<input aria-label="Find a town street" aria-controls="town-streets" aria-autocomplete="list" ' +
+        'style="width: 260px; height: 24px"><ul id="town-streets" role="listbox" aria-label="Town streets"></ul>';
+      root.querySelector('input').addEventListener('input', () => {
+        trending();
+        setTimeout(() => {
+          root.getElementById('town-streets').innerHTML = '<li role="option">Oak Lane</li>';
+        }, 600);
+      });
+    }
+  });
+</script>
+</body>
+</html>

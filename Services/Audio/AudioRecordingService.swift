@@ -19,7 +19,20 @@ final class AudioRecordingService: ObservableObject, AudioSource {
     /// user the mic had stopped producing audio.
     @Published var micHealthError: String?
 
+    /// How this recorder captures. Dictation records the input alone (`InputOnlyCapture`): AVAudioEngine runs input
+    /// and output as one device, and a Bluetooth headset switching to its call profile when its microphone opens
+    /// reset it in a loop that recorded nothing (owner's log, 2026-10-13). Meetings keep the engine, whose recovery
+    /// is built around it.
+    enum CapturePath: Equatable { case engine, inputOnly }
+    let path: CapturePath
+
+    init(path: CapturePath = .engine) {
+        self.path = path
+    }
+
     private var engine: AVAudioEngine?
+    /// Where a bind's engine comes from: a seam for the tests (an engine that raises, as AVFAudio does).
+    var makeEngine: () -> AVAudioEngine = { AVAudioEngine() }
     private var samples: [Float] = []
     private let targetSampleRate: Double = 16000
     private var converter: AVAudioConverter?
@@ -43,12 +56,36 @@ final class AudioRecordingService: ObservableObject, AudioSource {
         private var engine: AVAudioEngine?
         init(_ engine: AVAudioEngine?) { self.engine = engine }
         func bury(tearDown: Bool) {
-            if tearDown {
-                engine?.inputNode.removeTap(onBus: 0)
-                engine?.stop()
+            if tearDown, let engine {
+                _ = AudioRecordingService.tearDown(engine)
             }
             engine = nil
         }
+    }
+
+    /// Every call into AVAudioEngine goes through here. AVFAudio reports an input it can no longer use — a format the
+    /// hardware stopped having, a device gone in a dark wake with the lid closed — by raising an Objective-C
+    /// exception; one escaped a main-actor job of this recorder on 2026-10-11 at 23:37, the main queue never ran
+    /// again and the app crashed at the wake ten hours later. Caught here, a raise is the call failing; it surfaces
+    /// as the format error a bind already has.
+    ///
+    /// A raise leaks the engine object — the Swift frames it unwinds skip their releases — so an engine that raised
+    /// is stopped (`tearDown`), which releases the device and everything it prepared.
+    nonisolated static func avf<T>(_ step: String, _ body: () throws -> T) throws -> T {
+        do {
+            return try ObjCRaise.catching(body)
+        } catch let raise as ObjCRaise {
+            NSLog("[AudioRecording] AVFAudio raised in %@ — %@", step, raise.description)
+            throw RecordingError.formatError
+        }
+    }
+
+    /// Takes the tap off and stops the engine, each on its own: a raise in the first must not leave the engine
+    /// running. Whether both went through. Off the main thread as well (the engine grave).
+    nonisolated static func tearDown(_ engine: AVAudioEngine) -> Bool {
+        let tapOff = (try? avf("remove tap") { engine.inputNode.removeTap(onBus: 0) }) != nil
+        let stopped = (try? avf("stop") { engine.stop() }) != nil
+        return tapOff && stopped
     }
 
     private static func releaseOffMain(_ grave: EngineGrave, tearDown: Bool) {
@@ -64,7 +101,9 @@ final class AudioRecordingService: ObservableObject, AudioSource {
     private func buryPending() {
         guard let grave = pendingGrave else { return }
         pendingGrave = nil
-        Self.releaseOffMain(grave, tearDown: false)
+        // Torn down, not only released: an engine that raised is leaked (see `avf`), and only `stop()` gives back
+        // what it prepared.
+        Self.releaseOffMain(grave, tearDown: true)
     }
 
     /// When the CURRENT bind's first buffer was accepted — on the monotonic
@@ -128,7 +167,7 @@ final class AudioRecordingService: ObservableObject, AudioSource {
     /// Incremented on every bind. The tap closure carries its generation and
     /// the main-actor hop drops buffers from a retired engine: they used to
     /// land after a rebind and look like the replacement delivering.
-    private var bindGeneration = 0
+    private(set) var bindGeneration = 0
 
     /// What the input stream is doing, as the engine reports it. A stream
     /// that HAD audio and went quiet is not dead — headsets with silence
@@ -245,7 +284,7 @@ final class AudioRecordingService: ObservableObject, AudioSource {
             + "(Terminal: sudo killall coreaudiod), then record again."
 
     /// Request microphone permission using multiple strategies.
-    func requestPermission() async -> Bool {
+    func requestPermission(_ ask: PermissionAsk) async -> Bool {
         // Strategy 1: AVAudioApplication (macOS 14+)
         if #available(macOS 14.0, *) {
             let perm = AVAudioApplication.shared.recordPermission
@@ -275,11 +314,13 @@ final class AudioRecordingService: ObservableObject, AudioSource {
         // Strategy 3: Touch AVAudioEngine to trigger the macOS permission dialog
         NSLog("[AudioRecording] Trying AVAudioEngine touch to trigger prompt...")
         let testEngine = AVAudioEngine()
-        let _ = testEngine.inputNode  // accessing inputNode triggers mic prompt
         do {
-            testEngine.prepare()
-            try testEngine.start()
-            testEngine.stop()
+            try Self.avf("permission touch") {
+                _ = testEngine.inputNode  // accessing inputNode triggers mic prompt
+                testEngine.prepare()
+                try testEngine.start()
+                testEngine.stop()
+            }
             // Check again after engine touch
             if #available(macOS 14.0, *) {
                 return AVAudioApplication.shared.recordPermission == .granted
@@ -287,6 +328,7 @@ final class AudioRecordingService: ObservableObject, AudioSource {
             return AVCaptureDevice.authorizationStatus(for: .audio) == .authorized
         } catch {
             NSLog("[AudioRecording] AVAudioEngine touch failed: %@", error.localizedDescription)
+            _ = Self.tearDown(testEngine)   // a start that raised skipped the stop above
         }
 
         return false
@@ -300,12 +342,30 @@ final class AudioRecordingService: ObservableObject, AudioSource {
         return AVCaptureDevice.authorizationStatus(for: .audio) == .authorized
     }
 
-    /// Pre-warm audio engine at app startup (call once).
+    /// The microphone prompt was never answered. Reading it asks nothing.
+    var permissionUndetermined: Bool {
+        if #available(macOS 14.0, *) {
+            return AVAudioApplication.shared.recordPermission == .undetermined
+        }
+        return AVCaptureDevice.authorizationStatus(for: .audio) == .notDetermined
+    }
+
+    /// Pre-warm audio engine at app startup (call once). The input-only path has no engine to warm: it opens its
+    /// device at each start, and touching an engine's input node here would open the default input for nothing.
     func warmUp() {
-        guard !engineWarmed else { return }
-        let eng = AVAudioEngine()
-        let _ = eng.inputNode // force lazy init of input node
-        eng.prepare()
+        guard path == .engine, !engineWarmed else { return }
+        let eng = makeEngine()
+        do {
+            try Self.avf("warm up") {
+                _ = eng.inputNode // force lazy init of input node
+                eng.prepare()
+            }
+        } catch {
+            // Released off the main thread at the next start, per the DEADLOCK RULES below; that start makes its own.
+            buryPending()
+            pendingGrave = EngineGrave(eng)
+            return
+        }
         self.engine = eng
         engineWarmed = true
         observeDeviceChanges()
@@ -380,32 +440,53 @@ final class AudioRecordingService: ObservableObject, AudioSource {
                 // profile, a monitor being plugged in and AirPods connecting
                 // all land here, and the recording should simply continue on
                 // whatever the input is now.
-                guard MicDeviceFollow.shouldFollow(wasRecording: wasRecording,
-                                                   attempts: self.followAttempts) else {
-                    if wasRecording {
-                        NSLog("[AudioRecording] ⚠️ the input device kept changing — stopped following after %d switch(es)",
-                              self.followAttempts)
-                    }
-                    return
-                }
-                self.followAttempts += 1
-                self.followInFlight = true
-                let attempt = self.followAttempts
-                NSLog("[AudioRecording] input device changed mid-recording — following it (switch %d of %d)",
-                      attempt, MicDeviceFollow.maxAttempts)
-                Task { @MainActor [weak self] in
-                    try? await Task.sleep(for: .seconds(MicDeviceFollow.settleDelaySeconds))
-                    guard let self else { return }
-                    defer { self.followInFlight = false }
-                    guard !self.isRecording else { return }
-                    do {
-                        try self.resume()   // keeps what was captured before the switch
-                        NSLog("[AudioRecording] ✅ now recording on the new input device (switch %d)", attempt)
-                    } catch {
-                        NSLog("[AudioRecording] ❌ could not follow the device (switch %d): %@",
-                              attempt, error.localizedDescription)
-                    }
-                }
+                self.follow(afterChangeWhileRecording: wasRecording)
+            }
+        }
+    }
+
+    /// How a follow waits for the device to settle, and how it binds again: seams for the tests (no microphone there).
+    var followDelay: (Double) async -> Void = { try? await Task.sleep(for: .seconds($0)) }
+    var followResume: (AudioRecordingService) throws -> Void = { try $0.resume() }   // keeps what was captured
+    /// The recording a follow belongs to, advanced at every explicit `start()` and `stop()`: a follow scheduled in one
+    /// recording never binds after the user stopped or cancelled it, or in the next one (independent review,
+    /// 2026-10-13, and step-1 review #4: a follow pending at stop turned the microphone back on). `AudioSource` names
+    /// it so a practice's teardown stops only the recording it was listening in.
+    private(set) var captureSession = 0
+
+    /// Follows the input device after a configuration change: once it settles, the microphone is bound again.
+    func follow(afterChangeWhileRecording wasRecording: Bool,
+                settleDelay: Double = MicDeviceFollow.settleDelaySeconds) {
+        guard MicDeviceFollow.shouldFollow(wasRecording: wasRecording, attempts: followAttempts) else {
+            if wasRecording {
+                NSLog("[AudioRecording] ⚠️ the input device kept changing — stopped following after %d switch(es)",
+                      followAttempts)
+            }
+            return
+        }
+        followAttempts += 1
+        followInFlight = true
+        let attempt = followAttempts
+        let session = captureSession
+        NSLog("[AudioRecording] input device changed mid-recording — following it (switch %d of %d)",
+              attempt, MicDeviceFollow.maxAttempts)
+        Task { @MainActor [weak self] in
+            await self?.followDelay(settleDelay)
+            // A follow whose recording ended owns nothing now: `stop()` released the flag, and the next recording's
+            // own follow may hold it (independent review, 2026-10-13).
+            guard let self else { return }
+            guard self.captureSession == session else {
+                NSLog("[AudioRecording] stopped while the device settled — the follow (switch %d) is dropped", attempt)
+                return
+            }
+            defer { self.followInFlight = false }
+            guard !self.isRecording else { return }
+            do {
+                try self.followResume(self)
+                NSLog("[AudioRecording] ✅ now recording on the new input device (switch %d)", attempt)
+            } catch {
+                NSLog("[AudioRecording] ❌ could not follow the device (switch %d): %@",
+                      attempt, error.localizedDescription)
             }
         }
     }
@@ -414,9 +495,11 @@ final class AudioRecordingService: ObservableObject, AudioSource {
     /// default when none is configured.
     func start() throws {
         guard !isRecording else { return }
+        captureSession += 1
         followAttempts = 0
         defer { buryPending() }
         try bind(keepingSamples: false)
+        if path == .inputOnly { watchReadiness() }
     }
 
     /// Bring the input back under a live recording. What was captured stays
@@ -432,7 +515,9 @@ final class AudioRecordingService: ObservableObject, AudioSource {
     /// bind again, keeping what was captured. The old engine goes to the grave
     /// — released off the main thread, per the DEADLOCK RULES above.
     func restart() throws {
-        if isRecording {
+        if isRecording, path == .inputOnly {
+            retireInputOnlyBind()
+        } else if isRecording {
             let grave = EngineGrave(engine)
             engine = nil
             converter = nil
@@ -445,6 +530,7 @@ final class AudioRecordingService: ObservableObject, AudioSource {
     }
 
     private func bind(keepingSamples keep: Bool) throws {
+        if path == .inputOnly { return try bindInputOnly(keepingSamples: keep) }
         // ITER-060.3 (Codex) — the device-change observer used to be installed
         // only via warmUp(), which AppDelegate calls for the DICTATION mic
         // alone. The meeting mic instance never observed device changes, so an
@@ -456,10 +542,16 @@ final class AudioRecordingService: ObservableObject, AudioSource {
 
         // Reuse existing engine or create new
         let fresh = self.engine == nil
-        let engine = self.engine ?? AVAudioEngine()
+        let engine = self.engine ?? makeEngine()
         do {
             try bindBody(engine: engine, keepingSamples: keep)
         } catch {
+            // An older grave still pending — a warm-up's that raised — goes off-main first: replaced, its engine
+            // would be released here, on the main thread (independent review, 2026-10-14).
+            buryPending()
+            // Whatever this bind queued is retired: a bind that failed after its start — its input query raised —
+            // must not have its buffers counted (independent review, 2026-10-14).
+            bindGeneration += 1
             // Whatever threw — format, converter, start — the engine must not
             // perform its final release on the main thread; the caller buries
             // it once this frame is gone. A REUSED engine that threw is dropped
@@ -478,33 +570,40 @@ final class AudioRecordingService: ObservableObject, AudioSource {
         }
     }
 
+    /// The input a bind records from: the built-in microphone when recovery asked for it, the user's pick (Settings →
+    /// Microphone) while it is plugged in, or nil — the system default. A picked device that was unplugged falls back
+    /// to the default silently.
+    private func chosenInput() -> (device: AudioInputDevice, isRecovery: Bool)? {
+        if preferBuiltInInput, let builtIn = AudioInputCatalog.builtInMicrophone() { return (builtIn, true) }
+        let preferredUID = AppSettings.shared.preferredInputDeviceUID
+        if !preferredUID.isEmpty, let dev = AudioInputCatalog.device(forUID: preferredUID) { return (dev, false) }
+        return nil
+    }
+
     private func bindBody(engine: AVAudioEngine, keepingSamples keep: Bool) throws {
 
-        // Apply user-picked input device (Settings → Microphone) BEFORE
-        // touching the input node. If the picked device was unplugged we
-        // silently fall back to whatever macOS has as default.
-        let preferredUID = AppSettings.shared.preferredInputDeviceUID
-        if preferBuiltInInput, let builtIn = AudioInputCatalog.builtInMicrophone() {
-            // Recovery: the default after a device change has failed enough
-            // times to stop trusting it. The Mac's own microphone always exists.
-            // The engine is dropped at stop so the NEXT recording rebinds per
-            // the user's settings — clearing the flag alone left the reused
-            // engine on the built-in mic (review, 2026-09-03).
-            let ok = AudioInputCatalog.setInputDevice(builtIn, on: engine)
-            engineNeedsRebuild = true
-            NSLog("[AudioRecording] recovery → built-in microphone %@ (%@)", builtIn.name, ok ? "OK" : "FAIL")
-        } else if !preferredUID.isEmpty,
-           let dev = AudioInputCatalog.device(forUID: preferredUID) {
-            let ok = AudioInputCatalog.setInputDevice(dev, on: engine)
-            NSLog("[AudioRecording] input device → %@ (%@)", dev.name, ok ? "OK" : "FAIL")
+        // Apply the chosen input device BEFORE touching the input node.
+        if let chosen = chosenInput() {
+            let ok = try AudioInputCatalog.setInputDevice(chosen.device, on: engine)
+            if chosen.isRecovery {
+                // Recovery: the default after a device change has failed enough
+                // times to stop trusting it. The Mac's own microphone always exists.
+                // The engine is dropped at stop so the NEXT recording rebinds per
+                // the user's settings — clearing the flag alone left the reused
+                // engine on the built-in mic (review, 2026-09-03).
+                engineNeedsRebuild = true
+                NSLog("[AudioRecording] recovery → built-in microphone %@ (%@)", chosen.device.name, ok ? "OK" : "FAIL")
+            } else {
+                NSLog("[AudioRecording] input device → %@ (%@)", chosen.device.name, ok ? "OK" : "FAIL")
+            }
         }
 
-        let inputNode = engine.inputNode
+        let inputNode = try Self.avf("input node") { engine.inputNode }
         // A bind that failed after installing its tap used to leave that tap
         // in place; the next bind installed a second one on the same bus and
         // the process was terminated. Removing a tap that is not there is a
         // no-op, so this is unconditional (review, 2026-09-03).
-        inputNode.removeTap(onBus: 0)
+        try Self.avf("remove tap") { inputNode.removeTap(onBus: 0) }
 
         // ITER-060.5 — AEC (setVoiceProcessingEnabled) REMOVED, 2026-08-10.
         // It shipped in 1.3.23 and broke meeting recording: measured on the
@@ -520,8 +619,207 @@ final class AudioRecordingService: ObservableObject, AudioSource {
         // against 863 real duplicates) — that is the shipping defense.
         // Any future AEC attempt must first prove, on real hardware, that the
         // post-VP format still yields speech through the converter.
-        let inputFormat = inputNode.outputFormat(forBus: 0)
+        let inputFormat = try Self.avf("input format") { inputNode.outputFormat(forBus: 0) }
+        let handler = try prepareBind(inputFormat: inputFormat, keepingSamples: keep)
 
+        do {
+            try Self.avf("install tap") {
+                inputNode.installTap(onBus: 0, bufferSize: 1024, format: inputFormat, block: handler)
+            }
+        } catch {
+            self.converter = nil
+            throw error
+        }
+
+        if !engine.isRunning {
+            do {
+                try Self.avf("start") {
+                    engine.prepare()
+                    try engine.start()
+                }
+            } catch {
+                // Leave nothing behind: no tap, and an engine a raise may have
+                // left half-started stopped. The fresh engine, if it was one, is
+                // buried by `bind()`'s catch.
+                _ = Self.tearDown(engine)
+                self.converter = nil
+                throw error
+            }
+        }
+
+        // Whether the bind is on the built-in microphone, which the dead-mic check reads — asked before the recording is
+        // committed, so a raise here fails the bind like any other: tap off, engine stopped.
+        let builtIn: Bool
+        do {
+            builtIn = try AudioInputCatalog.boundInputIsBuiltIn(for: engine)
+        } catch {
+            _ = Self.tearDown(engine)
+            self.converter = nil
+            throw error
+        }
+
+        // The bind, on the record. Absent this line the 2026-08-12 dead-mic
+        // investigation had nothing to reason about: not the device, not the
+        // channel count, not the layout. Logged on EVERY start because the
+        // failure is intermittent and only the failing run's values matter.
+        NSLog("[AudioRecording] bind → %@ | %.0f Hz, %d ch, layout=%@",
+              AudioInputCatalog.boundInputDescription(for: engine),
+              inputFormat.sampleRate,
+              Int(inputFormat.channelCount),
+              inputFormat.channelLayout.map { "0x" + String($0.layoutTag, radix: 16) } ?? "<nil>")
+
+        self.engine = engine
+        self.isRecording = true
+        self.boundInputIsBuiltIn = builtIn
+    }
+
+    // MARK: - Input only
+
+    /// The input-only path's live capture, its device, and whether that device is the system default — which a
+    /// recording follows — rather than a pick.
+    private var inputCapture: MicCapture?
+    private var boundDeviceID: AudioDeviceID = 0
+    private var boundToDefault = false
+    private var boundIsBluetooth = false
+    private var defaultInputObserver: DefaultInputObserver?
+    /// How a capture is made and what macOS's default input is: seams for the tests (no microphone there).
+    var makeCapture: (AudioDeviceID) throws -> MicCapture = { try InputOnlyCapture(deviceID: $0) }
+    var defaultInputDevice: () -> AudioDeviceID = { AudioInputCatalog.systemDefaultInputDeviceID() }
+
+    private func bindInputOnly(keepingSamples keep: Bool) throws {
+        if defaultInputObserver == nil {
+            defaultInputObserver = DefaultInputObserver { [weak self] in
+                Task { @MainActor in self?.defaultInputChanged() }
+            }
+        }
+        let chosen = chosenInput()
+        let deviceID = chosen?.device.deviceID ?? defaultInputDevice()
+        guard deviceID != 0 else { throw RecordingError.noInputDevice }
+        let capture = try makeCapture(deviceID)
+        do {
+            let handler = try prepareBind(inputFormat: capture.format, keepingSamples: keep)
+            let generation = bindGeneration
+            try capture.start(handler: handler) { [weak self] event in
+                self?.captureChanged(event, generation: generation)
+            }
+        } catch {
+            converter = nil
+            Self.stopOffMain(capture)
+            throw error
+        }
+        NSLog("[AudioRecording] bind → %@ | %.0f Hz, %d ch, input only",
+              AudioInputCatalog.description(of: deviceID), capture.format.sampleRate,
+              Int(capture.format.channelCount))
+        inputCapture = capture
+        boundDeviceID = deviceID
+        boundToDefault = chosen == nil
+        boundIsBluetooth = AudioInputCatalog.isBluetooth(deviceID)
+        bindStartedAt = readinessClock()
+        isRecording = true
+        boundInputIsBuiltIn = AudioInputCatalog.isBuiltIn(deviceID)
+    }
+
+    /// The bound device went away, or its input format changed under the capture: the recording follows — at once
+    /// for a new format on the same device, after the settle delay for a device that is leaving.
+    private func captureChanged(_ event: MicCaptureEvent, generation: Int) {
+        guard generation == bindGeneration, isRecording else { return }   // news of a retired bind
+        NSLog("[AudioRecording] 🔄 %@ mid-recording — following",
+              event == .deviceGone ? "the input device went away" : "the input format changed")
+        retireInputOnlyBind()
+        follow(afterChangeWhileRecording: true,
+               settleDelay: event == .formatChanged ? 0 : MicDeviceFollow.settleDelaySeconds)
+    }
+
+    /// macOS's default input changed (AirPods arrived, a headset left). A capture holds one device and does not move
+    /// with the default; a recording on the default follows it, one on the user's pick stays.
+    func defaultInputChanged() {
+        guard path == .inputOnly, isRecording,
+              MicDeviceFollow.followsDefaultChange(boundToDefault: boundToDefault, bound: boundDeviceID,
+                                                   newDefault: defaultInputDevice()) else { return }
+        NSLog("[AudioRecording] 🔄 the default input changed mid-recording — following it")
+        retireInputOnlyBind()
+        follow(afterChangeWhileRecording: true)
+    }
+
+    /// Retires the input-only bind now: its queued buffers are dropped and its capture stops off the main thread —
+    /// a background thread may wait on the audio system, the main thread may not (see the DEADLOCK RULES).
+    private func retireInputOnlyBind() {
+        isRecording = false
+        bindGeneration += 1
+        converter = nil
+        if let capture = inputCapture {
+            inputCapture = nil
+            Self.stopOffMain(capture)
+        }
+    }
+
+    private static func stopOffMain(_ capture: MicCapture) {
+        Task.detached(priority: .utility) { capture.stop() }
+    }
+
+    // MARK: - Judged by the clock
+
+    /// How the check waits and what time it is: seams for the tests.
+    var readinessDelay: (Double) async -> Void = { try? await Task.sleep(for: .seconds($0)) }
+    var readinessClock: () -> SuspendingClock.Instant = { SuspendingClock.now }
+    private var bindStartedAt: SuspendingClock.Instant?
+    private var readinessRebinds = 0
+
+    /// Judges the input-only recording by the clock until it ends (see `MicReadiness`): one more bind when the
+    /// microphone delivers nothing, then the user is told. Stands down while a follow brings the microphone back.
+    private func watchReadiness() {
+        let session = captureSession
+        readinessRebinds = 0
+        Task { @MainActor [weak self] in
+            var seenGeneration = -1
+            var seenProduced = 0
+            var progressAt: SuspendingClock.Instant?
+            var lastCheck = self?.readinessClock()
+            while true {
+                guard let delay = self?.readinessDelay else { return }
+                await delay(MicReadiness.checkEverySeconds)
+                guard let self, self.captureSession == session else { return }
+                let now = self.readinessClock()
+                defer { lastCheck = now }
+                // A check that came late means the main thread was busy — and with it the buffers' way here.
+                if let last = lastCheck, (now - last).seconds > MicReadiness.checkEverySeconds + 0.5 { continue }
+                if self.followInFlight { continue }
+                if self.bindGeneration != seenGeneration {
+                    seenGeneration = self.bindGeneration
+                    seenProduced = self.producedByTap
+                    progressAt = seenProduced > 0 ? now : nil
+                } else if self.producedByTap != seenProduced {
+                    seenProduced = self.producedByTap
+                    progressAt = now
+                }
+                switch MicReadiness.judge(bound: self.isRecording,
+                                          sinceBind: self.bindStartedAt.map { (now - $0).seconds } ?? 0,
+                                          sinceLastBuffer: progressAt.map { (now - $0).seconds },
+                                          bluetooth: self.boundIsBluetooth,
+                                          rebindsSpent: self.readinessRebinds) {
+                case .fine:
+                    continue
+                case .rebind:
+                    self.readinessRebinds += 1
+                    NSLog("[AudioRecording] ⚠️ the microphone is delivering nothing — binding it once more")
+                    do {
+                        try self.restart()
+                    } catch {
+                        NSLog("[AudioRecording] ❌ binding again failed: %@", error.localizedDescription)
+                    }
+                case .tellUser:
+                    guard self.micHealthError == nil else { continue }
+                    NSLog("[AudioRecording] ❌ the microphone delivered nothing, bound once more — telling the user")
+                    self.micHealthError = Self.deadMicMessage
+                }
+            }
+        }
+    }
+
+    /// What every bind does before its first buffer, whichever path captures it: a converter from the input's format
+    /// to 16 kHz mono, the buffer kept or begun anew, this bind's state cleared and a new generation. Returns the
+    /// handler for the bind's buffers.
+    private func prepareBind(inputFormat: AVAudioFormat, keepingSamples keep: Bool) throws -> AVAudioNodeTapBlock {
         guard inputFormat.sampleRate > 0, inputFormat.channelCount > 0 else {
             throw RecordingError.noInputDevice
         }
@@ -563,9 +861,16 @@ final class AudioRecordingService: ObservableObject, AudioSource {
         self.bindPlacement = nil
         self.producedByTap = 0
         self.bindGeneration += 1
-        let gen = self.bindGeneration
+        return bufferHandler(inputFormat: inputFormat, outputFormat: outputFormat,
+                             converter: converter, generation: self.bindGeneration)
+    }
 
-        inputNode.installTap(onBus: 0, bufferSize: 1024, format: inputFormat) { [weak self] buffer, when in
+    /// What the recorder does with every captured buffer, on the thread that delivered it: levels from the raw
+    /// buffer and conversion to 16 kHz mono there, then — on the main actor, for the bind `gen` only — placement on
+    /// the timeline, the meters and the dead-stream watchdog.
+    private func bufferHandler(inputFormat: AVAudioFormat, outputFormat: AVAudioFormat,
+                               converter: AVAudioConverter, generation gen: Int) -> AVAudioNodeTapBlock {
+        return { [weak self] buffer, when in
             guard let self else { return }
             // The buffer's own capture time, taken here on the audio thread —
             // the main-actor hop can run seconds later under load, and the
@@ -640,6 +945,8 @@ final class AudioRecordingService: ObservableObject, AudioSource {
                     if rawRMS > 0, rawRMS.isFinite {
                         self.lastAudioAt = now
                         self.zeroRun.note(samples: newSamples.count, silent: false)
+                        // The verdict is about now: audio means the microphone delivers again.
+                        if self.micHealthError != nil { self.micHealthError = nil }
                     } else if rawRMS == 0, !self.boundInputIsBuiltIn {
                         self.zeroRun.note(samples: newSamples.count, silent: true)
                     }
@@ -654,33 +961,6 @@ final class AudioRecordingService: ObservableObject, AudioSource {
                                          sampleRate: inputFormat.sampleRate)
             }
         }
-
-        if !engine.isRunning {
-            engine.prepare()
-            do {
-                try engine.start()
-            } catch {
-                // Leave nothing behind: no tap on a stopped engine. The fresh
-                // engine, if it was one, is buried by `bind()`'s catch.
-                inputNode.removeTap(onBus: 0)
-                self.converter = nil
-                throw error
-            }
-        }
-
-        // The bind, on the record. Absent this line the 2026-08-12 dead-mic
-        // investigation had nothing to reason about: not the device, not the
-        // channel count, not the layout. Logged on EVERY start because the
-        // failure is intermittent and only the failing run's values matter.
-        NSLog("[AudioRecording] bind → %@ | %.0f Hz, %d ch, layout=%@",
-              AudioInputCatalog.boundInputDescription(for: engine),
-              inputFormat.sampleRate,
-              Int(inputFormat.channelCount),
-              inputFormat.channelLayout.map { "0x" + String($0.layoutTag, radix: 16) } ?? "<nil>")
-
-        self.engine = engine
-        self.isRecording = true
-        self.boundInputIsBuiltIn = AudioInputCatalog.boundInputIsBuiltIn(for: engine)
     }
 
     /// Watchdog for an input that has stopped producing audio entirely.
@@ -701,7 +981,9 @@ final class AudioRecordingService: ObservableObject, AudioSource {
             deadZeroSecondsSinceTake += DeadMicDetector.deadAfterSeconds
         }
 
-        let bind = engine.map { AudioInputCatalog.boundInputDescription(for: $0) } ?? "<no engine>"
+        let bind = path == .inputOnly
+            ? AudioInputCatalog.description(of: boundDeviceID)
+            : engine.map { AudioInputCatalog.boundInputDescription(for: $0) } ?? "<no engine>"
 
         // A zero-run on a stream that HAS delivered audio is ambiguous:
         // Bluetooth headsets and interfaces with silence suppression emit
@@ -717,7 +999,7 @@ final class AudioRecordingService: ObservableObject, AudioSource {
         NSLog("[AudioRecording] ❌ input is DIGITAL SILENCE for %.1fs, no audio at all this recording — %@",
               DeadMicDetector.deadAfterSeconds, bind)
         micHealthError = Self.deadMicMessage
-        engineNeedsRebuild = true
+        if path == .engine { engineNeedsRebuild = true }   // the input-only path opens a fresh unit at every bind
     }
 
     /// ITER-019 — total samples accumulated so far. `LiveMeetingAdvisor` uses
@@ -738,8 +1020,16 @@ final class AudioRecordingService: ObservableObject, AudioSource {
         // Retire the bind: a tap task already queued must not repopulate the
         // buffer this method is about to clear (review, 2026-09-03).
         bindGeneration += 1
-        engine?.inputNode.removeTap(onBus: 0)
-        engine?.stop()
+        captureSession += 1   // and a device-change follow still waiting: it binds nothing after stop
+        followInFlight = false
+
+        if let engine, !Self.tearDown(engine) {
+            engineNeedsRebuild = true   // an engine that raised is not reused: dropped below, off the main thread
+        }
+        if let capture = inputCapture {
+            inputCapture = nil
+            Self.stopOffMain(capture)
+        }
         // Keep engine alive for reuse — don't nil it...
         // ...unless this recording caught the input delivering digital silence.
         // Then the bind is suspect and reuse would carry the fault into every

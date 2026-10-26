@@ -1,0 +1,24 @@
+ITER-074 I-0.1 live check on Chrome — 2026-09-25 11:25 CEST (the owner at the Mac)
+The owner chose Chrome over Dia for the first live check. The probe log (outcomes and timings only):
+  11:25:11 start — browser com.google.Chrome, running: yes
+  11:25:11 permission without asking: needsConsent
+  11:25:13 permission after asking: allowed
+  11:25:13 active tab before: ok in 142 ms
+  11:25:14 page loaded: yes after 545 ms
+  11:25:14 javascript: ok in 33 ms, title as expected
+  11:25:14 focus: front app changed com.apple.UserNotificationCenter → com.google.Chrome, browser active tab switched to the new tab
+  11:25:14 close tab: ok in 20 ms
+  11:25:14 done
+Findings:
+  1. Works end to end: the macOS prompt, the owner's OK, a new tab, the page loaded in 545 ms, JavaScript
+     in 33 ms, the tab closed in 20 ms.
+  2. Focus: the new tab becomes Chrome's active tab (`make new tab`), so an errand would take over the tab
+     the user is looking at. The phase-1 bridge must open its tab without activating it.
+  3. The first try (10:56) was refused without a prompt: the installed bundle's Info.plist had no
+     NSAppleEventsUsageDescription. hot-swap.sh swapped only the binary, so the key added in 537e965 never
+     reached the app. Fixed at the cause: hot-swap.sh copies Resources/Info.plist, as build.sh does.
+  4. Signing: Developer ID signing fails with errSecInternalComponent from command-line tools (the
+     Terminal app included), although Keychain Access shows the login keychain unlocked. The install
+     killed the app before signing and left it unsigned; the orchestrator signed it ad-hoc to bring it
+     back. Open — MetaWhisp runs ad-hoc signed until Developer ID signing works again.
+Not yet done: a denial and a revocation (§17.1(2)); Dia itself.

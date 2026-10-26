@@ -44,6 +44,18 @@ final class MicDeviceFollowTests: XCTestCase {
                                  "a dictation is seconds long — a slow follow is the same as none")
     }
 
+    // MARK: - The system default changes
+
+    /// A recording on the system default goes where the default goes (AirPods arriving mid-dictation); a recording
+    /// on the user's pick stays on it, and a "change" to the device already bound is none.
+    func testOnlyARecordingOnTheDefaultFollowsTheDefault() {
+        XCTAssertTrue(MicDeviceFollow.followsDefaultChange(boundToDefault: true, bound: 41, newDefault: 42))
+        XCTAssertFalse(MicDeviceFollow.followsDefaultChange(boundToDefault: false, bound: 41, newDefault: 42))
+        XCTAssertFalse(MicDeviceFollow.followsDefaultChange(boundToDefault: true, bound: 41, newDefault: 41))
+        XCTAssertFalse(MicDeviceFollow.followsDefaultChange(boundToDefault: true, bound: 41, newDefault: 0),
+                       "no input at all is not a device to follow")
+    }
+
     // MARK: - One owner at a time
 
     /// The meeting's recovery tick and the service's own follow must not both
@@ -65,5 +77,43 @@ final class MicDeviceFollowTests: XCTestCase {
                                       elapsed: 30, outageOpen: true, attemptDue: true)
         XCTAssertTrue(MicRecoveryPolicy.decide(followDone, sampleRate: 16_000).attempt,
                       "the follow did not fix it — the recorder's own recovery takes over")
+    }
+
+    // MARK: - A follow belongs to its recording
+
+    /// The user stopping while a follow waits for the device to settle leaves the microphone off (independent
+    /// review, 2026-10-13: the delayed follow checked only "not recording now", which stop makes true, and bound the
+    /// microphone again after the user had stopped).
+    @MainActor
+    func testAFollowPendingAtStopLeavesTheMicrophoneOff() async {
+        let recorder = AudioRecordingService()
+        var binds = 0
+        recorder.followDelay = { _ in await Task.yield() }
+        recorder.followResume = { _ in binds += 1 }
+        recorder.follow(afterChangeWhileRecording: true)
+        XCTAssertTrue(recorder.followInFlight)
+        _ = recorder.stop()
+        await settled(recorder)
+        XCTAssertEqual(binds, 0, "no bind after the user stopped")
+    }
+
+    /// The same follow, its recording going on, binds the microphone again — the follow still does its job.
+    @MainActor
+    func testAFollowWhoseRecordingGoesOnBindsAgain() async {
+        let recorder = AudioRecordingService()
+        var binds = 0
+        recorder.followDelay = { _ in await Task.yield() }
+        recorder.followResume = { _ in binds += 1 }
+        recorder.follow(afterChangeWhileRecording: true)
+        await settled(recorder)
+        XCTAssertEqual(binds, 1)
+    }
+
+    /// The follow's task has run: `stop()` releases the flag at once, so the flag alone does not say so.
+    @MainActor
+    private func settled(_ recorder: AudioRecordingService) async {
+        for _ in 0..<1_000 where recorder.followInFlight { await Task.yield() }
+        for _ in 0..<50 { await Task.yield() }
+        XCTAssertFalse(recorder.followInFlight, "the follow ended")
     }
 }

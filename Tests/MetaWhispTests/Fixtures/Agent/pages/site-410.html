@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Search 410</title>
+<style>main { min-height: 10000px; }</style></head>
+<body>
+<main>
+  <form id="search" action="https://site-410.test/search" method="get">
+    <input type="search" name="q" aria-label="Search">
+    <button type="submit">Search</button>
+  </form>
+  <p id="results"></p>
+</main>
+<script>
+  // A search box whose page adds words of its own to what is typed: the box
+  // never shows what the agent typed, and what it would send is the page's.
+  const box = document.querySelector('input[name=q]');
+  box.addEventListener('input', () => {
+    if (box.value !== '' && !box.value.endsWith(' deals')) box.value += ' deals';
+  });
+  if (location.pathname === '/search') {
+    const query = new URLSearchParams(location.search).get('q') || '';
+    document.title = 'Results 410';
+    document.getElementById('results').textContent = 'Results for ' + query;
+  }
+</script>
+</body>
+</html>

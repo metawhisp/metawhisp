@@ -1,0 +1,18 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Site Seventy-Three</title></head>
+<body>
+<main>
+  <h1>Plans</h1>
+  <form action="https://site-73.test/buy" method="post">
+    <select aria-label="Plan period"
+            onchange="document.getElementById('buy').textContent = this.value === 'Yearly' ? 'Buy for $100 a year' : 'Buy for $10 a month'">
+      <option>Monthly</option>
+      <option>Yearly</option>
+    </select>
+    <label><input type="checkbox" name="gift"> Gift wrap</label>
+    <button id="buy">Buy for $10 a month</button>
+  </form>
+</main>
+</body>
+</html>

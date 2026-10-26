@@ -1,0 +1,35 @@
+ITER-074 review round 20 (Codex on c92ff14, a sweep of the whole label reader), fix part 1 — 2026-09-24
+Code by GLM-5.3-Flash from the orchestrator's instructions (review20a-instructions.md); compiled, run and
+reviewed line by line by the orchestrator.
+Round 20 confirmed fixed: each markup tree read on its own; runs of breaks and seams take one form.
+
+The sweep raised eight points. Part 1 closes the five about where a label's words come from (all confirmed
+by a failing page first):
+  1. markup a slotted component holds but does not draw was never read — the markup reading now follows a
+     slot to the nodes it shows, each read on its own;
+  2. only text nodes were read — an element's aria-label, alt and title are now readings of their own;
+  3. a component's <style> text broke a phrase — script, style, noscript and template give no words;
+  6. a select's options counted as label words — a select's and a textarea's contents give no words;
+  8. nothing bounded the string work — past WORDS_LIMIT (100,000 characters) a field counts as unchecked
+     (null), as when the time budget runs out: no value on the page is read.
+Part 2 (the next commit) closes the vocabulary points (4, 7a). Points 5 and 7b are answered with
+reasoning in the round-21 request.
+
+--- red (c92ff14 + tests)
+Tests/MetaWhispTests/Services/Agent/ObserverFormsTests.swift:493: error: testAControlsContentsAreNotLabelWords] : XCTAssertFalse failed
+Tests/MetaWhispTests/Services/Agent/ObserverFormsTests.swift:494: error: testAControlsContentsAreNotLabelWords] : XCTAssertTrue failed
+Tests/MetaWhispTests/Services/Agent/ObserverFormsTests.swift:482: error: testEverySourceOfALabelsWordsIsRead] : XCTAssertTrue failed - https://site-43.test/
+Tests/MetaWhispTests/Services/Agent/ObserverFormsTests.swift:483: error: testEverySourceOfALabelsWordsIsRead] : XCTAssertFalse failed - https://site-43.test/
+Tests/MetaWhispTests/Services/Agent/ObserverFormsTests.swift:482: error: testEverySourceOfALabelsWordsIsRead] : XCTAssertTrue failed - https://site-44.test/
+Tests/MetaWhispTests/Services/Agent/ObserverFormsTests.swift:483: error: testEverySourceOfALabelsWordsIsRead] : XCTAssertFalse failed - https://site-44.test/
+Tests/MetaWhispTests/Services/Agent/ObserverFormsTests.swift:482: error: testEverySourceOfALabelsWordsIsRead] : XCTAssertTrue failed - https://site-45.test/
+Tests/MetaWhispTests/Services/Agent/ObserverFormsTests.swift:483: error: testEverySourceOfALabelsWordsIsRead] : XCTAssertFalse failed - https://site-45.test/
+Tests/MetaWhispTests/Services/Agent/ObserverFormsTests.swift:482: error: testEverySourceOfALabelsWordsIsRead] : XCTAssertTrue failed - https://site-46.test/
+Tests/MetaWhispTests/Services/Agent/ObserverFormsTests.swift:483: error: testEverySourceOfALabelsWordsIsRead] : XCTAssertFalse failed - https://site-46.test/
+Tests/MetaWhispTests/Services/Agent/ObserverFormsTests.swift:502: error: testWordsPastTheLimitLockEveryValue] : XCTAssertFalse failed
+--- green (ObserverFormsTests)
+	 Executed 46 tests, with 0 failures (0 unexpected) in 4.060 (4.065) seconds
+--- gate
+  ✅ 1797 tests, 0 failures
+  ✅ 88 critical suites ran
+PASS — safe to continue.

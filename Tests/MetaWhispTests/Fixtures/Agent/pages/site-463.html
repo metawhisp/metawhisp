@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Site Four Sixty-Three</title></head>
+<body>
+<main>
+  <!-- ITER-076 stage 7, review round 2 (R2-5): a demo form whose page writes
+       the e-mail typed in it into its own address — /demo/<e-mail> — and
+       says how long a demo takes: a page read after Fill is kept without it. -->
+  <h1>Request a demo</h1>
+  <p>A demo takes thirty minutes.</p>
+  <form id="demo" action="/thanks" method="post">
+    <label for="name">Full name</label><input id="name" name="name" autocomplete="name">
+    <label for="email">Work email</label><input id="email" name="email" type="email">
+    <button type="submit" id="send">Request a demo</button>
+  </form>
+</main>
+<script>
+  document.getElementById('email').addEventListener('input', (event) => {
+    history.replaceState(null, '', '/demo/' + event.target.value);
+  });
+</script>
+</body>
+</html>

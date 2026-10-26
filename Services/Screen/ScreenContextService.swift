@@ -97,6 +97,24 @@ final class ScreenContextService: ObservableObject {
     var onCallContext: ((String?) -> Void)?
     private var lastCallContext: String?
 
+    /// When this detector last saw a call in front, at any pass — not only at a
+    /// change: a call held in front for twenty minutes is seen the whole time.
+    /// nil until a call is seen. Read by the calendar-end check, which until
+    /// 2026-10-20 ran its own probe over stored screen captures and missed
+    /// the Meet in Dia this detector was reporting.
+    private(set) var lastCallSeenAt: Date?
+
+    /// What one detection pass saw. Both passes, the poll and the instant
+    /// app-switch check, report here, so a sighting and a change are recorded
+    /// one way. Returns whether the verdict changed — the caller then logs it
+    /// and fires `onCallContext`.
+    func noteCallDetection(_ call: String?, at now: Date = Date()) -> Bool {
+        if call != nil { lastCallSeenAt = now }
+        guard call != lastCallContext else { return false }
+        lastCallContext = call
+        return true
+    }
+
     /// Apps already reported as "not captured because the allowlist is empty",
     /// so the log gets one line per app rather than one per poll.
     private var loggedSuppressedApps: Set<String> = []
@@ -104,6 +122,11 @@ final class ScreenContextService: ObservableObject {
     /// ITER-065.6 — why the last attempt to read the screen produced what it
     /// did. Carries no screen content, so it is safe for health reporting.
     private(set) var lastCaptureOutcome: ScreenCaptureOutcome = .captured(ocrCharacters: 0)
+
+    /// Screen Recording, read and asked for: the system's in the app, a test's
+    /// own in tests — so no test can show the prompt or start a real capture.
+    var screenRecordingGranted: () -> Bool = { CGPreflightScreenCaptureAccess() }
+    var askForScreenRecording: @MainActor (PermissionAsk) async -> Bool = { await PermissionsService.shared.requestScreenRecording($0) }
 
     /// ID of the most recently accepted screen row.
     private(set) var lastAcceptedContextID: UUID?
@@ -327,12 +350,20 @@ final class ScreenContextService: ObservableObject {
     /// ITER-064A.5 — no policy parameters. The loop resolves the user's current
     /// blacklist/allowlist on every tick via `currentPolicy()`, so a Settings
     /// change takes effect on the next poll instead of at the next relaunch.
-    func startMonitoring(interval: TimeInterval = 30) {
+    func startMonitoring(interval: TimeInterval = 30, ask: PermissionAsk? = nil) {
         guard !isActive else { return }
         // ITER-049 A2 — a degraded (temporary in-memory) session is read-only; don't
         // capture OCR into the empty store or stage candidates from it. Covers every
         // start path (launch, Settings toggle, applicationDidBecomeActive re-arm).
         guard StoreHealthSignal.shared.isHealthy else { return }
+        // Step-1 review #1 — an automatic start (launch, the grant's restart)
+        // never asks: without the permission it stays off with its reason, and
+        // the grant starts it (PermissionReactions). The Settings switch asks.
+        guard ask != nil || screenRecordingGranted() else {
+            lastCaptureOutcome = .permissionDenied
+            NSLog("[ScreenContext] No Screen Recording permission — not asked; the grant starts monitoring")
+            return
+        }
 
         // ITER-064A.6 — claim the slot here, synchronously on the main actor,
         // not inside the task. `isActive` used to be set only after the TCC
@@ -347,11 +378,13 @@ final class ScreenContextService: ObservableObject {
             // Pre-flight: ensure Screen Recording permission is granted.
             // Trigger the TCC dialog — but DO NOT force-open System Settings,
             // that steals focus (user can re-enable the toggle to get here again).
-            if !CGPreflightScreenCaptureAccess() {
-                NSLog("[ScreenContext] No Screen Recording permission — requesting...")
-                _ = await PermissionsService.shared.requestScreenRecording()
+            if !self.screenRecordingGranted() {
+                if let ask {
+                    NSLog("[ScreenContext] No Screen Recording permission — requesting...")
+                    _ = await self.askForScreenRecording(ask)
+                }
 
-                if !CGPreflightScreenCaptureAccess() {
+                if !self.screenRecordingGranted() {
                     NSLog("[ScreenContext] ❌ Permission denied — monitor not started")
                     await MainActor.run { self.isActive = false }
                     return
@@ -425,8 +458,7 @@ final class ScreenContextService: ObservableObject {
             appName: appName,
             windowTitle: windowTitle
         )
-        if currentCall != lastCallContext {
-            lastCallContext = currentCall
+        if noteCallDetection(currentCall) {
             NSLog("[ScreenContext] ⚡️ instant call-context change: %@ (app=%@)",
                   currentCall ?? "nil", appName)
             await MainActor.run { self.onCallContext?(currentCall) }
@@ -548,8 +580,7 @@ final class ScreenContextService: ObservableObject {
             appName: appName,
             windowTitle: windowTitle
         )
-        if currentCall != lastCallContext {
-            lastCallContext = currentCall
+        if noteCallDetection(currentCall) {
             NSLog("[ScreenContext] Call context changed: %@", currentCall ?? "nil")
             onCallContext?(currentCall)
         }

@@ -1,0 +1,14 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Site Thirty</title></head>
+<body>
+<main>
+  <h1>Account</h1>
+  <label for="credential"><x-label id="shadow-label"></x-label></label>
+  <input id="credential" type="text" value="SECRET-SHADOW">
+</main>
+<script>
+  document.getElementById('shadow-label').attachShadow({ mode: 'open' }).innerHTML = '<span>Password</span>';
+</script>
+</body>
+</html>

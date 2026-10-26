@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Site Two Hundred Fifty-Six</title>
+<style>body { margin: 0; font: 16px sans-serif; } button { display: block; margin: 4px 0; }</style>
+</head>
+<body>
+<main id="main"></main>
+<p id="log"></p>
+<script>
+  // A widget of another site, drawn by its path: each path one widget.
+  function log(text) { document.getElementById('log').textContent += text + ';'; }
+  const main = document.getElementById('main');
+  const path = location.pathname;
+  if (path === '/archive') {
+    main.innerHTML = '<button type="button" onclick="log(\'archived\')">Archive</button>';
+  } else if (path === '/remove' || path === '/member') {
+    main.innerHTML = '<button type="button" onclick="log(\'removed\')">Remove member</button>';
+  } else if (path === '/signin-later') {
+    // A button of no form, and a sign-in the widget shows when it wants:
+    // only its frame makes the button the user's part.
+    main.innerHTML = '<button type="button" onclick="log(\'continued\')">Continue</button>'
+      + '<form id="signin" hidden><label>Email <input type="email" name="email"></label>'
+      + '<label>Password <input type="password" name="password"></label></form>';
+  } else if (path === '/upload') {
+    main.innerHTML = '<input type="file" id="file" hidden>'
+      + '<button type="button" onclick="document.getElementById(\'file\').click()">Attach a file</button>';
+  }
+</script>
+</body>
+</html>

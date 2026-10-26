@@ -1,0 +1,39 @@
+ITER-074 I-0.3a review round 1 — green run, 2026-09-24 17:13 CEST, orchestrator (GLM quota exhausted)
+command: swift test --filter "ObservedPageTests|ObserverScriptTests" (plus 3 repeats with WebViewBridgeTests)
+
+ObservedPageTests testAnObserverReportDecodes passed (0.001 seconds).
+ObservedPageTests testAnOversizedReportIsRefused passed (0.018 seconds).
+ObservedPageTests testGarbageIsRefused passed (0.000 seconds).
+ObservedPageTests testIdenticalElementsAreToldApartByOccurrence passed (0.001 seconds).
+ObservedPageTests testTheFingerprintIgnoresTheIndex passed (0.000 seconds).
+ObservedPageTests testTheFingerprintIgnoresViewportAndVisibleText passed (0.000 seconds).
+ObservedPageTests testTheFingerprintIsStableAndShort passed (0.000 seconds).
+ObservedPageTests testTheFingerprintSeesWhatIdentifiesAnElement passed (0.000 seconds).
+ObserverScriptTests testAButtonIsSeen passed (0.247 seconds).
+ObserverScriptTests testAHugePageIsCutAndSaysSo passed (0.079 seconds).
+ObserverScriptTests testAPageThatRewritesJSONCannotFakeTheReport passed (0.072 seconds).
+ObserverScriptTests testAnImageLinkIsNamedByItsAlt passed (0.072 seconds).
+ObserverScriptTests testClickHandlersAndAriaRolesCount passed (0.070 seconds).
+ObserverScriptTests testContentBeatsTheTitle passed (0.072 seconds).
+ObserverScriptTests testCoveredAndClippedElementsAreOutOfView passed (0.069 seconds).
+ObserverScriptTests testFarAwayElementsAreMarkedOutOfView passed (0.068 seconds).
+ObserverScriptTests testFingerprintsSurviveChangesToThePage passed (0.071 seconds).
+ObserverScriptTests testFingerprintsSurviveReobservation passed (0.145 seconds).
+ObserverScriptTests testHiddenAndZeroSizeElementsAreDropped passed (0.073 seconds).
+ObserverScriptTests testHiddenHeadingsDoNotCount passed (0.076 seconds).
+ObserverScriptTests testHtmlLabelsNameTheirFields passed (0.067 seconds).
+ObserverScriptTests testIdenticalButtonsAreTellable passed (0.072 seconds).
+ObserverScriptTests testIndicesFollowDocumentOrder passed (0.069 seconds).
+ObserverScriptTests testInputsAreNamedByPlaceholderOrLabel passed (0.074 seconds).
+ObserverScriptTests testLabelledByBeatsAriaLabel passed (0.073 seconds).
+ObserverScriptTests testMoreRolesAreRecognised passed (0.071 seconds).
+ObserverScriptTests testRelativeLinksBecomeAbsolute passed (0.074 seconds).
+ObserverScriptTests testTheAccessibleNameWinsOverTheText passed (0.070 seconds).
+ObserverScriptTests testTheNearestHeadingIsRecorded passed (0.138 seconds).
+ObserverScriptTests testTheNearestLandmarkWins passed (0.068 seconds).
+ObserverScriptTests testTheResultsPageShowsItsLinksByRegion passed (0.072 seconds).
+ObserverScriptTests testTheTitleIsALastResort passed (0.069 seconds).
+ObserverScriptTests testTransparentAndCollapsedElementsAreDropped passed (0.074 seconds).
+ObserverScriptTests testTypedTextNeverLeavesAnEditor passed (0.067 seconds).
+
+	 Executed 34 tests, with 0 failures (0 unexpected) in 2.192 (2.195) seconds

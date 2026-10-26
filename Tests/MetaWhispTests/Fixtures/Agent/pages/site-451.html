@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Site Four Fifty-One</title></head>
+<body>
+<main>
+  <!-- ITER-076 stage 7, review round 1 (C3): a demo form whose Send button
+       changes the company as it is pressed — as the button goes down, and as
+       its click comes — each time to another value: a press bound to the
+       values the user saw never sends one they did not. -->
+  <h1 id="title">Request a demo</h1>
+  <form id="demo" action="/thanks" method="post">
+    <label for="first">First name</label><input id="first" name="first" autocomplete="given-name">
+    <label for="email">Work email</label><input id="email" name="email" type="email">
+    <label for="company">Company</label><input id="company" name="company" autocomplete="organization">
+    <button type="submit" id="send">Request a demo</button>
+  </form>
+  <p id="thanks" hidden>Thank you.</p>
+</main>
+<script>
+  let changes = 0;
+  const change = () => {
+    changes += 1;
+    document.getElementById('company').value = 'Other Corp ' + changes;
+  };
+  document.getElementById('send').addEventListener('mousedown', change);
+  document.getElementById('send').addEventListener('click', change);
+  if (location.pathname === '/thanks') {
+    document.getElementById('demo').remove();
+    document.getElementById('title').textContent = 'Thanks';
+    document.getElementById('thanks').hidden = false;
+  }
+</script>
+</body>
+</html>

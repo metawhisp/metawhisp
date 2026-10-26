@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Site One Hundred Fifty-One</title>
+<style>
+  body { margin: 0; font: 16px sans-serif; }
+  main { padding: 24px 40px; }
+  input:not([type=file]) { width: 220px; height: 28px; }
+  a, button, [role=button] { display: inline-block; margin: 8px 0; padding: 4px 8px; border: 1px solid #777; cursor: pointer; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Upload a scan</h1>
+  <!-- A form that needs a file, sent by script: the browser's own check is off,
+       and a script send skips it anyway. -->
+  <form id="upload" action="/upload" method="post" novalidate>
+    <p><label for="title">Title</label> <input id="title" name="title"></p>
+    <p><label for="scan">Scan</label> <input id="scan" name="scan" type="file" required></p>
+    <p><input id="copy" name="copy" type="checkbox"> <label for="copy">Keep a copy</label></p>
+    <p><a onclick="this.closest('form').submit()">Send by link</a></p>
+    <p><button type="button" onclick="this.form.submit()">Send by button</button></p>
+    <div role="button" tabindex="0" onclick="this.closest('form').submit()">Send by box</div>
+  </form>
+</main>
+</body>
+</html>

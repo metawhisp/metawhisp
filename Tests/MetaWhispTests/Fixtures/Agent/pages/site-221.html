@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Site Two Hundred Twenty-One</title>
+<style>
+  body { margin: 0; font: 16px sans-serif; }
+  main { padding: 24px 40px; }
+  #archive { display: inline-block; padding: 8px 12px; border: 1px solid #333; cursor: pointer; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Messages</h1>
+  <form id="other" action="/other" method="get"><button id="go" type="submit">Go elsewhere</button></form>
+  <!-- A control of the page's own making inside a label for that button. -->
+  <label for="go"><span id="archive" role="button" tabindex="0">Archive</span></label>
+  <p id="log"></p>
+</main>
+<script>
+  document.getElementById('archive').addEventListener('click', () => {
+    document.getElementById('log').textContent += 'archived;';
+  });
+</script>
+</body>
+</html>

@@ -1,0 +1,15 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Site Forty-Three</title></head>
+<body>
+<main>
+  <h1>Verify</h1>
+  <x-field id="field"><x-caption id="caption">OTP</x-caption></x-field>
+</main>
+<script>
+  document.getElementById('caption').attachShadow({ mode: 'open' }).innerHTML = '<span aria-hidden="true">*</span>';
+  document.getElementById('field').attachShadow({ mode: 'open' }).innerHTML =
+    '<label for="q"><slot></slot></label><input id="q" type="text" value="SECRET-SLOTTED">';
+</script>
+</body>
+</html>

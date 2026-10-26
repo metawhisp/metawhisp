@@ -1,0 +1,16 @@
+ITER-074 — a question to the user ends at its window, 2026-09-24 19:10 CEST, orchestrator (GLM quota exhausted)
+
+Found by the orchestrator while reviewing AgentRun: the run awaited the user's answer with no deadline of its
+own, so a card that never answered would hang the errand; a late Yes inside ConfirmationRequest's own window
+would still count. Fix: the question runs under Deadline with the answer window; silence or a late answer is a No.
+
+--- red (the silent user answers Yes after 3 s; the run's window is 200 ms)
+Tests/MetaWhispTests/Services/Agent/AgentRunTests.swift:99: error: -[MetaWhispTests.AgentRunTests testSilenceEndsTheQuestionAtItsWindow] : XCTAssertTrue failed
+Tests/MetaWhispTests/Services/Agent/AgentRunTests.swift:100: error: -[MetaWhispTests.AgentRunTests testSilenceEndsTheQuestionAtItsWindow] : XCTAssertFalse failed - a late yes counts for nothing
+AgentRunTests testSilenceEndsTheQuestionAtItsWindow failed (11.023 seconds).
+--- green
+AgentRunTests testALoginFormHandsTheErrandToTheUser passed (0.268 seconds).
+AgentRunTests testAnIrreversibleActionWaitsForAYesAndANoCancelsIt passed (0.087 seconds).
+AgentRunTests testJ1CollectsTheSitesIntoANewSheet passed (0.387 seconds).
+AgentRunTests testSilenceEndsTheQuestionAtItsWindow passed (0.733 seconds).
+AgentRunTests testStopBeforeTheFirstStepDoesNothing passed (0.005 seconds).

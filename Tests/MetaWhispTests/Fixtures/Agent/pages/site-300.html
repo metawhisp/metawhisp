@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Site Three Hundred</title>
+<style>body { margin: 0; font: 16px sans-serif; } main { padding: 16px 40px; } form { margin: 8px 0; } label { display: block; margin: 4px 0; }</style>
+</head>
+<body>
+<main id="page"></main>
+<p id="log"></p>
+<script>
+  // A plan change sent by its own change, in a POST form whose only submit
+  // button no one can press (ITER-076 I-09, round 5, part C; Claude review
+  // c10, #15). Each path one way of not being pressable; `/forms` holds them
+  // all, with one button a person can press beside them.
+  const page = document.getElementById('page');
+  const log = (text) => { document.getElementById('log').textContent += text + ';'; };
+  const prices = '<p>Yearly: $99 a year. Monthly: $9 a month.</p>';
+  const zero = 'style="display:inline-block;width:0;height:0;padding:0;border:0;overflow:hidden"';
+  const submitters = {
+    disabled: '<button type="submit" disabled>Save</button>',
+    fieldset: '<fieldset disabled><button type="submit">Save</button></fieldset>',
+    inert: '<div inert><button type="submit">Save</button></div>',
+    hidden: '<input type="submit" value="Save" hidden>',
+    undisplayed: '<input type="submit" value="Save" style="display:none">',
+    unseen: '<input type="submit" value="Save" style="visibility:hidden">',
+    zero: '<button type="submit" ' + zero + '>Save</button>',
+    pressable: '<button type="submit">Save</button>',
+  };
+  const form = (way, plan) => '<form method="post" action="https://site-300.test/plan">' + prices +
+    '<div role="radiogroup" aria-label="Plan">' +
+    '<label><input type="radio" name="plan" class="charges"> ' + plan + '</label>' +
+    '<label><input type="radio" name="plan" checked> Monthly ' + way + '</label></div>' + submitters[way] + '</form>';
+  const way = location.pathname.slice(1);
+  if (way === 'forms') {
+    page.innerHTML = Object.keys(submitters).map((each) =>
+      form(each, each.charAt(0).toUpperCase() + each.slice(1) + ' plan')).join('');
+  } else if (way === 'select-hidden') {
+    // A select whose change sends its POST form, beside a hidden submitter.
+    page.innerHTML = '<form method="post" action="https://site-300.test/plan">' + prices +
+      '<select aria-label="Plan" class="charges"><option>Monthly $9</option><option>Yearly $99</option></select>' +
+      submitters.hidden + '</form>';
+  } else if (submitters[way]) {
+    page.innerHTML = form(way, 'Yearly');
+  }
+  for (const control of document.querySelectorAll('.charges')) {
+    control.addEventListener('change', () => control.form.requestSubmit());
+  }
+  for (const sent of document.querySelectorAll('form')) {
+    sent.addEventListener('submit', (event) => { event.preventDefault(); log('charged'); });
+  }
+</script>
+</body>
+</html>

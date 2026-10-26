@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Site Five Hundred Thirty</title></head>
+<body>
+<main>
+  <h1>Phones</h1>
+  <!-- A shop's list in no form, sorted by its own script as its "Order by" list changes: nothing is sent (2026-10-21:
+       bstackdemo's sort was asked about as a send, and a No left the list unsorted). The tests read the order. -->
+  <label for="sort">Order by</label>
+  <select id="sort">
+    <option value="">Select</option>
+    <option value="lowest">Lowest to highest</option>
+    <option value="highest">Highest to lowest</option>
+  </select>
+  <ul id="list">
+    <li data-price="899">Max phone, 899</li>
+    <li data-price="199">Basic phone, 199</li>
+    <li data-price="499">Plus phone, 499</li>
+  </ul>
+  <script>
+    document.getElementById('sort').addEventListener('change', (event) => {
+      const way = event.target.value;
+      if (!way) return;
+      const list = document.getElementById('list');
+      const items = Array.from(list.children);
+      items.sort((a, b) => (Number(a.dataset.price) - Number(b.dataset.price)) * (way === 'lowest' ? 1 : -1));
+      items.forEach((item) => list.appendChild(item));
+    });
+  </script>
+</main>
+</body>
+</html>

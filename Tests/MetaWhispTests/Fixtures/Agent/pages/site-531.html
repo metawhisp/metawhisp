@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Site Five Hundred Thirty One</title></head>
+<body>
+<main>
+  <h1>Search quotes</h1>
+  <!-- A POST form whose author list sends it as it changes, as an ASP.NET page's postback does, beside its own Search
+       button (2026-10-21: quotes.toscrape's search ended the errand at the held post). The page the post brings shows
+       the author posted, as its server renders it: from the form the harness hands it (`window.posted`). -->
+  <form id="search" action="/search" method="post">
+    <label for="author">Author</label>
+    <select id="author" name="author" onchange="this.form.submit()">
+      <option value="">----------</option>
+      <option value="Sam Lee">Sam Lee</option>
+      <option value="Alex Kim">Alex Kim</option>
+    </select>
+    <label for="keyword">Keyword</label>
+    <input id="keyword" name="keyword" type="text">
+    <input type="submit" id="go" value="Search">
+  </form>
+  <script>
+    const posted = new URLSearchParams(window.posted || '');
+    if (posted.has('author')) document.getElementById('author').value = posted.get('author');
+  </script>
+</main>
+</body>
+</html>

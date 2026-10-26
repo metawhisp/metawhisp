@@ -1,0 +1,14 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Site Forty-Nine</title></head>
+<body>
+<main>
+  <h1>Details</h1>
+  <label for="w" id="word"></label>
+  <input id="w" type="text" value="typed-value">
+</main>
+<script>
+  document.getElementById('word').textContent = new URLSearchParams(location.search).get('label') || '';
+</script>
+</body>
+</html>

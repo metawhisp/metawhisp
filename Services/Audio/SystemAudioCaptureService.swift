@@ -30,13 +30,24 @@ final class SystemAudioCaptureService: NSObject, ObservableObject, AudioSource {
     /// value and bails after each suspension point if it no longer matches, so a
     /// STOP during setup cannot resurrect a recording the user already cancelled.
     private var startGeneration = 0
+    /// `AudioSource` — the start generation names the recording.
+    var captureSession: Int { startGeneration }
+
+    /// Screen Recording, read and asked for: the system's in the app, a test's
+    /// own in tests — so no test can show the prompt or start a real capture.
+    var screenRecordingGranted: () -> Bool = { CGPreflightScreenCaptureAccess() }
+    var askForScreenRecording: @MainActor (PermissionAsk) async -> Bool = { await PermissionsService.shared.requestScreenRecording($0) }
 
     /// Based on Screen Recording permission — system audio via SCStream needs it.
-    var hasPermission: Bool { CGPreflightScreenCaptureAccess() }
+    var hasPermission: Bool { screenRecordingGranted() }
+
+    /// Screen Recording has no "not answered yet" reading; its prompt comes
+    /// with the first start.
+    var permissionUndetermined: Bool { false }
 
     /// Actively request Screen Recording permission (triggers TCC dialog).
-    func requestPermission() async -> Bool {
-        await PermissionsService.shared.requestScreenRecording()
+    func requestPermission(_ ask: PermissionAsk) async -> Bool {
+        await askForScreenRecording(ask)
     }
 
     /// Samples of leading silence that place a channel starting `seconds`
@@ -56,9 +67,13 @@ final class SystemAudioCaptureService: NSObject, ObservableObject, AudioSource {
     /// Synchronously throws only for immediate state errors — actual SCStream setup is async.
     /// - Parameter leadingSilenceSeconds: how far into a recording this channel
     ///   is joining, so its samples land where they belong.
+    /// An automatic start (a meeting the calendar or a call window started, a
+    /// mid-meeting join) passes no `ask`: without the permission it stays off
+    /// with its reason and asks nothing (step-1 review #1). The user's RECORD
+    /// passes one.
     func start() throws { try start(leadingSilenceSeconds: 0) }
 
-    func start(leadingSilenceSeconds: Double) throws {
+    func start(leadingSilenceSeconds: Double, ask: PermissionAsk? = nil) throws {
         guard !isRecording, !isStarting else { return }
         let lead = Self.leadingSilenceSamples(seconds: leadingSilenceSeconds, rate: targetSampleRate)
         samples = lead > 0 ? [Float](repeating: 0, count: lead) : []
@@ -80,12 +95,16 @@ final class SystemAudioCaptureService: NSObject, ObservableObject, AudioSource {
 
             // Pre-flight: if permission is denied, proactively trigger the TCC dialog
             // so user sees WHY the button "did nothing".
-            if !CGPreflightScreenCaptureAccess() {
-                NSLog("[SystemAudio] No Screen Recording permission — requesting...")
-                _ = await PermissionsService.shared.requestScreenRecording()
-                guard self.startGeneration == gen else { return }  // AUD-008: stopped during permission prompt
+            if !self.screenRecordingGranted() {
+                if let ask {
+                    NSLog("[SystemAudio] No Screen Recording permission — requesting...")
+                    _ = await self.askForScreenRecording(ask)
+                    guard self.startGeneration == gen else { return }  // AUD-008: stopped during permission prompt
+                } else {
+                    NSLog("[SystemAudio] No Screen Recording permission — an automatic start does not ask")
+                }
 
-                if !CGPreflightScreenCaptureAccess() {
+                if !self.screenRecordingGranted() {
                     // Keep the popover open — surface error in UI with a clickable hint.
                     // DO NOT auto-open System Settings here: it steals focus and closes
                     // the popover, making the user think "nothing happened".

@@ -69,12 +69,19 @@ enum AudioInputCatalog {
         return availableInputDevices().first { $0.uid == uid }
     }
 
+    /// The engine's input audio unit, or nil when there is none. A raise from AVFAudio — a device it can no longer use
+    /// — is thrown: escaped from a main-actor job it stops the main queue for good (2026-10-12 wake crash), and
+    /// answered as "none" a built-in microphone's bind would pass for another's and lose its dead-mic check.
+    private static func inputAudioUnit(of engine: AVAudioEngine) throws -> AudioUnit? {
+        try AudioRecordingService.avf("input unit") { engine.inputNode.audioUnit }
+    }
+
     /// Bind a chosen input device to an existing `AVAudioEngine`. Must be
     /// called BEFORE `installTap` / `engine.start()` — switching the device
     /// after the input node already has a tap requires a teardown.
     @discardableResult
-    static func setInputDevice(_ device: AudioInputDevice, on engine: AVAudioEngine) -> Bool {
-        guard let inputUnit = engine.inputNode.audioUnit else { return false }
+    static func setInputDevice(_ device: AudioInputDevice, on engine: AVAudioEngine) throws -> Bool {
+        guard let inputUnit = try inputAudioUnit(of: engine) else { return false }
         var id = device.deviceID
         let size = UInt32(MemoryLayout<AudioDeviceID>.size)
         let status = AudioUnitSetProperty(
@@ -92,8 +99,8 @@ enum AudioInputCatalog {
     /// A live built-in mic always carries a noise floor, so exact zeros from it
     /// after audio are a dead stream rather than a headset's silence
     /// suppression — the one case where zeros-after-audio is unambiguous.
-    static func boundInputIsBuiltIn(for engine: AVAudioEngine) -> Bool {
-        guard let inputUnit = engine.inputNode.audioUnit else { return false }
+    static func boundInputIsBuiltIn(for engine: AVAudioEngine) throws -> Bool {
+        guard let inputUnit = try inputAudioUnit(of: engine) else { return false }
         var deviceID = AudioDeviceID(0)
         var size = UInt32(MemoryLayout<AudioDeviceID>.size)
         let status = AudioUnitGetProperty(inputUnit, kAudioOutputUnitProperty_CurrentDevice,
@@ -110,7 +117,8 @@ enum AudioInputCatalog {
     /// what shape. Cheap enough to log on every `start()`, and it is the one
     /// measurement that makes the next occurrence diagnosable.
     static func boundInputDescription(for engine: AVAudioEngine) -> String {
-        guard let inputUnit = engine.inputNode.audioUnit else { return "<no input audio unit>" }
+        // A log line: best-effort, a raise reads as no unit.
+        guard let inputUnit = (try? inputAudioUnit(of: engine)) ?? nil else { return "<no input audio unit>" }
         var deviceID = AudioDeviceID(0)
         var size = UInt32(MemoryLayout<AudioDeviceID>.size)
         let status = AudioUnitGetProperty(
@@ -122,14 +130,28 @@ enum AudioInputCatalog {
             &size
         )
         guard status == noErr else { return "<CurrentDevice query failed: \(status)>" }
+        return description(of: deviceID)
+    }
+
+    /// A device as one log line: name, UID and runtime id.
+    static func description(of deviceID: AudioDeviceID) -> String {
         let name = stringProperty(deviceID: deviceID, selector: kAudioObjectPropertyName) ?? "?"
         let uid = stringProperty(deviceID: deviceID, selector: kAudioDevicePropertyDeviceUID) ?? "?"
         return "\(name) [\(uid)] id=\(deviceID)"
     }
 
+    static func isBuiltIn(_ deviceID: AudioDeviceID) -> Bool {
+        transportType(deviceID: deviceID) == kAudioDeviceTransportTypeBuiltIn
+    }
+
+    static func isBluetooth(_ deviceID: AudioDeviceID) -> Bool {
+        let transport = transportType(deviceID: deviceID)
+        return transport == kAudioDeviceTransportTypeBluetooth || transport == kAudioDeviceTransportTypeBluetoothLE
+    }
+
     // MARK: - Private helpers
 
-    private static func systemDefaultInputDeviceID() -> AudioDeviceID {
+    static func systemDefaultInputDeviceID() -> AudioDeviceID {
         var deviceID: AudioDeviceID = 0
         var size = UInt32(MemoryLayout<AudioDeviceID>.size)
         var addr = AudioObjectPropertyAddress(

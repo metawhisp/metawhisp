@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Site One Hundred Two</title></head>
+<body>
+<main>
+  <h1>Frames in forms</h1>
+  <!-- A form whose secret sits in a frame of this page's own origin: its
+       submit handler reads the frame's password. -->
+  <form id="outer" action="https://site-102.test/outer" method="post"
+        onsubmit="document.getElementById('log').textContent += 'outer sent;'">
+    <input aria-label="Nickname" value="sam">
+    <iframe id="same" style="width:200px;height:40px;border:0"
+            srcdoc="<input type=password aria-label=Secret value=pa55word>"></iframe>
+    <button type="submit">Continue</button>
+  </form>
+  <!-- A form holding a frame of another origin: what it holds is unknown. -->
+  <form id="foreign" action="https://site-102.test/foreign" method="post">
+    <input aria-label="Coupon" value="SPRING">
+    <iframe sandbox style="width:200px;height:40px;border:0" srcdoc="<input aria-label=Anything>"></iframe>
+    <button type="submit">Apply</button>
+  </form>
+  <!-- A form whose frame of its own origin holds words only. -->
+  <form id="plain" action="https://site-102.test/plain" method="post">
+    <input aria-label="Note" value="hello">
+    <iframe style="width:200px;height:40px;border:0" srcdoc="<p>Just words</p>"></iframe>
+    <button type="submit">Save note</button>
+  </form>
+  <p id="log"></p>
+</main>
+</body>
+</html>

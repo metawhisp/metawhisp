@@ -1,0 +1,43 @@
+ITER-074 I-0.1 review fixes — green run, 2026-09-24 16:07 CEST, after steps C2 and D2
+command: swift test --filter "AutomationPermissionTests|DiaScriptTests|DiaSpikeRulesTests"
+
+AutomationPermissionTests testAnyOtherStatusIsKeptAsAFailure passed (0.001 seconds).
+AutomationPermissionTests testNoErrorMeansAllowed passed (0.000 seconds).
+AutomationPermissionTests testNotPermittedMeansDenied passed (0.000 seconds).
+AutomationPermissionTests testProcessNotFoundMeansTheBrowserIsNotRunning passed (0.000 seconds).
+AutomationPermissionTests testWouldRequireConsentMeansAskTheUser passed (0.000 seconds).
+DiaScriptTests testACarriageReturnIsNotPartOfAnID passed (0.000 seconds).
+DiaScriptTests testAnEmptyScriptIsStillAQuotedLiteral passed (0.000 seconds).
+DiaScriptTests testCloseTabScript passed (0.000 seconds).
+DiaScriptTests testEveryBuilderEscapesHostileIDs passed (0.000 seconds).
+DiaScriptTests testExecuteEscapesTheIDs passed (0.000 seconds).
+DiaScriptTests testExecuteEscapesTheJavaScript passed (0.000 seconds).
+DiaScriptTests testExecuteScript passed (0.000 seconds).
+DiaScriptTests testFrontActiveTabScript passed (0.000 seconds).
+DiaScriptTests testIsLoadingScript passed (0.000 seconds).
+DiaScriptTests testOnlyWebURLsCanBeOpened passed (0.000 seconds).
+DiaScriptTests testOpenTabScript passed (0.000 seconds).
+DiaScriptTests testOpeningANonWebURLProducesNoScript passed (0.000 seconds).
+DiaScriptTests testParsingTheWindowAndTabIDs passed (0.000 seconds).
+DiaScriptTests testQuotedTextSurvivesARealAppleScriptRoundTrip passed (0.111 seconds).
+DiaScriptTests testQuotingEscapesBackslashAndDoubleQuote passed (0.000 seconds).
+DiaScriptTests testQuotingEscapesLineBreaksAndTabs passed (0.000 seconds).
+DiaScriptTests testRelativeAndBlobURLsCannotBeOpened passed (0.000 seconds).
+DiaScriptTests testTheTimeoutIsWrittenIntoTheScript passed (0.000 seconds).
+DiaScriptTests testWebSchemesAreMatchedWhateverTheirCase passed (0.000 seconds).
+DiaScriptTests testWhitespaceOnlyIDsAreRejected passed (0.000 seconds).
+DiaSpikeRulesTests testADurationBecomesSeconds passed (0.000 seconds).
+DiaSpikeRulesTests testAFullBudgetAllowsAFullCall passed (0.000 seconds).
+DiaSpikeRulesTests testALongMessageIsCut passed (0.000 seconds).
+DiaSpikeRulesTests testAPassedDeadlineIsNegativeTimeNotACrash passed (0.000 seconds).
+DiaSpikeRulesTests testAnErrorMessageStaysOutOfTheLogByDefault passed (0.000 seconds).
+DiaSpikeRulesTests testAnyOtherTabIsAChange passed (0.000 seconds).
+DiaSpikeRulesTests testFocusCannotBeJudgedWithoutBothObservations passed (0.000 seconds).
+DiaSpikeRulesTests testLandingOnTheNewTabIsReported passed (0.000 seconds).
+DiaSpikeRulesTests testNoCallStartsWithLessThanASecondLeft passed (0.000 seconds).
+DiaSpikeRulesTests testSuccessIsReportedWithItsTime passed (0.000 seconds).
+DiaSpikeRulesTests testTheLastCallIsCutToTheTimeLeft passed (0.000 seconds).
+DiaSpikeRulesTests testTheMessageIsLoggedOnlyWhenAllowed passed (0.000 seconds).
+DiaSpikeRulesTests testTheSameActiveTabMeansUnchanged passed (0.000 seconds).
+
+	 Executed 38 tests, with 0 failures (0 unexpected) in 0.115 (0.118) seconds

@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Site Two Hundred Fifty-Five</title>
+<style>
+  body { margin: 0; font: 16px sans-serif; }
+  main { padding: 16px 40px; }
+  iframe { display: block; border: 0; margin: 8px 0; width: 420px; height: 60px; }
+  li { margin: 4px 0; }
+</style>
+</head>
+<body>
+<main id="main"></main>
+<p id="log"></p>
+<script>
+  // A page whose frames are laid out by its path: each path one case.
+  function log(text) { document.getElementById('log').textContent += text + ';'; }
+  const main = document.getElementById('main');
+  const frame = (src, style) => {
+    const made = document.createElement('iframe');
+    if (style) made.style.cssText = style;
+    made.src = src;
+    return made;
+  };
+  const row = (name, src) => {
+    const item = document.createElement('li');
+    item.append(name, frame(src));
+    return item;
+  };
+  const path = location.pathname;
+  if (path === '/member-actions') {
+    // The page's own widget, drawn in each row's frame.
+    document.body.innerHTML = '<button type="button" onclick="parent.log(\'removed\')">Remove member</button>';
+  } else if (path === '/team' || path === '/team-widget') {
+    // A team whose rows each hold the same widget: the member's name is in
+    // the page, never in the frame — of the page's own site, or of another.
+    main.innerHTML = '<h1>The team</h1><ul id="rows"></ul>';
+    const src = path === '/team' ? 'https://site-255.test/member-actions' : 'https://site-256.test/member';
+    for (const name of ['Alice', 'Bob', 'Carol']) document.getElementById('rows').append(row(name, src));
+  } else if (path === '/siblings') {
+    // Two frames of one other site, each with a control of its own, the
+    // second a moment after the first.
+    main.innerHTML = '<h1>Two widgets</h1>';
+    main.append(frame('https://site-256.test/archive'));
+    setTimeout(() => main.append(frame('https://site-256.test/remove')), 500);
+  } else if (path === '/loading') {
+    // A widget of another site that is still loading, then a frame the page
+    // writes itself.
+    main.innerHTML = '<h1>The team</h1>';
+    const widget = frame('https://site-256.test/never/widget');
+    widget.id = 'widget';
+    main.append(widget);
+    const own = document.createElement('iframe');
+    own.srcdoc = '<button onclick="parent.log(\'removed\')">Remove member</button>';
+    main.append(own);
+  } else if (path === '/signin') {
+    // A comments widget of another site, which may show its sign-in.
+    main.innerHTML = '<h1>Comments</h1>';
+    main.append(frame('https://site-256.test/signin-later', 'width:420px;height:220px'));
+  } else if (path === '/skewed') {
+    // A widget the page draws slanted: no point of it is where its own
+    // viewport says — a press measured as if it were not lands on the
+    // control beside the one aimed at.
+    main.innerHTML = '<h1>Slanted</h1>';
+    const own = document.createElement('iframe');
+    own.style.cssText = 'width:320px;height:120px;transform:skewX(20deg);transform-origin:0 0';
+    const press = (word) => 'onclick="document.getElementById(\'log\').textContent += \'' + word + ';\'"';
+    own.srcdoc = '<style>body{margin:0;font:16px sans-serif}'
+      + 'button{position:absolute;top:60px;width:40px;height:24px;padding:0;overflow:hidden}</style>'
+      + '<button style="left:110px" ' + press('discarded') + '>Discard</button>'
+      + '<button style="left:150px" ' + press('saved') + '>Save</button><p id="log" style="position:absolute;top:90px"></p>';
+    main.append(own);
+  } else if (path === '/upload') {
+    // A widget of another site that asks for a file.
+    main.innerHTML = '<h1>Upload</h1>';
+    main.append(frame('https://site-256.test/upload', 'width:420px;height:80px'));
+  } else if (path === '/many') {
+    // A page of very many small frames.
+    main.innerHTML = '<h1>Many</h1>';
+    for (let i = 0; i < 200; i++) {
+      const own = document.createElement('iframe');
+      own.style.cssText = 'width:200px;height:24px;margin:0';
+      own.srcdoc = '<button>Frame ' + i + '</button>';
+      main.append(own);
+    }
+  }
+</script>
+</body>
+</html>

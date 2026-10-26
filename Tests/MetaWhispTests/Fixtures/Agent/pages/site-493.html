@@ -1,0 +1,18 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Site Four Hundred Ninety-Three</title></head>
+<body>
+<main>
+  <h1>Park articles</h1>
+  <!-- The brain's site search (2026-10-19): a pure GET search — one box, its button — is sent as a search with no
+       Yes when the box holds the brain's own words. "?filled": the page put words in the box itself. -->
+  <form id="find" action="/search" method="get" role="search">
+    <input id="q" name="q" type="search" aria-label="Query">
+    <button type="submit">Search</button>
+  </form>
+</main>
+<script>
+  if (location.search.includes('filled')) document.getElementById('q').value = 'words the page wrote';
+</script>
+</body>
+</html>

@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Site Three Hundred One</title>
+<style>body { margin: 0; font: 16px sans-serif; } main { padding: 16px 40px; } iframe { display: block; border: 0; }</style>
+</head>
+<body>
+<main id="page"></main>
+<p id="log"></p>
+<script>
+  // Checkouts whose order goes out by a select of no form, by a link, or by
+  // a button beside a frame of their own; each frames its total from another
+  // site's checkout when it says so (ITER-076 I-09, round 5, part C; Claude
+  // review c10, #14, #16).
+  const page = document.getElementById('page');
+  const log = (text) => { document.getElementById('log').textContent += text + ';'; };
+  const path = location.pathname;
+  const frame = (address, height) => {
+    const made = document.createElement('iframe');
+    made.style.cssText = 'width:420px;height:' + height + 'px';
+    made.src = address;
+    page.append(made);
+  };
+  window.addTotal = () => frame('https://site-271.test/total', 40);
+  // A frame no one sees, as an ad-heavy page keeps adding: its total shows to no one (2026-10-16).
+  window.addHiddenFrame = () => {
+    const made = document.createElement('iframe');
+    made.style.cssText = 'display:none';
+    made.src = 'https://site-271.test/total';
+    page.append(made);
+  };
+  if (path === '/select') {
+    page.innerHTML = '<h1>Kasse</h1><select aria-label="Tarif" id="plan"><option>Monatlich</option>' +
+      '<option>Jaehrlich</option></select>';
+    document.getElementById('plan').addEventListener('change', () => log('ordered'));
+  } else if (path === '/open') {
+    page.innerHTML = '<h1>Kasse</h1><p><a href="https://site-301.test/ordered">Bestellen</a></p>';
+  } else if (path === '/ordered') {
+    page.innerHTML = '<h1>Bestellt</h1>';
+  } else if (path === '/framed') {
+    // A frame of its own beside the order button when it is looked at.
+    page.innerHTML = '<h1>Kasse</h1><button id="order" type="button">Bestellen</button>';
+    document.getElementById('order').addEventListener('click', () => log('ordered'));
+    frame('https://site-268.test/blank', 40);
+  }
+</script>
+</body>
+</html>

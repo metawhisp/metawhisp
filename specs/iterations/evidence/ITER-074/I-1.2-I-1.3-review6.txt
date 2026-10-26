@@ -1,0 +1,98 @@
+ITER-074 review round 6 (Codex on 84ce5b2 + 2ad8ae2), fixes — 2026-09-24 18:18 CEST, orchestrator
+
+Findings (all confirmed in the code before fixing):
+  1. an <a role=button href=javascript:/file:> became a click — the scheme check ran for role 'link' only
+  2. staging by region hid every action past the fifteenth of a region, and every select option past the fifth
+  3. sixteen planned searches made the capacity negative: an empty chooser, or 21 options
+  4. the absolute expiry (and the 2-minute answer window) ran on the wall clock
+  5. money rounded to the nearest millionth, so $0.5000004 was admitted
+
+Clock change (4) is a type change — Date no longer compiles where a deadline is measured; no runtime red.
+
+--- red (new tests against the old logic)
+AgentPolicyTests testAWorstCaseAHairOverTheCeilingIsRefused failed (0.571 seconds).
+AgentPolicyTests testMoreIsAlwaysReversibleAndMayRepeat failed (0.000 seconds).
+CandidateBuilderTests testANonWebAddressOffersNothingWhateverItsRole failed (0.000 seconds).
+CandidateBuilderTests testASelectOffersEveryOtherOptionBestMatchFirst failed (0.000 seconds).
+CandidateBuilderTests testEveryActionOnADensePageIsReachable failed (0.014 seconds).
+CandidateBuilderTests testManyPlannedSearchesNeverOverflowTheChooser failed (0.009 seconds).
+SafetyGuardTests testOnlyBackScrollWaitMoreAndPlannedSearchesAreAlwaysReversible failed (0.000 seconds).
+	 Executed 76 tests, with 13 failures (0 unexpected) in 0.872 (0.877) seconds
+--- green
+AgentPolicyTests testABABCycleIsStuck passed (0.001 seconds).
+AgentPolicyTests testAConfidentChoiceActsUnlessItIsIrreversible passed (0.000 seconds).
+AgentPolicyTests testAMalformedConfidenceIsReconsidered passed (0.000 seconds).
+AgentPolicyTests testAMalformedWorstCaseIsNotReserved passed (0.000 seconds).
+AgentPolicyTests testAMiddlingChoiceActsOnlyWhenItCanBeUndoneForFree passed (0.000 seconds).
+AgentPolicyTests testAMissingRiskAnswerMeansNoAction passed (0.001 seconds).
+AgentPolicyTests testANewRowOrAFinishedSubgoalIsProgress passed (0.000 seconds).
+AgentPolicyTests testANonsenseDurationIsIgnored passed (0.000 seconds).
+AgentPolicyTests testAReservationIsSettledOnlyOnce passed (0.000 seconds).
+AgentPolicyTests testAWeakChoiceIsAlwaysReconsidered passed (0.000 seconds).
+AgentPolicyTests testAWorstCaseAHairOverTheCeilingIsRefused passed (0.000 seconds).
+AgentPolicyTests testAnAlwaysReversibleActionNeedsNoRiskAnswer passed (0.000 seconds).
+AgentPolicyTests testAnyOtherDecisionBetweenReconsiderationsResetsTheCount passed (0.000 seconds).
+AgentPolicyTests testBackScrollAndWaitMayRepeat passed (0.000 seconds).
+AgentPolicyTests testEightStepsWithoutProgressFiresAnywayAfterEarlierProgress passed (0.000 seconds).
+AgentPolicyTests testEightStepsWithoutProgressIsStuck passed (0.000 seconds).
+AgentPolicyTests testGoalMetCountsFromPointEight passed (0.000 seconds).
+AgentPolicyTests testMissingUsageCountsTheWholeReservation passed (0.000 seconds).
+AgentPolicyTests testMoreIsAlwaysReversibleAndMayRepeat passed (0.000 seconds).
+AgentPolicyTests testProgressBreaksACycleAndItFiresAnywayAfter passed (0.000 seconds).
+AgentPolicyTests testProgressStartsTheRepeatCountAgainAndItFiresAnywayAfter passed (0.000 seconds).
+AgentPolicyTests testSettlingGivesBackWhatWasNotSpent passed (0.000 seconds).
+AgentPolicyTests testTheAbsoluteExpiryFiresAnywayAfterThirtyMinutes passed (0.000 seconds).
+AgentPolicyTests testTheActiveTimeCeilingCountsWorkNotTheWallClock passed (0.000 seconds).
+AgentPolicyTests testTheLexiconAloneRequiresAYes passed (0.000 seconds).
+AgentPolicyTests testTheLexiconOutranksAlwaysReversible passed (0.000 seconds).
+AgentPolicyTests testTheRiskAnswerCountsAsYesFromPointTwo passed (0.000 seconds).
+AgentPolicyTests testTheSameActionThreeTimesAnywhereInTheRunIsStuck passed (0.000 seconds).
+AgentPolicyTests testTheSameActionThreeTimesIsStuck passed (0.000 seconds).
+AgentPolicyTests testTheSameElementWithANewPayloadIsANewAction passed (0.000 seconds).
+AgentPolicyTests testTheSecondReconsiderationInARowIsStuck passed (0.000 seconds).
+AgentPolicyTests testTheSpendCeiling passed (0.000 seconds).
+AgentPolicyTests testTheStepCeiling passed (0.000 seconds).
+AgentPolicyTests testTheWorstCaseIsReservedBeforeACall passed (0.000 seconds).
+AgentPolicyTests testTheWorstCaseOfACall passed (0.000 seconds).
+CandidateBuilderTests testALinkBecomesAnOpenOfItsOwnAddress passed (0.000 seconds).
+CandidateBuilderTests testANonWebAddressOffersNothingWhateverItsRole passed (0.000 seconds).
+CandidateBuilderTests testAPlannedSearchIsOfferedAsOne passed (0.000 seconds).
+CandidateBuilderTests testASelectOffersEachOtherOption passed (0.000 seconds).
+CandidateBuilderTests testASelectOffersEveryOtherOptionBestMatchFirst passed (0.000 seconds).
+CandidateBuilderTests testCandidateIDsAreUnique passed (0.000 seconds).
+CandidateBuilderTests testControlsBecomeTheirOperations passed (0.000 seconds).
+CandidateBuilderTests testEveryActionOnADensePageIsReachable passed (0.042 seconds).
+CandidateBuilderTests testMainContentMatchingTheSubgoalComesFirst passed (0.000 seconds).
+CandidateBuilderTests testManyPlannedSearchesNeverOverflowTheChooser passed (0.023 seconds).
+CandidateBuilderTests testNeverMoreThanTwentyCandidates passed (0.002 seconds).
+CandidateBuilderTests testNonWebLinksAreNotCandidates passed (0.000 seconds).
+CandidateBuilderTests testOnScreenBeatsOffScreenWhenAllElseIsEqual passed (0.000 seconds).
+CandidateBuilderTests testPageLevelActionsAreAlwaysOffered passed (0.000 seconds).
+CandidateBuilderTests testTheResultsFixtureOffersItsThreeSitesFirst passed (0.331 seconds).
+CandidateBuilderTests testTwinsAreOfferedOnlyWhenTheyAreOneDestination passed (0.001 seconds).
+SafetyGuardTests testACookieBannerIsRecognisedByItsTextAndConsentButtons passed (0.000 seconds).
+SafetyGuardTests testAGrantDialogIsNotACookieBanner passed (0.000 seconds).
+SafetyGuardTests testAGrantThatMentionsCookiesIsNotACookieBanner passed (0.000 seconds).
+SafetyGuardTests testALateYesDoesNotCount passed (0.000 seconds).
+SafetyGuardTests testAPlannedSearchIsAlwaysReversible passed (0.000 seconds).
+SafetyGuardTests testAPlannedSearchMustLookLikeOne passed (0.000 seconds).
+SafetyGuardTests testAYesInsideTheWindowApproves passed (0.000 seconds).
+SafetyGuardTests testAYesIsBoundToTheExactActionTabPageAndWording passed (0.000 seconds).
+SafetyGuardTests testAcceptOnlyWhenTheBannerBlocksThePage passed (0.000 seconds).
+SafetyGuardTests testActionWordsFailTheNavigationCheck passed (0.000 seconds).
+SafetyGuardTests testAnAllowThatNamesItsScopeIsStillConsent passed (0.000 seconds).
+SafetyGuardTests testAnAnswerOutsideTheRealWindowDoesNotCount passed (0.000 seconds).
+SafetyGuardTests testAnEncodedQueryFailsTheNavigationCheck passed (0.000 seconds).
+SafetyGuardTests testAnOrdinaryLinkPassesTheNavigationCheck passed (0.000 seconds).
+SafetyGuardTests testLeavingOrUndoingNeedsAYes passed (0.000 seconds).
+SafetyGuardTests testNegationsAndScopesAreRead passed (0.000 seconds).
+SafetyGuardTests testNonWebAddressesFailTheNavigationCheck passed (0.000 seconds).
+SafetyGuardTests testOnlyBackScrollWaitMoreAndPlannedSearchesAreAlwaysReversible passed (0.000 seconds).
+SafetyGuardTests testSilenceBecomesANoWhenTheWindowCloses passed (0.000 seconds).
+SafetyGuardTests testSilenceIsStillWaitingInsideTheWindow passed (0.000 seconds).
+SafetyGuardTests testTheLeastPermissiveOptionWins passed (0.000 seconds).
+SafetyGuardTests testTheLexiconFindsIrreversibleActionWords passed (0.000 seconds).
+SafetyGuardTests testTheLexiconIgnoresOrdinaryWordsAndNouns passed (0.000 seconds).
+SafetyGuardTests testTheLexiconReadsAddressesIncludingCamelCase passed (0.000 seconds).
+SafetyGuardTests testTheWholeActionIsReadNotJustItsName passed (0.000 seconds).
+	 Executed 76 tests, with 0 failures (0 unexpected) in 0.411 (0.415) seconds

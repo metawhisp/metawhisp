@@ -1,0 +1,34 @@
+ITER-074 review round 11 (Codex on 6d3eeae + 99bf8be + c4a8ab8), fixes — 2026-09-24 20:44 CEST
+Code by GLM-5.3-Flash from the orchestrator's instructions (review11-instructions.md), two phases;
+the orchestrator compiled, ran, reviewed every line, and made one test deterministic (see below).
+c4a8ab8 (a question ends at its window): accepted.
+
+Findings (all confirmed in the code before fixing):
+  1. Stop only flipped a flag; an await before an effect let an action or the Sheet through
+     fix: the errand runs in a task Stop cancels; Stop and the ceilings are checked right before every effect
+  2. a Yes was checked, then an await passed; the act script compared only fingerprint fields
+     fix: the approved page, visible words and submit label are checked in the same script that acts
+  3. ceilings were checked only between steps; a Yes after the 30-minute expiry could act
+     fix: a question never runs past the expiry; ceilings checked before every effect; limits injectable
+  4. a hidden field named Password was never classified, so its content could become a name
+     fix: any field is judged sensitive by its own words, shown or hidden (fail closed when out of time)
+  5. a grant went through the normal Yes/No question
+     fix: a grant is handed to the user, never asked about (a cookie-naming label is not a grant)
+
+Deterministic test: 'Stop right before an action' first passed on the old code because the page's
+navigation is recorded asynchronously and the tab closed first; it now asserts no action script was
+sent after Stop, and fails on the old code.
+
+--- red (10 tests)
+ActionScriptTests testAnApprovedActionIsNotTakenWhenItsWordsChanged failed (0.666 seconds).
+AgentRunTests testAGrantIsHandedToTheUserNotAskedAbout failed (1.056 seconds).
+AgentRunTests testAYesAfterTheExpiryIsNotActedOn failed (5.647 seconds).
+AgentRunTests testAtACeilingNoSheetIsWritten failed (0.381 seconds).
+AgentRunTests testStopBeforeThePasteWritesNothing failed (0.390 seconds).
+AgentRunTests testStopDuringAQuestionEndsTheErrandAtOnce failed (60.092 seconds).
+AgentRunTests testStopRightBeforeAnActionSendsNothing failed (0.811 seconds).
+ObserverFormsTests testAHiddenSecretNeverBecomesAName failed (0.073 seconds).
+ObserverFormsTests testSlottedWritingAndSecretsInCustomControlsReachNoNeighbour failed (0.072 seconds).
+SafetyGuardTests testAGrantIsRecognised failed (0.001 seconds).
+--- green (agent suites)
+	 Executed 191 tests, with 0 failures (0 unexpected) in 10.661 (10.675) seconds

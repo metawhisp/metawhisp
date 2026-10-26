@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="fr">
+<head><meta charset="utf-8"><title>Site 52</title></head>
+<body>
+<main>
+  <h1>Compte</h1>
+  <form id="close" action="https://site-52.test/account/close" method="post">
+    <button type="button">Afficher les détails</button>
+    <button type="submit">Supprimer le compte</button>
+    <input type="image" alt="Envoyer l'image" src="data:image/gif;base64,R0lGODlhAQABAAAAACw=" width="40" height="20">
+    <div role="button" tabindex="0" onclick="this.closest('form').requestSubmit()">Konto löschen</div>
+    <a href="https://site-52.test/aide">Aide</a>
+    <a role="menuitem" href="https://site-52.test/profil">Profil</a>
+  </form>
+  <button type="submit" form="close">Hors du formulaire</button>
+  <form id="find" action="https://site-52.test/recherche" method="get">
+    <input type="search" aria-label="Recherche">
+    <button type="submit">Chercher</button>
+    <button type="submit" formmethod="post">Chercher et enregistrer</button>
+  </form>
+  <form id="away" action="https://other-52.test/abonnement" method="get">
+    <button id="go">Weiter</button>
+  </form>
+  <label role="button" tabindex="0" for="go">Los</label>
+  <form id="box" method="dialog">
+    <button>Fermer la boîte</button>
+  </form>
+  <button type="submit">Sans formulaire</button>
+  <a href="https://accounts.site-52.test/o/oauth2/auth?client_id=abc&amp;redirect_uri=https%3A%2F%2Fsite-52.test%2Fcb&amp;response_type=code">Continuer avec un compte</a>
+</main>
+</body>
+</html>

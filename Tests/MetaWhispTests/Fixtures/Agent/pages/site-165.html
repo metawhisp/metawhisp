@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Site One Hundred Sixty-Five</title>
+<style>
+  body { margin: 0; font: 16px sans-serif; min-height: 2400px; }
+  main { padding: 24px 40px; }
+  .select { position: absolute; left: 40px; width: 260px; height: 36px; line-height: 36px; padding: 0 8px;
+            border: 1px solid #777; }
+  .menu { position: absolute; left: 40px; width: 278px; max-height: 360px; overflow-y: auto; border: 1px solid #777;
+          background: #fff; }
+  .menu [role=option] { height: 32px; line-height: 32px; padding: 0 8px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Delivery</h1>
+  <!-- Dropdowns near the bottom of the window: each open list runs past the
+       window's edge, and closes when the page scrolls. The first scrolls far;
+       the second only a little, so its last option cannot be brought into
+       sight without moving the page. -->
+  <div id="slot" class="select" role="combobox" tabindex="0" aria-label="Time slot" aria-haspopup="listbox"
+       aria-expanded="false" aria-controls="slots" style="top: 600px">Choose a time</div>
+  <div id="room" class="select" role="combobox" tabindex="0" aria-label="Room" aria-haspopup="listbox"
+       aria-expanded="false" aria-controls="rooms" style="top: 680px">Choose a room</div>
+</main>
+<script>
+  const menus = [];
+  const dropdown = (boxId, listId, top, names) => {
+    const box = document.getElementById(boxId);
+    let menu = null;
+    const close = () => { if (menu) { menu.remove(); menu = null; box.setAttribute('aria-expanded', 'false'); } };
+    menus.push(close);
+    box.addEventListener('click', () => {
+      if (menu) { close(); return; }
+      menu = document.createElement('div');
+      menu.id = listId;
+      menu.className = 'menu';
+      menu.style.top = top + 'px';
+      menu.setAttribute('role', 'listbox');
+      for (const name of names) {
+        const option = document.createElement('div');
+        option.setAttribute('role', 'option');
+        option.textContent = name;
+        option.addEventListener('click', () => { box.textContent = name; close(); });
+        menu.appendChild(option);
+      }
+      document.body.appendChild(menu);
+      box.setAttribute('aria-expanded', 'true');
+    });
+  };
+  const slots = [];
+  for (let slot = 16; slot < 64; slot++) slots.push(Math.floor(slot / 2) + (slot % 2 ? ':30' : ':00'));
+  dropdown('slot', 'slots', 640, slots);
+  const rooms = [];
+  for (let room = 1; room <= 12; room++) rooms.push('Room ' + room);
+  dropdown('room', 'rooms', 720, rooms);
+  addEventListener('scroll', () => menus.forEach((close) => close()));
+</script>
+</body>
+</html>

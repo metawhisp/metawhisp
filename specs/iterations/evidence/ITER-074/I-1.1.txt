@@ -1,0 +1,55 @@
+ITER-074 I-1.1 — cells and SafetyGuard, 2026-09-24 17:36 CEST, orchestrator (GLM quota exhausted)
+
+--- red, cells: 10 tests, 8 failing
+SheetCellsTests testAnEmptyValueBecomesTheRequestsPlaceholder failed (0.577 seconds).
+SheetCellsTests testAnyDifferenceIsAMismatch failed (0.001 seconds).
+SheetCellsTests testFormulaLikeStartsGetAnApostrophe failed (0.001 seconds).
+SheetCellsTests testLineBreaksTabsAndControlCharactersBecomeSpaces failed (0.000 seconds).
+SheetCellsTests testRowsBecomeTabSeparatedTextThatCannotGrowColumnsOrRows failed (0.001 seconds).
+SheetCellsTests testRunsOfSpacesCollapseAndTheEndsAreTrimmed failed (0.000 seconds).
+SheetCellsTests testTheOrderIsCanonicalThenEscape failed (0.000 seconds).
+SheetCellsTests testUnicodeLineAndParagraphSeparatorsBecomeSpaces failed (0.000 seconds).
+--- red, SafetyGuard: 17 tests, 13 failing
+SafetyGuardTests testACookieBannerIsRecognisedByItsTextAndConsentButtons failed (0.000 seconds).
+SafetyGuardTests testALateYesDoesNotCount failed (0.000 seconds).
+SafetyGuardTests testAYesInsideTheWindowApproves failed (0.000 seconds).
+SafetyGuardTests testAYesIsBoundToTheExactActionPageAndPayload failed (0.001 seconds).
+SafetyGuardTests testAcceptOnlyWhenTheBannerBlocksThePage failed (0.598 seconds).
+SafetyGuardTests testActionWordsFailTheNavigationCheck failed (0.001 seconds).
+SafetyGuardTests testNonWebAddressesFailTheNavigationCheck failed (0.000 seconds).
+SafetyGuardTests testOnlyBackScrollWaitAndSafeLinksAreAlwaysReversible failed (0.001 seconds).
+SafetyGuardTests testSilenceBecomesANoWhenTheWindowCloses failed (0.000 seconds).
+SafetyGuardTests testTheLeastPermissiveOptionWins failed (0.001 seconds).
+SafetyGuardTests testTheLexiconFindsIrreversibleWordsInTheirForms failed (0.001 seconds).
+SafetyGuardTests testTheLexiconReadsAddressesIncludingCamelCase failed (0.000 seconds).
+SafetyGuardTests testTheWholeActionIsReadNotJustItsName failed (0.000 seconds).
+--- green
+SafetyGuardTests testACookieBannerIsRecognisedByItsTextAndConsentButtons passed (0.000 seconds).
+SafetyGuardTests testALateYesDoesNotCount passed (0.000 seconds).
+SafetyGuardTests testAPlannedSearchIsAlwaysReversible passed (0.000 seconds).
+SafetyGuardTests testAYesInsideTheWindowApproves passed (0.000 seconds).
+SafetyGuardTests testAYesIsBoundToTheExactActionPageAndPayload passed (0.000 seconds).
+SafetyGuardTests testAcceptOnlyWhenTheBannerBlocksThePage passed (0.001 seconds).
+SafetyGuardTests testActionWordsFailTheNavigationCheck passed (0.000 seconds).
+SafetyGuardTests testAnOrdinaryLinkPassesTheNavigationCheck passed (0.000 seconds).
+SafetyGuardTests testNonWebAddressesFailTheNavigationCheck passed (0.000 seconds).
+SafetyGuardTests testOnlyBackScrollWaitAndSafeLinksAreAlwaysReversible passed (0.000 seconds).
+SafetyGuardTests testSilenceBecomesANoWhenTheWindowCloses passed (0.000 seconds).
+SafetyGuardTests testSilenceIsStillWaitingInsideTheWindow passed (0.000 seconds).
+SafetyGuardTests testTheLeastPermissiveOptionWins passed (0.000 seconds).
+SafetyGuardTests testTheLexiconFindsIrreversibleActionWords passed (0.000 seconds).
+SafetyGuardTests testTheLexiconIgnoresOrdinaryWordsAndNouns passed (0.000 seconds).
+SafetyGuardTests testTheLexiconReadsAddressesIncludingCamelCase passed (0.000 seconds).
+SafetyGuardTests testTheWholeActionIsReadNotJustItsName passed (0.000 seconds).
+SheetCellsTests testAJoinedEmojiSurvives passed (0.000 seconds).
+SheetCellsTests testAReadBackOfTheCanonicalValuesMatches passed (0.000 seconds).
+SheetCellsTests testAnEmptyValueBecomesTheRequestsPlaceholder passed (0.000 seconds).
+SheetCellsTests testAnyDifferenceIsAMismatch passed (0.000 seconds).
+SheetCellsTests testFormulaLikeStartsGetAnApostrophe passed (0.000 seconds).
+SheetCellsTests testLineBreaksTabsAndControlCharactersBecomeSpaces passed (0.000 seconds).
+SheetCellsTests testOrdinaryValuesAreLeftAlone passed (0.000 seconds).
+SheetCellsTests testRowsBecomeTabSeparatedTextThatCannotGrowColumnsOrRows passed (0.000 seconds).
+SheetCellsTests testRunsOfSpacesCollapseAndTheEndsAreTrimmed passed (0.000 seconds).
+SheetCellsTests testTheOrderIsCanonicalThenEscape passed (0.000 seconds).
+SheetCellsTests testUnicodeLineAndParagraphSeparatorsBecomeSpaces passed (0.000 seconds).
+	 Executed 28 tests, with 0 failures (0 unexpected) in 0.003 (0.006) seconds

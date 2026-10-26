@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Site One Hundred Sixty-Seven</title>
+<style>
+  body { margin: 0; font: 16px sans-serif; }
+  main { padding: 24px 40px; }
+  .row { margin: 12px 0; height: 40px; }
+  .select { display: inline-block; width: 220px; height: 36px; line-height: 36px; padding: 0 8px; border: 1px solid #777; }
+  #status-list { position: absolute; left: 320px; top: 80px; width: 200px; border: 1px solid #777; background: #fff; }
+  [role=option] { height: 32px; line-height: 32px; padding: 0 8px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Records</h1>
+  <!-- Two records' dropdowns in one POST form share one list; the open one owns it. -->
+  <form id="records" action="/records" method="post">
+    <div class="row"><span id="a-label">Status of record A</span>
+      <div id="a" class="select" role="combobox" aria-labelledby="a-label" aria-haspopup="listbox"
+           aria-expanded="true" aria-controls="status-list">Active</div></div>
+    <div class="row"><span id="b-label">Status of record B</span>
+      <div id="b" class="select" role="combobox" aria-labelledby="b-label" aria-haspopup="listbox"
+           aria-expanded="false" aria-controls="status-list">Active</div></div>
+  </form>
+</main>
+<script>
+  // The list, drawn for whichever record is open; the test calls these.
+  const draw = () => {
+    const old = document.getElementById('status-list');
+    if (old) old.remove();
+    const list = document.createElement('div');
+    list.id = 'status-list';
+    list.setAttribute('role', 'listbox');
+    for (const name of ['Active', 'Archived']) {
+      const option = document.createElement('div');
+      option.setAttribute('role', 'option');
+      option.textContent = name;
+      option.addEventListener('click', () => {
+        const owner = document.querySelector('[role=combobox][aria-expanded=true]');
+        const form = document.getElementById('records');
+        form.action = '/records/' + owner.id;
+        form.requestSubmit();
+      });
+      list.appendChild(option);
+    }
+    document.body.appendChild(list);
+  };
+  const retarget = () => {
+    document.getElementById('a').setAttribute('aria-expanded', 'false');
+    document.getElementById('b').setAttribute('aria-expanded', 'true');
+  };
+  draw();
+  // ?open=both or ?open=none: whose the list is cannot be told.
+  const open = new URLSearchParams(location.search).get('open');
+  if (open === 'both') document.getElementById('b').setAttribute('aria-expanded', 'true');
+  if (open === 'none') document.getElementById('a').setAttribute('aria-expanded', 'false');
+</script>
+</body>
+</html>

@@ -1,0 +1,15 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Site One Hundred Twenty-Four</title></head>
+<body>
+<main>
+  <h1>Departures</h1>
+  <!-- A clock that ticks for ever: the page is never quiet. -->
+  <p>Now: <span id="clock">0</span></p>
+</main>
+<script>
+  let ticks = 0;
+  setInterval(() => { document.getElementById('clock').textContent = String(++ticks); }, 50);
+</script>
+</body>
+</html>

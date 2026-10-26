@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Site Two Hundred Thirty-One</title></head>
+<body>
+<main>
+  <h1 id="heading">Catalogue</h1>
+  <ul id="items"><li>First item</li></ul>
+  <p><a id="more" href="#">Load more</a></p>
+  <p><a id="all" href="javascript:void(0)">Show all</a></p>
+  <p><a id="again" href="">Refresh list</a></p>
+  <p><a id="shout" href=" JavaScript:void(0)">Shout</a></p>
+  <p><a id="next" href="/next">Next page</a></p>
+  <p id="log"></p>
+</main>
+<script>
+  // Links that act through the page's own script, as many sites draw them: an
+  // address of "#", a javascript: one, an empty one. A click runs them.
+  if (location.pathname === '/next') document.getElementById('heading').textContent = 'Second page';
+  const log = (word) => { document.getElementById('log').textContent += word + ';'; };
+  document.getElementById('more').addEventListener('click', (event) => {
+    event.preventDefault();
+    const item = document.createElement('li');
+    item.textContent = 'Second item';
+    document.getElementById('items').appendChild(item);
+    log('more');
+  });
+  document.getElementById('all').addEventListener('click', () => log('all'));
+  document.getElementById('again').addEventListener('click', (event) => { event.preventDefault(); log('again'); });
+  document.getElementById('shout').addEventListener('click', () => log('shout'));
+</script>
+</body>
+</html>

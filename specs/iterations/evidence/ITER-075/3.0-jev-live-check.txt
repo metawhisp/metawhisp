@@ -1,0 +1,41 @@
+# ITER-075 step 3 — Jev found and checked live (2026-09-26, 13:55 CEST)
+Owner, 2026-09-26: Jev's documentation is to be found online, and the OpenRouter key is the one to use.
+
+What Jev is
+  TypeSafe's "System One" decision model, served through OpenRouter. It returns typed answers with
+  probabilities — Choice (one of the options), Noul (yes/no), Score (a place on an ordered scale) — and
+  never text, reasoning or explanations.
+
+Where the documentation is
+  OpenRouter hub:       https://openrouter.ai/docs/guides/community/jev
+  Tutorial:             https://openrouter.ai/docs/guides/community/jev-tutorial
+  API reference:        https://openrouter.ai/docs/api/api-reference/alphadecisions/submit-a-decisions-request
+  Model page (price):   https://openrouter.ai/typesafe/jev-1.13
+  TypeSafe concepts:    https://docs.typesafe.ai (state, primitives, confidence and thresholds)
+  Agent recipes:        https://openrouter.ai/docs/cookbook/building-agents/gate-tool-calls-with-jev
+                        https://openrouter.ai/docs/cookbook/coding-agents/auto-approve-permission-prompts-with-jev
+
+The wire, as the documentation gives it (field names only; the pages hold the full schema)
+  - POST https://openrouter.ai/api/alpha/decisions, "Authorization: Bearer <OpenRouter key>", JSON.
+  - Request: model ("typesafe/jev-1.13"; "~typesafe/jev-latest" tracks the newest release), state (an
+    object), questions (a map of name → type choice|noul|score, instructions, criteria). All questions in
+    one request are answered in parallel and do not see each other's answers.
+  - Response: answers per question — choice: choice, probabilities, confidence; noul: the probability of
+    yes; score: score, probabilities, confidence, legend — plus usage {input_tokens, output_tokens, cost in
+    USD} and model, the dated snapshot that answered.
+  - Context: 32,000 tokens for state plus questions. Input tokens are billed; output tokens are free.
+  - A second surface, POST https://openrouter.ai/api/v1/systemone, serves the TypeSafe SDKs.
+  - No TypeSafe account is needed: the OpenRouter key authenticates and is billed.
+
+Live check with the owner's key
+  Key: macOS keychain, service "openrouter-key" (read into a variable, never printed, never committed).
+  Request: the tutorial's own example (a support ticket with one Noul, one Choice and one Score question),
+  so no wording of ours was sent.
+  Result:  HTTP 200 in 0.48 s; model typesafe/jev-1.13-20260917; provider TypeSafe;
+           the answers match the tutorial (is_bug 0.96; team = payments 0.77; urgency 1.99);
+           usage 476 input tokens, 70 output tokens, cost $0.000019992.
+
+Not yet done (step 3)
+  - Russian phrases: accuracy unknown until measured on the owner's own phrases (at least 100, labelled).
+  - The router, choose and risk questions: their wording is ported from the recipes above and approved by
+    the owner before commit — nothing invented (US-3.2).

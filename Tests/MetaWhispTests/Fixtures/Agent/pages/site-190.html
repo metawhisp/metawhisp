@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Site One Hundred Sixty</title>
+<style>
+  body { margin: 0; font: 16px sans-serif; }
+  main { padding: 24px 40px; }
+  a, button { display: block; width: 240px; height: 36px; margin: 8px 0; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Your router, from the web</h1>
+  <!-- A public page that sends the visitor to their own network. -->
+  <a href="http://192.168.1.1/">Open the router</a>
+  <a href="https://site-190.test/redirect?to=http%3A%2F%2F127.0.0.1%3A9%2Fadmin">Through a redirect</a>
+  <button type="button" onclick="location = 'http://127.0.0.1:9/assigned'">Go home</button>
+  <!-- Says it is on its way, and sends the tab home. -->
+  <button type="button" onclick="this.textContent = 'On the way'; location = 'http://127.0.0.1:9/announced'">Head home</button>
+  <!-- The page's own request to a private address: a subresource, the page's. -->
+  <button type="button" onclick="fetch('http://127.0.0.1:9/ping').catch(() => {}); document.title = 'pinged'">Ping home</button>
+  <a href="https://site-1.test/">A public page</a>
+</main>
+</body>
+</html>

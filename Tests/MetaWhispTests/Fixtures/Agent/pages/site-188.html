@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Site One Hundred Eighty-Eight</title>
+<style>
+  body { margin: 0; font: 16px sans-serif; }
+  main { padding: 24px 40px; }
+  #many button { display: block; height: 20px; }
+  #bulk { display: none; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Archive</h1>
+  <p><button type="button">Continue</button></p>
+  <!-- Saved numbers in a box a name could point to; then more controls than
+       the walk reads, and more parts than the census counts. -->
+  <div id="saved"><button type="button">MN7788990</button></div>
+  <div id="many"></div>
+  <div id="bulk"></div>
+</main>
+<script>
+  const many = document.getElementById('many');
+  for (let i = 0; i < 5100; i++) {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.textContent = 'Row ' + i;
+    many.appendChild(button);
+  }
+  const bulk = document.getElementById('bulk');
+  const part = document.createElement('span');
+  for (let i = 0; i < 100500; i++) bulk.appendChild(part.cloneNode());
+</script>
+</body>
+</html>

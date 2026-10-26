@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Site Four Hundred Ninety-Five</title>
+<style>
+  body { margin: 0; font: 16px sans-serif; }
+  .bar { position: sticky; top: 0; background: #eee; padding: 8px; }
+  main { padding: 24px 40px; }
+</style>
+</head>
+<body>
+<!-- A site's search with two submit buttons that carry no value (2026-10-19): a GET search still — the button
+     pressed changes nothing of the query — so the brain's own words go as a search with no Yes. -->
+<div class="bar">
+  <form id="find" action="/search/" method="GET" role="search">
+    <button type="button" id="toggle">Search</button>
+    <input type="text" name="query" aria-label="Search text" autocomplete="off" required>
+    <button type="submit" data-scope="site">This park</button>
+    <button type="submit" data-scope="all">All parks</button>
+    <input type="hidden" name="sitelimit" value="">
+    <input type="hidden" name="affiliate" value="acme">
+  </form>
+</div>
+<main>
+  <h1>First flights</h1>
+  <p>Articles about the first flights, by year.</p>
+</main>
+<!-- The footer's search sends to the same address: another form, not more fields of the header's. -->
+<footer>
+  <form id="find-again" action="/search/" method="GET" role="search">
+    <input type="search" name="query" aria-label="Search the site">
+    <button type="submit">Go</button>
+  </form>
+</footer>
+</body>
+</html>

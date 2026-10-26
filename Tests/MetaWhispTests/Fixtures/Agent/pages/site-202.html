@@ -1,0 +1,14 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Site Two Hundred Two</title>
+<style>body { margin: 0; font: 16px sans-serif; } main { padding: 16px 40px; }
+  iframe { display: block; border: 0; width: 400px; height: 200px; transform: scale(1, 0.5); transform-origin: 0 0; }</style>
+</head>
+<body>
+<main>
+  <h1>A widget drawn at half its height</h1>
+  <!-- Its own height is 200, drawn as 100: a point is not where the width alone says. -->
+  <iframe srcdoc="<style>body{margin:0;font:16px sans-serif}button{display:block;width:300px;height:40px;margin:0;border:0}</style><button onclick=&quot;document.getElementById('log').textContent += 'saved;'&quot;>Save</button><button onclick=&quot;document.getElementById('log').textContent += 'deleted;'&quot;>Delete</button><p id=log></p>"></iframe>
+</main>
+</body>
+</html>

@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Site Two Hundred Seventy-Six</title>
+<style>body { margin: 0; font: 16px sans-serif; } main { padding: 16px 40px; }</style>
+</head>
+<body>
+<main id="page"></main>
+<script>
+  // ITER-076 I-09, review round 4, part A: decision 6, and a frame whose
+  // read a test makes fail.
+  const page = document.getElementById('page');
+  const filler = '<p>' + 'The garden path winds past the old stone wall and the quiet pond where ducks rest. '.repeat(8) +
+    '</p>';
+  if (location.pathname === '/unread') {
+    page.innerHTML = '<p>Words no look reads</p>';
+  } else if (location.pathname === '/code') {
+    // A code this frame names, which its holder shows unnamed (decision 4).
+    page.innerHTML = '<p>Your one-time code is 481920.</p>';
+  } else if (location.pathname === '/rotate') {
+    // Decision 3: the code changes two seconds in.
+    page.innerHTML = '<p id="code">Your one-time code is 481920.</p>';
+    setTimeout(() => { document.getElementById('code').textContent = 'Your one-time code is 735102.'; }, 2000);
+  } else if (location.pathname === '/before') {
+    // A code only in a control's own label, the words that name it in a
+    // paragraph drawn just before it: neither its heading nor its row. A
+    // number far past any such words stays what it is.
+    page.innerHTML = '<p>Your one-time code:</p><span>&bull;&bull;&bull;&bull;&bull;&bull;</span>' +
+      '<button type="button" aria-label="Copy 481920">Copy</button>' + filler +
+      '<button type="button" aria-label="Room 4821">Room</button> <button type="button">Help</button>';
+  }
+</script>
+</body>
+</html>

@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Site Four Sixty</title></head>
+<body>
+<main>
+  <!-- ITER-076 stage 7, review round 2 (R2-2): a demo form whose page sends
+       it by itself once the page is scrolled down with the form filled, and
+       sends what the e-mail field holds by a beacon as the page is left; its
+       pricing link goes there through a redirect, and the pricing page loads
+       its prices by POST on a click, naming no page it comes from (no
+       referrer: only the hold's end lets it go). Held from Fill to the
+       Send's Yes: neither of the first two goes out; the agent's own
+       navigation away goes, and the next page's own requests go too. -->
+  <h1 id="title">Request a demo</h1>
+  <form id="demo" action="/thanks" method="post">
+    <label for="first">First name</label><input id="first" name="first" autocomplete="given-name">
+    <label for="email">Work email</label><input id="email" name="email" type="email">
+    <label for="company">Company</label><input id="company" name="company" autocomplete="organization">
+    <button type="submit" id="send">Request a demo</button>
+  </form>
+  <p><a id="pricing" href="/redirect?to=https://site-460.test/pricing">Pricing</a></p>
+  <p id="thanks" hidden>Thank you.</p>
+  <div style="height: 3000px"></div>
+</main>
+<script>
+  const form = document.getElementById('demo');
+  if (location.pathname === '/thanks') {
+    form.remove();
+    document.getElementById('title').textContent = 'Thanks';
+    document.getElementById('thanks').hidden = false;
+  }
+  if (location.pathname === '/pricing') {
+    form.remove();
+    document.getElementById('pricing').remove();
+    document.getElementById('title').textContent = 'Pricing';
+    const load = document.createElement('button');
+    load.type = 'button';
+    load.id = 'load';
+    load.textContent = 'Load prices';
+    load.addEventListener('click', () => { fetch('/api/prices', { method: 'POST', body: '{}', referrerPolicy: 'no-referrer' }).catch(() => {}); });
+    document.querySelector('main').appendChild(load);
+  }
+  window.addEventListener('scroll', () => {
+    const email = document.getElementById('email');
+    if (window.scrollY > 300 && email && email.value) form.submit();
+  });
+  window.addEventListener('pagehide', () => {
+    const email = document.getElementById('email');
+    if (email && email.value) navigator.sendBeacon('/api/left', email.value);
+  });
+</script>
+</body>
+</html>

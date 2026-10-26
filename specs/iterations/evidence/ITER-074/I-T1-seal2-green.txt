@@ -1,0 +1,42 @@
+ITER-074 I-T1 harness seal round 2 — green run, 2026-09-24 17:08 CEST, orchestrator (GLM quota exhausted)
+command: swift test --filter "WebViewBridgeTests|ObserverScriptTests" (repeated 3x: 37/37 each)
+
+ObserverScriptTests testAButtonIsSeen passed (0.271 seconds).
+ObserverScriptTests testClickHandlersAndAriaRolesCount passed (0.075 seconds).
+ObserverScriptTests testFarAwayElementsAreMarkedOutOfView passed (0.077 seconds).
+ObserverScriptTests testFingerprintsSurviveReobservation passed (0.144 seconds).
+ObserverScriptTests testHiddenAndZeroSizeElementsAreDropped passed (0.073 seconds).
+ObserverScriptTests testIndicesFollowDocumentOrder passed (0.077 seconds).
+ObserverScriptTests testInputsAreNamedByPlaceholderOrLabel passed (0.075 seconds).
+ObserverScriptTests testRelativeLinksBecomeAbsolute passed (0.071 seconds).
+ObserverScriptTests testTheAccessibleNameWinsOverTheText passed (0.079 seconds).
+ObserverScriptTests testTheNearestHeadingIsRecorded passed (0.155 seconds).
+ObserverScriptTests testTheResultsPageShowsItsLinksByRegion passed (0.078 seconds).
+WebViewBridgeTests testAClickRunsThePagesOwnScript passed (0.073 seconds).
+WebViewBridgeTests testAClosedTabIsGone passed (0.074 seconds).
+WebViewBridgeTests testAFixturePageLoadsAndRunsJavaScript passed (0.075 seconds).
+WebViewBridgeTests testAFrameGoingAnywhereIsBlocked passed (0.000 seconds).
+WebViewBridgeTests testANonWebAddressIsBlocked passed (0.000 seconds).
+WebViewBridgeTests testAPageCannotFetchFromTheNetwork passed (0.076 seconds).
+WebViewBridgeTests testAPageGoingToAWebAddressIsRoutedToAFixture passed (0.000 seconds).
+WebViewBridgeTests testARunThatOutlivesItsDeadlineTimesOut passed (0.473 seconds).
+WebViewBridgeTests testAScriptErrorIsReportedNotSwallowed passed (0.074 seconds).
+WebViewBridgeTests testASearchAddressRoutesToTheResultsPage passed (0.000 seconds).
+WebViewBridgeTests testAStoppedLoadDoesNotHangTheWait passed (0.077 seconds).
+WebViewBridgeTests testAWaitNeverOverrunsItsDeadline passed (0.441 seconds).
+WebViewBridgeTests testAnEmptyFrameIsAllowed passed (0.000 seconds).
+WebViewBridgeTests testAnUnknownAddressGetsTheNotFoundPage passed (0.075 seconds).
+WebViewBridgeTests testClickingAResultLandsOnThatSitesFixture passed (0.119 seconds).
+WebViewBridgeTests testClosingATabSettlesItsPendingRun passed (0.076 seconds).
+WebViewBridgeTests testEveryPageCarriesTheNetworkLock passed (0.778 seconds).
+WebViewBridgeTests testEveryTabBlocksResourceLoads passed (0.069 seconds).
+WebViewBridgeTests testGoingToARealHostLandsOnTheNotFoundFixture passed (0.139 seconds).
+WebViewBridgeTests testNonWebURLsAreRefusedBeforeAnythingLoads passed (0.001 seconds).
+WebViewBridgeTests testOurOwnLoadIsAllowed passed (0.000 seconds).
+WebViewBridgeTests testScriptsMustReturnText passed (0.070 seconds).
+WebViewBridgeTests testThePageBelievesItIsAtItsAddress passed (0.072 seconds).
+WebViewBridgeTests testTheResultsPageHasThreeResults passed (0.075 seconds).
+WebViewBridgeTests testTwoTabsAreIndependent passed (0.147 seconds).
+WebViewBridgeTests testUndefinedComesBackAsEmptyText passed (0.076 seconds).
+
+	 Executed 37 tests, with 0 failures (0 unexpected) in 4.236 (4.240) seconds

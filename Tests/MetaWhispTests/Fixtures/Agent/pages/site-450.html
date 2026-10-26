@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Site Four Fifty</title></head>
+<body>
+<main>
+  <!-- ITER-076 stage 7, review round 1 (C2): a demo form whose own script
+       sends it the moment its e-mail field is typed in: Fill must never let
+       it go out before the Send's Yes. -->
+  <h1 id="title">Request a demo</h1>
+  <form id="demo" action="/thanks" method="post">
+    <label for="first">First name</label><input id="first" name="first" autocomplete="given-name">
+    <label for="last">Last name</label><input id="last" name="last" autocomplete="family-name">
+    <label for="email">Work email</label><input id="email" name="email" type="email">
+    <label for="company">Company</label><input id="company" name="company" autocomplete="organization">
+    <button type="submit" id="send">Request a demo</button>
+  </form>
+  <p id="thanks" hidden>Thank you.</p>
+</main>
+<script>
+  document.getElementById('email').addEventListener('input', () => document.getElementById('demo').submit());
+  if (location.pathname === '/thanks') {
+    document.getElementById('demo').remove();
+    document.getElementById('title').textContent = 'Thanks';
+    document.getElementById('thanks').hidden = false;
+  }
+</script>
+</body>
+</html>

@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Site One Hundred Fifty-Nine</title>
+<style>
+  body { margin: 0; font: 16px sans-serif; }
+  main { padding: 24px 40px; }
+  .select { display: inline-block; width: 260px; height: 36px; line-height: 36px; padding: 0 8px; border: 1px solid #777;
+            cursor: pointer; }
+  aside { position: absolute; left: 40px; top: 260px; width: 278px; }
+  [role=option] { height: 32px; line-height: 32px; padding: 0 8px; border: 1px solid #ccc; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Gift card</h1>
+  <!-- A form that shows an amount and holds a secret field, filled in - it
+       could send it (an empty one sends none, 2026-10-21) - with a made-up
+       dropdown whose list is drawn in another part of the page. -->
+  <form action="/redeem" method="get">
+    <p>Balance $12</p>
+    <label for="pw">Account password</label> <input id="pw" type="password" value="gift-pass-71">
+    <p><span id="kind-label">Card kind</span>
+      <div id="kind" class="select" role="combobox" tabindex="0" aria-labelledby="kind-label" aria-haspopup="listbox"
+           aria-expanded="false" aria-controls="kinds">Choose</div></p>
+    <button type="submit">Redeem</button>
+  </form>
+</main>
+<aside>
+  <div id="kinds" role="listbox" hidden><div role="option">Plastic</div><div role="option">Digital</div></div>
+</aside>
+<script>
+  document.getElementById('kind').addEventListener('click', () => {
+    document.getElementById('kinds').hidden = false;
+    document.getElementById('kind').setAttribute('aria-expanded', 'true');
+  });
+</script>
+</body>
+</html>

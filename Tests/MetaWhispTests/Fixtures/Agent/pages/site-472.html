@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Site Four Hundred Seventy-Two</title>
+<style>
+  body { margin: 0; font: 16px sans-serif; }
+  main { padding: 24px 40px; }
+  #demo { display: none; border: 1px solid #777; padding: 12px; }
+  #demo.open { display: block; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Product</h1>
+  <!-- A link to a place on its own page whose script opens a window, as a site's demo link does. -->
+  <p><a id="ask" href="#demo">Request a demo</a></p>
+  <div id="demo" role="dialog" aria-label="Book a demo">
+    <h2>Book a demo</h2>
+    <label for="work-email">Work email</label>
+    <input id="work-email" type="email">
+  </div>
+  <!-- A POST form: a link to a place on this page, whose script could send the form, and one to another page. -->
+  <form method="post" action="/order">
+    <input name="item" value="1" type="hidden">
+    <p><a href="#terms">Read the terms</a> <a href="/help">Help</a></p>
+    <button type="submit">Order</button>
+  </form>
+  <p id="terms">Terms of the order.</p>
+</main>
+<script>
+  document.getElementById('ask').addEventListener('click', (event) => {
+    event.preventDefault();
+    document.getElementById('demo').classList.add('open');
+  });
+</script>
+</body>

@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Site Two Hundred Eighty-Eight</title>
+<style>body { margin: 0; font: 16px sans-serif; } main { padding: 16px 40px; } iframe { display: block; border: 0; }</style>
+</head>
+<body>
+<main id="page"><h1>Kasse</h1><button id="order" type="button">Jetzt bestellen</button></main>
+<p id="log"></p>
+<script>
+  // A checkout of very many small frames whose total stands in a frame past
+  // the most a look reads, beside the order button, which sends nothing but
+  // this page's log (ITER-076 I-09, review round 4, part C, decision 13;
+  // Claude review c9, #17).
+  const page = document.getElementById('page');
+  document.getElementById('order').addEventListener('click', () => {
+    document.getElementById('log').textContent += 'ordered;';
+  });
+  for (let i = 0; i < 55; i++) {
+    const own = document.createElement('iframe');
+    own.style.cssText = 'width:200px;height:12px;margin:0';
+    own.srcdoc = '<p style="margin:0;font-size:9px">Note ' + i + '</p>';
+    page.append(own);
+  }
+  const total = document.createElement('iframe');
+  total.style.cssText = 'width:420px;height:40px';
+  total.src = 'https://site-271.test/total';
+  page.append(total);
+</script>
+</body>
+</html>

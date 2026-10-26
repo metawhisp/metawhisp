@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Site One Hundred Ninety-Eight</title>
+<style>body { margin: 0; font: 16px sans-serif; } main { padding: 16px 40px; } iframe { display: block; border: 0; } button { display: block; margin: 8px 0; }</style>
+</head>
+<body>
+<main>
+  <h1>Connected apps</h1>
+  <button type="button" onclick="log('confirmed')">Confirm</button>
+  <!-- A consent page of the page's own site, in a frame: its address asks for access by OAuth. -->
+  <iframe style="width:420px;height:80px" src="/oauth/authorize?client_id=app&response_type=code&redirect_uri=https%3A%2F%2Fsite-198.test%2Fcb"></iframe>
+  <p id="log"></p>
+</main>
+<script>
+  function log(text) { document.getElementById('log').textContent += text + ';'; }
+  // The same site answers its consent page at its own address.
+  if (location.pathname === '/oauth/authorize') {
+    document.querySelector('main').innerHTML =
+      '<button type="button" onclick="log(\'granted\')">Continue</button><p id="log"></p>';
+  }
+</script>
+</body>
+</html>

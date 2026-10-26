@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Site Eighty-Two</title>
+<style>
+  html { scroll-behavior: smooth; }
+  body { min-height: 3000px; }
+  #shade { position: absolute; left: 0; top: 400px; width: 100%; height: 120px; background: rgba(0,0,0,0.4); }
+  #under { position: absolute; top: 440px; left: 40px; }
+  #far { position: absolute; top: 2000px; left: 40px; }
+  #shadowed { position: absolute; top: 600px; left: 40px; }
+  #shadowed-cover { position: absolute; top: 590px; left: 0; width: 100%; height: 60px; background: rgba(0,0,0,0.4); }
+  #shadow-free { position: absolute; top: 700px; left: 40px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Trusted input</h1>
+  <button id="go" type="button">Show details</button>
+  <button id="details" type="button" hidden>Hide details</button>
+  <label for="name">Name</label>
+  <input id="name" type="text">
+  <label for="code">Code</label>
+  <input id="code" type="text" value="A-1" readonly>
+  <label for="hop">Moves on</label>
+  <input id="hop" type="text">
+  <button id="later" type="button" disabled>Not yet</button>
+  <p id="log"></p>
+  <button id="under" type="button">Hidden behind</button>
+  <div id="shade"></div>
+  <button id="far" type="button">Far below</button>
+  <div id="shadowed"></div>
+  <div id="shadowed-cover"></div>
+  <div id="shadow-free"></div>
+  <script>
+    // Only a person's input — a trusted event — counts here, as on sites that
+    // ignore the clicks and typing a script makes. The page scrolls smoothly,
+    // as many do.
+    document.getElementById('go').addEventListener('click', (event) => {
+      if (event.isTrusted) document.getElementById('details').hidden = false;
+    });
+    document.getElementById('far').addEventListener('click', (event) => {
+      if (event.isTrusted) document.getElementById('log').textContent = 'Far below pressed';
+    });
+    document.getElementById('name').addEventListener('input', (event) => {
+      if (!event.isTrusted) event.target.value = '';
+    });
+    // Buttons inside components' shadow roots: one under an overlay of the
+    // page's own, one in the open.
+    for (const [id, label] of [['shadowed', 'Inside a shadow'], ['shadow-free', 'Shadow in the open']]) {
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.textContent = label;
+      document.getElementById(id).attachShadow({ mode: 'open' }).appendChild(button);
+    }
+    // A field that hands its focus on, so typing would land elsewhere.
+    document.getElementById('hop').addEventListener('focus', () => document.getElementById('name').focus());
+    // Scrolling moves things here once — a banner that loads, an image that
+    // takes its height — as on many pages.
+    addEventListener('scroll', () => { document.getElementById('far').style.top = '2100px'; }, { once: true });
+  </script>
+</main>
+</body>
+</html>

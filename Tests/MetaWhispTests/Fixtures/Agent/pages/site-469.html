@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><meta name="referrer" content="origin"><title>Site Four Sixty-Nine</title></head>
+<body>
+<main>
+  <!-- ITER-076 stage 7, review round 3 (R3-3): a site whose pages say only
+       the site as where their requests come from (referrer policy `origin`).
+       Its first page links to its demo form; the form's page links back to
+       the first page and sends what the e-mail field holds by a beacon as it
+       is left. Each page is this file: its address picks its part. -->
+  <section id="home">
+    <h1>Welcome</h1>
+    <p><a id="to-demo" href="/demo">Demo page</a></p>
+  </section>
+  <section id="demo">
+    <h1 id="title">Request a demo</h1>
+    <form id="form" action="/thanks" method="post">
+      <label for="first">First name</label><input id="first" name="first" autocomplete="given-name">
+      <label for="email">Work email</label><input id="email" name="email" type="email">
+      <button type="submit" id="send">Request a demo</button>
+    </form>
+    <p><a id="home-link" href="/">Home</a></p>
+  </section>
+</main>
+<script>
+  document.getElementById(location.pathname === '/demo' ? 'home' : 'demo').remove();
+  window.addEventListener('pagehide', () => {
+    const email = document.getElementById('email');
+    if (email && email.value) navigator.sendBeacon('/api/left', email.value);
+  });
+</script>
+</body>
+</html>

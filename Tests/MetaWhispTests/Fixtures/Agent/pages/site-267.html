@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Site Two Hundred Sixty-Seven</title>
+<style>
+  body { margin: 0; font: 16px sans-serif; }
+  main { padding: 24px 40px; }
+  button { display: block; width: 240px; height: 32px; margin: 6px 0; }
+  iframe { display: block; border: 0; width: 420px; height: 60px; }
+</style>
+</head>
+<body>
+<main id="main"></main>
+<p id="log"></p>
+<script>
+  // A page's own dialogs under the user's Yes (ITER-076 I-09, review round 3,
+  // part C), laid out by its path: each path one case.
+  const log = (text) => { document.getElementById('log').textContent += text + ';'; };
+  const main = document.getElementById('main');
+  const path = location.pathname;
+  const button = (id, label, run) => {
+    const made = document.createElement('button');
+    made.type = 'button';
+    made.id = id;
+    made.innerHTML = label;
+    made.addEventListener('click', run);
+    main.append(made);
+  };
+  if (path === '/framed') {
+    // The act in the page; a widget of another site asks on its own while
+    // the act's Yes stands, then the page asks about the act — once the
+    // widget's answer came back, or 5 s on at the most: never before it,
+    // however slow the widget.
+    main.innerHTML = '<h1>Drafts</h1>';
+    const widget = document.createElement('iframe');
+    widget.src = 'https://site-268.test/widget';
+    button('delete', 'Delete', () => {
+      let asked = false;
+      const ask = () => {
+        if (asked) return;
+        asked = true;
+        log(confirm('Delete this draft?') ? 'deleted' : 'kept');
+      };
+      addEventListener('message', ask, { once: true });
+      setTimeout(ask, 5000);
+      widget.contentWindow.postMessage('ask', '*');
+    });
+    main.append(widget);
+    addEventListener('message', (event) => log(String(event.data)));
+  } else {
+    main.innerHTML = '<h1>Your plan</h1>';
+    // A charge named by a form of its word, no amount (Codex review 2 of
+    // I-09, P1-3).
+    button('charging', 'Renew', () => log(confirm('Renew by charging the saved card?') ? 'charged' : 'not charged'));
+    button('billing', 'Renew now', () =>
+      log(confirm('Renew and start billing the saved card?') ? 'billed' : 'not billed'));
+    // A price in the letters its currency is printed in, which no amount
+    // rule reads: a number the control does not show (Claude review c8 of
+    // I-09, #9).
+    button('foernya', 'F&#xf6;rnya', () =>
+      log(confirm('F\u00f6rnya prenumerationen f\u00f6r 99 kr?') ? 'renewed' : 'not renewed'));
+    button('prodlit', '&#x41f;&#x440;&#x43e;&#x434;&#x43b;&#x438;&#x442;&#x44c;', () =>
+      log(confirm('\u041f\u0440\u043e\u0434\u043b\u0438\u0442\u044c \u043f\u043e\u0434\u043f\u0438\u0441\u043a\u0443 \u0437\u0430 299 \u0440\u0443\u0431.?')
+        ? 'extended' : 'not extended'));
+    button('obnovi', 'Obnovi', () =>
+      log(confirm('Obnovi pretplatu za 499 dinara?') ? 'renewed' : 'not renewed'));
+    // Another act, sharing an object word with the approved one (#11).
+    button('remove-item', 'Remove item', () =>
+      log(confirm('Send this item to all subscribers?') ? 'sent' : 'not sent'));
+    // A control that does not send its form, whose form's button names
+    // another act (#12).
+    const form = document.createElement('form');
+    form.method = 'post';
+    form.action = 'https://site-267.test/report';
+    form.addEventListener('submit', (event) => { event.preventDefault(); log('report sent by its form'); });
+    form.innerHTML = '<button type="button" id="archive">Archive</button><button type="submit">Send report</button>';
+    main.append(form);
+    document.getElementById('archive').addEventListener('click', () =>
+      log(confirm('Send the report to all members?') ? 'sent to all' : 'not sent to all'));
+    // A confirm not bound to the act, then a flood of alerts (#15).
+    button('archive-all', 'Archive all', () => {
+      log(confirm('Send the report to all members?') ? 'sent to all' : 'not sent to all');
+      for (let i = 0; i < 300; i++) alert('One more thing');
+      log('done');
+      // The page changes whatever the answer: the act did not happen.
+      if (!document.getElementById('details')) {
+        const details = document.createElement('button');
+        details.type = 'button';
+        details.id = 'details';
+        details.textContent = 'Show details';
+        main.append(details);
+      }
+    });
+  }
+</script>
+</body>
+</html>

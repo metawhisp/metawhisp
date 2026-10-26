@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Site One Hundred Forty-Four</title>
+<style>
+  body { margin: 0; font: 16px sans-serif; }
+  main { padding: 24px 40px; }
+  .row { margin: 12px 0; position: relative; }
+  .select { display: inline-block; width: 260px; height: 36px; line-height: 36px; padding: 0 8px; border: 1px solid #777;
+            cursor: pointer; }
+  .menu { position: absolute; left: 0; top: 40px; width: 278px; border: 1px solid #777; background: #fff; z-index: 1; }
+  .menu [role=option] { height: 32px; line-height: 32px; padding: 0 8px; }
+  .spacer { height: 200px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Order details</h1>
+  <!-- A list that opens on the press, not on the click. -->
+  <div class="row">
+    <div id="fit" class="select" role="combobox" tabindex="0" aria-label="Fit" aria-haspopup="listbox"
+         aria-expanded="false" aria-controls="fit-list">Choose a fit</div>
+  </div>
+  <div class="spacer"></div>
+  <!-- A list that closes when the focus leaves it: its options choose on the
+       press, before the focus moves, as such lists do. -->
+  <div class="row">
+    <div id="colour" class="select" role="combobox" tabindex="0" aria-label="Colour" aria-haspopup="listbox"
+         aria-expanded="false" aria-controls="colour-list">Choose a colour</div>
+  </div>
+  <p id="log"></p>
+</main>
+<script>
+  const log = (text) => { document.getElementById('log').textContent += text + ';'; };
+  const dropdown = (id, names, chooseOn) => {
+    const box = document.getElementById(id);
+    let menu = null;
+    const close = () => {
+      if (!menu) return;
+      menu.remove();
+      menu = null;
+      box.setAttribute('aria-expanded', 'false');
+    };
+    const open = () => {
+      if (menu) return;
+      menu = document.createElement('div');
+      menu.id = id + '-list';
+      menu.className = 'menu';
+      menu.setAttribute('role', 'listbox');
+      for (const name of names) {
+        const option = document.createElement('div');
+        option.setAttribute('role', 'option');
+        option.textContent = name;
+        option.addEventListener(chooseOn, () => { box.textContent = name; log(id + ' ' + name); close(); });
+        menu.appendChild(option);
+      }
+      box.parentElement.appendChild(menu);
+      box.setAttribute('aria-expanded', 'true');
+    };
+    return { box, open, close, inside: (node) => !!menu && menu.contains(node) };
+  };
+  const fit = dropdown('fit', ['Slim', 'Regular', 'Loose'], 'click');
+  // Opened by the press; a click on the box does nothing.
+  fit.box.addEventListener('mousedown', () => fit.open());
+  document.addEventListener('mousedown', (event) => {
+    if (!fit.inside(event.target) && event.target !== fit.box) fit.close();
+  });
+  const colour = dropdown('colour', ['Red', 'Green', 'Blue'], 'mousedown');
+  colour.box.addEventListener('click', () => colour.open());
+  colour.box.addEventListener('blur', () => colour.close());
+</script>
+</body>
+</html>

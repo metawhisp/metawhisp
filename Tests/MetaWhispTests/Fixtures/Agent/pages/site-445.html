@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Site Four Forty-Five</title></head>
+<body>
+<main>
+  <!-- ITER-076 stage 7: a demo form whose phone is required. A user whose
+       memories hold no phone cannot have it filled: the errand ends before
+       the preview, naming the field. -->
+  <h1>Talk to sales</h1>
+  <form id="sales" action="/thanks" method="post">
+    <label for="name">Full name</label><input id="name" name="name" autocomplete="name">
+    <label for="email">Email</label><input id="email" name="email" type="email" required>
+    <label for="phone">Phone</label><input id="phone" name="phone" type="tel" required>
+    <label for="street">Street</label><input id="street" name="street" autocomplete="street-address">
+    <button type="submit">Contact sales</button>
+  </form>
+</main>
+</body>
+</html>

@@ -6,6 +6,8 @@ struct MainWindowView: View {
     @ObservedObject var modelManager: ModelManagerService
     @ObservedObject var recorder: AudioRecordingService
     @ObservedObject var historyService: HistoryService
+    /// Whether the engine can transcribe now — the Dashboard's next step reads it.
+    let modelPreparer: ModelPreparer
 
     /// Drives the sidebar footer pips. AppSettings publishes change events
     /// when @AppStorage-backed properties flip, so the footer recomposes
@@ -24,12 +26,14 @@ struct MainWindowView: View {
     init(
         coordinator: TranscriptionCoordinator,
         modelManager: ModelManagerService,
+        modelPreparer: ModelPreparer,
         recorder: AudioRecordingService,
         historyService: HistoryService,
         initialTab: SidebarTab = .dashboard
     ) {
         self.coordinator = coordinator
         self.modelManager = modelManager
+        self.modelPreparer = modelPreparer
         self.recorder = recorder
         self.historyService = historyService
         _selectedTab = State(initialValue: initialTab)
@@ -165,7 +169,7 @@ struct MainWindowView: View {
 
     /// Decides the processing-mode label based on which paths the user
     /// has actually wired up. Source-of-truth flags:
-    ///   - `transcriptionEngine`: primary dictation engine ("ondevice" or "cloud")
+    ///   - `coordinator.usesCloud`: the dictation engine in use — cloud only with Pro or a key (A4)
     ///   - `processingMode == "structured"`: post-transcription LLM cleanup
     ///   - `proactiveEnabled`: ITER-027 insight extraction (cloud LLM)
     ///   - `ttsCloudEnabled`: cloud TTS for voice replies
@@ -183,7 +187,7 @@ struct MainWindowView: View {
     ///   - "local+cloud" — local LLM for processing + cloud Whisper for transcription
     ///   - "on-device+local" — fully local stack (Whisper + local LLM)
     private var processingModeLabel: String {
-        let primaryCloud = settings.transcriptionEngine == "cloud"
+        let primaryCloud = coordinator.usesCloud
         // ITER-039 Phase 5b — pip says "local" ONLY when the model weights
         // are actually loaded into RAM. `localLLMActiveModelID` non-empty
         // means the user picked one; `isReady` means it's truly serving
@@ -250,7 +254,7 @@ struct MainWindowView: View {
     private var detailContent: some View {
         switch selectedTab {
         case .dashboard:
-            DashboardView(coordinator: coordinator)
+            DashboardView(coordinator: coordinator, modelPreparer: modelPreparer)
         case .library:
             LibraryView()
         case .workspace:

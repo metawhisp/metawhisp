@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Site Two Hundred Fifty-Eight</title>
+<style>body { margin: 0; font: 16px sans-serif; } main { padding: 8px; } iframe { display: block; border: 0; }</style>
+</head>
+<body>
+<main id="page"></main>
+<p id="log"></p>
+<script>
+  // ITER-076 I-09, review round 3, part A: the documents other sites' pages
+  // hold in their frames.
+  const page = document.getElementById('page');
+  const filler = '<p>' + 'A small boat drifts along the river under the bridge and past the mill. '.repeat(8) + '</p>';
+  const log = (text) => { document.getElementById('log').textContent += text + ';'; };
+  window.log = log;
+  if (location.pathname === '/repeat') {
+    // The code its page shows, alone: on a button and as an ordinary field's
+    // value, past the frame's first words.
+    page.innerHTML = filler + '<button type="button">481920</button> <label>Reference <input value="481920"></label> ' +
+      '<button type="button">Copy</button>';
+  } else if (location.pathname === '/named') {
+    // The words that name the code its page shows alone, past the frame's
+    // first and last words.
+    page.innerHTML = filler + '<p>Your backup code is 735102.</p>' + filler + '<button type="button">Copy</button>';
+  } else if (location.pathname === '/id-field') {
+    // A field whose own words say only "Number": its page names it.
+    page.innerHTML = '<input placeholder="Number" value="X12Y34Z"> <button type="button">Save</button>';
+  } else if (location.pathname === '/widget') {
+    // An ordinary booking widget, with a frame of its own.
+    page.innerHTML = '<button type="button" onclick="log(\'booked\')">Book</button>' +
+      '<iframe style="width:200px;height:40px" srcdoc="<button type=button>Deep</button>"></iframe>';
+  } else if (location.pathname === '/video') {
+    // A video player: no field at all.
+    page.innerHTML = '<button type="button">Play</button>';
+  } else if (location.pathname === '/titled') {
+    // A field of another site, named a secret only by its frame's title.
+    page.innerHTML = '<input placeholder="Number" value="X55Y66Z">';
+  } else if (location.pathname === '/code-button') {
+    // A code alone on a button.
+    page.innerHTML = '<button type="button">481920</button>';
+  } else if (location.pathname === '/unread') {
+    // The words that name a code, in a frame whose read is made to fail.
+    page.innerHTML = '<p>Your one-time code</p>';
+  } else if (location.pathname === '/send') {
+    // A button whose words hold the code its page shows.
+    page.innerHTML = '<button type="button" onclick="log(\'copied\')">Copy 481920</button>' +
+      '<div role="combobox" aria-label="Copy 481920 list" aria-expanded="true" aria-controls="ways" tabindex="0">Pick</div>' +
+      '<ul id="ways" role="listbox"><li role="option" tabindex="0" onclick="log(\'picked\')">Use it</li></ul>';
+  } else {
+    page.innerHTML = '<p>Nothing here.</p>';
+  }
+</script>
+</body>
+</html>

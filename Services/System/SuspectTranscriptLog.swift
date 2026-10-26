@@ -23,7 +23,7 @@ enum SuspectTranscriptLog {
     private static var fileURL: URL {
         let appSupport = FileManager.default
             .urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
-        let dir = appSupport.appendingPathComponent("MetaWhisp", isDirectory: true)
+        let dir = AppIdentity.current.supportDirectory(applicationSupport: appSupport)
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         return dir.appendingPathComponent("suspect-transcripts.log")
     }

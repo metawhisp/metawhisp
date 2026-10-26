@@ -1,0 +1,16 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Site Thirty-Seven</title></head>
+<body>
+<main>
+  <h1>Verify</h1>
+  <label for="n"><x-outer id="outer"></x-outer></label>
+  <input id="n" type="text" value="SECRET-NESTED">
+</main>
+<script>
+  const outer = document.getElementById('outer').attachShadow({ mode: 'open' });
+  outer.innerHTML = '<x-inner id="inner">OTP</x-inner>';
+  outer.getElementById('inner').attachShadow({ mode: 'open' }).innerHTML = '<span aria-hidden="true">*</span>';
+</script>
+</body>
+</html>

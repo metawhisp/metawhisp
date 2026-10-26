@@ -30,6 +30,16 @@ final class RecordingOverlayController {
             .sink { [weak self] stage in self?.handleStageChange(stage) }
             .store(in: &cancellables)
 
+        // The island and the pill share the top centre: when the island opens
+        // or closes, the pill follows the stage again (ITER-079 review).
+        VoiceQuestionState.shared.$phase
+            .receive(on: RunLoop.main)
+            .sink { [weak self, weak coordinator] _ in
+                guard let coordinator else { return }
+                self?.handleStageChange(coordinator.stage)
+            }
+            .store(in: &cancellables)
+
         coordinator.$translateNext
             .receive(on: RunLoop.main)
             .sink { [weak self] val in
@@ -79,10 +89,13 @@ final class RecordingOverlayController {
             pillState.style = AppSettings.shared.pillStyle
             showPanel()
             pillState.stage = .recording
-        case .processing:
-            pillState.stage = .processing
-        case .postProcessing:
-            pillState.stage = .postProcessing
+        case .processing, .postProcessing:
+            // Shown again when the island that hid it closes mid-transcription.
+            if panel == nil {
+                pillState.style = AppSettings.shared.pillStyle
+                showPanel()
+            }
+            pillState.stage = stage
         }
     }
 

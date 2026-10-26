@@ -1,0 +1,40 @@
+ITER-074 review round 18 (Codex on 833c8ca), fix — 2026-09-24
+Code by GLM-5.3-Flash from the orchestrator's instructions (review18-instructions.md, then a correction).
+The orchestrator's instructions carried the zero-width space as an invisible literal (the escape was decoded
+when the file was written; shown there as <U+200B>); GLM copied it faithfully, and the correction made it
+String.fromCharCode(0x200B), so no invisible character is in the source.
+Round 18 confirmed fixed: a component read twice ("OTPOTP"), words in separate tags ("Enter" "OTP").
+
+Findings (both confirmed in the code):
+  1. the markup reading never entered a shadow root, so a word held in a nested component that no slot
+     shows was never read;
+  2. a label mixing seams the page draws as a break and seams it draws as nothing ("Enter" on its own line,
+     then "O<b>TP</b>") read "EnterOTP" or "Enter O TP"; \botp\b matched neither. Same class: an invisible
+     format character ("Pass&shy;word") became a space, so "passw" missed.
+Cause: the classifier got a flat string whose every seam was already decided one way; how the page draws a
+seam depends on CSS the reader cannot know.
+Fix (owner layer: the label reader and the classifier, the only consumers of these words): every seam — a
+text-node boundary, or a run of invisible format characters (\p{Cf}) — is marked U+200B and read both ways
+at once, in one linear match: long words on the words read run together; short words (pwd, otp, 2fa, cvv,
+cvc, csc, mm yy) standing alone, each end a space, the edge or a seam, a seam inside read as nothing. The
+markup reading enters shadow roots.
+
+Guard (site-40): "Hot|pot and shotput" flags nothing and its value is read. It passes before and after,
+and fails on a loose matcher (otp anywhere in the run-together words) — shown below.
+
+--- red (833c8ca + tests)
+Tests/MetaWhispTests/Services/Agent/ObserverFormsTests.swift:443: error: testEverySeamIsReadBothWays] : XCTAssertTrue failed - https://site-37.test/
+Tests/MetaWhispTests/Services/Agent/ObserverFormsTests.swift:444: error: testEverySeamIsReadBothWays] : XCTAssertFalse failed - https://site-37.test/
+Tests/MetaWhispTests/Services/Agent/ObserverFormsTests.swift:443: error: testEverySeamIsReadBothWays] : XCTAssertTrue failed - https://site-38.test/
+Tests/MetaWhispTests/Services/Agent/ObserverFormsTests.swift:444: error: testEverySeamIsReadBothWays] : XCTAssertFalse failed - https://site-38.test/
+Tests/MetaWhispTests/Services/Agent/ObserverFormsTests.swift:443: error: testEverySeamIsReadBothWays] : XCTAssertTrue failed - https://site-39.test/
+Tests/MetaWhispTests/Services/Agent/ObserverFormsTests.swift:444: error: testEverySeamIsReadBothWays] : XCTAssertFalse failed - https://site-39.test/
+--- guard on a loose matcher (temporary edit, restored)
+Tests/MetaWhispTests/Services/Agent/ObserverFormsTests.swift:454: error: testAShortWordInsideALongerOneFlagsNothing] : XCTAssertFalse failed
+Tests/MetaWhispTests/Services/Agent/ObserverFormsTests.swift:456: error: testAShortWordInsideALongerOneFlagsNothing] : XCTAssertTrue failed
+--- green (ObserverFormsTests)
+	 Executed 42 tests, with 0 failures (0 unexpected) in 3.684 (3.688) seconds
+--- gate
+  ✅ 1793 tests, 0 failures
+  ✅ 88 critical suites ran
+PASS — safe to continue.

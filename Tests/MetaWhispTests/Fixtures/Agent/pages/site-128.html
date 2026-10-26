@@ -1,0 +1,107 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Site One Hundred Twenty-Eight</title>
+<style>
+  body { font: 16px sans-serif; }
+  .row { margin: 14px 0; height: 32px; }
+  input, [contenteditable] { width: 260px; height: 24px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Fields that take typing their own way</h1>
+  <!-- A framework's field that swaps itself for a hydrated copy on focus. -->
+  <div class="row"><input id="city" aria-label="City"></div>
+  <!-- One whose copy is a secret field. -->
+  <div class="row"><input id="account" aria-label="Account"></div>
+  <!-- One that opens an editor over itself on its first input, a moment late. -->
+  <div class="row"><input id="catalog" aria-label="Search the catalog"></div>
+  <!-- One that keeps four characters, and one that reformats a number. -->
+  <div class="row"><input id="code" aria-label="Code" maxlength="4"></div>
+  <div class="row"><input id="phone" aria-label="Phone"></div>
+  <!-- An editor. -->
+  <div class="row"><div id="note" contenteditable="true" aria-label="Note"></div></div>
+  <!-- A native date input. -->
+  <div class="row"><input id="arrival" type="date" aria-label="Arrival"></div>
+  <!-- A search that lists suggestions 300 ms after typing, and one that never does. -->
+  <div class="row"><input id="city-search" type="search" aria-label="Find a city" aria-controls="cities"
+    aria-autocomplete="list"></div>
+  <ul id="cities" role="listbox"></ul>
+  <div class="row"><input id="never" type="search" aria-label="Search the archive" aria-controls="archive"></div>
+  <ul id="archive" role="listbox"></ul>
+  <!-- An ordinary field. -->
+  <div class="row"><input id="plain" aria-label="Plain field"></div>
+  <!-- A field the page empties a moment after its input, and one it draws
+       anew a moment after, keeping what was typed. -->
+  <div class="row"><input id="fleeting" aria-label="Fleeting field"></div>
+  <div class="row"><input id="redrawn" aria-label="Redrawn field"></div>
+  <!-- A list of options that has nothing to do with the fields above. -->
+  <ul id="recent" role="listbox" aria-label="Recent cities"><li role="option">Oslo, Norway</li></ul>
+</main>
+<script>
+  window.counts = { city: 0, catalog: 0, overlay: 0, code: 0, phone: 0, arrivalInput: 0, arrivalChange: 0 };
+  const swapOnFocus = (id, make) => {
+    document.getElementById(id).addEventListener('focus', (event) => {
+      const copy = make();
+      event.target.replaceWith(copy);
+      copy.focus();
+    }, { once: true });
+  };
+  swapOnFocus('city', () => {
+    const copy = document.createElement('input');
+    copy.id = 'city-hydrated';
+    copy.setAttribute('aria-label', 'City (hydrated)');
+    copy.addEventListener('input', () => { window.counts.city += 1; });
+    return copy;
+  });
+  swapOnFocus('account', () => {
+    const copy = document.createElement('input');
+    copy.type = 'password';
+    copy.id = 'account-secret';
+    copy.setAttribute('aria-label', 'Account secret');
+    return copy;
+  });
+  const catalog = document.getElementById('catalog');
+  catalog.addEventListener('input', () => {
+    window.counts.catalog += 1;
+    if (document.getElementById('overlay-search')) return;
+    const box = catalog.getBoundingClientRect();
+    const overlay = document.createElement('input');
+    overlay.id = 'overlay-search';
+    overlay.setAttribute('aria-label', 'Catalog search');
+    overlay.style.cssText = 'position:absolute;left:' + (box.left + scrollX) + 'px;top:' + (box.top + scrollY) +
+      'px;width:' + box.width + 'px;height:' + box.height + 'px;box-sizing:border-box';
+    overlay.addEventListener('input', () => { window.counts.overlay += 1; });
+    document.body.appendChild(overlay);
+    catalog.value = '';
+    overlay.focus();
+  });
+  document.getElementById('code').addEventListener('input', () => { window.counts.code += 1; });
+  document.getElementById('phone').addEventListener('input', (event) => {
+    window.counts.phone += 1;
+    const digits = event.target.value.replace(/\D/g, '').slice(0, 10);
+    event.target.value = digits.length > 6 ? '(' + digits.slice(0, 3) + ') ' + digits.slice(3, 6) + '-' + digits.slice(6)
+      : digits;
+  });
+  const arrival = document.getElementById('arrival');
+  arrival.addEventListener('input', () => { window.counts.arrivalInput += 1; });
+  arrival.addEventListener('change', () => { window.counts.arrivalChange += 1; });
+  document.getElementById('fleeting').addEventListener('input', (event) => {
+    setTimeout(() => { event.target.value = ''; }, 100);
+  });
+  document.getElementById('redrawn').addEventListener('input', (event) => {
+    setTimeout(() => {
+      const copy = event.target.cloneNode();
+      copy.value = event.target.value;
+      event.target.replaceWith(copy);
+      copy.focus();
+    }, 100);
+  }, { once: true });
+  document.getElementById('city-search').addEventListener('input', () => {
+    setTimeout(() => {
+      document.getElementById('cities').innerHTML = '<li role="option">Riga, Latvia</li>';
+    }, 300);
+  });
+</script>
+</body>
+</html>

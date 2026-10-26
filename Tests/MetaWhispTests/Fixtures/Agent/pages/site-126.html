@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Site One Hundred Twenty-Six</title></head>
+<body>
+<main>
+  <h1 id="heading">Checkout steps</h1>
+  <button type="button" id="continue">Continue</button>
+  <p id="status"></p>
+</main>
+<script>
+  if (location.pathname === '/next') {
+    // The next page draws its words a moment after it loads, as a page its
+    // own script renders does.
+    document.getElementById('continue').remove();
+    setTimeout(() => { document.getElementById('heading').textContent = 'Arrived'; }, 150);
+  } else {
+    // The page keeps changing after the click, then moves to the next page
+    // while the agent is still waiting for it to go quiet.
+    document.getElementById('continue').addEventListener('click', () => {
+      let dots = 0;
+      setInterval(() => { document.getElementById('status').textContent = 'Working' + '.'.repeat(++dots % 4); }, 50);
+      setTimeout(() => location.assign('https://site-126.test/next'), 900);
+    });
+  }
+</script>
+</body>
+</html>

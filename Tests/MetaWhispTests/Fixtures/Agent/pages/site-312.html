@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Site Three Hundred Twelve</title>
+<style>body { margin: 0; font: 16px sans-serif; }</style>
+</head>
+<body>
+<div id="page"></div>
+<p id="log"></p>
+<script>
+  // The frames site-311 names (ITER-076 I-09, round 7): a field and a button
+  // of no form (/pan); a field and its submit button in a POST form (/form).
+  const log = (text) => { document.getElementById('log').textContent += text + ';'; };
+  document.getElementById('page').innerHTML = location.pathname === '/form'
+    ? '<form method="post" action="https://site-312.test/card"><input aria-label="Number"> ' +
+      '<button type="submit">Submit</button></form>'
+    : '<input aria-label="Number" inputmode="numeric"> <button type="button" id="next">Next</button>';
+  const next = document.getElementById('next');
+  if (next) next.addEventListener('click', () => log('next'));
+  const form = document.querySelector('form');
+  if (form) form.addEventListener('submit', (event) => { event.preventDefault(); log('sent'); });
+</script>
+</body>
+</html>

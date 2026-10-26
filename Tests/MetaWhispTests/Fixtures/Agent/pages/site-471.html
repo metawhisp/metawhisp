@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Site Four Hundred Seventy-One</title>
+<style>
+  body { margin: 0; font: 16px sans-serif; }
+  main { padding: 24px 40px; }
+  input { width: 360px; height: 28px; }
+  ul { list-style: none; margin: 0; padding: 0; width: 366px; border: 1px solid #777; }
+  li { line-height: 30px; }
+  /* A suggestion's link is its whole face, as an encyclopedia's search draws it. */
+  li > a { display: block; padding: 0 6px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Encyclopedia</h1>
+  <!-- A search whose open list draws each suggestion as an option around its article's link. -->
+  <label for="search">Search the encyclopedia</label>
+  <input id="search" type="search" role="combobox" aria-autocomplete="list" aria-expanded="true"
+         aria-controls="suggestions" value="Goedel">
+  <ul id="suggestions" role="listbox" aria-label="Suggestions">
+    <li role="option"><a href="/wiki/Incompleteness">Incompleteness theorems</a></li>
+    <li role="option"><a href="/wiki/Kurt">Kurt Goedel</a> - logician</li>
+    <li role="option">Goedel numbering</li>
+  </ul>
+  <!-- Outside any list: a menu item drawn as its link. -->
+  <ul aria-label="Account">
+    <li role="menuitem"><a href="/settings">Settings</a></li>
+  </ul>
+</main>
+</body>

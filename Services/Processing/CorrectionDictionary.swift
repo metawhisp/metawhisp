@@ -85,7 +85,7 @@ final class CorrectionDictionary: ObservableObject {
 
     convenience init() {
         let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
-        self.init(directory: appSupport.appendingPathComponent("MetaWhisp", isDirectory: true))
+        self.init(directory: AppIdentity.current.supportDirectory(applicationSupport: appSupport))
     }
 
     /// Designated init with an explicit storage directory — the test seam.

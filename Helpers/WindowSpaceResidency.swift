@@ -3,18 +3,16 @@ import Foundation
 /// Whether the main window may stay where it is when the user moves to
 /// another Space.
 ///
-/// The window parks with `[.fullScreenAuxiliary]`, so it belongs to exactly
-/// one Space and stays visible there. That is what gives macOS something to
-/// drag the user to: activating the app from a different Space — a popover
-/// button, a card, the Dock icon — brings the app's window forward, and the
-/// user goes with it. The guard that existed lived inside
-/// `MainWindowController.open()`, which the app's own SpaceTrace log shows was
-/// never reached on that path (2026-09-08: two `create:` entries, no `reuse:`).
+/// The window belongs to exactly one Space while visible (`.moveToActiveSpace`
+/// moves it only when it is ordered front). A window left visible on the
+/// Space the user swiped away from is what macOS drags the user to when the
+/// app is activated from elsewhere — a popover button, a card, the Dock icon.
+/// So it is unbound instead, and `MainWindowController.open()` orders it front
+/// again on the Space the user is actually on (2026-09-08; the order-front
+/// itself moves the window since 2026-10-19).
 ///
 /// `.canJoinAllSpaces` was tried and rejected — a 1440×1000 window on every
-/// desktop is its own regression (`MWWindowBehavior`). So the window is
-/// unbound instead, and `MainWindowController.open()` puts it back on the
-/// Space the user is actually on.
+/// desktop is its own regression (`MWWindowBehavior`).
 ///
 /// Pure, because this is the third attempt at this bug and the rule deserves
 /// to be arguable without switching desktops by hand.

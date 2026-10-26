@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Site Eighty-Nine</title>
+<style>
+  body { margin: 0; }
+  .row { position: relative; margin: 40px; width: 420px; height: 64px; border: 1px solid #999; }
+  x-del { position: absolute; left: 170px; top: 8px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Messages</h1>
+  <!-- A row a person opens by its words; at its centre a component whose own
+       shadow root holds a Delete button. -->
+  <div class="row" role="button" tabindex="0" aria-label="Open message from Alex">
+    <span>Alex: the files are ready</span>
+    <x-del></x-del>
+  </div>
+  <p id="log"></p>
+</main>
+<script>
+  const log = (text) => { document.getElementById('log').textContent += text + ';'; };
+  document.querySelector('.row').addEventListener('click', () => log('opened'));
+  customElements.define('x-del', class extends HTMLElement {
+    constructor() {
+      super();
+      const root = this.attachShadow({ mode: 'open' });
+      root.innerHTML = '<style>button{width:80px;height:48px}</style><button type="button">Delete</button>';
+      root.querySelector('button').addEventListener('click', (event) => { event.stopPropagation(); log('DELETED'); });
+    }
+  });
+</script>
+</body>
+</html>

@@ -1,0 +1,18 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Site One Hundred Eighty</title>
+<style>body { margin: 0; font: 16px sans-serif; } a, button { display: block; width: 200px; height: 30px; margin: 4px 0; }</style>
+</head>
+<body>
+<p id="log"></p>
+<button type="button" onclick="document.getElementById('log').textContent += (confirm('Remove the widget?') ? 'removed' : 'kept') + ';'">Remove widget</button>
+<a href="https://site-180.test/files/terms.pdf?type=application%2Fpdf&attachment=1">The terms</a>
+<a href="https://site-180.test/files/notes.txt?type=text%2Fplain" download>The widget notes</a>
+<button type="button" onclick="location = 'http://192.168.1.1/'">Open the router</button>
+<script>
+  // An alert as the frame loads.
+  alert('Widget ready');
+  document.getElementById('log').textContent += 'loaded;';
+</script>
+</body>
+</html>

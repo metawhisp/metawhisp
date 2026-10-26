@@ -1,0 +1,18 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Site Fifty-Five</title></head>
+<body>
+<main>
+  <h1>Terms, then a card</h1>
+  <p id="terms"></p>
+  <input aria-labelledby="terms">
+  <input aria-label="Card number">
+  <button>Continue</button>
+</main>
+<script>
+  // A label longer than the observer reads (WORDS_LIMIT): the field it names
+  // cannot be checked for a secret.
+  document.getElementById('terms').textContent = 'Terms of service. '.repeat(6000);
+</script>
+</body>
+</html>

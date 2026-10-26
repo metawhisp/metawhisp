@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Site Two Hundred Forty-Two</title></head>
+<body>
+<main>
+  <h1>Slow notes</h1>
+  <div id="words"></div>
+</main>
+<script>
+  // A page whose words take long to read: each part of it is slow to measure
+  // in the page's own world, so a look runs out of time half-way through
+  // them. What was read before the time ran out is kept.
+  const words = document.getElementById('words');
+  for (let i = 0; i < 600; i++) {
+    const part = document.createElement('span');
+    part.className = 'slow';
+    part.textContent = 'Part ' + i + '. ';
+    words.appendChild(part);
+  }
+  const measure = Element.prototype.getClientRects;
+  Element.prototype.getClientRects = function () {
+    if (this.className === 'slow') {
+      const until = performance.now() + 4;
+      while (performance.now() < until) {}
+    }
+    return measure.call(this);
+  };
+</script>
+</body>
+</html>

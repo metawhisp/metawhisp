@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Site One Hundred Forty-Eight</title>
+<style>
+  body { margin: 0; font: 16px sans-serif; }
+  main { padding: 24px 40px; }
+  .row { margin: 12px 0; }
+  input { width: 220px; height: 28px; }
+  .calendar { border: 1px solid #777; width: 240px; padding: 6px; }
+  .calendar button { width: 40px; height: 30px; }
+  .box { display: inline-block; width: 220px; height: 28px; border: 1px solid #777; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Your stay</h1>
+  <!-- A date field that only shows its date: a click opens its calendar. -->
+  <div class="row"><label for="checkin">Check-in</label> <input id="checkin" type="text" readonly placeholder="Pick a date"></div>
+  <div id="calendar" class="calendar" hidden>
+    <button type="button">14</button><button type="button">15</button><button type="button">16</button>
+  </div>
+  <!-- The same, read-only by its role. -->
+  <div class="row"><span id="checkout-label">Check-out</span>
+    <div class="box" role="textbox" aria-readonly="true" aria-labelledby="checkout-label" tabindex="0"></div></div>
+  <!-- Native date and time fields: typed through their own setters. -->
+  <div class="row"><label for="departure">Departure</label> <input id="departure" type="date"></div>
+  <div class="row"><label for="pickup">Pickup time</label> <input id="pickup" type="time"></div>
+  <!-- A native colour field: typed through its setter too (2026-10-19). -->
+  <div class="row"><label for="favourite">Favourite colour</label> <input id="favourite" type="color"></div>
+  <p id="log"></p>
+</main>
+<script>
+  const log = (text) => { document.getElementById('log').textContent += text + ';'; };
+  const checkin = document.getElementById('checkin');
+  const calendar = document.getElementById('calendar');
+  checkin.addEventListener('click', () => { calendar.hidden = false; log('calendar'); });
+  for (const day of calendar.querySelectorAll('button')) {
+    day.addEventListener('click', () => { checkin.value = '2026-10-' + day.textContent; calendar.hidden = true; });
+  }
+  checkin.addEventListener('input', () => log('typed'));
+  for (const id of ['departure', 'pickup', 'favourite']) {
+    document.getElementById(id).addEventListener('change', (event) => log(id + ' ' + event.target.value));
+  }
+</script>
+</body>
+</html>

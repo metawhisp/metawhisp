@@ -1,0 +1,33 @@
+ITER-074 I-T2a — action scripts, 2026-09-24 18:41 CEST, orchestrator (GLM quota exhausted)
+
+User story: as a user, I want the agent to act only on the element it chose — found again in the page
+at the moment of acting — so a page that changed, twins, or a stale candidate never get a click.
+
+Design: the observer's walk is a shared function (observe() -> report + nodes). Each element action
+re-runs it and matches the element by the fingerprint's own fields and twin count, in the same script
+run as the act. 'back' opens the previous address the loop recorded: the fixture browser's history
+held one entry (history.length 1 after a routed load), and in production a page can stuff its history.
+
+--- red: 10 tests, 10 failing
+ActionScriptTests testAClickReachesTheButton failed (0.818 seconds).
+ActionScriptTests testAPlannedSearchOpensItsOwnAddress failed (10.088 seconds).
+ActionScriptTests testASensitiveFieldIsNeverTypedInto failed (0.083 seconds).
+ActionScriptTests testAVanishedElementIsNotActedOn failed (0.072 seconds).
+ActionScriptTests testOnlyWholeActionsHaveAScript failed (0.001 seconds).
+ActionScriptTests testOpenFollowsTheLinkAndBackReturns failed (10.075 seconds).
+ActionScriptTests testScrollMovesTheViewport failed (0.086 seconds).
+ActionScriptTests testSelectingChoosesTheOption failed (0.073 seconds).
+ActionScriptTests testTwinButtonsAreNotActedOn failed (0.071 seconds).
+ActionScriptTests testTypingFillsTheField failed (0.074 seconds).
+--- green (action, observer and builder suites)
+ActionScriptTests testAClickReachesTheButton passed (0.247 seconds).
+ActionScriptTests testAPlannedSearchOpensItsOwnAddress passed (0.136 seconds).
+ActionScriptTests testASensitiveFieldIsNeverTypedInto passed (0.070 seconds).
+ActionScriptTests testAVanishedElementIsNotActedOn passed (0.073 seconds).
+ActionScriptTests testOnlyWholeActionsHaveAScript passed (0.000 seconds).
+ActionScriptTests testOpenFollowsTheLinkAndBackReturns passed (0.118 seconds).
+ActionScriptTests testScrollMovesTheViewport passed (0.077 seconds).
+ActionScriptTests testSelectingChoosesTheOption passed (0.072 seconds).
+ActionScriptTests testTwinButtonsAreNotActedOn passed (0.074 seconds).
+ActionScriptTests testTypingFillsTheField passed (0.075 seconds).
+	 Executed 89 tests, with 0 failures (0 unexpected) in 5.618 (5.626) seconds

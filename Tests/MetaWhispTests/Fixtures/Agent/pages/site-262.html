@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Site Two Hundred Sixty-Two</title>
+<style>body { margin: 0; font: 16px sans-serif; } main { padding: 16px 40px; } iframe { display: block; border: 0; }</style>
+</head>
+<body>
+<main id="page"></main>
+<div id="controls"></div>
+<p id="log"></p>
+<script>
+  // ITER-076 I-09, review round 3, part A: pages read in part, and a cut
+  // inside a number, are acted on as they were shown.
+  const page = document.getElementById('page');
+  const controls = document.getElementById('controls');
+  window.log = (text) => { document.getElementById('log').textContent += text + ';'; };
+  if (location.pathname === '/long') {
+    // A main text longer than a look reads, cut inside "482137", leaving
+    // "4821" (Claude review c8, #3); a frame on the page, and a control whose
+    // name holds what the cut leaves.
+    page.innerHTML = '<p>' + 'Lorem ipsum dolor sit amet. '.repeat(213) + 'Read the notes carefully ' +
+      'Ticket 482137 issued. ' + 'Lorem ipsum dolor sit amet. '.repeat(40) + '</p>';
+    controls.innerHTML = '<button type="button" onclick="log(\'room\')">Room 4821</button>' +
+      '<iframe style="width:300px;height:40px" srcdoc="<p>Hello</p>"></iframe>';
+  } else if (location.pathname === '/unread-long') {
+    // More words than a look reads (Claude review c8, #8): a control whose
+    // name holds a run of digits, found again as it was shown.
+    page.innerHTML = '<p>' + 'Lorem ipsum dolor sit amet. '.repeat(25000) + '</p>';
+    controls.innerHTML = '<button type="button" onclick="log(\'room\')">Room 4821</button>';
+    document.body.insertBefore(controls, page);
+  } else if (location.pathname === '/touched') {
+    // A heading with an order number beside a frame whose read is made to
+    // fail (Claude review c8, #4), the button under it; a code the page
+    // shows, and a button of a frame of another site whose words hold it.
+    // The unread frame is of a third site: one of the button frame's own
+    // site and holder could hold its twin, and withholds it (c8, #21).
+    page.innerHTML = '<p>Your one-time code is 481920.</p>' +
+      '<p>' + 'The garden path winds past the old stone wall and the quiet pond. '.repeat(10) + '</p>' +
+      '<h2>Order 48213377</h2><iframe style="width:300px;height:40px" src="https://site-261.test/unread"></iframe>' +
+      '<button type="button" onclick="log(\'tracked\')">Track package</button>' +
+      '<p>' + 'The garden path winds past the old stone wall and the quiet pond. '.repeat(10) + '</p>' +
+      '<iframe style="width:400px;height:40px" src="https://site-258.test/send"></iframe>';
+  }
+</script>
+</body>
+</html>

@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Site Four Sixty-Two</title></head>
+<body>
+<main>
+  <!-- ITER-076 stage 7, review round 2 (R2-5): a demo form that, as it is
+       sent, sends itself to an address holding the e-mail typed in it —
+       /thanks/<e-mail>, as a site's redirect would — and shows its thanks
+       there. -->
+  <h1 id="title">Request a demo</h1>
+  <form id="demo" action="/thanks" method="post">
+    <label for="name">Full name</label><input id="name" name="name" autocomplete="name">
+    <label for="email">Work email</label><input id="email" name="email" type="email">
+    <button type="submit" id="send">Request a demo</button>
+  </form>
+  <p id="thanks" hidden>Thank you.</p>
+</main>
+<script>
+  const form = document.getElementById('demo');
+  form.addEventListener('submit', () => {
+    form.action = '/thanks/' + document.getElementById('email').value;
+  });
+  if (location.pathname.startsWith('/thanks')) {
+    form.remove();
+    document.getElementById('title').textContent = 'Thanks';
+    document.getElementById('thanks').hidden = false;
+  }
+</script>
+</body>
+</html>

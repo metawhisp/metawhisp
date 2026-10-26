@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Site Seventy-Four</title></head>
+<body>
+<main>
+  <h1>Shop</h1>
+  <!-- The ARIA 1.1 combobox layout: the field sits inside the combobox -->
+  <div role="combobox" aria-expanded="false" aria-owns="suggestions">
+    <input type="search" placeholder="Search products">
+    <button>Search</button>
+    <button aria-label="Clear">x</button>
+  </div>
+  <label for="city">City</label>
+  <div role="combobox" aria-expanded="false"><input id="city"></div>
+
+  <!-- A list box that is a list, not a select: its links and buttons are controls -->
+  <h2>Results</h2>
+  <ul role="listbox" aria-label="Results">
+    <li><a href="https://site-74.test/first">First result</a></li>
+    <li><a href="https://site-74.test/second">Second result</a></li>
+    <li><button>Load more</button></li>
+  </ul>
+
+  <!-- A select that pops up a tree of choices -->
+  <h2>Category</h2>
+  <div role="listbox" aria-haspopup="tree" aria-expanded="true" aria-label="Category">
+    <div role="tree"><div role="treeitem" tabindex="0">Recorders</div><div role="treeitem" tabindex="0">Microphones</div></div>
+  </div>
+</main>
+</body>
+</html>

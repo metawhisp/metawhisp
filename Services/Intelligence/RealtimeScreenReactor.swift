@@ -100,7 +100,7 @@ final class RealtimeScreenReactor: ObservableObject {
         let rejectedExamples = recentDismissedDescriptions(limit: 10)
         NSLog("[RealtimeReactor] reacting in %@: %d chars OCR, %d open-task refs, %d rejected examples, %d calls this hour", context.appName, context.ocrText.count, fulfillmentRefs.count, rejectedExamples.count, callTimestamps.count)
 
-        let prompt = buildPrompt(
+        let prompt = Self.buildPrompt(
             appName: context.appName,
             windowTitle: context.windowTitle,
             ocr: context.ocrText,
@@ -129,10 +129,15 @@ final class RealtimeScreenReactor: ObservableObject {
                 // gate is tuned for "new action?" and a screen proving a task was
                 // DONE scores as no-action, silencing the check we need.
                 if fulfillmentRefs.isEmpty {
+                    // 2026-10-20 — the gate reads the screen alone, not the
+                    // dismissed tasks the model is told not to extract again:
+                    // a do-not-repeat list in a gate's input is what made the
+                    // proactive and advice gates read old items as live. The
+                    // duplicate check after the model covers dismissed tasks.
+                    let gateContext = Self.buildPrompt(appName: context.appName, windowTitle: context.windowTitle, ocr: context.ocrText)
                     let gate = await GateClient.call(
-                        context: prompt,
+                        context: gateContext,
                         purpose: .reactor,
-                        recentTopics: [],
                         serviceId: Self.llmServiceId,
                         licenseKey: key
                     )
@@ -682,7 +687,7 @@ final class RealtimeScreenReactor: ObservableObject {
     CRITICAL: respond with ONLY the JSON. No prose, no markdown, no explanation.
     """
 
-    private func buildPrompt(appName: String, windowTitle: String, ocr: String,
+    static func buildPrompt(appName: String, windowTitle: String, ocr: String,
                              openTasks: [TaskFulfillment.OpenTaskRef] = [],
                              rejectedExamples: [String] = []) -> String {
         // Cap OCR — single-window prompts must stay small for 30/hour cost profile.

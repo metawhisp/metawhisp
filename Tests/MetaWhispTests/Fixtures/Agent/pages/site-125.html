@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Site One Hundred Twenty-Five</title></head>
+<body>
+<main>
+  <h1>Account</h1>
+  <button type="button" id="menu-button">Open the menu</button>
+  <ul id="menu" role="menu" hidden><li role="menuitem">Settings</li></ul>
+</main>
+<script>
+  // The menu is drawn in the next animation frame, and the handler keeps the
+  // page busy until then: the frame is late.
+  document.getElementById('menu-button').addEventListener('click', () => {
+    requestAnimationFrame(() => { document.getElementById('menu').hidden = false; });
+    const until = performance.now() + 300;
+    while (performance.now() < until) {}
+  });
+</script>
+</body>
+</html>

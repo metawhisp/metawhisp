@@ -1,0 +1,15 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Site Forty-Six</title></head>
+<body>
+<main>
+  <h1>Verify</h1>
+  <label for="v">Verification <x-suffix id="suffix"></x-suffix></label>
+  <input id="v" type="text" value="SECRET-STYLED">
+</main>
+<script>
+  document.getElementById('suffix').attachShadow({ mode: 'open' }).innerHTML =
+    '<style>:host{display:inline}</style>code';
+</script>
+</body>
+</html>

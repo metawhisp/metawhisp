@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Site Four Sixty-Six</title></head>
+<body>
+<main>
+  <!-- ITER-076 stage 7, review round 3 (R3-3): a demo form at /demo whose
+       page sends what the e-mail field holds by a beacon as it is left, and
+       a link that opens the same page again: the page the agent's navigation
+       brings has the form page's own address, so what the form's page sends
+       as it goes is still the form's, and stays held. The site's first page
+       links to the form. Each page is this file: its address picks its part. -->
+  <section id="home">
+    <h1>Welcome</h1>
+    <p><a id="to-demo" href="/demo">Demo page</a></p>
+  </section>
+  <section id="demo">
+    <h1 id="title">Request a demo</h1>
+    <form id="form" action="/thanks" method="post">
+      <label for="first">First name</label><input id="first" name="first" autocomplete="given-name">
+      <label for="email">Work email</label><input id="email" name="email" type="email">
+      <button type="submit" id="send">Request a demo</button>
+    </form>
+    <p><a id="again" href="/demo">Start over</a></p>
+  </section>
+</main>
+<script>
+  document.getElementById(location.pathname === '/demo' ? 'home' : 'demo').remove();
+  window.addEventListener('pagehide', () => {
+    const email = document.getElementById('email');
+    if (email && email.value) navigator.sendBeacon('/api/left', email.value);
+  });
+</script>
+</body>
+</html>

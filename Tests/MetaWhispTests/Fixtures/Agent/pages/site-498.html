@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Site Four Hundred Ninety-Eight</title></head>
+<body>
+<main>
+  <h1>Guides</h1>
+  <!-- A search form that holds a password field too, left empty (2026-10-21): it sends no secret, and it is no
+       pure search either - D4 opens only a form that holds no password. -->
+  <form id="locked" action="/find" method="get">
+    <input type="search" name="q" aria-label="Find a guide">
+    <input type="password" name="key" aria-label="Guide key">
+    <button type="submit">Find</button>
+  </form>
+  <!-- The plain search beside it: a pure search. -->
+  <form id="plain" action="/search" method="get">
+    <input type="search" name="q" aria-label="Search the site">
+    <button type="submit">Search</button>
+  </form>
+</main>
+</body>
+</html>

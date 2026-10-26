@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Site One Hundred One</title>
+<style> body { min-height: 3000px; } #more { position: absolute; top: 2000px; left: 40px; } </style>
+</head>
+<body>
+<main>
+  <h1>An article</h1>
+  <button id="more" type="button">Continue reading</button>
+  <p id="log"></p>
+</main>
+<script>
+  // Scrolling down shows a login form of its own: the button outside it sends none of it.
+  addEventListener('scroll', () => {
+    const form = document.createElement('form');
+    form.action = 'https://site-101.test/login';
+    form.method = 'post';
+    form.innerHTML = '<label>Password <input type="password" name="password"></label><button type="submit">Sign in</button>';
+    document.querySelector('main').prepend(form);
+  }, { once: true });
+  document.getElementById('more').addEventListener('click', () => {
+    document.getElementById('log').textContent += 'read on;';
+  });
+</script>
+</body>
+</html>

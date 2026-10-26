@@ -10,27 +10,29 @@ final class ModelBootstrapTests: XCTestCase {
 
     func test_quickStart_freshInstall_starts() {
         XCTAssertTrue(ModelBootstrap.shouldQuickStart(
-            anyModelDownloaded: false, isDownloading: false, isPro: false, freeBytes: plentyOfDisk))
+            anyModelDownloaded: false, isDownloading: false, engineIsCloud: false, freeBytes: plentyOfDisk))
     }
 
     func test_quickStart_modelAlreadyPresent_noop() {
         XCTAssertFalse(ModelBootstrap.shouldQuickStart(
-            anyModelDownloaded: true, isDownloading: false, isPro: false, freeBytes: plentyOfDisk))
+            anyModelDownloaded: true, isDownloading: false, engineIsCloud: false, freeBytes: plentyOfDisk))
     }
 
     func test_quickStart_downloadInFlight_noop() {
         XCTAssertFalse(ModelBootstrap.shouldQuickStart(
-            anyModelDownloaded: false, isDownloading: true, isPro: false, freeBytes: plentyOfDisk))
+            anyModelDownloaded: false, isDownloading: true, engineIsCloud: false, freeBytes: plentyOfDisk))
     }
 
-    func test_quickStart_proUser_noop() {
+    /// C5 — the cloud engine needs no local model. Pro is not asked: a Pro user
+    /// on the on-device engine gets the quick model (ModelPreparerTests).
+    func test_quickStart_cloudEngine_noop() {
         XCTAssertFalse(ModelBootstrap.shouldQuickStart(
-            anyModelDownloaded: false, isDownloading: false, isPro: true, freeBytes: plentyOfDisk))
+            anyModelDownloaded: false, isDownloading: false, engineIsCloud: true, freeBytes: plentyOfDisk))
     }
 
     func test_quickStart_fullDisk_noop() {
         XCTAssertFalse(ModelBootstrap.shouldQuickStart(
-            anyModelDownloaded: false, isDownloading: false, isPro: false, freeBytes: 100_000_000))
+            anyModelDownloaded: false, isDownloading: false, engineIsCloud: false, freeBytes: 100_000_000))
     }
 
     // MARK: - upgradeAction
@@ -41,14 +43,13 @@ final class ModelBootstrapTests: XCTestCase {
         quickModelLoaded: Bool = true,
         bestDownloaded: Bool = false,
         isDownloading: Bool = false,
-        isPro: Bool = false,
         engineIsCloud: Bool = false,
         freeBytes: Int64 = 50_000_000_000
     ) -> ModelBootstrap.UpgradeAction {
         ModelBootstrap.upgradeAction(
             pending: pending, selectedModel: selectedModel,
             quickModelLoaded: quickModelLoaded, bestDownloaded: bestDownloaded,
-            isDownloading: isDownloading, isPro: isPro,
+            isDownloading: isDownloading,
             engineIsCloud: engineIsCloud, freeBytes: freeBytes)
     }
 
@@ -60,12 +61,12 @@ final class ModelBootstrapTests: XCTestCase {
         XCTAssertEqual(action(selectedModel: "small"), .none)
     }
 
-    /// Review P1: a user who went Pro or validated a cloud key must never get
-    /// an unrequested ~1 GB download or a false "upgraded" notification.
-    func test_upgrade_proOrCloud_cancelsPlan() {
-        XCTAssertEqual(action(isPro: true), .cancelPlan)
+    /// Review P1: a user on the cloud engine must never get an unrequested
+    /// ~1 GB download or a false "upgraded" notification. Keyed on the engine
+    /// (C5): Pro on the on-device engine keeps the plan (ModelPreparerTests).
+    func test_upgrade_cloud_cancelsPlan() {
         XCTAssertEqual(action(engineIsCloud: true), .cancelPlan)
-        XCTAssertEqual(action(bestDownloaded: true, isPro: true), .cancelPlan,
+        XCTAssertEqual(action(bestDownloaded: true, engineIsCloud: true), .cancelPlan,
                        "cancel wins even with the best model on disk")
     }
 
@@ -184,5 +185,59 @@ final class ModelBootstrapTests: XCTestCase {
         XCTAssertFalse(mgr.isDownloaded("large-v3"),
                        "substring of another variant's dir must not count as downloaded")
         XCTAssertFalse(mgr.isDownloaded("base"))
+    }
+
+    /// ITER-075 step 0 (0.4) — a test never downloads into the owner's shared
+    /// model folder: under XCTest a download waits, offline, until it is
+    /// cancelled.
+    @MainActor
+    func test_downloadsStayOfflineUnderTests() async {
+        final class Box { var finished = false }
+        let box = Box()
+        let task = Task { @MainActor in
+            defer { box.finished = true }
+            _ = try await ModelManagerService.defaultDownload("openai_whisper-base",
+                                                                 FileManager.default.temporaryDirectory, { _ in })
+        }
+        try? await Task.sleep(nanoseconds: 200_000_000)
+        XCTAssertFalse(box.finished, "the offline download waits until it is cancelled")
+        task.cancel()
+        do {
+            try await task.value
+            XCTFail("an offline download never completes")
+        } catch {
+            XCTAssertTrue(error is CancellationError)
+        }
+    }
+
+    /// ITER-075 step 0 (0.4) — a speech model that keeps failing to load is
+    /// deleted from the shared Documents folder only by the owner's app; any
+    /// other copy leaves it alone. A copy's own folder (F1) is its to clean.
+    /// On temp folders, never the owner's.
+    @MainActor
+    func test_aBrokenModelIsDeletedOnlyByTheOwnersApp() throws {
+        let home = FileManager.default.temporaryDirectory.appendingPathComponent("mw-hub-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: home) }
+        let shared = ModelFolder(kind: .documents, home: home, supportDirectory: home.appendingPathComponent("support"))
+        let own = ModelFolder(kind: .applicationSupport, home: home, supportDirectory: home.appendingPathComponent("support"))
+        let variant = "openai_whisper-test"
+        let dev = AppIdentity(bundleIdentifier: "com.metawhisp.app.dev")
+        for folder in [shared, own] {
+            try FileManager.default.createDirectory(at: folder.speechModels.appendingPathComponent(variant, isDirectory: true),
+                                                    withIntermediateDirectories: true)
+        }
+
+        XCTAssertFalse(ModelManagerService.removeBrokenModel(variant: variant, identity: dev, folder: shared))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: shared.speechModels.appendingPathComponent(variant).path),
+                      "a non-owner copy leaves the shared model alone")
+
+        XCTAssertTrue(ModelManagerService.removeBrokenModel(
+            variant: variant, identity: AppIdentity(bundleIdentifier: "com.metawhisp.app"), folder: shared))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: shared.speechModels.appendingPathComponent(variant).path),
+                       "the owner's app deletes it, as before")
+
+        XCTAssertTrue(ModelManagerService.removeBrokenModel(variant: variant, identity: dev, folder: own))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: own.speechModels.appendingPathComponent(variant).path),
+                       "any copy cleans its own folder")
     }
 }

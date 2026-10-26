@@ -57,8 +57,115 @@ final class StructuredGenerator: ObservableObject {
     private var periodicBackfillTask: Task<Void, Never>?
     private let periodicBackfillInterval: TimeInterval = 1800  // 30 min
 
+    /// - Parameters:
+    ///   - queueDirectory: override for tests; defaults to the app's support folder.
+    ///   - isStoreHealthy: override for tests; a degraded store reads as empty.
+    init(queueDirectory: URL? = nil,
+         isStoreHealthy: @escaping () -> Bool = { StoreHealthSignal.shared.isHealthy }) {
+        self.queueDirectory = queueDirectory
+        self.isStoreHealthy = isStoreHealthy
+    }
+
+    private let queueDirectory: URL?
+    private let isStoreHealthy: () -> Bool
+
     func configure(modelContainer: ModelContainer) {
         self.modelContainer = modelContainer
+    }
+
+    // MARK: - ITER-075 step 1 (1.5) — runs take turns, and every summary is queued
+
+    /// A run handed in while another is going waits its turn. It used to be
+    /// dropped ("another generation already in flight"), and nothing ran it
+    /// again.
+    private let turns = RunTurns<StructuredOutcome>()
+
+    /// The conversations waiting for their summary, on disk. The ones that
+    /// closed this session may use the local model; older ones use the cloud
+    /// only, like the backfills.
+    private(set) lazy var queue = StructuredQueue(
+        directory: queueDirectory,
+        route: { [weak self] mayUseLocal in self?.route(mayUseLocal: mayUseLocal) },
+        isStoreHealthy: isStoreHealthy
+    ) { [weak self] id, transcript, mayUseLocal in
+        await self?.generate(conversationId: id, knownTranscript: transcript, preferCloud: !mayUseLocal) ?? .notNow
+    }
+
+    /// A conversation that just closed: queued first, on disk, then run at once
+    /// in its turn — the Library and the recap show its summary first. The
+    /// rest of the queue runs afterwards, on its own.
+    func summarizeClosed(_ id: UUID, knownTranscript: String? = nil) async {
+        await queue.runFresh(id, knownTranscript: knownTranscript)
+    }
+
+    /// Runs what is queued: at launch, and when LLM access appears.
+    func drainQueue() async {
+        await queue.drain()
+    }
+
+    /// LLM access for a run: the local model counts only for a run that may
+    /// use it.
+    func hasAccess(mayUseLocal: Bool) -> Bool {
+        mayUseLocal ? hasLLMAccess : hasCloudLLMAccess
+    }
+
+    /// Where a run would go now, by `generateInTurn`'s own rule — the local
+    /// model only for a run that may use it — or nil without access for it,
+    /// or before the store is set up (a run could then only say "not now").
+    func route(mayUseLocal: Bool) -> StructuredRoute? {
+        guard modelContainer != nil else { return nil }
+        if mayUseLocal && LocalLLMService.shared.isReady { return .local }
+        return hasCloudLLMAccess ? .cloud : nil
+    }
+
+    /// The cloud path's setup right now — Pro, or a provider and its key — as
+    /// a value that changes whenever the setup does; nil without one. Only a
+    /// hash of the key is kept.
+    var cloudAccessSetup: String? {
+        if LicenseService.shared.isPro { return "pro" }
+        let key = settings.activeAPIKey
+        return key.isEmpty ? nil : settings.llmProvider + ":" + String(key.hashValue)
+    }
+
+    /// A meeting with a call context is linked to its calendar event
+    /// (ITER-018). The close links it first, because the task extractor reads
+    /// the link when it starts (ITER-026); a run links it again for the
+    /// backfills, and the linker skips a conversation already linked.
+    static func linksToCalendar(_ conv: Conversation) -> Bool {
+        conv.source == "meeting" && !(conv.callContext ?? "").isEmpty
+    }
+
+    func linkCalendar(_ conversationId: UUID) async {
+        guard let container = modelContainer, let calendarReader else { return }
+        let ctx = ModelContext(container)
+        var desc = FetchDescriptor<Conversation>(predicate: #Predicate { $0.id == conversationId })
+        desc.fetchLimit = 1
+        guard let conv = try? ctx.fetch(desc).first, Self.linksToCalendar(conv) else { return }
+        await calendarReader.linkConversation(conversationId)
+    }
+
+    static let untitledSweepKey = "structuredUntitledQueued_iter075"
+
+    /// Once: the completed conversations with no title (522 on 2026-09-26,
+    /// 149 meetings and 373 dictations) join the back of the queue, newest
+    /// first. Nothing ran them again after a run without access or a dropped
+    /// one. The flag is set only after they are queued on disk, and only from
+    /// a healthy store: a degraded one reads as empty.
+    func enqueueUntitledOnce(defaults: UserDefaults = .standard) {
+        guard !defaults.bool(forKey: Self.untitledSweepKey), isStoreHealthy(),
+              let container = modelContainer else { return }
+        let ctx = ModelContext(container)
+        let desc = FetchDescriptor<Conversation>(
+            predicate: #Predicate { !$0.discarded && $0.status == "completed" && $0.title == nil },
+            sortBy: [SortDescriptor(\.startedAt, order: .reverse)]
+        )
+        guard let rows = try? ctx.fetch(desc) else { return }
+        guard queue.enqueue(rows.map(\.id)) else {
+            NSLog("[StructuredGenerator] %d untitled conversations not saved to the queue — the next launch tries again", rows.count)
+            return
+        }
+        defaults.set(true, forKey: Self.untitledSweepKey)
+        NSLog("[StructuredGenerator] %d untitled conversations queued for their summary (once)", rows.count)
     }
 
     /// ITER-021 — Encode `[String]` to JSON for the new structured summary fields.
@@ -101,7 +208,9 @@ final class StructuredGenerator: ObservableObject {
     /// 2026-04-25 13:33: 3611 chars transcript + Quick note + empty overview).
     /// Run on launch AND periodically (see startPeriodicBackfill).
     func backfillPlaceholders() async {
-        guard hasLLMAccess else { return }
+        // The pass runs on the cloud path only; without it every run would
+        // return "not now" at each launch.
+        guard hasCloudLLMAccess else { return }
         guard let container = modelContainer else { return }
         let ctx = ModelContext(container)
         // Match conversations where StructuredGenerator clearly hadn't run successfully:
@@ -146,17 +255,25 @@ final class StructuredGenerator: ObservableObject {
                 try? ctx.save()
                 continue
             }
-            // Reset title/overview so generate() re-runs through the LLM path.
-            conv.title = nil
-            conv.overview = nil
-            conv.category = nil
-            conv.emoji = nil
+            // ITER-075 step 1 (1.6) — nothing is cleared first: the full path
+            // is asked for outright, and the placeholder stands until a result
+            // replaces it. Clearing and saving first left a conversation blank
+            // for good whenever the run was cut short (a quit mid-pass,
+            // 2026-09-22).
             try? ctx.save()
             // Pass the transcript we already have — avoids generate() doing
             // a second DB fetch for the same data. `preferCloud: true` keeps
             // accumulated backfill OFF the local model — large prompts × N
             // conversations would otherwise freeze a freshly-activated Phi-4.
-            await generate(conversationId: conv.id, knownTranscript: transcript, preferCloud: true)
+            let outcome = await generate(conversationId: conv.id, knownTranscript: transcript, preferCloud: true,
+                                         isRegeneration: true)
+            // A run that never happened (no key for the cloud path, or the
+            // network or the service down) doesn't use up the conversation's
+            // one attempt.
+            if outcome == .notNow {
+                conv.structuredBackfillAttempted = false
+                try? ctx.save()
+            }
         }
     }
 
@@ -189,8 +306,8 @@ final class StructuredGenerator: ObservableObject {
     /// ITER-021 — Public manual retry for the UI "Regenerate" button.
     /// Forces re-generation regardless of placeholder state. Used when the
     /// user looks at a meeting and the LLM previously chose a bad title /
-    /// missed structured sections. Internally clears existing fields then
-    /// calls the standard `generate(conversationId:)` path.
+    /// missed structured sections. It asks `generate` for the full path;
+    /// nothing is cleared first.
     func regenerate(conversationId: UUID) async {
         guard let container = modelContainer else { return }
         let ctx = ModelContext(container)
@@ -198,7 +315,7 @@ final class StructuredGenerator: ObservableObject {
         desc.fetchLimit = 1
         guard (try? ctx.fetch(desc).first) != nil else { return }
         // Nothing is cleared here. The eleven structured fields used to be set
-        // to nil and SAVED before the generator ran, and the generator has
+        // to nil and SAVED before the generator ran, and the generator had
         // five ways to return without writing: no LLM access, a transcript
         // under the floor, a run already in flight, a parse failure, a network
         // error. Each of them left the conversation permanently blank (audit,
@@ -229,23 +346,45 @@ final class StructuredGenerator: ObservableObject {
     /// even though the conversation already has a title. It used to be
     /// simulated by deleting the eleven structured fields first, which lost
     /// them for good whenever the run then produced nothing (audit, P1).
+    ///
+    /// Returns what the run did (ITER-075 step 1, 1.6), so a caller can tell a
+    /// result from a run that never happened.
+    @discardableResult
     func generate(conversationId: UUID, knownTranscript: String? = nil, preferCloud: Bool = false,
-                  isRegeneration: Bool = false) async {
-        let t0 = Date()
-        guard !isRunning else { return }
-        NSLog("[StructuredGenerator] conv %@ dropped — another generation already in flight", conversationId.uuidString.prefix(8) as CVarArg)
-        guard hasLLMAccess else {
-            NSLog("[StructuredGenerator] No LLM access — skipping")
-            return
+                  isRegeneration: Bool = false) async -> StructuredOutcome {
+        await turns.take {
+            await self.generateInTurn(conversationId: conversationId, knownTranscript: knownTranscript,
+                                      preferCloud: preferCloud, isRegeneration: isRegeneration)
         }
-        guard let container = modelContainer else { return }
+    }
+
+    /// One run, in its turn (`generate` hands the turns out).
+    private func generateInTurn(conversationId: UUID, knownTranscript: String?, preferCloud: Bool,
+                                isRegeneration: Bool) async -> StructuredOutcome {
+        let t0 = Date()
+        // A cloud-only run (a backfill, an older conversation in the queue)
+        // cannot use the local model, so the local model alone is no access
+        // for it.
+        guard hasAccess(mayUseLocal: !preferCloud) else {
+            NSLog("[StructuredGenerator] No LLM access — skipping")
+            return .notNow
+        }
+        guard let container = modelContainer else { return .notNow }
 
         let ctx = ModelContext(container)
         var descriptor = FetchDescriptor<Conversation>(predicate: #Predicate { $0.id == conversationId })
         descriptor.fetchLimit = 1
-        guard let conv = try? ctx.fetch(descriptor).first else {
+        // A store that could not be read is a failed run, not a finished one.
+        let found: Conversation?
+        do {
+            found = try ctx.fetch(descriptor).first
+        } catch {
+            NSLog("[StructuredGenerator] conv %@ could not be read — %@", conversationId.uuidString.prefix(8) as CVarArg, error.localizedDescription)
+            return .failed
+        }
+        guard let conv = found else {
             NSLog("[StructuredGenerator] Conversation %@ not found", conversationId.uuidString.prefix(8) as CVarArg)
-            return
+            return .unchanged
         }
 
         // Skip if already generated (idempotent) — BUT allow re-generation when
@@ -256,7 +395,7 @@ final class StructuredGenerator: ObservableObject {
         if !StructuredFieldSet.forcesFullRegeneration(isRegeneration: isRegeneration, hasTitle: conv.title != nil),
            conv.title != nil && conv.overview != nil && !isPlaceholder {
         NSLog("[StructuredGenerator] conv %@ already structured — skipping", conversationId.uuidString.prefix(8) as CVarArg)
-            return
+            return .unchanged
         }
 
         // Prefer the caller-provided transcript when available — bypasses
@@ -290,8 +429,7 @@ final class StructuredGenerator: ObservableObject {
         // overview / category / emoji (calendar doesn't have those). Doing
         // this BEFORE the LLM call closes the race where recap popup fires
         // (8s after stop) before the old fire-and-forget linker had finished.
-        if conv.source == "meeting", let cc = conv.callContext, !cc.isEmpty,
-           let calendarReader {
+        if Self.linksToCalendar(conv), let calendarReader {
             await calendarReader.linkConversation(conversationId)
             // Pull the updated row into our context so subsequent saves don't
             // stomp the freshly-set calendar fields.
@@ -305,6 +443,13 @@ final class StructuredGenerator: ObservableObject {
         }
 
         guard transcript.count >= minTranscriptChars else {
+            // ITER-075 step 1 (1.6) — a real title and its fields stay: a
+            // transcript too short to structure is no reason to overwrite them
+            // with the placeholder.
+            if StructuredFieldSet.keepsFieldsOnShortTranscript(title: conv.title) {
+                NSLog("[StructuredGenerator] Short transcript (%d chars) — the existing title stays", transcript.count)
+                return .unchanged
+            }
             // Too short — give a placeholder so UI has something to show.
             // Calendar event name still wins if linked (preserve user's
             // naming even on a sub-300-char meeting).
@@ -316,9 +461,16 @@ final class StructuredGenerator: ObservableObject {
             conv.category = "other"
             conv.emoji = "bubble.left"  // SF Symbol, monochrome
             conv.updatedAt = Date()
-            try? ctx.save()
+            // `written` only once the save went through.
+            do {
+                try ctx.save()
+            } catch {
+                ctx.rollback()
+                NSLog("[StructuredGenerator] ❌ conv %@ placeholder not saved — %@", conversationId.uuidString.prefix(8) as CVarArg, error.localizedDescription)
+                return .failed
+            }
             NSLog("[StructuredGenerator] Short transcript (%d chars) — placeholder title", transcript.count)
-            return
+            return .written
         }
 
         isRunning = true
@@ -344,7 +496,7 @@ final class StructuredGenerator: ObservableObject {
                 let apiKey = settings.activeAPIKey
                 guard !apiKey.isEmpty else {
                     NSLog("[StructuredGenerator] No API key — skipping")
-                    return
+                    return .notNow
                 }
                 let provider = LLMProvider(rawValue: settings.llmProvider) ?? .openai
                 response = try await llm.complete(
@@ -358,18 +510,28 @@ final class StructuredGenerator: ObservableObject {
             guard let parsed = parseResponse(response) else {
             NSLog("[StructuredGenerator] ⚠️ parse failed conv %@ — response %d chars after %.1fs, has-brace=%d", conversationId.uuidString.prefix(8) as CVarArg, response.count, Date().timeIntervalSince(t0), response.contains("{") ? 1 : 0)
                 NSLog("[StructuredGenerator] ⚠️ Parse failed for conv %@", conversationId.uuidString.prefix(8) as CVarArg)
-                return
+                return .failed
             }
-
+            // ITER-075 step 1 (1.6) — an empty title or overview is no result:
+            // written as it is, it would blank the conversation just as the old
+            // backfills did.
             // Calendar event name has priority over LLM-generated title —
             // user's own naming ("Standup C") beats LLM theme
             // inference ("Discussing Project Updates And Marketing").
             // 2026-05-07 user report. Fix scoped to new conversations only;
             // pre-existing rows keep their LLM-generated titles per user spec.
-            conv.title = ConversationTitleResolver.resolve(
+            let resolvedTitle = ConversationTitleResolver.resolve(
                 calendarEventTitle: conv.calendarEventTitle,
                 llmTitle: parsed.title
             )
+            // The check is on the title that will be written, after the
+            // calendar's name has had its turn.
+            guard !resolvedTitle.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                  !parsed.overview.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                NSLog("[StructuredGenerator] ⚠️ conv %@ — empty title or overview in the answer", conversationId.uuidString.prefix(8) as CVarArg)
+                return .failed
+            }
+            conv.title = resolvedTitle
             conv.overview = parsed.overview
             conv.category = parsed.category
             conv.emoji = validateSFSymbol(parsed.icon)
@@ -402,7 +564,15 @@ final class StructuredGenerator: ObservableObject {
             conv.keyQuotesJSON    = Self.encodeStringArray(parsed.keyQuotes)
             conv.nextStepsJSON    = Self.encodeStringArray(parsed.nextSteps)
             conv.updatedAt = Date()
-            try? ctx.save()
+            // `written` only once the save went through; the embedding and the
+            // project alias below follow a saved result, never an unsaved one.
+            do {
+                try ctx.save()
+            } catch {
+                ctx.rollback()
+                NSLog("[StructuredGenerator] ❌ conv %@ result not saved — %@", conversationId.uuidString.prefix(8) as CVarArg, error.localizedDescription)
+                return .failed
+            }
                   NSLog("[StructuredGenerator] ✅ conv %@ — %.1fs, response %d chars, title %d chars, overview %d chars, decisions=%d actions=%d participants=%d quotes=%d next=%d topics=%d project=%d", conversationId.uuidString.prefix(8) as CVarArg, Date().timeIntervalSince(t0), response.count, parsed.title.count, parsed.overview.count, parsed.decisions?.count ?? 0, parsed.actionItems?.count ?? 0, parsed.participants?.count ?? 0, parsed.keyQuotes?.count ?? 0, parsed.nextSteps?.count ?? 0, parsed.topics?.count ?? 0, conv.primaryProject == nil ? 0 : 1)
 
             // Embed the now-finalized conversation so MetaChat can semantically retrieve
@@ -427,10 +597,14 @@ final class StructuredGenerator: ObservableObject {
             // popup that fires 8s after meeting stop always has the calendar
             // title in place. Dictations (non-meeting) skip the link entirely
             // there. Nothing to do here on the post-LLM path anymore.
+            return .written
         } catch {
             lastError = error.localizedDescription
             NSLog("[StructuredGenerator] ❌ conv %@ failed after %.1fs — %@", conversationId.uuidString.prefix(8) as CVarArg, Date().timeIntervalSince(t0), error.localizedDescription)
             NSLog("[StructuredGenerator] ❌ Failed: %@", error.localizedDescription)
+            // ITER-075 step 1 (1.5) — the service turning the run away is no
+            // failure of this conversation: it waits, uncounted.
+            return Self.isServiceUnavailable(error) ? .notNow : .failed
         }
     }
 
@@ -826,12 +1000,20 @@ final class StructuredGenerator: ObservableObject {
         // the same head+tail sandwich the local path uses, against the
         // proxy's own limit. Without it an hour-long meeting got HTTP 400 and
         // no title at all (2026-09-04).
-        try await callProAdvice(system: system,
-                                user: Self.headAndTail(user, limit: ChunkedCompletion.graphemeBudget(
-                                    for: user, unitLimit: LLMRequestBody.safePromptChars)),
-                                licenseKey: licenseKey,
-                                tier: Self.llmTier, serviceId: Self.llmServiceId,
-                                timeout: 30, label: "Structured")
+        do {
+            // ITER-075 step 1 (1.5) — the proxy is asked for an answer within
+            // 25 s, and past that says 503. So this 30-s wait runs out only when
+            // the proxy itself does not answer: the service's failure, not this
+            // conversation's (504).
+            return try await callProAdvice(system: system,
+                                           user: Self.headAndTail(user, limit: ChunkedCompletion.graphemeBudget(
+                                               for: user, unitLimit: LLMRequestBody.safePromptChars)),
+                                           licenseKey: licenseKey,
+                                           tier: Self.llmTier, serviceId: Self.llmServiceId,
+                                           timeout: 30, deadlineMs: 25_000, label: "Structured")
+        } catch let error as URLError where error.code == .timedOut {
+            throw ProcessingError.http(status: 504, message: "Structured proxy did not answer in 30 s")
+        }
     }
 
     /// Keep the beginning and the END of a transcript when it does not fit:
@@ -850,7 +1032,8 @@ final class StructuredGenerator: ObservableObject {
     /// for two days and left the founder guessing (2026-09-04).
     private func callProAdvice(system: String, user: String, licenseKey: String,
                                tier: LLMTier, serviceId: String,
-                               timeout: TimeInterval, label: String) async throws -> String {
+                               timeout: TimeInterval, deadlineMs: Int? = nil,
+                               label: String) async throws -> String {
         // The wire limit counts UTF-16 units. Everything above aims below it;
         // if a prompt still arrives over the line, say so plainly instead of
         // spending a call to be told "Prompt too long".
@@ -868,14 +1051,15 @@ final class StructuredGenerator: ObservableObject {
         request.timeoutInterval = timeout
 
         let body = LLMRequestBody.proAdviceBody(
-            system: system, user: user, tier: tier, serviceId: serviceId
+            system: system, user: user, tier: tier, serviceId: serviceId, deadlineMs: deadlineMs
         )
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
 
         let (data, response) = try await URLSession.shared.data(for: request)
         if let http = response as? HTTPURLResponse, http.statusCode != 200 {
-            throw ProcessingError.apiError(
-                "\(label) proxy HTTP \(http.statusCode)\(Self.proxyReason(data))")
+            throw ProcessingError.http(
+                status: http.statusCode,
+                message: "\(label) proxy HTTP \(http.statusCode)\(Self.proxyReason(data))")
         }
         struct ProResponse: Decodable { let text: String }
         let result = try JSONDecoder().decode(ProResponse.self, from: data)
@@ -895,8 +1079,8 @@ final class StructuredGenerator: ObservableObject {
         return raw.isEmpty ? "" : " — " + raw.prefix(200)
     }
 
-    // Internal (was private) — ITER-050 B1.1: ProjectAggregator must check
-    // access BEFORE wiping conversation fields it can't regenerate.
+    // Internal (was private) — ITER-050 B1.1: ProjectAggregator checks access
+    // before a pass that could otherwise change nothing.
     var hasLLMAccess: Bool {
         // ITER-039 — `LocalLLMService.isReady` is the third clause. Free
         // users with a downloaded + activated MLX model now get
@@ -905,6 +1089,32 @@ final class StructuredGenerator: ObservableObject {
         !settings.activeAPIKey.isEmpty
             || LicenseService.shared.isPro
             || LocalLLMService.shared.isReady
+    }
+
+    /// ITER-075 step 1 (1.6) — the cloud path alone: a key or Pro. The
+    /// backfills run only there (a pass of many prompts through the local
+    /// model froze a Mac, 2026-05-13), so they start only with it.
+    var hasCloudLLMAccess: Bool {
+        !settings.activeAPIKey.isEmpty || LicenseService.shared.isPro
+    }
+
+    /// ITER-075 step 1 (1.5) — a thrown error that says the service could not
+    /// take the run, which is no failure of this conversation: no network, no
+    /// key or a refused one, a missing model, a throttled or unavailable
+    /// service. The Pro proxy answers 503 for these, and passes a request it
+    /// could not run through as 4xx (since 2026-09-26). A timeout, a request
+    /// refused as it was, or an answer that could not be used is a failure.
+    nonisolated static func isServiceUnavailable(_ error: Error) -> Bool {
+        if let urlError = error as? URLError { return urlError.code != .timedOut }
+        guard let processing = error as? ProcessingError else { return false }
+        switch processing {
+        case .noAPIKey:
+            return true
+        case .http(let status, _):
+            return [401, 403, 404, 408, 429].contains(status) || status >= 500
+        case .apiError, .emptyResponse:
+            return false
+        }
     }
 
     /// Route system + user prompt through the local Phi-4 (or whichever

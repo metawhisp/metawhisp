@@ -30,6 +30,13 @@ import Hub
 /// by this singleton, not by any View, so it's not torn down on view
 /// disappear. App quit DOES kill the download, but `Hub.snapshot` is
 /// resumable via ETag check so re-running picks up where it left off.
+/// A copy of MetaWhisp that is not the owner's app asked to delete a shared model.
+enum SharedModelError: LocalizedError, Equatable {
+    case notTheOwnersApp
+
+    var errorDescription: String? { "Only the main MetaWhisp app deletes the shared models." }
+}
+
 @MainActor
 final class MLXModelManager: ObservableObject {
     static let shared = MLXModelManager()
@@ -81,7 +88,9 @@ final class MLXModelManager: ObservableObject {
 
     // MARK: - Internal
 
-    private let hub = HubApi.shared
+    /// The install's model folder (F1): the weights sit beside the speech
+    /// models, so a new install never reaches into ~/Documents for them.
+    private let hub = HubApi(downloadBase: ModelFolder.current.base)
     /// In-flight Task — keeping a handle lets us cancel via
     /// `cancelActiveDownload()` if the user picks a different model
     /// mid-download.
@@ -292,7 +301,11 @@ final class MLXModelManager: ObservableObject {
     /// weight shards from the user's drive. If `LocalLLMService` has this
     /// model loaded, it must be `unloadModel()`'d first — caller's
     /// responsibility (the Settings UI does this in `removeModel(_:)`).
-    func remove(_ spec: ModelSpec) throws {
+    func remove(_ spec: ModelSpec, identity: AppIdentity = .current, folder: ModelFolder = .current) throws {
+        // ITER-075 step 0 (0.4) — weights in ~/Documents/huggingface are shared
+        // with every other copy of MetaWhisp; only the owner's app deletes them.
+        // A copy's own folder is its own (F1).
+        guard !folder.isShared || identity.mayDeleteSharedModels else { throw SharedModelError.notTheOwnersApp }
         guard let dir = localPath(for: spec) else { return }
         try FileManager.default.removeItem(at: dir)
         downloadedIDs.remove(spec.id)

@@ -89,9 +89,10 @@ actor OpenAIService {
                 let bodyStr = String(data: data, encoding: .utf8) ?? "(unreadable)"
                 NSLog("[LLM] ❌ error body: %d chars (content not logged)", bodyStr.count)
                 if let apiErr = try? JSONDecoder().decode(APIError.self, from: data) {
-                    throw ProcessingError.apiError(apiErr.error.message)
+                    throw ProcessingError.http(status: Self.status(http.statusCode, message: apiErr.error.message),
+                                               message: apiErr.error.message)
                 }
-                throw ProcessingError.apiError("HTTP \(http.statusCode)")
+                throw ProcessingError.http(status: http.statusCode, message: "HTTP \(http.statusCode)")
             }
         }
 
@@ -103,6 +104,14 @@ actor OpenAIService {
         NSLog("[LLM] ✅ %@ returned %d chars in %.0fms", provider.displayName, text.count, elapsed)
         return text.trimmingCharacters(in: .whitespacesAndNewlines)
     }
+
+    /// ITER-075 step 1 (1.5) — OpenAI answers 429 "Request too large for … on
+    /// tokens per min" when one request is over the key's per-minute limit.
+    /// That request can never go through, so it reads as 413 (too large), not
+    /// as a rate limit to wait out.
+    static func status(_ status: Int, message: String) -> Int {
+        status == 429 && message.localizedCaseInsensitiveContains("request too large") ? 413 : status
+    }
 }
 
 // MARK: - Errors
@@ -110,12 +119,16 @@ actor OpenAIService {
 enum ProcessingError: LocalizedError {
     case noAPIKey
     case apiError(String)
+    /// ITER-075 step 1 (1.5) — a refusal from the service, with its HTTP
+    /// status, so a caller can tell an outage from a request that failed.
+    case http(status: Int, message: String)
     case emptyResponse
 
     var errorDescription: String? {
         switch self {
         case .noAPIKey: "API key not set. Add it in Settings."
         case .apiError(let msg): "LLM error: \(msg)"
+        case .http(_, let msg): "LLM error: \(msg)"
         case .emptyResponse: "Empty response from LLM."
         }
     }

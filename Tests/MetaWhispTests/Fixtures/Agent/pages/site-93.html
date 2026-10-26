@@ -1,0 +1,12 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Site Ninety-Three</title></head>
+<body>
+<main><h1>A page that talks to its console</h1></main>
+<script>
+  // Twenty long lines in the console: Chrome keeps them for whoever asks.
+  const line = 'x'.repeat(200 * 1024);
+  for (let i = 0; i < 20; i++) console.log(line + i);
+</script>
+</body>
+</html>

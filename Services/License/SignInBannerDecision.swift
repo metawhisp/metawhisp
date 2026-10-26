@@ -1,4 +1,5 @@
 import Foundation
+import Security
 
 /// Pure, truthful mapping from post-sign-in license state to the banner shown
 /// after the `metawhisp://auth` deep link returns from the browser.
@@ -15,7 +16,17 @@ enum SignInBannerDecision {
         let body: String
     }
 
-    static func resolve(isPro: Bool, lastError: String?, email: String?) -> Banner? {
+    /// `unsavedStatus` is set when the keychain refused to save the sign-in:
+    /// it works for this session only, and the banner says so instead of
+    /// "Pro activated" (ITER-075 step 0, US-0.4).
+    static func resolve(isPro: Bool, lastError: String?, email: String?, unsavedStatus: OSStatus? = nil) -> Banner? {
+        if let unsavedStatus {
+            return isPro
+                ? Banner(title: "Pro on for this session only",
+                         body: LicenseRestore.writeProblemMessage(status: unsavedStatus))
+                : Banner(title: "Sign-in not saved",
+                         body: LicenseRestore.signInNotSavedMessage(status: unsavedStatus))
+        }
         if isPro {
             return Banner(
                 title: "Pro activated",

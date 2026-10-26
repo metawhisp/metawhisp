@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Search 407</title></head>
+<body>
+<main>
+  <!-- ITER-076 stage 1: a search site drawn as the start page draws its own —
+       a text area that is a combobox in a GET form — whose results link to
+       two pages of jokes, six on one and four on the other. -->
+  <form action="/search" autocomplete="off" method="GET" role="search">
+    <textarea name="q" role="combobox" aria-label="Search" rows="1" autocomplete="off"></textarea>
+    <input type="submit" value="Search 407" aria-label="Search 407" role="button">
+  </form>
+  <p id="results"></p>
+  <ul id="links"></ul>
+</main>
+<script>
+  if (location.pathname === '/search') {
+    document.title = 'Results 407';
+    document.getElementById('results').textContent = 'Results for ' + (new URLSearchParams(location.search).get('q') || '');
+    for (const [href, words] of [['https://site-408.test/', 'Six jokes'], ['https://site-409.test/', 'Four jokes']]) {
+      const item = document.createElement('li');
+      const link = document.createElement('a');
+      link.href = href;
+      link.textContent = words;
+      item.appendChild(link);
+      document.getElementById('links').appendChild(item);
+    }
+  }
+</script>
+</body>
+</html>

@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Site Four Fifty-Six</title></head>
+<body>
+<main>
+  <!-- ITER-076 stage 7, review round 1 (C9): a demo form sent by GET: the
+       page after it carries every value the form held in its address. -->
+  <h1 id="title">Request a demo</h1>
+  <form id="demo" action="/thanks" method="get">
+    <label for="name">Full name</label><input id="name" name="name" autocomplete="name">
+    <label for="email">Work email</label><input id="email" name="email" type="email">
+    <button type="submit" id="send">Request a demo</button>
+  </form>
+  <p id="thanks" hidden>Thank you.</p>
+</main>
+<script>
+  if (location.pathname === '/thanks') {
+    document.getElementById('demo').remove();
+    document.getElementById('title').textContent = 'Thanks';
+    document.getElementById('thanks').hidden = false;
+  }
+</script>
+</body>
+</html>

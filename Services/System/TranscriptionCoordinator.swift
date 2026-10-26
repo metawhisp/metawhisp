@@ -1,5 +1,6 @@
 import AppKit
 import AVFoundation
+import Combine
 import Foundation
 import os
 
@@ -22,22 +23,22 @@ final class TranscriptionCoordinator: ObservableObject {
 
     private let recorder: any AudioSource
     /// The on-device WhisperKit model id currently loaded and ready (nil = none).
-    /// FREE-1/FREE-7: onboarding gates on "the SELECTED model is loaded", not just
-    /// "downloaded" or "some model loaded" — downloading Tiny then Large must load
-    /// Large, not silently keep Tiny.
-    @Published var loadedWhisperModelId: String? = nil
-    /// FREE-2: set true once a BYOK cloud key has validated against the provider,
-    /// so the onboarding gate reacts (an @AppStorage key write doesn't publish).
-    /// Onboarding-transient: onboarding has no provider switcher (so it can't go
-    /// stale there) and this flag is not consulted after onboarding completes.
-    @Published var cloudKeyValidated: Bool = false
-    var whisperEngine: WhisperKitEngine?
-    private let cloudEngine = CloudWhisperEngine()
+    /// Every loader records its model here: launch, the auto-load after a
+    /// download, a pick in Settings, an engine switch, the best-model swap.
+    @Published var loadedWhisperModelId: String? = nil {
+        didSet { refreshStatusLine() }
+    }
+    static let noModelLoaded = "No model loaded. Go to Settings to download one."
+    /// The on-device engine: WhisperKit in the app, a test's own in tests.
+    var whisperEngine: (any TranscriptionEngine)?
+    private let cloudEngine: any TranscriptionEngine
+    /// Opens System Settings at Privacy → Microphone.
+    private let openMicrophoneSettings: () -> Void
     private let textInserter: TextInsertionService
     private let soundService: SoundService
     private let settings: AppSettings
     var historyService: HistoryService?
-    var textProcessor: TextProcessor?
+    var textProcessor: (any TranscriptPostProcessor)?
     var correctionDictionary: CorrectionDictionary?
     var correctionMonitor: CorrectionMonitor?
     /// Optional. If set and AI Advice is enabled, each successful transcription
@@ -59,7 +60,7 @@ final class TranscriptionCoordinator: ObservableObject {
     /// spec://BACKLOG#C1.1
     weak var conversationGrouper: ConversationGrouper?
 
-    /// Optional. When voiceQuestionMode is active, the transcript is routed to ChatService
+    /// Optional. A voice question's transcript is routed to ChatService
     /// (as a voice question) instead of the clipboard.
     /// spec://BACKLOG#Phase6
     weak var chatService: ChatService?
@@ -69,34 +70,276 @@ final class TranscriptionCoordinator: ObservableObject {
     /// vault. No-op when sync isn't enabled.
     weak var obsidianExporter: ObsidianExporter?
 
-    /// True while user is holding Right ⌘ (long-press). Set by `startVoiceQuestion()` /
-    /// cleared by `stopVoiceQuestion()` handler after the transcript is sent.
-    var voiceQuestionMode: Bool = false
+    /// The voice question being recorded (ITER-079): set once its recording
+    /// starts, and taken by `stopAndTranscribe`, which carries it to the
+    /// transcript. Nil for a dictation.
+    private(set) var voiceQuestion: UUID?
+
+    /// The voice question being transcribed, and its task: closing or
+    /// replacing the question cancels it and frees the coordinator at once
+    /// (ITER-079 review).
+    private var voiceTranscription: (question: UUID, task: Task<Void, Never>)?
+
+    /// The island's state; `shared` in the app, a test's own in tests.
+    private let voiceQuestions: VoiceQuestionState
+
+    /// Who answers a voice question and says the answer (ITER-079): MetaChat
+    /// and its speech in the app. Tests pass their own, so no model is asked
+    /// and nothing is said out loud.
+    struct VoiceAnswerer {
+        /// The transcript, and the island's id for the question it answers:
+        /// an errand the question starts carries it (ITER-076 B2).
+        let ask: @Sendable (String, UUID) async -> ChatService.SendOutcome
+        let speak: (String) -> Void
+        let stopSpeaking: () -> Void
+    }
+
+    /// Set by tests; nil means MetaChat (`chatService`).
+    var voiceAnswerer: VoiceAnswerer?
+
+    private var answerer: VoiceAnswerer? {
+        if let voiceAnswerer { return voiceAnswerer }
+        guard let chat = chatService else { return nil }
+        return VoiceAnswerer(ask: { text, question in await chat.send(text, source: .voice(question: question)) },
+                             speak: { [weak chat] text in chat?.ttsService?.speak(text) },
+                             stopSpeaking: { [weak chat] in chat?.ttsService?.stop() })
+    }
+
+    /// How long a voice question waits for its answer before it ends in an
+    /// error (ITER-079). A stalled request already times out after 60 s a
+    /// round; this ends what nothing else ends.
+    var voiceAnswerLimit: Duration = .seconds(120)
+
+    /// Saves the audio of a failed transcription to the Recovery folder; tests
+    /// pass their own, so nothing is written to a real folder.
+    var saveRecoveryAudio: @MainActor ([Float]) -> URL? = { TranscriptionCoordinator.saveSamplesAsWav($0) }
 
     /// Source label for history items (set when switching audio source).
     var audioSourceLabel: String = "microphone"
 
-    /// Returns the active transcription engine based on settings.
-    /// Internal so meeting recording can reuse the same engine without duplicating logic.
+    /// C6 — the onboarding practice owns the microphone while its screen is
+    /// up; a dictation asks here first. Its refusal line goes when capture
+    /// comes back.
+    weak var captureArbiter: CaptureArbiter? {
+        didSet {
+            captureReturned = captureArbiter?.$practiceOwnsCapture.sink { [weak self] owns in
+                guard !owns, let self, lastError == CaptureArbiter.finishThePracticeFirst else { return }
+                lastError = nil
+            }
+        }
+    }
+    private var captureReturned: AnyCancellable?
+
+    /// The Pro proxy: Pro with its licence key, read at each ask. Tests pass their own.
+    private let proxyAvailable: @MainActor () -> Bool
+
+    /// A4 — whether the engine in use is the cloud one: cloud is chosen AND can be used — the Pro proxy, or the
+    /// user's own key for the chosen provider. Without either, the on-device engine transcribes, so dictation keeps
+    /// working when Pro ends; the stored choice stays, so cloud comes back with Pro. Read at each ask. Whatever
+    /// depends on which engine runs reads this or `activeEngine`, never the stored choice.
+    var usesCloud: Bool {
+        settings.transcriptionEngine == "cloud"
+            && CloudWhisperEngine.hasCredential(settings: settings, proxyAvailable: proxyAvailable())
+    }
+
+    /// Cloud is chosen but can't be used, so the on-device engine transcribes in its place until Pro or the
+    /// user's own key comes — what Settings says under its engine picker.
+    var onDeviceStandsInForCloud: Bool {
+        settings.transcriptionEngine == "cloud" && !usesCloud
+    }
+
+    /// The engine in use (`usesCloud`). Meetings, the live meeting advisor and the practice take it too.
     var activeEngine: (any TranscriptionEngine)? {
-        settings.transcriptionEngine == "cloud" ? cloudEngine : whisperEngine
+        usesCloud ? cloudEngine : whisperEngine
+    }
+
+    /// A4 — how long a recording waits for the engine in use while it is being got ready. Pro ending or coming back
+    /// changes which engine runs, and the on-device one is made, loaded or downloaded only after that change — so a
+    /// recording stopped meanwhile finds it not ready. The wait ends sooner once the readiness owner says nothing is
+    /// getting it ready; past it the audio goes to the Recovery folder, never away. Tests set their own.
+    var engineWaitLimit: Duration = .seconds(180)
+    private static let engineWaitStep: Duration = .milliseconds(200)
+
+    /// The engine in use once it can transcribe, waited for while it is being got ready, at most `limit`. Nil when it
+    /// is not ready by then, when nothing is getting it ready, or when the task waiting is cancelled (a voice question
+    /// closed with Esc) while it is not ready: an engine ready at the look after a cancel still comes back, so a caller
+    /// whose work can be called off asks after the wait whether it was. Read again at each look, so Pro ending or
+    /// coming back during the wait takes the engine that works then.
+    func engineWhenReady(within limit: Duration) async -> (any TranscriptionEngine)? {
+        let clock = ContinuousClock()
+        let deadline = clock.now.advanced(by: limit)
+        while true {
+            if let engine = activeEngine, engine.isModelLoaded { return engine }
+            guard !Task.isCancelled, isGettingEngineReady, clock.now < deadline else { return nil }
+            try? await Task.sleep(for: Self.engineWaitStep)
+        }
+    }
+
+    /// A4 — a meeting's way to the engine in use: asked at every chunk and every retry of its finalization, so Pro
+    /// ending or coming back while the meeting is transcribed takes the engine that works then — never the one the
+    /// meeting began on, which the engine switch unloads under it. Waiting for an engine being got ready is shared by
+    /// the whole meeting: at most `limit` in all; past it a chunk with no engine fails and its audio is kept.
+    func engineSource(waitingAtMost limit: Duration) -> @MainActor () async -> (any TranscriptionEngine)? {
+        var left = limit
+        return { [weak self] in
+            guard let self else { return nil }
+            let clock = ContinuousClock()
+            let start = clock.now
+            let engine = await self.engineWhenReady(within: left)
+            left = max(.zero, left - (clock.now - start))
+            return engine
+        }
+    }
+
+    /// Whether the on-device engine in use is on its way: standing in for cloud and not made yet — the engine switch
+    /// makes it — or made, with the readiness owner's line anything but "No model loaded": a download's progress, or
+    /// no line while its model loads. (The cloud engine is always ready when in use.)
+    private var isGettingEngineReady: Bool {
+        guard whisperEngine != nil else { return onDeviceStandsInForCloud }
+        return engineStatusLine() != Self.noModelLoaded
+    }
+
+    /// A recording no engine could take (A4): where its audio was kept, then the engine's own line.
+    static func notTranscribed(savedAt url: URL, _ line: String) -> String {
+        "Not transcribed — audio saved to \(url.path). \(line)"
     }
 
     private static let debounceInterval: TimeInterval = 0.03
     private var lastToggleTime: Date = .distantPast
 
+    /// Tests pass their own `cloudEngine`, `openMicrophoneSettings` and
+    /// `voiceQuestions`, so they reach neither the network, System Settings nor
+    /// the island on screen.
     init(
         recorder: any AudioSource,
-        whisperEngine: WhisperKitEngine?,
+        whisperEngine: (any TranscriptionEngine)?,
         textInserter: TextInsertionService,
         soundService: SoundService,
-        settings: AppSettings
+        settings: AppSettings,
+        voiceQuestions: VoiceQuestionState? = nil,
+        cloudEngine: any TranscriptionEngine = CloudWhisperEngine(),
+        openMicrophoneSettings: @escaping () -> Void = {
+            if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone") {
+                NSWorkspace.shared.open(url)
+            }
+        },
+        proxyAvailable: @escaping @MainActor () -> Bool = {
+            LicenseService.shared.isPro && LicenseService.shared.licenseKey != nil
+        }
     ) {
+        self.proxyAvailable = proxyAvailable
         self.recorder = recorder
         self.whisperEngine = whisperEngine
         self.textInserter = textInserter
         self.soundService = soundService
         self.settings = settings
+        self.cloudEngine = cloudEngine
+        self.openMicrophoneSettings = openMicrophoneSettings
+        let voiceQuestions = voiceQuestions ?? .shared
+        self.voiceQuestions = voiceQuestions
+        voiceQuestions.onQuestionClosed = { [weak self] question in
+            self?.voiceQuestionClosed(question)
+        }
+    }
+
+    /// The popover's red line for a missing microphone, the slot that already
+    /// exists: never answered, or a standing no.
+    static let microphoneNotAllowedYet = "🎤 Microphone is off — press RECORD or Right ⌘ to allow it"
+    static let microphoneDeniedAtLaunch = "🎤 Microphone denied — press Right ⌘ to retry (opens Settings)"
+    static let microphoneDenied = "🎤 Microphone access denied — open System Settings > Privacy > Microphone"
+
+    /// Lines that describe a condition standing now rather than something
+    /// that just happened.
+    private static let statusLines: Set<String> = [microphoneNotAllowedYet, microphoneDeniedAtLaunch,
+                                                   microphoneDenied, noModelLoaded]
+
+    private static let preparingModelPrefix = "Preparing the model… "
+
+    /// A4 — the line while the speech model downloads and nothing can transcribe yet: its progress, in the slot the
+    /// line already has.
+    static func preparingModel(_ progress: Double) -> String {
+        preparingModelPrefix + "\(Int((progress * 100).rounded()))%"
+    }
+
+    /// A standing line — a fixed one, or the download's progress at any percent — is replaced by a recompute.
+    private static func isStanding(_ line: String) -> Bool {
+        statusLines.contains(line) || line.hasPrefix(preparingModelPrefix)
+    }
+
+    /// The engine's standing line, from the readiness owner (`ModelPreparer`):
+    /// the download's progress while one runs, nil when it is ready or loading.
+    var engineStatusLine: () -> String? = { nil }
+
+    /// Step-1 review #11 — the one red line, recomputed from every standing
+    /// condition in a fixed order: the microphone first, then the engine. It
+    /// used to be whatever was written last, so a model loading after the
+    /// microphone line cleared it though the microphone was still off. A line
+    /// about an event — a dictation's error — stays until the next recording.
+    func refreshStatusLine() {
+        if let current = lastError, !Self.isStanding(current) { return }
+        let line = microphoneLine ?? engineStatusLine()
+        if lastError != line { lastError = line }
+    }
+
+    private var microphoneLine: String? {
+        if recorder.hasPermission { return nil }
+        return recorder.permissionUndetermined ? Self.microphoneNotAllowedYet : Self.microphoneDeniedAtLaunch
+    }
+
+    /// Launch reads the microphone permission and never asks for it (PRD P0 1):
+    /// the first record press does. The warm-up touches the input node, which
+    /// can bring the prompt up as well, so it runs only on a grant.
+    func prepareMicrophoneAtLaunch(warmUp: () -> Void) {
+        if recorder.hasPermission {
+            warmUp()
+            NSLog("[MetaWhisp] Microphone: granted")
+        } else if recorder.permissionUndetermined {
+            NSLog("[MetaWhisp] Microphone: never asked — the first record press asks")
+        } else {
+            NSLog("[MetaWhisp] Microphone: denied — macOS holds a standing decision, so only System Settings > Privacy > Microphone can change it")
+        }
+        refreshStatusLine()
+    }
+
+    /// The prompt the first record press brings up — launch no longer does.
+    private let microphonePrompt = MicrophonePrompt()
+
+    private func askForMicrophone() {
+        askForMicrophone(PermissionAsk())
+    }
+
+    /// The same one prompt for a button that asks for the microphone itself —
+    /// the onboarding's "Allow microphone" (D3): a record press while it is up
+    /// asks nothing more, and the red line follows the answer.
+    func askForMicrophone(_ ask: PermissionAsk, answered: @escaping @MainActor (Bool) -> Void = { _ in }) {
+        microphonePrompt.ask(recorder, ask) { [weak self] granted in
+            self?.refreshStatusLine()
+            answered(granted)
+        }
+    }
+
+    /// Loads `variant` into `engine` and records `modelId` — only while
+    /// `engine` is still the on-device engine (step-1 review #7). The load is
+    /// long (the CoreML weights), and an engine switch can replace the engine
+    /// meanwhile: the replaced one's late success or failure must not speak
+    /// for the live one. Returns whether it recorded; throws only the live
+    /// engine's failure.
+    func load(_ modelId: String, variant: String, into engine: any TranscriptionEngine) async throws -> Bool {
+        do {
+            try await engine.loadModel(variant, progressHandler: nil)
+        } catch {
+            guard whisperEngine === engine else {
+                NSLog("[Coordinator] a replaced engine failed to load %@ — ignored", modelId)
+                return false
+            }
+            throw error
+        }
+        guard whisperEngine === engine else {
+            NSLog("[Coordinator] a replaced engine finished loading %@ — not recorded", modelId)
+            return false
+        }
+        loadedWhisperModelId = modelId
+        return true
     }
 
     /// Toggle with translation — called by Right ⌥ shortcut.
@@ -148,42 +391,98 @@ final class TranscriptionCoordinator: ObservableObject {
     }
 
     /// Right ⌘ long-press → start voice question recording. Routed to MetaChat on release.
+    /// A recording that cannot start ends the question in an error (ITER-079).
     /// spec://BACKLOG#Phase6
     func startVoiceQuestion() {
-        guard stage == .idle else {
+        // A voice question still being transcribed is replaced — the new one
+        // closes it, which frees the coordinator. A dictation is never cut
+        // short: while one records, the long press does nothing; while one is
+        // transcribed, an idle island says so — one that shows a question is
+        // left alone (ITER-079 review).
+        guard stage == .idle || voiceTranscription != nil else {
             NSLog("[Coordinator] Voice question: busy (stage=\(stage)) — skipping")
+            if stage != .recording, !voiceQuestions.isVisible {
+                // The island adds "Hold Right ⌘ to try again".
+                let question = voiceQuestions.startListening()
+                voiceQuestions.failed(question, "Still transcribing your dictation.", retryByVoice: true)
+            }
             return
         }
-        voiceQuestionMode = true
-        VoiceQuestionState.shared.startListening()
+        let question = voiceQuestions.startListening()
         NSLog("[Coordinator] 🎤 Voice question mode ON")
-        startRecording()
+        // Any answer still being read aloud stops before the microphone starts,
+        // so the new question never records it (ITER-079 review).
+        answerer?.stopSpeaking()
+        if let failure = startRecording() {
+            NSLog("[Coordinator] 🎤 voice question could not record")
+            voiceQuestions.failed(question, failure)
+            return
+        }
+        voiceQuestion = question
     }
 
     /// Right ⌘ release after long-press → stop + transcribe + send to ChatService.
     func stopVoiceQuestion() {
-        guard stage == .recording, voiceQuestionMode else {
+        guard stage == .recording, voiceQuestion != nil else {
             NSLog("[Coordinator] Voice question stop called but not in voice question recording state")
-            voiceQuestionMode = false
             return
         }
         NSLog("[Coordinator] 🎤 Voice question mode STOPPING")
-        VoiceQuestionState.shared.transcribing()
         stopAndTranscribe()
-        // voiceQuestionMode flag reset inside the transcription completion path.
     }
 
-    private func startRecording() {
+    /// Esc closed the question, or a newer one replaced it (ITER-079). What it
+    /// still has running stops now: its recording — the audio is dropped — or
+    /// its transcription. The coordinator is free at once; the transcription's
+    /// own end, when it comes, drops the transcript. (Its speech stops on Esc in
+    /// the island's window, and before any new recording starts.)
+    private func voiceQuestionClosed(_ question: UUID) {
+        if voiceQuestion == question, stage == .recording {
+            voiceQuestion = nil
+            _ = recorder.stop()
+            AppDelegate.shared?.dictationDidEnd()
+            translateNext = false
+            stage = .idle
+            NSLog("[Coordinator] 🎤 voice question closed while recording — microphone stopped, audio dropped")
+        } else if let running = voiceTranscription, running.question == question {
+            voiceTranscription = nil
+            running.task.cancel()
+            stage = .idle
+            NSLog("[Coordinator] 🎤 voice question closed while transcribing — transcription cancelled")
+        }
+    }
+
+    /// Whether `question` was closed or replaced; a dictation never is. Its
+    /// closing already freed the coordinator, so a closed question's
+    /// transcription leaves `stage` alone.
+    private func isClosed(_ question: UUID?) -> Bool {
+        guard let question else { return false }
+        return !voiceQuestions.isOpen(question)
+    }
+
+    /// Starts the microphone; on failure, says why in words for the voice
+    /// island (a dictation shows `lastError`).
+    @discardableResult
+    private func startRecording() -> String? {
+        if let refusal = captureArbiter?.refusal {
+            translateNext = false
+            lastError = refusal
+            NSLog("[Coordinator] not recording — the practice has the microphone")
+            return refusal
+        }
+
         // Check microphone permission before starting
         guard recorder.hasPermission else {
             translateNext = false
-            lastError = "🎤 Microphone access denied — open System Settings > Privacy > Microphone"
+            if recorder.permissionUndetermined {
+                askForMicrophone()
+                return "Allow the microphone, then try again."
+            }
+            lastError = Self.microphoneDenied
             NSLog("[Coordinator] ❌ Mic permission denied, cannot record")
             soundService.playError()
-            if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone") {
-                NSWorkspace.shared.open(url)
-            }
-            return
+            openMicrophoneSettings()
+            return "Microphone access is off. Allow MetaWhisp in System Settings → Privacy & Security → Microphone."
         }
 
         // ITER-026 v2 — if a meeting is recording, signal AppDelegate to pause
@@ -200,6 +499,7 @@ final class TranscriptionCoordinator: ObservableObject {
             lastError = nil
             soundService.playStart()
             NSLog("[Coordinator] ✅ Recording started (translate=%@)", translateNext ? "YES" : "NO")
+            return nil
         } catch {
             translateNext = false
             lastError = error.localizedDescription
@@ -208,11 +508,17 @@ final class TranscriptionCoordinator: ObservableObject {
             // Failed before any audio → resume meeting mic immediately so we
             // don't leave a dangling pause window.
             AppDelegate.shared?.dictationDidEnd()
+            return "Couldn't start the microphone: \(error.localizedDescription)"
         }
     }
 
     private func stopAndTranscribe() {
         let samples = recorder.stop()
+        // The voice question this recording was for, if any, goes with its
+        // audio to the transcript (ITER-079) — whichever control stopped it.
+        let question = voiceQuestion
+        voiceQuestion = nil
+        if let question { voiceQuestions.transcribing(question) }
         // ITER-026 v2 — resume meeting mic capture (if a meeting was running
         // it was paused by `dictationDidStart` in `startRecording`). Once
         // recorder.stop() returns, dictation mic is off, so it's safe.
@@ -226,8 +532,17 @@ final class TranscriptionCoordinator: ObservableObject {
 
         // Discard accidental triggers (< 0.3s of audio = 4800 samples at 16kHz)
         guard samples.count > 4800 else {
+            // The recorder judged that the microphone delivered nothing: that is what the user is told — not "too
+            // short", and not nothing, which is how the owner's headset dictations of 2026-10-13 ended.
+            if let micError = recorder.micHealthError {
+                NSLog("[Coordinator] ❌ the microphone delivered nothing (%d samples)", samples.count)
+                lastError = micError
+                abortVoiceQuestion(question, reason: micError)
+                stage = .idle
+                return
+            }
             NSLog("[Coordinator] Too short (%d samples), discarding", samples.count)
-            abortVoiceQuestionIfActive(reason: "Too short — try holding longer.")
+            abortVoiceQuestion(question, reason: "Too short — try holding longer.", retryByVoice: true)
             stage = .idle
             return
         }
@@ -245,44 +560,101 @@ final class TranscriptionCoordinator: ObservableObject {
             NSLog("[Coordinator] ❌ recording was DIGITAL SILENCE (%d samples, RMS=0) — the mic delivered no audio",
                   samples.count)
             lastError = AudioRecordingService.deadMicMessage
-            abortVoiceQuestionIfActive(reason: AudioRecordingService.deadMicMessage)
+            abortVoiceQuestion(question, reason: AudioRecordingService.deadMicMessage)
             stage = .idle
             return
         }
         if rms < 0.0003 {
             NSLog("[Coordinator] Audio too quiet (RMS=%.5f), skipping transcription", rms)
-            abortVoiceQuestionIfActive(reason: "Audio too quiet — speak closer to the mic.")
+            abortVoiceQuestion(question, reason: "Audio too quiet — speak closer to the mic.", retryByVoice: true)
             stage = .idle
             return
         }
 
-        Task {
-            await transcribe(samples: samples, shouldTranslate: shouldTranslate, rms: rms)
+        // The microphone stopped delivering before the end: what it captured is still transcribed, and the user is
+        // told the rest was lost — before, and along with, whatever becomes of the text.
+        let micLoss = recorder.micHealthError
+        if let micLoss {
+            NSLog("[Coordinator] ⚠️ the microphone stopped delivering before the end (%d samples kept)", samples.count)
+            lastError = micLoss
         }
+
+        let transcription = Task {
+            await transcribe(samples: samples, shouldTranslate: shouldTranslate, rms: rms, question: question,
+                             micLoss: micLoss)
+            if let question, voiceTranscription?.question == question { voiceTranscription = nil }
+        }
+        if let question { voiceTranscription = (question, transcription) }
     }
 
-    /// Voice-question mode aborts must reset BOTH the flag (so the next
-    /// short-tap dictation doesn't get routed to MetaChat) AND the popup
-    /// state (so the floating answer window doesn't sit there forever in
-    /// `.listening` / `.transcribing`). 2026-05-01 user report:
-    /// "нажимаю долго но не успеваю сказать → попап зависает; следующий
-    /// короткий tap вставляется в этот VoiceBlock". Pair-reset fixes both
-    /// in one helper called from every early-return path.
-    private func abortVoiceQuestionIfActive(reason: String) {
-        guard voiceQuestionMode else { return }
+    /// Every early return of a voice question ends it in an error, so the
+    /// island never sits in `.listening` / `.transcribing` — the 2026-05-01
+    /// report of a long press with nothing said that left the popup hanging.
+    /// The next dictation is a dictation: the question travels with its own
+    /// audio (ITER-079), so no flag is left behind to reset.
+    /// `retryByVoice`: asking again by voice can fix it (ITER-078).
+    private func abortVoiceQuestion(_ question: UUID?, reason: String, retryByVoice: Bool = false) {
+        guard let question else { return }
         NSLog("[Coordinator] 🎤 voice question aborted: %@", reason)
-        voiceQuestionMode = false
-        VoiceQuestionState.shared.failed(reason)
+        voiceQuestions.failed(question, reason, retryByVoice: retryByVoice)
     }
 
-    private func transcribe(samples: [Float], shouldTranslate: Bool, rms: Float) async {
-        guard let currentEngine = activeEngine, currentEngine.isModelLoaded else {
-            lastError = settings.transcriptionEngine == "cloud" ? "API key not set for cloud transcription" : "No model loaded. Go to Settings to download one."
-            abortVoiceQuestionIfActive(reason: "Transcription engine not ready.")
+    /// MetaChat answers the question; its island shows and speaks the answer,
+    /// or ends in an error — for every outcome, and after `voiceAnswerLimit`
+    /// with none (ITER-079).
+    private func answerVoiceQuestion(_ question: UUID, _ transcript: String) {
+        voiceQuestions.thinking(question, transcript: transcript)
+        guard let answerer else {
+            NSLog("[Coordinator] ⚠️ chatService nil — voice question dropped")
+            voiceQuestions.failed(question, "Chat not available")
+            return
+        }
+        let ask = answerer.ask
+        voiceQuestions.answer(question, transcript: transcript, within: voiceAnswerLimit,
+                              ask: { text in await ask(text, question) },
+                              speak: settings.ttsVoiceQuestions ? answerer.speak : nil)
+    }
+
+    /// `question`: the voice question this audio is for, or nil for a dictation.
+    /// An outcome of a recording whose microphone stopped delivering, said after that loss rather than instead of it.
+    static func withMicLoss(_ micLoss: String?, _ message: String) -> String {
+        micLoss.map { "\($0) \(message)" } ?? message
+    }
+
+    private func transcribe(samples: [Float], shouldTranslate: Bool, rms: Float, question: UUID?,
+                            micLoss: String? = nil) async {
+        func report(_ message: String) { lastError = Self.withMicLoss(micLoss, message) }
+        // A question closed before its audio went out costs no transcription.
+        if isClosed(question) {
+            NSLog("[Coordinator] 🎤 voice question closed before transcription — audio dropped")
+            return
+        }
+        // A4 — the engine in use once it can transcribe. Pro ending during the
+        // recording leaves cloud out of reach while the on-device engine is
+        // still being made, loaded or downloaded: the recording waits for it
+        // (`engineWaitLimit`). These samples used to be dropped right here.
+        let readyEngine = await engineWhenReady(within: engineWaitLimit)
+        // Closed with Esc while it waited: nothing of it is kept and nothing is
+        // transcribed (ITER-079) — whether or not the engine came back, as it
+        // does when it became ready at the moment of the Esc (Codex P2, 1.4.0).
+        if isClosed(question) {
+            NSLog("[Coordinator] 🎤 voice question closed while its engine was got ready — audio dropped")
+            return
+        }
+        guard let currentEngine = readyEngine else {
+            // Only the on-device engine is ever unready — cloud is in use only
+            // with what it needs (A4): its line, the download's progress or
+            // no model, never a missing key. The audio is kept in the Recovery
+            // folder and the line says where. Said after a microphone loss, as
+            // every outcome of this recording is.
+            let line = engineStatusLine() ?? Self.noModelLoaded
+            let recoveryURL = saveRecoveryAudio(samples)
+            report(recoveryURL.map { Self.notTranscribed(savedAt: $0, line) } ?? line)
+            abortVoiceQuestion(question, reason: "Transcription engine not ready.")
             stage = .idle
             soundService.playError()
             NSLog("[Coordinator] ❌ Engine not ready")
-            NSLog("[Coordinator] engine=%@, %d samples (%.1fs) dropped — %@", settings.transcriptionEngine, samples.count, Double(samples.count) / 16000.0, lastError ?? "?")
+            NSLog("[Coordinator] engine=%@ (chosen %@), %d samples (%.1fs) %@ — %@", usesCloud ? "cloud" : "on-device", settings.transcriptionEngine, samples.count, Double(samples.count) / 16000.0, recoveryURL == nil ? "LOST (the recovery save failed)" : "kept in Recovery", line)
             return
         }
 
@@ -297,6 +669,12 @@ final class TranscriptionCoordinator: ObservableObject {
             // Whisper echo them back verbatim on silence (2026-08-06).
             let promptWords = TranscriptionLanguageResolver.enginePromptWords(language: lang)
             let result = try await currentEngine.transcribe(audioSamples: samples, language: lang, promptWords: promptWords)
+            // Closed with Esc while it was transcribed: nothing of it is kept —
+            // not the clipboard, not the history, not an answer (ITER-079).
+            if isClosed(question) {
+                NSLog("[Coordinator] 🎤 voice question closed during transcription — transcript dropped")
+                return
+            }
 
             var trimmed = result.text.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !trimmed.isEmpty else {
@@ -306,8 +684,8 @@ final class TranscriptionCoordinator: ObservableObject {
                 // pressing ⌘ produced nothing. Most common cause is Cloud
                 // Whisper / on-device engine returning a blank string when
                 // it can't decode the audio. Suggest retry.
-                lastError = "Transcription returned empty — try again louder/closer."
-                abortVoiceQuestionIfActive(reason: "Transcription returned empty.")
+                report("Transcription returned empty — try again louder/closer.")
+                abortVoiceQuestion(question, reason: "Transcription returned empty.", retryByVoice: true)
                 stage = .idle
                 return
             }
@@ -323,8 +701,8 @@ final class TranscriptionCoordinator: ObservableObject {
                 // silently discard 30-60s of speech.
                 Self.saveSuspectToClipboard(trimmed)
                 lastResult = result
-                lastError = "Looked like a hallucination — text saved to clipboard, ⌘V to paste anyway."
-                abortVoiceQuestionIfActive(reason: "Filtered as hallucination.")
+                report("Looked like a hallucination — text saved to clipboard, ⌘V to paste anyway.")
+                abortVoiceQuestion(question, reason: "Filtered as hallucination.", retryByVoice: true)
                 stage = .idle
                 return
             }
@@ -352,8 +730,8 @@ final class TranscriptionCoordinator: ObservableObject {
                 // option even on quiet-audio false positives.
                 Self.saveSuspectToClipboard(trimmed)
                 lastResult = result
-                lastError = "Audio too quiet, but text saved to clipboard — ⌘V to paste anyway."
-                abortVoiceQuestionIfActive(reason: "Audio too quiet for voice question.")
+                report("Audio too quiet, but text saved to clipboard — ⌘V to paste anyway.")
+                abortVoiceQuestion(question, reason: "Audio too quiet for voice question.", retryByVoice: true)
                 stage = .idle
                 return
             }
@@ -371,13 +749,12 @@ final class TranscriptionCoordinator: ObservableObject {
                 NSLog("[Coordinator] 🎚️ Low-confidence metrics (%@) — saved to clipboard, not pasted", reason)
                 Self.saveSuspectToClipboard(trimmed)
                 lastResult = result
-                lastError = "Low transcription confidence — text saved to clipboard, ⌘V to paste anyway."
-                abortVoiceQuestionIfActive(reason: "Low transcription confidence.")
+                report("Low transcription confidence — text saved to clipboard, ⌘V to paste anyway.")
+                abortVoiceQuestion(question, reason: "Low transcription confidence.", retryByVoice: true)
                 stage = .idle
                 return
             }
 
-            lastResult = result
             NSLog("[Coordinator] ✅ lang=%@, %.2fs, %d chars", result.language ?? "?", result.processingTime, result.text.count)
 
             // AUD-011 — establish ONE normalized transcript value, used for
@@ -387,6 +764,7 @@ final class TranscriptionCoordinator: ObservableObject {
             var finalText = trimmed
 
             let needsProcess = (textProcessor?.needsProcessing ?? false) || shouldTranslate
+            var postProcessingError: String?
             if let processor = textProcessor, needsProcess {
                 stage = .postProcessing
                 do {
@@ -398,9 +776,18 @@ final class TranscriptionCoordinator: ObservableObject {
                 } catch {
                     NSLog("[Coordinator] ⚠️ Post-processing failed: %@", error.localizedDescription)
                     NSLog("[Coordinator] continuing with UNPROCESSED text (%d chars, translate=%@) — no translation applied", finalText.count, shouldTranslate ? "YES" : "NO")
-                    lastError = error.localizedDescription
+                    postProcessingError = error.localizedDescription
                 }
             }
+            // Or closed while it was post-processed: still nothing is kept —
+            // the result and a post-processing error are recorded only after
+            // this check (ITER-079 review).
+            if isClosed(question) {
+                NSLog("[Coordinator] 🎤 voice question closed during post-processing — transcript dropped")
+                return
+            }
+            lastResult = result
+            if let postProcessingError { report(postProcessingError) }
 
             // 2026-05-28: brand-name auto-correct (BrandGlossary) BEFORE the user
             // dictionary apply so an explicit user override still wins. Only
@@ -424,7 +811,9 @@ final class TranscriptionCoordinator: ObservableObject {
             // so Library, Obsidian export and downstream AI extraction all match it.
             // processedText carries the normalized string whenever it differs from the
             // raw transcript (displayText falls back to the raw text otherwise).
-            if let hs = historyService {
+            // A voice question is no dictation: MetaChat keeps it (ITER-076
+            // stage 3, № 2; the ITER-075 plan, step 4.2).
+            if question == nil, let hs = historyService {
                 let item = hs.save(result)
                 NSLog("[Coordinator] history %@ (translatedTo=%@, %d chars)", item == nil ? "NOT saved" : "saved", shouldTranslate ? settings.translateTo : "-", finalText.count)
                 NSLog("[Coordinator] History save: %@", item == nil ? "SKIPPED (store degraded or save failed)" : "OK")
@@ -447,21 +836,9 @@ final class TranscriptionCoordinator: ObservableObject {
             }
 
             // Voice question mode (Phase 6) — route to MetaChat instead of clipboard paste.
-            if voiceQuestionMode {
-                voiceQuestionMode = false
+            if let question {
                 NSLog("[Coordinator] 🎤 Voice question transcript → MetaChat (%d chars)", finalText.count)
-                VoiceQuestionState.shared.thinking(transcript: finalText)
-                if let chat = chatService {
-                    // F1.9 — keep the handle so Esc (dismiss) can cancel the
-                    // in-flight generation instead of letting it run blind.
-                    VoiceQuestionState.shared.activeSendTask = Task {
-                        await chat.send(finalText, source: .voice)
-                        NSLog("[Coordinator] 🎤 voice question send returned (chatError=%@)", chat.lastError ?? "none")
-                    }
-                } else {
-                    NSLog("[Coordinator] ⚠️ chatService nil — voice question dropped")
-                    VoiceQuestionState.shared.failed("Chat not available")
-                }
+                answerVoiceQuestion(question, finalText)
                 // Skip clipboard / paste for voice questions.
             } else if settings.autoSubmit {
                 let outcome = textInserter.insertResult(text: finalText)
@@ -470,13 +847,13 @@ final class TranscriptionCoordinator: ObservableObject {
                     // Auto-learn corrections after successful paste.
                     correctionMonitor?.startMonitoring(pastedText: finalText)
                 case .clipboardOnly:
-                    lastError = "Copied to clipboard — press ⌘V to paste"
+                    report("Copied to clipboard — press ⌘V to paste")
                 case .clipboardFailed:
                     // Honest message — clipboard write actually failed (race
                     // with another process owning the pasteboard). User
                     // manually pressing ⌘V would paste nothing. Tell them
                     // where to recover from.
-                    lastError = "Clipboard write failed — recover from Library → History"
+                    report("Clipboard write failed — recover from Library → History")
                 }
             }
 
@@ -491,21 +868,26 @@ final class TranscriptionCoordinator: ObservableObject {
             stage = .idle
 
         } catch {
+            // A question closed with Esc keeps nothing, its audio included.
+            if isClosed(question) {
+                NSLog("[Coordinator] 🎤 voice question closed; its failed transcription is dropped")
+                return
+            }
             // Cloud Whisper / on-device engine failed (network blip, 502, etc).
             // Save raw audio to a recovery folder so the user can re-submit
             // later — losing 30-60 seconds of speech to a transient HTTP
             // glitch is unacceptable for a dictation tool.
-            let recoveryURL = Self.saveSamplesAsWav(samples)
+            let recoveryURL = saveRecoveryAudio(samples)
             let baseMsg = error.localizedDescription
             if let url = recoveryURL {
-                lastError = "\(baseMsg) — audio saved to \(url.path)"
+                report("\(baseMsg) — audio saved to \(url.path)")
                 NSLog("[Coordinator] ❌ Transcription failed: %@ — audio recovery: %@",
                       baseMsg, url.path)
             } else {
-                lastError = baseMsg
+                report(baseMsg)
                 NSLog("[Coordinator] ❌ Transcription failed: %@ (recovery save also failed)", baseMsg)
             }
-            abortVoiceQuestionIfActive(reason: "Transcription failed: \(baseMsg)")
+            abortVoiceQuestion(question, reason: "Transcription failed: \(baseMsg)")
             soundService.playError()
             stage = .idle
         }
@@ -532,13 +914,13 @@ final class TranscriptionCoordinator: ObservableObject {
     /// `~/Library/Application Support/MetaWhisp/Recovery/`, created on demand.
     /// Audio and, since 2026-09-08, a transcript the library refused both land
     /// here — one folder the user can be pointed at.
-    static func recoveryDirectory() -> URL? {
+    static func recoveryDirectory(identity: AppIdentity = .current, applicationSupport: URL? = nil) -> URL? {
         let fm = FileManager.default
-        guard let appSupport = fm.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else {
+        guard let appSupport = applicationSupport
+                ?? fm.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else {
             return nil
         }
-        let dir = appSupport
-            .appendingPathComponent("MetaWhisp", isDirectory: true)
+        let dir = identity.supportDirectory(applicationSupport: appSupport)
             .appendingPathComponent("Recovery", isDirectory: true)
         do {
             try fm.createDirectory(at: dir, withIntermediateDirectories: true)

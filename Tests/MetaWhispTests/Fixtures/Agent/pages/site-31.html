@@ -1,0 +1,14 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Site Thirty-One</title></head>
+<body>
+<main>
+  <h1>Profile</h1>
+  <x-field id="native"><span slot="caption">Password</span></x-field>
+</main>
+<script>
+  document.getElementById('native').attachShadow({ mode: 'open' }).innerHTML =
+    '<label for="q"><slot name="caption"></slot></label><input id="q" value="SECRET-SLOT">';
+</script>
+</body>
+</html>

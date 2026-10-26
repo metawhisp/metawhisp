@@ -101,4 +101,429 @@ final class SelectionTranslateClipboardTests: XCTestCase {
         borrow.giveBack()
         XCTAssertEqual(pasteboard.string(forType: .string), "original")
     }
+
+    private let targetPID: pid_t = 4101
+    private let telegramType = NSPasteboard.PasteboardType("TelegramTextPboardType")
+
+    private func borrow(from bundleID: String = "ru.keepcoder.Telegram",
+                        readText: (() -> String?)? = nil) -> SelectionTranslator.ClipboardBorrow {
+        SelectionTranslator.ClipboardBorrow(pasteboard: pasteboard, targetPID: targetPID,
+                                             targetBundleIdentifier: bundleID, readText: readText)
+    }
+
+    /// The native composer's copy handler clears, declares rich types, then
+    /// publishes its representations. This private pasteboard exercises those
+    /// AppKit calls without opening an app or reading the general pasteboard.
+    private func publishRichSelection(_ text: String = "A sample draft",
+                                      includeCustomPayload: Bool = true) {
+        let before = pasteboard.changeCount
+        pasteboard.clearContents()
+        pasteboard.declareTypes([.rtf, telegramType], owner: nil)
+        if includeCustomPayload {
+            XCTAssertTrue(pasteboard.setData(Data("{}".utf8), forType: telegramType))
+        }
+        XCTAssertTrue(pasteboard.setData(Data("{\\rtf1 A sample draft}".utf8), forType: .rtf))
+        XCTAssertTrue(pasteboard.setString(text, forType: .string))
+        XCTAssertEqual(pasteboard.changeCount - before, 2,
+                       "One rich copy publishes through two ownership changes")
+        XCTAssertEqual(pasteboard.string(forType: .string), text)
+        XCTAssertTrue(pasteboard.types?.contains(.rtf) == true)
+        XCTAssertTrue(pasteboard.types?.contains(telegramType) == true)
+    }
+
+    func testNativeTelegramRichSelectionIsAcceptedAndReturnsTheBorrowedClipboard() {
+        writeString("original")
+        let borrow = borrow()
+        borrow.begin()
+        publishRichSelection()
+
+        let copy = borrow.readCopiedText { targetPID }
+        XCTAssertTrue(copy.owned, "A native rich copy must reach translation")
+        XCTAssertEqual(copy.text, "A sample draft")
+        borrow.giveBack()
+        XCTAssertEqual(pasteboard.string(forType: .string), "original")
+    }
+
+    func testNativeTelegramRichSelectionWithoutCustomPayloadIsAccepted() {
+        writeString("original")
+        let borrow = borrow()
+        borrow.begin()
+        publishRichSelection(includeCustomPayload: false)
+
+        let copy = borrow.readCopiedText { targetPID }
+        XCTAssertTrue(copy.owned, "The rich copy declares its custom type even without encoded data")
+        XCTAssertEqual(copy.text, "A sample draft")
+        borrow.giveBack()
+        XCTAssertEqual(pasteboard.string(forType: .string), "original")
+    }
+
+    func testGenericDoublePublicationIsRejectedWithoutReplacingIt() {
+        writeString("original")
+        let borrow = borrow(from: "com.example.Editor")
+        borrow.begin()
+        writeString("first copy")
+        writeString("newer copy")
+
+        XCTAssertFalse(borrow.readCopiedText { targetPID }.owned)
+        borrow.giveBack()
+        XCTAssertEqual(pasteboard.string(forType: .string), "newer copy")
+    }
+
+    func testRichMarkerFromAnotherAppDoesNotGrantClipboardOwnership() {
+        writeString("original")
+        let borrow = borrow(from: "com.example.Editor")
+        borrow.begin()
+        publishRichSelection()
+
+        XCTAssertFalse(borrow.readCopiedText { targetPID }.owned)
+        borrow.giveBack()
+        XCTAssertEqual(pasteboard.string(forType: .string), "A sample draft")
+    }
+
+    func testTelegramDoublePublicationWithoutBothRichTypesIsRejected() {
+        for types: [NSPasteboard.PasteboardType] in [[.rtf], [telegramType], [.string]] {
+            writeString("original")
+            let borrow = borrow()
+            borrow.begin()
+            let before = pasteboard.changeCount
+            pasteboard.clearContents()
+            pasteboard.declareTypes(types, owner: nil)
+            XCTAssertTrue(pasteboard.setString("another copy", forType: .string))
+            XCTAssertEqual(pasteboard.changeCount - before, 2)
+
+            XCTAssertFalse(borrow.readCopiedText { targetPID }.owned)
+            borrow.giveBack()
+            XCTAssertEqual(pasteboard.string(forType: .string), "another copy")
+        }
+    }
+
+    func testAnotherCopyAfterTelegramRichPublicationIsRejected() {
+        writeString("original")
+        let borrow = borrow()
+        borrow.begin()
+        publishRichSelection()
+        writeString("newer user copy")
+
+        XCTAssertFalse(borrow.readCopiedText { targetPID }.owned)
+        borrow.giveBack()
+        XCTAssertEqual(pasteboard.string(forType: .string), "newer user copy")
+    }
+
+    func testTelegramWithoutACopyIsRejectedAndReturnsTheOriginalClipboard() {
+        writeString("original")
+        let borrow = borrow()
+        borrow.begin()
+
+        XCTAssertFalse(borrow.readCopiedText { targetPID }.owned)
+        borrow.giveBack()
+        XCTAssertEqual(pasteboard.string(forType: .string), "original")
+    }
+
+    func testSinglePublicationFromAnOrdinaryEditorRemainsAccepted() {
+        writeString("original")
+        let borrow = borrow(from: "com.example.Editor")
+        borrow.begin()
+        writeString("A plain draft")
+
+        let copy = borrow.readCopiedText { targetPID }
+        XCTAssertTrue(copy.owned)
+        XCTAssertEqual(copy.text, "A plain draft")
+        borrow.giveBack()
+        XCTAssertEqual(pasteboard.string(forType: .string), "original")
+    }
+
+    func testSinglePublicationFromTelegramWithoutRichTypesRemainsAccepted() {
+        writeString("original")
+        let borrow = borrow()
+        borrow.begin()
+        writeString("A plain draft")
+
+        let copy = borrow.readCopiedText { targetPID }
+        XCTAssertTrue(copy.owned)
+        XCTAssertEqual(copy.text, "A plain draft")
+        borrow.giveBack()
+        XCTAssertEqual(pasteboard.string(forType: .string), "original")
+    }
+
+    func testSelectionFromAChangedAppIsRejectedWithoutTakingItsClipboard() {
+        writeString("original")
+        let borrow = borrow()
+        borrow.begin()
+        writeString("A copy from the other app")
+
+        XCTAssertFalse(borrow.readCopiedText { targetPID + 1 }.owned)
+        borrow.giveBack()
+        XCTAssertEqual(pasteboard.string(forType: .string), "A copy from the other app")
+    }
+
+    func testSelectionIsRejectedIfTheClipboardChangesWhileItsTextIsRead() {
+        writeString("original")
+        let borrow = borrow(readText: { [self] in
+            let copied = pasteboard.string(forType: .string)
+            writeString("A newer user copy")
+            return copied
+        })
+        borrow.begin()
+        writeString("A draft")
+
+        XCTAssertFalse(borrow.readCopiedText { targetPID }.owned)
+        borrow.giveBack()
+        XCTAssertEqual(pasteboard.string(forType: .string), "A newer user copy")
+    }
+
+    func testSelectionIsRejectedIfTheTargetChangesWhileItsTextIsRead() {
+        writeString("original")
+        var currentPID = targetPID
+        let borrow = borrow(readText: { [self] in
+            currentPID += 1
+            return pasteboard.string(forType: .string)
+        })
+        borrow.begin()
+        writeString("A draft")
+
+        XCTAssertFalse(borrow.readCopiedText { currentPID }.owned)
+        borrow.giveBack()
+        XCTAssertEqual(pasteboard.string(forType: .string), "A draft")
+    }
+
+    func testUserCopyAfterRichSelectionAcknowledgementIsPreserved() {
+        writeString("original")
+        let borrow = borrow()
+        borrow.begin()
+        publishRichSelection()
+        XCTAssertTrue(borrow.readCopiedText { targetPID }.owned)
+
+        writeString("A newer user copy")
+        borrow.giveBack()
+        XCTAssertEqual(pasteboard.string(forType: .string), "A newer user copy")
+    }
+
+    func testSharedTransactionDoesNotAcceptTheRichDoublePublicationByDefault() {
+        writeString("original")
+        let transaction = PasteboardReplacementTransaction(pasteboard: pasteboard)
+        transaction.beginSelectionCopy()
+        publishRichSelection()
+
+        XCTAssertFalse(transaction.acknowledgeSelectionCopy())
+        transaction.restoreIfOwned()
+        XCTAssertEqual(pasteboard.string(forType: .string), "A sample draft")
+    }
+
+    private func copiedDraft(_ text: String = "A draft") -> SelectionTranslator.ClipboardBorrow {
+        let borrow = borrow(from: "com.example.Editor")
+        borrow.begin()
+        writeString(text)
+        XCTAssertTrue(borrow.readCopiedText { targetPID }.owned)
+        return borrow
+    }
+
+    private func paste(_ text: String, using borrow: SelectionTranslator.ClipboardBorrow,
+                       frontmostPID: (() -> pid_t?)? = nil,
+                       waitBeforePaste: () async -> Void = {}, postPaste: () -> Bool,
+                       settlePaste: () async -> Void = {}) async -> Bool {
+        await borrow.pasteTranslation(
+            text, frontmostPID: frontmostPID ?? { self.targetPID },
+            waitBeforePaste: waitBeforePaste, postPaste: postPaste, settlePaste: settlePaste)
+    }
+
+    func testAUserCopyDuringModelWaitIsNotOverwrittenByTheTranslation() async {
+        writeString("original")
+        let borrow = copiedDraft()
+        await Task.yield()
+        writeString("A newer user copy")
+        var posts = 0
+
+        let sent = await paste("Translated draft", using: borrow, postPaste: { posts += 1; return true })
+
+        XCTAssertFalse(sent)
+        XCTAssertEqual(posts, 0)
+        XCTAssertEqual(pasteboard.string(forType: .string), "A newer user copy")
+    }
+
+    func testAChangedAppDuringModelWaitPreventsWritingAndPastingTheTranslation() async {
+        writeString("original")
+        let borrow = copiedDraft()
+        var posts = 0
+
+        let sent = await paste("Translated draft", using: borrow,
+                               frontmostPID: { self.targetPID + 1 },
+                               postPaste: { posts += 1; return true })
+
+        XCTAssertFalse(sent)
+        XCTAssertEqual(posts, 0)
+        XCTAssertEqual(pasteboard.string(forType: .string), "original")
+    }
+
+    func testAUserCopyBeforeThePasteEventIsPreservedAndCancelsThePaste() async {
+        writeString("original")
+        let borrow = copiedDraft()
+        var posts = 0
+        var prepared = false
+
+        let sent = await paste("Translated draft", using: borrow, waitBeforePaste: {
+            prepared = true
+            XCTAssertEqual(self.pasteboard.string(forType: .string), "Translated draft")
+            self.writeString("A newer user copy")
+        }, postPaste: { posts += 1; return true })
+
+        XCTAssertTrue(prepared)
+        XCTAssertFalse(sent)
+        XCTAssertEqual(posts, 0)
+        XCTAssertEqual(pasteboard.string(forType: .string), "A newer user copy")
+    }
+
+    func testAChangedAppBeforeThePasteEventCancelsThePasteAndRestoresTheClipboard() async {
+        writeString("original")
+        let borrow = copiedDraft()
+        var currentPID = targetPID
+        var posts = 0
+
+        let sent = await paste("Translated draft", using: borrow,
+                               frontmostPID: { currentPID },
+                               waitBeforePaste: { currentPID += 1 },
+                               postPaste: { posts += 1; return true })
+
+        XCTAssertFalse(sent)
+        XCTAssertEqual(posts, 0)
+        XCTAssertEqual(pasteboard.string(forType: .string), "original")
+    }
+
+    func testCancellationBeforeThePasteEventRestoresWithoutPosting() async {
+        writeString("original")
+        let borrow = copiedDraft()
+        var posts = 0
+        let operation = Task { @MainActor in
+            await paste("Translated draft", using: borrow, waitBeforePaste: {
+                withUnsafeCurrentTask { $0?.cancel() }
+            }, postPaste: { posts += 1; return true })
+        }
+
+        let sent = await operation.value
+        XCTAssertFalse(sent)
+        XCTAssertEqual(posts, 0)
+        XCTAssertEqual(pasteboard.string(forType: .string), "original")
+    }
+
+    func testARejectedPasteEventDoesNotReportSuccess() async {
+        writeString("original")
+        let borrow = copiedDraft()
+        var attempted = false
+        var settled = false
+
+        let sent = await paste("Translated draft", using: borrow,
+                               postPaste: { attempted = true; return false },
+                               settlePaste: { settled = true })
+
+        XCTAssertTrue(attempted)
+        XCTAssertFalse(sent)
+        XCTAssertFalse(settled)
+        XCTAssertEqual(pasteboard.string(forType: .string), "original")
+    }
+
+    func testTheOriginalClipboardReturnsOnlyAfterThePasteHasSettled() async {
+        writeImageLike()
+        let originalImage = pasteboard.data(forType: .png)
+        let borrow = copiedDraft()
+        var events: [String] = []
+        var returned = false
+
+        let sent = await paste("Translated draft", using: borrow, waitBeforePaste: {
+            events.append("prepared")
+            XCTAssertEqual(self.pasteboard.string(forType: .string), "Translated draft")
+        }, postPaste: {
+            events.append("posted")
+            XCTAssertEqual(self.pasteboard.string(forType: .string), "Translated draft")
+            return true
+        }, settlePaste: {
+            await Task.yield()
+            XCTAssertFalse(returned, "The operation must await the paste's settling period")
+            XCTAssertEqual(self.pasteboard.string(forType: .string), "Translated draft")
+            events.append("settled")
+        })
+        returned = true
+
+        XCTAssertTrue(sent)
+        XCTAssertEqual(events, ["prepared", "posted", "settled"])
+        XCTAssertEqual(pasteboard.data(forType: .png), originalImage)
+        XCTAssertNil(pasteboard.string(forType: .string))
+    }
+
+    func testCancellationAfterPostingStillWaitsBeforeRestoringTheClipboard() async {
+        writeString("original")
+        let borrow = copiedDraft()
+        var settled = false
+        let operation = Task { @MainActor in
+            await paste("Translated draft", using: borrow, postPaste: {
+                withUnsafeCurrentTask { $0?.cancel() }
+                return true
+            }, settlePaste: {
+                XCTAssertTrue(Task.isCancelled)
+                await Task.yield()
+                XCTAssertEqual(self.pasteboard.string(forType: .string), "Translated draft")
+                settled = true
+            })
+        }
+
+        let sent = await operation.value
+        XCTAssertTrue(sent, "Cancellation cannot retract a paste event that was already posted")
+        XCTAssertTrue(settled)
+        XCTAssertEqual(pasteboard.string(forType: .string), "original")
+    }
+
+    func testWhitespaceAroundTheCopiedSelectionDoesNotLoseOwnership() async {
+        writeString("original")
+        let borrow = copiedDraft("  A draft\n")
+        var posts = 0
+
+        let sent = await paste("Translated draft", using: borrow, postPaste: { posts += 1; return true })
+
+        XCTAssertTrue(sent)
+        XCTAssertEqual(posts, 1)
+        XCTAssertEqual(pasteboard.string(forType: .string), "original")
+    }
+
+    func testAnUnacknowledgedCopyCannotBeReplacedByATranslation() async {
+        writeString("original")
+        let borrow = borrow()
+        borrow.begin()
+        var posts = 0
+
+        let sent = await paste("Translated draft", using: borrow, postPaste: { posts += 1; return true })
+
+        XCTAssertFalse(sent)
+        XCTAssertEqual(posts, 0)
+        XCTAssertEqual(pasteboard.string(forType: .string), "original")
+    }
+
+    func testAnotherHoldCannotBorrowUntilCleanupAndTheNextHoldCanProceed() {
+        writeString("original")
+        var gate = SelectionTranslator.OperationGate()
+        var snapshots = 0
+        func start() -> SelectionTranslator.ClipboardBorrow? {
+            guard gate.begin() else { return nil }
+            snapshots += 1
+            let borrow = borrow()
+            borrow.begin()
+            return borrow
+        }
+
+        let first = start()
+        XCTAssertNotNil(first)
+        writeString("A draft")
+        XCTAssertTrue(first!.readCopiedText { targetPID }.owned)
+        let whileBusy = start()
+        XCTAssertNil(whileBusy, "Another hold must not snapshot the borrowed selection")
+        XCTAssertEqual(snapshots, 1)
+        XCTAssertEqual(pasteboard.string(forType: .string), "A draft")
+        first?.giveBack()
+        gate.finish()
+        XCTAssertEqual(pasteboard.string(forType: .string), "original")
+
+        let next = start()
+        XCTAssertNotNil(next, "Completion must admit the next hold")
+        XCTAssertEqual(snapshots, 2)
+        next?.giveBack()
+        gate.finish()
+        XCTAssertEqual(pasteboard.string(forType: .string), "original")
+    }
 }

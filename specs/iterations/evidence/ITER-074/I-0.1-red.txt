@@ -1,0 +1,23 @@
+ITER-074 I-0.1 — red run, 2026-09-24 15:24 CEST, stubs from phase A
+command: swift test --filter "AutomationPermissionTests|DiaScriptTests"
+
+AutomationPermissionTests testAnyOtherStatusIsKeptAsAFailure passed (0.001 seconds).
+AutomationPermissionTests testNoErrorMeansAllowed failed (0.573 seconds).
+AutomationPermissionTests testNotPermittedMeansDenied failed (0.000 seconds).
+AutomationPermissionTests testProcessNotFoundMeansTheBrowserIsNotRunning failed (0.000 seconds).
+AutomationPermissionTests testWouldRequireConsentMeansAskTheUser failed (0.000 seconds).
+DiaScriptTests testCloseTabScript failed (0.000 seconds).
+DiaScriptTests testExecuteEscapesTheIDs failed (0.000 seconds).
+DiaScriptTests testExecuteEscapesTheJavaScript failed (0.000 seconds).
+DiaScriptTests testExecuteScript failed (0.000 seconds).
+DiaScriptTests testFrontActiveTabScript failed (0.000 seconds).
+DiaScriptTests testIsLoadingScript failed (0.000 seconds).
+DiaScriptTests testOnlyWebURLsCanBeOpened failed (0.000 seconds).
+DiaScriptTests testOpenTabScript failed (0.000 seconds).
+DiaScriptTests testOpeningANonWebURLProducesNoScript passed (0.000 seconds).
+DiaScriptTests testParsingTheWindowAndTabIDs failed (0.001 seconds).
+DiaScriptTests testQuotingEscapesBackslashAndDoubleQuote failed (0.000 seconds).
+DiaScriptTests testQuotingEscapesLineBreaksAndTabs failed (0.000 seconds).
+DiaScriptTests testTheTimeoutIsWrittenIntoTheScript failed (0.000 seconds).
+
+	 Executed 18 tests, with 20 failures (0 unexpected) in 0.578 (0.581) seconds

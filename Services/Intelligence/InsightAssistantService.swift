@@ -63,6 +63,28 @@ final class InsightAssistantService: ObservableObject {
         context.bounded().allEntries.map { .init(id: $0.id, text: $0.text) }
     }
 
+    /// The relevance gate. A property only so a test can see what the gate is
+    /// asked; the app keeps this default.
+    var relevanceGate: @MainActor (_ context: String, _ licenseKey: String) async -> GateClient.Verdict = { context, licenseKey in
+        await GateClient.call(context: context, purpose: .proactive,
+                              serviceId: InsightAssistantService.llmServiceId,
+                              licenseKey: licenseKey)
+    }
+
+    /// What the relevance gate is shown: the app, its window, what is on it.
+    /// Until 2026-10-20 it was also shown the last hour's window titles and,
+    /// as topics not to repeat, the texts of the last five cards — and read
+    /// both as the present: in the owner's log that day 262 of 298 fires
+    /// scored exactly 0.95, 95 reasons cited a "recent topic", and "currently
+    /// in a Telegram chat" fired from Safari, Preview and Arc. Repeats are
+    /// stopped after the model, by `acceptCandidate`'s dedup.
+    static func gateContext(appName: String, windowTitle: String?, ocr: String) -> String {
+        """
+        \(appName) — \(windowTitle ?? "")
+        OCR: \(String(ocr.prefix(2000)))
+        """
+    }
+
     /// What the last `evaluate` cost and did. Read by the caller straight after
     /// the call and written to the run's metrics row.
     ///
@@ -113,18 +135,13 @@ final class InsightAssistantService: ObservableObject {
         // skip unless the gate scores >= 0.65. Fail-open on errors so a
         // gate outage doesn't silently drop real signals. Most contexts
         // are uneventful — this is the primary cost-reduction lever.
-        let gateContext = """
-        \(appName) — \(windowTitle ?? "")
-        OCR: \(String(ocr.prefix(2000)))
-        Activity: \(activitySummary)
-        """
+        // It is shown the screen as it is now, nothing else — see
+        // `gateContext`. The activity summary and the recent cards still go
+        // to the model below, which writes the card.
         let gateStartedAt = Date()
-        let gate = await GateClient.call(
-            context: gateContext,
-            purpose: .proactive,
-            recentTopics: recentInsights.prefix(5).map { $0.body },
-            serviceId: Self.llmServiceId,
-            licenseKey: licenseKey
+        let gate = await relevanceGate(
+            Self.gateContext(appName: appName, windowTitle: windowTitle, ocr: ocr),
+            licenseKey
         )
         tally.gateMilliseconds = Int(Date().timeIntervalSince(gateStartedAt) * 1000)
         tally.gateScore = gate.score
@@ -212,8 +229,10 @@ final class InsightAssistantService: ObservableObject {
     }
 
     /// Shared acceptance gate for BOTH paths (investigation + legacy single
-    /// pass): confidence floor → dedup window → remember + return.
-    private func acceptCandidate(_ insight: ExtractedInsight) -> ExtractedInsight? {
+    /// pass): confidence floor → dedup window → remember + return. Since the
+    /// relevance gate stopped seeing recent cards (2026-10-20), this is where
+    /// a repeat is stopped; internal so a test can hold it to that.
+    func acceptCandidate(_ insight: ExtractedInsight) -> ExtractedInsight? {
         // Confidence floor — the LLM's own confidence acts as a soft gate.
         guard insight.confidence >= minConfidence else {
             NSLog("[Insight] dropped — confidence %.2f below floor %.2f: %@",

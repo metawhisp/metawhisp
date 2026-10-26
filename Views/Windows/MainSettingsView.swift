@@ -23,6 +23,8 @@ struct MainSettingsView: View {
     // ITER-054 — Deepgram key draft (commit on ⏎/Save, not per keystroke)
     @State private var deepgramKeyDraft = ""
     @State private var geminiKeyDraft = ""
+    /// The browser did not open the account page: the link is shown, with Copy.
+    @State private var accountLinkShown = false
 
     // Tab selection — single column scroll per tab beats the previous two-column wall
     // (1500-line settings was hard to scan).
@@ -30,14 +32,20 @@ struct MainSettingsView: View {
 
     /// ITER-056 — 5 tabs, one product vertical each (founder-approved mockup
     /// 2026-07-15): a key lives next to the feature it powers; Integrations
-    /// holds external services only.
+    /// holds external services only. ITER-076 stage 8b (owner decision 8.3):
+    /// a 6th, Agent — the browser agent's switch, what it sends and where,
+    /// and the browser it uses.
     enum SettingsTab: String, CaseIterable, Identifiable {
         case general = "General"
         case dictation = "Dictation"
         case meetings = "Meetings"
         case brain = "Second Brain"
         case integrations = "Integrations"
+        case agent = "Agent"
         var id: String { rawValue }
+
+        /// The tabs Settings shows (U1): Agent only with the Ultra switch on.
+        static func shown(ultra: Bool) -> [SettingsTab] { ultra ? allCases : allCases.filter { $0 != .agent } }
     }
 
     /// Max width of the content + tab column — native-app pattern (System Settings,
@@ -76,7 +84,7 @@ struct MainSettingsView: View {
         HStack(spacing: 0) {
             Spacer(minLength: 0)
             HStack(spacing: 6) {
-                ForEach(SettingsTab.allCases) { tab in
+                ForEach(SettingsTab.shown(ultra: UltraFeatures.isOn())) { tab in
                     tabButton(tab)
                 }
             }
@@ -132,8 +140,12 @@ struct MainSettingsView: View {
         case .brain:
             VStack(spacing: MW.sp12) {
                 screenContextSection      // Screen Intelligence
-                twoColumn(memoriesSection, adviceSection)
-                proactiveSection
+                if UltraFeatures.isOn() {
+                    twoColumn(memoriesSection, adviceSection)   // U1b — AI Advice
+                } else {
+                    memoriesSection
+                }
+                if UltraFeatures.isOn() { proactiveSection }   // U1 — the screen hints
                 dailySummarySection
                 weeklyPatternsSection
                 voiceQuestionSection
@@ -144,6 +156,10 @@ struct MainSettingsView: View {
                 calendarSection
                 obsidianSyncSection
                 mcpSection
+            }
+        case .agent:
+            VStack(spacing: MW.sp12) {
+                agentSection
             }
         }
     }
@@ -193,6 +209,10 @@ struct MainSettingsView: View {
                 engineButton("On-device", value: "ondevice", subtitle: "WhisperKit · Metal GPU")
                 engineButton("Cloud", value: "cloud", subtitle: license.isPro ? "Pro · Groq Whisper" : "API · OpenAI or Groq")
             }
+            if let note = Self.engineNote(onDeviceStandsInForCloud:
+                                            AppDelegate.shared?.coordinator.onDeviceStandsInForCloud == true) {
+                Text(note).font(MW.monoSm).foregroundStyle(MW.textMuted)
+            }
 
             if settings.transcriptionEngine == "ondevice" {
                 Text("MODEL").font(MW.monoSm).foregroundStyle(MW.textMuted).padding(.top, MW.sp4)
@@ -219,6 +239,11 @@ struct MainSettingsView: View {
         .padding(MW.sp16)
         .frame(maxWidth: .infinity, alignment: .topLeading)
         .mwCard(radius: MW.rMedium, elevation: .raised)
+    }
+
+    /// A4 — cloud chosen but out of reach: the one quiet line under the picker. No control is added.
+    static func engineNote(onDeviceStandsInForCloud: Bool) -> String? {
+        onDeviceStandsInForCloud ? "On-device is used until Pro or your own key is set." : nil
     }
 
     private func engineButton(_ label: String, value: String, subtitle: String) -> some View {
@@ -728,6 +753,25 @@ struct MainSettingsView: View {
 
     // MARK: - Account
 
+    /// D6 — Free: Get Pro opens the site's account page (sign in or create the account, then the plans); the
+    /// link is shown when the browser does not open.
+    private var getProButton: some View {
+        HStack(spacing: MW.sp8) {
+            Button {
+                accountLinkShown = !AccountPage.open()
+            } label: {
+                Text("GET PRO")
+                    .font(MW.mono)
+                    .foregroundStyle(.black)
+                    .padding(.horizontal, MW.sp16)
+                    .padding(.vertical, MW.sp4)
+                    .background(MW.idle)
+            }
+            .buttonStyle(.plain)
+            Text("$30 a year").font(MW.monoSm).foregroundStyle(MW.textMuted)
+        }
+    }
+
     private var accountSection: some View {
         VStack(alignment: .leading, spacing: MW.sp8) {
             Text("ACCOUNT").blocksLabel()
@@ -748,8 +792,10 @@ struct MainSettingsView: View {
                                 .padding(.vertical, 2)
                                 .background(MW.idle)
                         }
-                        Text(license.plan == "annual" ? "Annual plan" : "Monthly plan")
-                            .font(MW.monoSm).foregroundStyle(MW.textMuted)
+                        // A2 — the billing period from the session answer; none known, no line.
+                        if let plan = LicenseService.planLabel(interval: license.billingInterval) {
+                            Text(plan).font(MW.monoSm).foregroundStyle(MW.textMuted)
+                        }
                         if let date = license.renewalDate {
                             let formatter = { () -> DateFormatter in let f = DateFormatter(); f.dateStyle = .medium; return f }()
                             if license.cancelAtPeriodEnd {
@@ -776,42 +822,27 @@ struct MainSettingsView: View {
                     Text("Free plan")
                         .font(MW.monoSm).foregroundStyle(MW.textMuted)
 
-                    Button {
-                        NSWorkspace.shared.open(URL(string: "https://metawhisp.com/account/")!)
-                    } label: {
-                        Text("UPGRADE TO PRO")
-                            .font(MW.mono)
-                            .foregroundStyle(.black)
-                            .padding(.horizontal, MW.sp16)
-                            .padding(.vertical, MW.sp4)
-                            .background(MW.idle)
-                    }
-                    .buttonStyle(.plain)
-                    .padding(.top, MW.sp4)
+                    getProButton.padding(.top, MW.sp4)
 
                     Button("Sign out") { license.signOut() }
                         .font(MW.monoSm).foregroundStyle(MW.textMuted).buttonStyle(.plain)
                 }
             } else {
-                // Not signed in
+                // Not signed in: buy on the site, or sign in to the Pro bought there.
                 VStack(alignment: .leading, spacing: MW.sp4) {
-                    Text("Sign in to activate Pro features.")
+                    Text("Free plan")
                         .font(MW.monoSm).foregroundStyle(MW.textMuted)
-
-                    Button {
-                        NSWorkspace.shared.open(URL(string: "https://metawhisp.com/account/")!)
-                    } label: {
-                        Text("SIGN IN")
-                            .font(MW.mono)
-                            .foregroundStyle(MW.textPrimary)
-                            .padding(.horizontal, MW.sp16)
-                            .padding(.vertical, MW.sp4)
-                            .frame(maxWidth: .infinity)
-                            .overlay(RoundedRectangle(cornerRadius: MW.rSmall, style: .continuous).stroke(MW.border, lineWidth: 0.5))
-                            .contentShape(Rectangle())
+                    getProButton.padding(.top, MW.sp4)
+                    // In Settings' own type, as "Show onboarding" below it — the onboarding's link is set in SF Pro.
+                    Button { accountLinkShown = !AccountPage.open() } label: {
+                        Text("Already have Pro? Sign in").font(MW.monoSm).foregroundStyle(MW.textSecondary)
                     }
                     .buttonStyle(.plain)
                 }
+            }
+
+            if accountLinkShown {
+                AccountLinkFallback()
             }
 
             if license.isActivating {
@@ -826,7 +857,7 @@ struct MainSettingsView: View {
             }
 
             Button {
-                OnboardingWindowController().show()
+                AppDelegate.shared?.showOnboarding()
             } label: {
                 Text("Show onboarding")
                     .font(MW.monoSm).foregroundStyle(MW.textMuted)
@@ -1175,7 +1206,8 @@ struct MainSettingsView: View {
             guard response == .OK, let url = panel.url else { return }
             // Copy to App Support so file persists
             let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
-            let soundsDir = appSupport.appendingPathComponent("MetaWhisp/Sounds", isDirectory: true)
+            let soundsDir = AppIdentity.current.supportDirectory(applicationSupport: appSupport)
+                .appendingPathComponent("Sounds", isDirectory: true)
             try? FileManager.default.createDirectory(at: soundsDir, withIntermediateDirectories: true)
             let dest = soundsDir.appendingPathComponent("\(role)_\(url.lastPathComponent)")
             try? FileManager.default.removeItem(at: dest)
@@ -1594,12 +1626,7 @@ struct MainSettingsView: View {
                 screenContextAppList
 
                 GlassDivider()
-                toggleRow("Realtime task detection", isOn: $settings.realtimeScreenReactionEnabled)
-                if settings.realtimeScreenReactionEnabled {
-                    Text("Catches commitments in your chats (\"I'll send it tomorrow\") and auto-completes tasks it sees you finish. Messengers, mail and work browser tabs only. Max 30 checks/hour. Needs Pro, a local model, or your API key.")
-                        .font(MW.monoSm).foregroundStyle(MW.textMuted)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
+                if UltraFeatures.isOn() { realtimeTaskDetectionRow }   // U1
                 // ITER-057.1 — promotion loop opt-in (default off, like the
                 // rest of proactive notifications).
                 toggleRow("Notify when a task is promoted", isOn: $settings.taskPromotionNotificationsEnabled)
@@ -1659,6 +1686,18 @@ struct MainSettingsView: View {
         .padding(MW.sp16)
         .frame(maxWidth: .infinity, alignment: .topLeading)
         .mwCard(radius: MW.rMedium, elevation: .raised)
+    }
+
+    /// Realtime task detection (ITER-006): the reactor's switch and what it does — built only with the Ultra switch on
+    /// (U1), as the reactor runs only then.
+    @ViewBuilder
+    private var realtimeTaskDetectionRow: some View {
+        toggleRow("Realtime task detection", isOn: $settings.realtimeScreenReactionEnabled)
+        if settings.realtimeScreenReactionEnabled {
+            Text("Catches commitments in your chats (\"I'll send it tomorrow\") and auto-completes tasks it sees you finish. Messengers, mail and work browser tabs only. Max 30 checks/hour. Needs Pro, a local model, or your API key.")
+                .font(MW.monoSm).foregroundStyle(MW.textMuted)
+                .fixedSize(horizontal: false, vertical: true)
+        }
     }
 
     /// ITER-053.1 — the one-click promise. Runs on the main actor against the
@@ -1721,7 +1760,7 @@ struct MainSettingsView: View {
                 Text("Reads recent Apple Notes via AppleScript. First run will prompt for Automation permission.")
                     .font(MW.monoSm).foregroundStyle(MW.textMuted)
                     .fixedSize(horizontal: false, vertical: true)
-                scanNowButton { await AppDelegate.shared?.appleNotesReader.scanNow() }
+                scanNowButton { await AppDelegate.shared?.appleNotesReader.scanNow(ask: PermissionAsk()) }
             }
         }
         .padding(MW.sp16)
@@ -1810,7 +1849,7 @@ struct MainSettingsView: View {
         VStack(alignment: .leading, spacing: MW.sp10) {
             toggleRow("MCP Server", isOn: $settings.mcpEnabled)
             if settings.mcpEnabled {
-                Text("Writes a local snapshot of your memories, tasks and conversation summaries to ~/Library/Application Support/MetaWhisp/mcp-snapshot.json so the standalone metawhisp-mcp tool can answer Claude Desktop / Cursor calls. The file stays on this Mac, owner-only, and is deleted when you turn this off.")
+                Text("Writes a local snapshot of your memories, tasks and conversation summaries to ~/Library/Application Support/\(AppIdentity.current.supportFolderName)/mcp-snapshot.json so the standalone metawhisp-mcp tool can answer Claude Desktop / Cursor calls. The file stays on this Mac, owner-only, and is deleted when you turn this off.")
                     .font(MW.monoSm).foregroundStyle(MW.textMuted)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -2373,6 +2412,12 @@ struct MainSettingsView: View {
     /// the UI — worst case the directory partially survives and the next
     /// download fully overwrites it.
     private func removeDownloadedModel(_ spec: ModelSpec) {
+        // ITER-075 step 0 (0.4) — a copy that is not the owner's app never
+        // deletes the shared weights, so it doesn't deactivate the model either.
+        guard AppIdentity.current.mayDeleteSharedModels else {
+            NSLog("[ITER-039] Settings: remove refused — only the main MetaWhisp app deletes shared models")
+            return
+        }
     NSLog("[ITER-039] Settings: removing weights for %@ (was active: %@)", spec.id, settings.localLLMActiveModelID == spec.id ? "yes" : "no")
         if settings.localLLMActiveModelID == spec.id {
             settings.localLLMActiveModelID = ""
@@ -2393,7 +2438,7 @@ struct MainSettingsView: View {
                 Text("Reads your Apple Calendar (iCloud/Google/Exchange). Creates Tasks for upcoming events and extracts routine patterns into Memories.")
                     .font(MW.monoSm).foregroundStyle(MW.textMuted)
                     .fixedSize(horizontal: false, vertical: true)
-                scanNowButton { await AppDelegate.shared?.calendarReader.scanNow() }
+                scanNowButton { await AppDelegate.shared?.calendarReader.scanNow(ask: PermissionAsk()) }
             }
         }
         .padding(MW.sp16)
@@ -2560,6 +2605,84 @@ struct MainSettingsView: View {
         }
     }
 
+    // MARK: - Agent (ITER-076 stage 8b)
+
+    /// Settings → Agent (№ 153, owner decisions 8.1, 8.3, 8.7): the browser agent's switch; with Pro, what it sends
+    /// and where — the disclosure's own title and rows — and the browser it uses: MetaWhisp's own Chrome window, or the
+    /// user's own Chrome with its one-time setup; without Pro, that it needs Pro. Every word approved on 2026-10-06.
+    private var agentSection: some View {
+        VStack(alignment: .leading, spacing: MW.sp10) {
+            toggleRow(AgentSetup.browserAgent, isOn: $settings.browserAgentOn)
+            if license.isPro {
+                GlassDivider()
+                Text(AgentDisclosure.title).font(MW.mono).foregroundStyle(MW.textSecondary)
+                ForEach(AgentDisclosure.rows, id: \.title) { row in
+                    HStack(alignment: .top, spacing: MW.sp8) {
+                        Image(systemName: row.symbol)
+                            .font(.system(size: 12))
+                            .foregroundStyle(MW.textMuted)
+                            .frame(width: 18)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(row.title).font(MW.mono).foregroundStyle(MW.textPrimary)
+                            Text(row.body).font(MW.monoSm).foregroundStyle(MW.textMuted)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                    }
+                }
+                GlassDivider()
+                toggleRow(AgentSetup.useYourOwnChrome, isOn: usesYourOwnChrome)
+                if usesYourOwnChrome.wrappedValue {
+                    Text(AgentSetup.oneTimeSetup).font(MW.monoSm).foregroundStyle(MW.textMuted)
+                        .fixedSize(horizontal: false, vertical: true)
+                    setupStep(1) {
+                        VStack(alignment: .leading, spacing: MW.sp6) {
+                            Text(AgentSetup.openAddress).font(MW.mono).foregroundStyle(MW.textSecondary)
+                            HStack(spacing: MW.sp8) {
+                                Text(AgentSetup.address).font(MW.monoSm).foregroundStyle(MW.textPrimary)
+                                    .textSelection(.enabled)
+                                Spacer(minLength: 0)
+                                Button(AgentSetup.copyAddress) { AgentSetup.copyAddress(to: .general) }
+                                    .font(MW.monoSm)
+                            }
+                        }
+                    }
+                    setupStep(2) {
+                        Text(AgentSetup.tick).font(MW.mono).foregroundStyle(MW.textSecondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    setupStep(3) {
+                        Text(AgentSetup.clickAllow).font(MW.mono).foregroundStyle(MW.textSecondary)
+                    }
+                } else {
+                    Text(AgentDisclosure.ownWindow).font(MW.monoSm).foregroundStyle(MW.textMuted)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            } else {
+                Text(AgentSetup.needsPro).font(MW.monoSm).foregroundStyle(MW.textMuted)
+            }
+        }
+        .padding(MW.sp16)
+        .frame(maxWidth: .infinity, alignment: .topLeading)
+        .mwCard(radius: MW.rMedium, elevation: .raised)
+    }
+
+    /// "Use your own Chrome": the `agentBrowser` setting, on for the user's own Chrome — the next errand runs there.
+    private var usesYourOwnChrome: Binding<Bool> {
+        Binding(get: { AgentBrowser(setting: settings.agentBrowser) == .usersChrome },
+                set: { settings.agentBrowser = ($0 ? AgentBrowser.usersChrome : .ownWindow).rawValue })
+    }
+
+    /// One of the second way's numbered steps, as board 4 draws them.
+    private func setupStep<Content: View>(_ number: Int, @ViewBuilder _ content: () -> Content) -> some View {
+        HStack(alignment: .top, spacing: MW.sp8) {
+            Text("\(number)").font(MW.monoSm).foregroundStyle(MW.textPrimary)
+                .frame(width: 20, height: 20)
+                .overlay(Circle().stroke(MW.border, lineWidth: 1))
+            content()
+        }
+    }
+
+    // MARK: - Voice questions section (Phase 6)
     // MARK: - Voice questions section (Phase 6)
 
     private var voiceQuestionSection: some View {

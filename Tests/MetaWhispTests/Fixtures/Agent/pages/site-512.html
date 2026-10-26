@@ -1,0 +1,21 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>Multiple choice list</title></head>
+<body>
+<h1>Order options</h1>
+<form action="/submit" method="post">
+  <label for="extras">Extras</label>
+  <select id="extras" name="extras" multiple size="4">
+    <option value="e1">Gift wrap</option>
+    <option value="e2">Card</option>
+    <option value="e3">Ribbon</option>
+    <option value="e4" selected>Box</option>
+  </select>
+  <label for="size">Size</label>
+  <select id="size" name="size">
+    <option value="s">Small</option>
+    <option value="m" selected>Medium</option>
+    <option value="l">Large</option>
+  </select>
+  <button type="submit">Order</button>
+</form>
+</body></html>

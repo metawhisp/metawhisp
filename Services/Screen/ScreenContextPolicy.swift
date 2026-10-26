@@ -71,7 +71,7 @@ enum ScreenContextPolicy {
         "com.anthropic.claudefordesktop", "Claude",
         "com.openai.chat", "com.openai.codex", "ChatGPT",
         "com.moonshot.kimichat", "Kimi",
-        "com.metawhisp.app", "MetaWhisp",
+        "com.metawhisp.app", "MetaWhisp", "com.metawhisp.app.dev", "MetaWhisp Dev",
     ]
 
     /// The rule for capture that nobody asked for — the polling loop.

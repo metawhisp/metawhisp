@@ -1,0 +1,16 @@
+ITER-074 I-0.1 live probe on Chrome — 2026-09-25
+The owner chose Chrome for the first live check (Dia, Chrome and Safari are installed; Chrome shares
+Dia's scripting terms). Written by the orchestrator: GLM's key is unreachable while the login keychain
+is locked, and the owner approved the change. The probe runs on Chrome only when asked for with
+`defaults write com.metawhisp.app agentSpikeBrowser com.google.Chrome`; anything else runs it on Dia.
+--- red (compile)
+Tests/MetaWhispTests/Services/Agent/DiaScriptTests.swift:55:72: error: extra argument 'bundleID' in call
+Tests/MetaWhispTests/Services/Agent/DiaScriptTests.swift:55:72: error: type 'DiaScript' has no member 'chromeBundleID'
+Tests/MetaWhispTests/Services/Agent/DiaScriptTests.swift:58:61: error: extra argument 'bundleID' in call
+Tests/MetaWhispTests/Services/Agent/DiaScriptTests.swift:58:61: error: type 'DiaScript' has no member 'chromeBundleID'
+--- green (DiaScriptTests + DiaSpikeRulesTests)
+	 Executed 36 tests, with 0 failures (0 unexpected) in 0.119 (0.122) seconds
+--- gate
+  ✅ 1803 tests, 0 failures
+  ✅ 88 critical suites ran
+PASS — safe to continue.

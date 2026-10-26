@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Site Four Fifty-Four</title></head>
+<body>
+<main>
+  <!-- ITER-076 stage 7, review round 1 (C4): two forms a script gathers
+       without a form tag, in two boxes, and one button in a box of its own
+       beside them: which of them its script sends is not known. -->
+  <h1>Get in touch</h1>
+  <div class="wrap">
+    <div class="first">
+      <label for="name">Full name</label><input id="name" autocomplete="name">
+      <label for="mail">Email</label><input id="mail" type="email">
+    </div>
+    <div class="second">
+      <label for="who">Your name</label><input id="who" autocomplete="name">
+      <label for="work">Work email</label><input id="work" type="email">
+    </div>
+    <div class="actions">
+      <button type="button" id="go">Send now</button>
+    </div>
+  </div>
+</main>
+<script>
+  window.sent = 0;
+  document.getElementById('go').addEventListener('click', () => { window.sent += 1; });
+</script>
+</body>
+</html>

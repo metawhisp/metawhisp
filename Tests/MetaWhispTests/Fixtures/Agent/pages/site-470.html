@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Site Four Seventy</title></head>
+<body>
+<main>
+  <!-- ITER-076 stage 7, review round 3 (R3-3): a demo form whose script
+       writes its own address anew as it is typed in — the form's step two
+       — and links to that same address; as it is left, it sends what its
+       e-mail field holds by a beacon. -->
+  <h1 id="title">Request a demo</h1>
+  <form id="demo" action="/thanks" method="post">
+    <label for="first">First name</label><input id="first" name="first" autocomplete="given-name">
+    <label for="email">Work email</label><input id="email" name="email" type="email">
+    <button type="submit" id="send">Request a demo</button>
+  </form>
+  <p><a id="step" href="/?step=2">Step two</a></p>
+</main>
+<script>
+  document.getElementById('demo').addEventListener('input', () => {
+    if (location.search !== '?step=2') history.replaceState(null, '', '/?step=2');
+  });
+  window.addEventListener('pagehide', () => {
+    const email = document.getElementById('email');
+    if (email && email.value) navigator.sendBeacon('/api/left', email.value);
+  });
+</script>
+</body>
+</html>

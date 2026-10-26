@@ -1,0 +1,30 @@
+ITER-074 review round 7 (Codex on e5ecb78 + ebe296e), fixes — 2026-09-24 18:30 CEST, orchestrator
+
+Findings (all confirmed in the code before fixing), with the cause each fix removes:
+  1. a sixth aria-labelledby label, a word split across tags or past a display cut-off passed a field as safe
+     cause: sensitivity reused the display-name reader and its limits; now read whole, time-bounded, fail closed
+  2. a chip slotted into a shadow-root text field escaped; role='listbox textbox' counted as writing
+     cause: DOM ancestry instead of the tree a person sees, role tokens instead of the element's own role
+  3. 'Acme requests access to all your files. We use cookies.' + Accept was accepted
+     cause: a grant-phrase list can never be complete; accept now needs a button that names cookies
+  4. a role=button span inside a mailto: link was offered as a click
+     cause: an element did not report where activating it leads; now the link around it, and forms too
+  5. select options past the 50th were unreachable; now 1000 per select, 2000 per page
+
+--- red
+CandidateBuilderTests testNothingThatLeadsOutOfTheBrowserIsOffered failed (0.912 seconds).
+ObserverFormsTests testAControlInsideALinkReportsTheLinksAddress failed (0.075 seconds).
+ObserverFormsTests testLongSelectsAreListedWithinBounds failed (0.075 seconds).
+ObserverFormsTests testSensitivityReadsEveryLabelWhole failed (0.075 seconds).
+ObserverFormsTests testWritingFollowsSlotsAndTheElementsOwnRole failed (0.071 seconds).
+SafetyGuardTests testABareAcceptIsNeverChosen failed (0.001 seconds).
+	 Executed 74 tests, with 14 failures (0 unexpected) in 3.307 (3.312) seconds
+--- green (observer, safety, builder, page and policy suites)
+CandidateBuilderTests testNothingThatLeadsOutOfTheBrowserIsOffered passed (0.273 seconds).
+ObserverFormsTests testAControlInsideALinkReportsTheLinksAddress passed (0.071 seconds).
+ObserverFormsTests testLongSelectsAreListedWithinBounds passed (0.074 seconds).
+ObserverFormsTests testSensitivityReadsEveryLabelWhole passed (0.072 seconds).
+ObserverFormsTests testWritingFollowsSlotsAndTheElementsOwnRole passed (0.075 seconds).
+SafetyGuardTests testABareAcceptIsNeverChosen passed (0.000 seconds).
+SafetyGuardTests testAcceptOnlyWhenTheBannerBlocksThePage passed (0.000 seconds).
+	 Executed 151 tests, with 0 failures (0 unexpected) in 4.973 (4.983) seconds

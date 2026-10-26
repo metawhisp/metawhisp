@@ -1,0 +1,17 @@
+ITER-074 review round 9 (Codex on 1981e62 + 41af233), fixes — 2026-09-24 18:53 CEST, orchestrator
+41af233 (round-8 fixes): accepted. The values-after-a-cut-report reasoning was checked and accepted.
+
+Findings on 1981e62 (both confirmed in the code before fixing):
+  1. focus() runs the page's handlers: one could move focus elsewhere or turn the field into a password
+     field before the write. Red run: 'hello' was written into a field that had become a password field.
+     fix: after focus, the walk runs again; the field must still be the one chosen (so not sensitive) and focused
+  2. a single link with an address cut at 2000 characters would be opened at the cut address
+     fix: an address at the length limit offers no action at all — its destination and its last words are unknown
+Added coverage Codex asked for: an element changed after observing is not acted on.
+
+--- red
+ActionScriptTests testALinkWhoseAddressMayBeCutOffersNothing failed (0.660 seconds).
+ActionScriptTests testTypingStopsWhenFocusIsMovedElsewhere failed (0.075 seconds).
+ActionScriptTests testTypingStopsWhenTheFieldTurnsSensitiveOnFocus failed (0.074 seconds).
+--- green (action, builder and observer suites)
+	 Executed 93 tests, with 0 failures (0 unexpected) in 5.970 (5.979) seconds

@@ -205,4 +205,12 @@ final class ScreenContextPolicyTests: XCTestCase {
             blacklist: [], whitelist: nil, defaultExcluded: []),
             "asking out loud what is on screen is not ambient capture")
     }
+
+    /// ITER-075 step 0 — the Dev app is MetaWhisp too: neither copy captures
+    /// the other's windows.
+    func test_ambient_bothMetaWhispAppsAreAssistantWindows() {
+        for name in ["com.metawhisp.app", "MetaWhisp", "com.metawhisp.app.dev", "MetaWhisp Dev"] {
+            XCTAssertTrue(ScreenContextPolicy.assistantWindows.contains(name), name)
+        }
+    }
 }

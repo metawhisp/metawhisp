@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Site Four Sixty-One</title></head>
+<body>
+<main>
+  <!-- ITER-076 stage 7, review round 2 (R2-3): a demo form a script gathers
+       without a form tag, a promo code field the site filled standing alone
+       beside it, and a button in a box of its own whose script sends them
+       all: the code would go out unshown. -->
+  <h1>Talk to us</h1>
+  <div class="card">
+    <label for="name">Full name</label><input id="name" autocomplete="name">
+    <label for="mail">Email</label><input id="mail" type="email">
+  </div>
+  <label for="promo">Promo code</label><input id="promo" value="SPRING">
+  <div class="actions"><button type="button" id="go">Send request</button></div>
+</main>
+<script>
+  window.sent = 0;
+  document.getElementById('go').addEventListener('click', () => {
+    window.sent += 1;
+    window.sentValues = ['name', 'mail', 'promo'].map((id) => document.getElementById(id).value);
+  });
+</script>
+</body>
+</html>

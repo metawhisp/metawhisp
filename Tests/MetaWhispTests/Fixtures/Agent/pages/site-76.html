@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Site Seventy-Six</title></head>
+<body>
+<main>
+  <h1>Recorders</h1>
+  <form method="get">
+    <select id="orderby" name="orderby" aria-label="Sort by" onchange="this.form.submit()">
+      <option value="relevance">Relevance</option>
+      <option value="price">Price</option>
+    </select>
+  </form>
+  <ul>
+    <li>Recorder One</li>
+    <li>Recorder Two</li>
+  </ul>
+</main>
+<script>
+  const orderby = new URLSearchParams(location.search).get('orderby');
+  if (orderby) document.getElementById('orderby').value = orderby;
+</script>
+</body>
+</html>

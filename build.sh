@@ -1,11 +1,23 @@
 #!/bin/bash
 set -euo pipefail
 
-# Build MetaWhisp and package as a proper .app bundle
-# Usage: ./build.sh [--release]
+# Build MetaWhisp and package it as a signed .app bundle.
+#
+# Usage:
+#   bash build.sh                     # the release bundle, left in .build for release.sh;
+#                                     # nothing is installed, stopped or launched
+#   bash build.sh --swap              # the same build, installed over the working app in
+#                                     # /Applications, then launched (hot-swap.sh runs this)
+#   bash build.sh --swap --debug      # the same from a debug build
+#   bash build.sh --swap --confirm-idle  # the app runs a build that wrote no activity
+#                                     # lease, and you checked it is not recording
+#
+# ITER-076 0.1 — a swap is built never to leave the working app broken; the
+# rules and their known limits live in scripts/lib/app-install.sh.
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "$SCRIPT_DIR"
+source "$SCRIPT_DIR/scripts/lib/app-install.sh"
 
 # Use the correct Xcode
 export DEVELOPER_DIR="/Applications/Other Apps/Xcode.app/Contents/Developer"
@@ -13,13 +25,35 @@ export DEVELOPER_DIR="/Applications/Other Apps/Xcode.app/Contents/Developer"
 # Always build release for speed (debug is 5-10x slower for ML inference)
 CONFIG="release"
 BUILD_FLAGS="-c release"
-NO_LAUNCH=false
+SWAP=false
 for arg in "$@"; do
     case "$arg" in
         --debug) CONFIG="debug"; BUILD_FLAGS="" ;;
-        --no-launch) NO_LAUNCH=true ;;
+        --swap) SWAP=true ;;
+        --confirm-idle) export MW_CONFIRM_IDLE=1 ;;
+        *) echo "Unknown option: $arg (see the usage at the top of build.sh)" >&2; exit 2 ;;
     esac
 done
+
+APP_NAME="$MW_APP_NAME"
+EXEC_NAME="$MW_APP_EXECUTABLE"
+BUNDLE_ID="$MW_PRODUCTION_BUNDLE_ID"
+
+# On any exit, a swap that stopped half-way is rolled back, the swap lock is
+# released, and the shader temp folder goes; an interrupt or a closed terminal
+# exits the same way (scripts/lib/app-install.sh).
+mw_trap_exit 'rm -rf "${METAL_BUILD_DIR:-}"'
+
+# Before anything is built or touched: the team's Developer ID identity must
+# exist and sign a throwaway file (a locked keychain stops here), and for a swap
+# the working app must not be recording or transcribing. There is no ad-hoc
+# fallback: an ad-hoc signature changes on every rebuild, and macOS then resets
+# every permission (Screen Recording, Microphone, Accessibility).
+SIGN_IDENTITY=$(mw_signing_identity) || exit 1
+mw_preflight_sign "$SIGN_IDENTITY" || exit 1
+if [ "$SWAP" = true ]; then
+    mw_refuse_if_busy || exit 1
+fi
 
 echo "==> Building MetaWhisp ($CONFIG)..."
 swift build $BUILD_FLAGS 2>&1
@@ -27,7 +61,7 @@ swift build $BUILD_FLAGS 2>&1
 # Paths
 BUILD_DIR=".build/arm64-apple-macosx/$CONFIG"
 EXECUTABLE="$BUILD_DIR/MetaWhisp"
-APP_DIR="$BUILD_DIR/MetaWhisp.app"
+APP_DIR=$(mw_bundle_path "$BUILD_DIR" "$SWAP")
 CONTENTS="$APP_DIR/Contents"
 MACOS="$CONTENTS/MacOS"
 # Frameworks/ is the standard Apple location for embedded frameworks. Putting
@@ -46,7 +80,7 @@ rm -rf "$APP_DIR"
 mkdir -p "$MACOS" "$RESOURCES" "$FRAMEWORKS"
 
 # Copy executable
-cp "$EXECUTABLE" "$MACOS/MetaWhisp"
+cp "$EXECUTABLE" "$MACOS/$EXEC_NAME"
 
 # Copy Info.plist
 cp "Resources/Info.plist" "$CONTENTS/Info.plist"
@@ -81,7 +115,7 @@ if [ -d "$BUILD_DIR/Sparkle.framework" ]; then
     # made Apple notarization reject the binary as "signature invalid"
     # because the bundle structure was malformed.
     ditto "$BUILD_DIR/Sparkle.framework" "$FRAMEWORKS/Sparkle.framework"
-    install_name_tool -add_rpath "@executable_path/../Frameworks" "$MACOS/MetaWhisp" 2>/dev/null || true
+    install_name_tool -add_rpath "@executable_path/../Frameworks" "$MACOS/$EXEC_NAME" 2>/dev/null || true
 fi
 
 # Copy any SPM resources (MetaWhisp_MetaWhisp.bundle)
@@ -122,7 +156,6 @@ if [ ! -d "$MLX_METAL_DIR" ]; then
     exit 1
 fi
 METAL_BUILD_DIR=$(mktemp -d -t mw-metalbuild)
-trap "rm -rf '$METAL_BUILD_DIR'" EXIT
 echo "==> Compiling MLX metal shaders → mlx.metallib..."
 metal_count=0
 for m in "$MLX_METAL_DIR"/*.metal; do
@@ -157,18 +190,9 @@ xattr -cr "$APP_DIR" 2>/dev/null || true
 # Stable Developer ID signing. Ad-hoc signatures change every rebuild — macOS treats
 # each rebuild as a new app and resets TCC permissions (Screen Recording, Microphone,
 # Accessibility). Developer ID keeps the same Team ID across rebuilds, so TCC sticks.
-# If the cert is missing (CI, another machine) fall back to ad-hoc so build still works.
-# Sign with Developer ID cert by SHA-1 hash (privacy: hash never reveals
-# the legal name on the cert, unlike the human-readable identity string).
-# Look up the hash dynamically by team ID 6D6948Z4MW so this works whether
-# the cert is currently labelled "MetaWhisp Maintainer" or any prior legal
-# name on the same Apple Developer Program team.
-SIGN_IDENTITY=$(security find-identity -v -p codesigning 2>/dev/null \
-    | awk '/Developer ID Application:.*\(6D6948Z4MW\)/ {print $2; exit}')
-if [ -z "$SIGN_IDENTITY" ]; then
-    echo "==> ⚠️  Developer ID cert (team 6D6948Z4MW) not found, falling back to ad-hoc (TCC will reset each rebuild)"
-    SIGN_IDENTITY="-"
-fi
+# The identity was found and tested at the top (mw_signing_identity,
+# mw_preflight_sign). It is used by SHA-1 hash, which never reveals the legal
+# name on the certificate.
 
 # Sign nested Sparkle components bottom-up. We REMOVE the existing Sparkle
 # Project signatures first (they were valid for Sparkle Project's identity but
@@ -183,6 +207,16 @@ if [ -d "$SPARKLE" ]; then
         local identifier="$2"
         # Best-effort remove existing signature; ignored if absent.
         codesign --remove-signature "$target" 2>/dev/null || true
+        # A swap build never leaves this Mac, so it is signed without a
+        # timestamp and Apple's timestamp server can't stall it.
+        if [ "$SWAP" = true ]; then
+            codesign --force --sign "$SIGN_IDENTITY" \
+                --options runtime \
+                --timestamp=none \
+                --identifier "$identifier" \
+                "$target"
+            return
+        fi
         # Sign + verify timestamp landed. Apple's TSA (timestamp.apple.com)
         # occasionally returns "OK but no timestamp" on flaky network — codesign
         # silently accepts that with exit 0, and Apple's notarization later
@@ -242,7 +276,11 @@ fi
 # We sign with --timestamp here too so the metallib survives notarization;
 # Apple's notary rejects un-timestamped Mach-O in app bundles.
 if [ -f "$MACOS/mlx.metallib" ]; then
-    codesign --force --sign "$SIGN_IDENTITY" --options runtime --timestamp "$MACOS/mlx.metallib"
+    if [ "$SWAP" = true ]; then
+        codesign --force --sign "$SIGN_IDENTITY" --options runtime --timestamp=none "$MACOS/mlx.metallib"
+    else
+        codesign --force --sign "$SIGN_IDENTITY" --options runtime --timestamp "$MACOS/mlx.metallib"
+    fi
 fi
 
 # Sign outer bundle with our app identifier — macOS uses Identifier as app identity
@@ -251,69 +289,59 @@ fi
 # their TSA) and required for the app to open on other Macs.
 # Retry on missing timestamp — same TSA-flake guard as sign_target above.
 # Bumped 3 → 10 with longer sleeps for real TSA outages (2026-05-09).
-outer_sleep=5
-for attempt in 1 2 3 4 5 6 7 8 9 10; do
+if [ "$SWAP" = true ]; then
     codesign --force --sign "$SIGN_IDENTITY" \
         --options runtime \
-        --timestamp \
-        --identifier "com.metawhisp.app" \
+        --timestamp=none \
+        --identifier "$BUNDLE_ID" \
         --entitlements "Resources/MetaWhisp.entitlements" \
         "$APP_DIR" 2>&1
-    # Same SIGPIPE pitfall as `sign_target` above — `grep -q` over a pipe
-    # makes the unread tail SIGPIPE codesign, pipeline exits 141 under
-    # `pipefail`, and we falsely loop. Dump to file, grep the file.
-    outer_cs_log=$(mktemp)
-    codesign -dvvv "$APP_DIR" >"$outer_cs_log" 2>&1 || true
-    if grep -q "^Timestamp=" "$outer_cs_log"; then
-        rm -f "$outer_cs_log"
-        break
-    fi
-    rm -f "$outer_cs_log"
-    echo "==> ⚠️  No timestamp on outer bundle (attempt $attempt/10) — TSA flake, sleeping ${outer_sleep}s..."
-    sleep "$outer_sleep"
-    outer_sleep=$((outer_sleep < 60 ? outer_sleep + 10 : 60))
-    codesign --remove-signature "$APP_DIR" 2>/dev/null || true
-done
-
-# Verify: outer bundle identifier must match CFBundleIdentifier — without this
-# macOS notifications return UNErrorDomain error 1.
-SIGNED_ID=$(codesign -dvv "$APP_DIR" 2>&1 | grep -E "^Identifier=" | cut -d= -f2)
-if [ "$SIGNED_ID" = "com.metawhisp.app" ]; then
-    echo "==> Code signed (identifier: $SIGNED_ID) ✓"
 else
-    echo "==> ⚠️  Signature identifier is '$SIGNED_ID', expected 'com.metawhisp.app'"
-    echo "==> Notifications may not work. Try deleting $APP_DIR and rebuilding."
+    outer_sleep=5
+    for attempt in 1 2 3 4 5 6 7 8 9 10; do
+        codesign --force --sign "$SIGN_IDENTITY" \
+            --options runtime \
+            --timestamp \
+            --identifier "$BUNDLE_ID" \
+            --entitlements "Resources/MetaWhisp.entitlements" \
+            "$APP_DIR" 2>&1
+        # Same SIGPIPE pitfall as `sign_target` above — `grep -q` over a pipe
+        # makes the unread tail SIGPIPE codesign, pipeline exits 141 under
+        # `pipefail`, and we falsely loop. Dump to file, grep the file.
+        outer_cs_log=$(mktemp)
+        codesign -dvvv "$APP_DIR" >"$outer_cs_log" 2>&1 || true
+        if grep -q "^Timestamp=" "$outer_cs_log"; then
+            rm -f "$outer_cs_log"
+            break
+        fi
+        rm -f "$outer_cs_log"
+        echo "==> ⚠️  No timestamp on outer bundle (attempt $attempt/10) — TSA flake, sleeping ${outer_sleep}s..."
+        sleep "$outer_sleep"
+        outer_sleep=$((outer_sleep < 60 ? outer_sleep + 10 : 60))
+        codesign --remove-signature "$APP_DIR" 2>/dev/null || true
+    done
 fi
+
+# Verify: the signature is valid, made by the team's Developer ID, and its
+# identifier matches CFBundleIdentifier — without that macOS notifications
+# return UNErrorDomain error 1. Any mismatch stops here.
+mw_verify_signature "$APP_DIR" "$BUNDLE_ID" || exit 1
+echo "==> Code signed (identifier: $BUNDLE_ID) ✓"
 
 # Verify Sparkle.framework kept its original identifier
-SPARKLE_ID=$(codesign -dvv "$FRAMEWORKS/Sparkle.framework" 2>&1 | grep -E "^Identifier=" | cut -d= -f2)
+SPARKLE_ID=$(codesign -dvv "$FRAMEWORKS/Sparkle.framework" 2>&1 | grep -E "^Identifier=" | cut -d= -f2 || true)
 if [ "$SPARKLE_ID" != "org.sparkle-project.Sparkle" ]; then
-    echo "==> ⚠️  Sparkle identifier changed to '$SPARKLE_ID' — dyld will refuse to load it"
+    echo "==> ❌ Sparkle identifier changed to '$SPARKLE_ID' — dyld will refuse to load it"
+    exit 1
 fi
 
-# Install to ~/Applications for stable permissions
-INSTALL_DIR="$HOME/Applications"
-mkdir -p "$INSTALL_DIR"
-INSTALLED_APP="$INSTALL_DIR/MetaWhisp.app"
+# The bundle starts and finds its parts (SelfCheck.swift) before it replaces
+# anything or goes to a release.
+mw_self_check "$MACOS/$EXEC_NAME" || exit 1
 
-# Kill running instance before replacing
-pkill -f "MetaWhisp.app" 2>/dev/null || true
-sleep 0.5
-
-# Copy to stable location.
-# `ditto` (NOT `cp -r`) — `cp -r` on macOS dereferences symlinks, which
-# destroys the symlink structure inside Sparkle.framework (Versions/Current,
-# Sparkle, Headers, Resources etc are all symlinks). Once symlinks become
-# real files, the codesign hashes computed in `--sign` above stop matching
-# the on-disk content and Apple notary rejects with
-# "The signature of the binary is invalid". Discovered 2026-05-09 after 4
-# failed releases — ship blocker for v1.3.2.
-rm -rf "$INSTALLED_APP"
-ditto "$APP_DIR" "$INSTALLED_APP"
-echo "==> Installed to: $INSTALLED_APP"
-
-# Launch from stable location (skip with --no-launch)
-if [ "$NO_LAUNCH" = false ]; then
-    echo "==> Launching MetaWhisp..."
-    open "$INSTALLED_APP"
+if [ "$SWAP" = true ]; then
+    mw_swap_app "$APP_DIR" || exit 1
+else
+    echo "==> Release bundle ready: $APP_DIR"
+    echo "    Nothing was installed, stopped or launched."
 fi

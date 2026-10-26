@@ -1,0 +1,26 @@
+ITER-074 review round 19 (Codex on ea4badb), fix — 2026-09-24
+Code by GLM-5.3-Flash from the orchestrator's instructions (review19-instructions.md); compiled, run and
+reviewed line by line by the orchestrator.
+Round 19 confirmed fixed: a word in a nested component no slot shows; mixed seams; a soft hyphen.
+
+Findings (both confirmed in the code; both regressions of ea4badb):
+  1. the markup reading put a component's shadow root between the words around it: "Pass" + a component
+     holding "word" that draws only "*" read "Pass word", and "passw" missed;
+  2. "MM / YY" in three text nodes left a run of spaces and seams that the short word "mm yy" could not
+     cross.
+Cause: (1) one reading mixed several trees; (2) breaks were not brought to one form before matching.
+Fix: the markup is read one tree at a time — the label's own tree, then every shadow root in it, nested
+ones included — each on its own and kept apart by a space; after normalizing, a run of spaces and seams is
+one space when it holds a space, else one seam.
+
+--- red (ea4badb + test)
+Tests/MetaWhispTests/Services/Agent/ObserverFormsTests.swift:466: error: testMarkupWordsAndSpacedShortWordsStayWhole] : XCTAssertTrue failed
+Tests/MetaWhispTests/Services/Agent/ObserverFormsTests.swift:467: error: testMarkupWordsAndSpacedShortWordsStayWhole] : XCTAssertFalse failed
+Tests/MetaWhispTests/Services/Agent/ObserverFormsTests.swift:469: error: testMarkupWordsAndSpacedShortWordsStayWhole] : XCTAssertTrue failed
+Tests/MetaWhispTests/Services/Agent/ObserverFormsTests.swift:470: error: testMarkupWordsAndSpacedShortWordsStayWhole] : XCTAssertFalse failed
+--- green (ObserverFormsTests)
+	 Executed 43 tests, with 0 failures (0 unexpected) in 3.835 (3.840) seconds
+--- gate
+  ✅ 1794 tests, 0 failures
+  ✅ 88 critical suites ran
+PASS — safe to continue.

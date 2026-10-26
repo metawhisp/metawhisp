@@ -206,7 +206,8 @@ final class ProjectAggregator: ObservableObject {
     ///
     /// Idempotent: deleting an already-gone project returns 0 with no error.
     @discardableResult
-    func deleteProject(canonicalName: String) -> Int {
+    func deleteProject(canonicalName: String,
+                       ledgerURL: URL = ProjectBackfillLedger.fileURL(in: AppIdentity.current.supportDirectory)) -> Int {
         guard let ctx = ctx() else { return 0 }
         guard let alias = aliasRow(named: canonicalName, ctx: ctx) else {
             NSLog("[ProjectAggregator] deleteProject: alias '%@' not found — no-op",
@@ -223,13 +224,23 @@ final class ProjectAggregator: ObservableObject {
         )
         let convs = (try? ctx.fetch(convDesc)) ?? []
         var unlinked = 0
+        var unlinkedIDs: [UUID] = []
         for c in convs {
             let raw = (c.primaryProject ?? "").lowercased()
             if aliasesLower.contains(raw) {
                 c.primaryProject = nil
                 c.updatedAt = Date()
                 unlinked += 1
+                unlinkedIDs.append(c.id)
             }
+        }
+        // ITER-075 step 1 (1.6) — the owner took these conversations' project
+        // away; the project backfill must not give it back.
+        var ledger = ProjectBackfillLedger(fileURL: ledgerURL)
+        do {
+            try ledger.mark(unlinkedIDs)
+        } catch {
+            NSLog("[ProjectAggregator] deleteProject: the checked list was not saved — %@", error.localizedDescription)
         }
 
         // Step 2 — delete the alias row. After save, listProjects() no longer
@@ -282,8 +293,9 @@ final class ProjectAggregator: ObservableObject {
     /// to reuse them.
     private func reclassifySuspiciousConversations(generator: StructuredGenerator) async -> Int {
         guard let ctx = ctx() else { return 0 }
-        // ITER-050 B1.1 — same wipe-before-check hazard as backfillProjects.
-        guard generator.hasLLMAccess else {
+        // Without LLM access a pass would change nothing.
+        // The pass runs on the cloud path only.
+        guard generator.hasCloudLLMAccess else {
             NSLog("[ProjectAggregator] reclassify: no LLM access — skipping")
             return 0
         }
@@ -306,39 +318,20 @@ final class ProjectAggregator: ObservableObject {
         NSLog("[ProjectAggregator] reclassify: %d suspect conversations", suspects.count)
         var done = 0
         for conv in suspects {
-            // Snapshot first (ITER-050 B1.1) — restore on failed generate.
-            let oldTitle = conv.title
-            let oldOverview = conv.overview
-            let oldCategory = conv.category
-            let oldEmoji = conv.emoji
-            let oldProject = conv.primaryProject
-            // Reset structured fields so generator takes the full LLM path.
-            conv.title = nil
-            conv.overview = nil
-            conv.category = nil
-            conv.emoji = nil
-            conv.primaryProject = nil
-            try? ctx.save()
             let convId = conv.id
-            await generator.generate(conversationId: convId)
-            // Review fix — same stale-context hazard as backfillProjects:
-            // decide success and restore through a fresh context.
+            // ITER-075 step 1 (1.6) — nothing is cleared first: the full path
+            // is asked for outright, and the old fields stand until a result
+            // replaces them (a quit between clearing and restoring left a
+            // conversation blank for good).
+            await generator.generate(conversationId: convId, preferCloud: true, isRegeneration: true)
+            // resolveCanonical seeds the alias for whatever raw value the LLM
+            // produced; read it through a fresh context, since generate()
+            // writes through its own.
             if let freshCtx = self.ctx(),
                let fresh = try? freshCtx.fetch(FetchDescriptor<Conversation>(
-                   predicate: #Predicate { $0.id == convId })).first {
-                if fresh.title == nil {
-                    fresh.title = oldTitle
-                    fresh.overview = oldOverview
-                    fresh.category = oldCategory
-                    fresh.emoji = oldEmoji
-                    fresh.primaryProject = oldProject
-                    try? freshCtx.save()
-                    NSLog("[ProjectAggregator] reclassify: generate failed — restored fields for %@", "\(convId)")
-                } else if let raw = fresh.primaryProject {
-                    // resolveCanonical seeds the alias for whatever raw value
-                    // the LLM produced.
-                    _ = resolveCanonical(raw)
-                }
+                   predicate: #Predicate { $0.id == convId })).first,
+               let raw = fresh.primaryProject {
+                _ = resolveCanonical(raw)
             }
             done += 1
             try? await Task.sleep(for: .milliseconds(300))
@@ -549,78 +542,86 @@ final class ProjectAggregator: ObservableObject {
         return new.canonicalName
     }
 
+    /// When PROJECT joined the structuring prompt (ITER-014, 2026-04-25). A
+    /// conversation from after it already had the question asked: an empty
+    /// project there is the LLM's answer, not a gap. ITER-075 step 1 (1.6).
+    static let projectQuestionShipped = Date(timeIntervalSince1970: 1_777_075_200)   // 2026-04-25 00:00 UTC
+
     /// Re-run StructuredGenerator for completed conversations missing `primaryProject`
     /// (rows finalized before ITER-014 ship). Skips placeholder titles — those are handled
-    /// by `StructuredGenerator.backfillPlaceholders()` independently.
+    /// by `StructuredGenerator.backfillPlaceholders()` independently. Runs on the
+    /// cloud path only, so it starts only with cloud access.
     func backfillProjects(structuredGenerator: StructuredGenerator) async {
+        await backfillProjects(
+            hasLLMAccess: structuredGenerator.hasCloudLLMAccess,
+            ledgerURL: ProjectBackfillLedger.fileURL(in: AppIdentity.current.supportDirectory)
+        ) { convId in
+            // Backfill stays on the cloud path, like the other backfills.
+            await structuredGenerator.generate(conversationId: convId, preferCloud: true, isRegeneration: true)
+        }
+    }
+
+    /// The pass itself, with the run and the checked list passed in.
+    func backfillProjects(hasLLMAccess: Bool, ledgerURL: URL, limit: Int = 200,
+                          pause: Duration = .milliseconds(300),
+                          generate: (UUID) async -> StructuredOutcome) async {
         guard let ctx = ctx() else { return }
-        // ITER-050 B1.1 — never start a pass that wipes fields we may not be
-        // able to regenerate: a license hiccup mid-pass once stripped 196
-        // conversations of their titles/overviews.
-        guard structuredGenerator.hasLLMAccess else {
+        // Without LLM access a pass would change nothing.
+        guard hasLLMAccess else {
             NSLog("[ProjectAggregator] backfill: no LLM access — skipping")
             return
         }
-        var desc = FetchDescriptor<Conversation>(
+        // ITER-075 step 1 (1.6) — conversations already checked are skipped;
+        // every launch used to send the same 200 to the LLM (a 5.5-minute pass).
+        var ledger = ProjectBackfillLedger(fileURL: ledgerURL)
+        let shipped = Self.projectQuestionShipped
+        let desc = FetchDescriptor<Conversation>(
             predicate: #Predicate {
                 !$0.discarded
                 && $0.status == "completed"
                 && $0.primaryProject == nil
                 && $0.title != nil
                 && $0.title != "Quick note"
+                && $0.startedAt < shipped
             },
             sortBy: [SortDescriptor(\.startedAt, order: .reverse)]
         )
-        desc.fetchLimit = 200
-        let needs = (try? ctx.fetch(desc)) ?? []
+        let needs = ProjectBackfillLedger.pending((try? ctx.fetch(desc)) ?? [], id: \.id,
+                                                  checked: ledger.checked, limit: limit)
         guard !needs.isEmpty else {
             NSLog("[ProjectAggregator] backfill: nothing to do")
             return
         }
         NSLog("[ProjectAggregator] backfill: %d conversations need project tag", needs.count)
 
-        var done = 0
+        var classified = 0
         for conv in needs {
-            // Snapshot first (ITER-050 B1.1) — if generate() fails (access
-            // dropped mid-pass, proxy error), restore instead of leaving the
-            // conversation stripped.
-            let oldTitle = conv.title
-            let oldOverview = conv.overview
-            let oldCategory = conv.category
-            let oldEmoji = conv.emoji
-            // Reset the structured fields so generate() takes the full LLM path
-            // (it short-circuits when title+overview are present).
-            conv.title = nil
-            conv.overview = nil
-            conv.category = nil
-            conv.emoji = nil
-            try? ctx.save()
             let convId = conv.id
-            await structuredGenerator.generate(conversationId: convId)
-            // Review fix — generate() writes through its OWN ModelContext;
-            // this loop's `conv` can be stale. Decide success and restore
-            // through a fresh context so we see what actually landed.
+            // ITER-075 step 1 (1.6) — nothing is cleared first. The full path
+            // is asked for outright, and the old title, overview, category and
+            // emoji stand until a result replaces them. They used to be cleared
+            // and saved first and put back after the run; a quit in between
+            // left the conversation blank for good (2026-09-22).
+            let outcome = await generate(convId)
+            do {
+                try ledger.record(convId, outcome: outcome)
+            } catch {
+                NSLog("[ProjectAggregator] backfill: the checked list was not saved — %@", error.localizedDescription)
+            }
+            if outcome == .written { classified += 1 }
+            // generate() writes through its own ModelContext; read what landed
+            // through a fresh one, then seed the alias for the new project.
             if let freshCtx = self.ctx(),
                let fresh = try? freshCtx.fetch(FetchDescriptor<Conversation>(
-                   predicate: #Predicate { $0.id == convId })).first {
-                if fresh.title == nil {
-                    fresh.title = oldTitle
-                    fresh.overview = oldOverview
-                    fresh.category = oldCategory
-                    fresh.emoji = oldEmoji
-                    try? freshCtx.save()
-                    NSLog("[ProjectAggregator] backfill: generate failed — restored fields for %@", "\(convId)")
-                } else if let raw = fresh.primaryProject {
-                    // After each generate, also run resolveCanonical to seed ProjectAlias.
-                    _ = resolveCanonical(raw)
-                }
+                   predicate: #Predicate { $0.id == convId })).first,
+               let raw = fresh.primaryProject {
+                _ = resolveCanonical(raw)
             }
-            done += 1
             // Tiny pause so we don't hammer the proxy.
-            try? await Task.sleep(for: .milliseconds(300))
+            try? await Task.sleep(for: pause)
         }
-        lastBackfillCount = done
-        NSLog("[ProjectAggregator] backfill done: %d conversations classified", done)
+        lastBackfillCount = classified
+        NSLog("[ProjectAggregator] backfill done: %d of %d conversations classified", classified, needs.count)
     }
 
     /// Periodic merge pass — runs at app startup (one-shot to clean legacy

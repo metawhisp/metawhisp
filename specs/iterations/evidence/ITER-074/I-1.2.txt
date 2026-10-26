@@ -1,0 +1,28 @@
+ITER-074 I-1.2 — CandidateBuilder, 2026-09-24 17:47 CEST, orchestrator (GLM quota exhausted)
+
+--- red: 13 tests, 10 failing
+CandidateBuilderTests testADensePageIsStagedByRegion failed (0.584 seconds).
+CandidateBuilderTests testALinkBecomesAnOpenOfItsOwnAddress failed (0.001 seconds).
+CandidateBuilderTests testAPlannedSearchIsOfferedAsOne failed (0.001 seconds).
+CandidateBuilderTests testASelectOffersEachOtherOption failed (0.000 seconds).
+CandidateBuilderTests testControlsBecomeTheirOperations failed (0.001 seconds).
+CandidateBuilderTests testMainContentMatchingTheSubgoalComesFirst failed (0.000 seconds).
+CandidateBuilderTests testOnScreenBeatsOffScreenWhenAllElseIsEqual failed (0.000 seconds).
+CandidateBuilderTests testPageLevelActionsAreAlwaysOffered failed (0.000 seconds).
+CandidateBuilderTests testTheResultsFixtureOffersItsThreeSitesFirst failed (0.200 seconds).
+CandidateBuilderTests testTwinsAreOfferedOnlyWhenTheyAreOneDestination failed (0.000 seconds).
+--- green
+CandidateBuilderTests testADensePageIsStagedByRegion passed (0.026 seconds).
+CandidateBuilderTests testALinkBecomesAnOpenOfItsOwnAddress passed (0.000 seconds).
+CandidateBuilderTests testAPlannedSearchIsOfferedAsOne passed (0.000 seconds).
+CandidateBuilderTests testASelectOffersEachOtherOption passed (0.000 seconds).
+CandidateBuilderTests testCandidateIDsAreUnique passed (0.000 seconds).
+CandidateBuilderTests testControlsBecomeTheirOperations passed (0.000 seconds).
+CandidateBuilderTests testMainContentMatchingTheSubgoalComesFirst passed (0.000 seconds).
+CandidateBuilderTests testNeverMoreThanTwentyCandidates passed (0.002 seconds).
+CandidateBuilderTests testNonWebLinksAreNotCandidates passed (0.000 seconds).
+CandidateBuilderTests testOnScreenBeatsOffScreenWhenAllElseIsEqual passed (0.000 seconds).
+CandidateBuilderTests testPageLevelActionsAreAlwaysOffered passed (0.000 seconds).
+CandidateBuilderTests testTheResultsFixtureOffersItsThreeSitesFirst passed (0.255 seconds).
+CandidateBuilderTests testTwinsAreOfferedOnlyWhenTheyAreOneDestination passed (0.001 seconds).
+	 Executed 13 tests, with 0 failures (0 unexpected) in 0.286 (0.288) seconds
