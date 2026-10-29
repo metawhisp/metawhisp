@@ -221,7 +221,11 @@ final class MeetingRecorder: ObservableObject {
 
     /// The meeting's start on the monotonic clock: the retry schedule and
     /// every recency test run on it, never on the wall clock.
-    private var micClockStart: SuspendingClock.Instant?
+    ///
+    /// Not private: the live hints read the mic's timeline through
+    /// `pauseWindowsSnapshot()`, and the test anchors the timeline without a
+    /// recording.
+    var micClockStart: SuspendingClock.Instant?
     /// The outage note for this meeting's finalization. Later finalization
     /// errors join it rather than replace it — an outage plus one failed
     /// transcription chunk used to leave only the chunk warning.
@@ -526,6 +530,31 @@ final class MeetingRecorder: ObservableObject {
         }
         pauseStartedAt = nil
     }
+
+    /// ITER-076 P2 — the dictation pause windows, read-only, on the mic's
+    /// sample timeline: the closed windows plus the open one, if a pause is in
+    /// progress. The live hints drop the mic utterances that fall inside a
+    /// pause — the user's dictated words are not part of the meeting.
+    ///
+    /// The recording is untouched: the windows are read, never taken.
+    func pauseWindowsSnapshot() -> [LiveSampleRange] {
+        var windows = pauseWindows
+        if let pauseStart = pauseStartedAt, let clockStart = micClockStart {
+            let startSec = (pauseStart - clockStart).seconds
+            let endSec = (SuspendingClock.now - clockStart).seconds
+            if endSec > startSec {
+                windows.append((startSec: startSec, endSec: endSec))
+            }
+        }
+        return windows.map { window in
+            let from = max(0, Int(window.startSec * Self.micSampleRate))
+            let to = max(from, Int(window.endSec * Self.micSampleRate))
+            return LiveSampleRange(from: from, to: to)
+        }
+    }
+
+    /// A second of the mic's timeline is this many samples.
+    static let micSampleRate = 16_000.0
 
     /// Apply `pauseWindows` to a mic sample buffer — zero out matching time
     /// ranges so dictated audio doesn't reach Whisper.

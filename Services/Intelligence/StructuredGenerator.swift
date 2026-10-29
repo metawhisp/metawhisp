@@ -1110,7 +1110,7 @@ final class StructuredGenerator: ObservableObject {
         switch processing {
         case .noAPIKey:
             return true
-        case .http(let status, _):
+        case .http(let status, _, _):
             return [401, 403, 404, 408, 429].contains(status) || status >= 500
         case .apiError, .emptyResponse:
             return false

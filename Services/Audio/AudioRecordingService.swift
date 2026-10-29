@@ -1015,6 +1015,14 @@ final class AudioRecordingService: ObservableObject, AudioSource {
         return Array(samples[safeStart..<samples.count])
     }
 
+    /// ITER-076 P2 — non-destructive read of a bounded window: the samples
+    /// `[from, from + count)`, clamped to what the buffer holds. The live
+    /// hints read one utterance at a time and must not copy the whole tail of
+    /// the meeting behind it. Same isolation as `peekSamples(from:)`.
+    func peekSamples(from index: Int, count: Int) -> [Float] {
+        SampleWindow.slice(samples, from: index, count: count)
+    }
+
     /// Stop recording and return the collected PCM samples.
     func stop() -> [Float] {
         // Retire the bind: a tap task already queued must not repopulate the

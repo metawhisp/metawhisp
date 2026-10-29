@@ -326,6 +326,8 @@ CRITICAL_SUITES=(
 # Tests that skip by design, as Suite.test: each needs something set up on
 # purpose that a gate run does not have. They are counted, and may skip.
 DESIGN_SKIPS=(
+    # Offscreen card PNGs are opt-in through METAWHISP_RENDER_DIR.
+    MeetingCoachRenderTests.testRenderMeetingCardStates
     # the live bench: real errands on real sites, only with METAWHISP_BENCH=1 (ITER-076 stage 3C)
     AgentLiveBenchTests.testTheTrialErrandsOnTheTestChrome
     # how MetaChat's model calls an errand, live, only with METAWHISP_CHAT_PROBE=1 (2026-10-06)

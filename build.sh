@@ -103,6 +103,17 @@ if [ -f "Resources/shrek-pill.mov" ]; then
     cp "Resources/shrek-pill.mov" "$RESOURCES/shrek-pill.mov"
 fi
 
+# The licence notices of the copied sources (§5). They travel with the app:
+# the notices are a condition of the licences, not a README. The build fails
+# without them — a bundle that ships the code but not the notices breaks the
+# licences it claims to follow.
+NOTICES="THIRD_PARTY_NOTICES.md"
+if [ ! -f "$NOTICES" ]; then
+    echo "ERROR: $NOTICES is missing from the repo root — the bundle cannot ship without the licence notices." >&2
+    exit 1
+fi
+cp "$NOTICES" "$RESOURCES/THIRD_PARTY_NOTICES.md"
+
 # Copy Sparkle framework into Contents/Frameworks/ (Apple's standard location).
 # SPM compiles the binary with rpath `@loader_path` (= alongside the main
 # executable, i.e. Contents/MacOS/). With Sparkle moved to Contents/Frameworks/

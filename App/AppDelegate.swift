@@ -1102,6 +1102,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
                 onVoiceQuestionStart: hotkey({ $0.startVoiceQuestion() }, practice: { $0.start() }),
                 onVoiceQuestionStop: hotkey({ $0.stopVoiceQuestion() }, practice: { $0.stop() })
             )
+            // ITER-076 P5 — the meeting-help shortcut is a Carbon hot key: the
+            // app sees it as a hot key press and never as a key event. It has
+            // to reach the hot key service, or a Right ⌥ inside the combo
+            // reads as a translate tap.
+            MeetingHelpHotkey.shared.hotkeyService = hotkeyService
         } else {
             NSLog("[HotkeyService] global input is off in this copy (the Dev app's default) — no hotkeys")
         }
@@ -1613,13 +1618,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         // against the current screen context before being fed to the advice prompt.
         adviceService.embeddingService = embeddingService
 
-        // ITER-019 — Live advice during meeting recording. Auto-arms via Combine
-        // subscription on `meetingRecorder.$isRecording`; auto-disarms on stop.
-        // No-op when settings.liveMeetingAdviceEnabled == false.
+        // ITER-076 — the live hints during a meeting recording. Auto-arms via
+        // Combine subscription on `meetingRecorder.$isRecording`; auto-disarms
+        // on stop. No-op when settings.liveMeetingAdviceEnabled == false.
         liveMeetingAdvisor.configure(
             meetingRecorder: meetingRecorder,
             coordinator: coordinator,
-            adviceService: adviceService
+            adviceService: adviceService,
+            captureScreen: { [weak self] in await self?.screenContext.captureNow(isCancelled: { Task.isCancelled })?.ocrText }
         )
         // MeetingCoach needs the model container to look up UserMemory entries
         // when entities mentioned in the live transcript match prior memories.
@@ -1865,6 +1871,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
                 NSLog("[CallDetect] Session cleared after 60s grace (recording untouched — silence guard owns stop)")
             }
         }
+    }
+
+    /// The card can stop the current recording, but a stale tap cannot start one.
+    func stopMeetingFromCard() {
+        guard meetingRecorder.isRecording || meetingRecorder.isStarting else { return }
+        meetingRecorder.lastError = nil
+        systemAudioCapture.lastError = nil
+        stopMeetingRecording(reason: "card-tap-stop")
     }
 
     /// Toggle meeting recording (mic + system audio together → transcription).
@@ -2153,12 +2167,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         calendarHardStopTask?.cancel()
         calendarHardStopTask = nil
 
-        // Try to reuse `LiveMeetingAdvisor` partials as the final transcript.
-        // The advisor was already transcribing the same audio in 30s chunks for
-        // realtime advice — re-transcribing on stop() doubled the cloud cost
-        // (a 30-min meeting → 60min billed). `finalize()` returns the assembled
-        // partials + the offsets where we left off; nil means advisor was off
-        // or collected nothing, in which case we fall back to a full pass.
+        // What the live hints heard during the meeting. It is the log line of
+        // the meeting only: the saved transcript comes from the dual-stream
+        // pass over the whole recording, so that every line carries its
+        // speaker. Nil means the hints were off, or nothing was recorded.
         let liveResult = liveMeetingAdvisor.finalize()
 
         // 2026-05-31 — the saved transcript now always comes from the full-buffer
@@ -2261,13 +2273,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             NSLog("[MetaWhisp] Meeting finalize via %@: mic %.0fs, system %.0fs", engine.name, Double(micSamples.count) / 16000.0, Double(sysSamples.count) / 16000.0)
             // 2026-05-31 — ALWAYS save via the per-channel dual-stream pass so the
             // stored transcript carries Me:/Them: speaker labels ("who said what").
-            // The live advisor's partials already powered the real-time copilot
-            // DURING the meeting, but they're a single MIXED stream (no labels), so
-            // they're no longer reused for the saved transcript. Cost: re-transcribes
-            // both channels at finalize (~2×) — accepted trade for speaker accuracy.
+            // The live hints heard the meeting line by line while it ran, but the
+            // saved transcript comes from the dual-stream pass over the whole
+            // recording. Cost: re-transcribes both channels at finalize (~2×) —
+            // accepted trade for speaker accuracy.
             // (`assembleMeetingTranscriptFromLive` is now dormant; kept as fallback.)
             if let live = liveResult {
-                NSLog("[MetaWhisp] Meeting: %d live partials drove the copilot; saving via dual-stream for Me/Them labels", live.partialCount)
+                NSLog("[MetaWhisp] Meeting: the live hints heard %d lines; saving via dual-stream for Me/Them labels", live.partialCount)
             }
             let dual = await Self.transcribeMeetingDualStream(mic: micSamples, system: sysSamples, engine: engines)
 

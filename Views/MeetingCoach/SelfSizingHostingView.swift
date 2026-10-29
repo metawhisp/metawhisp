@@ -17,8 +17,21 @@ final class SelfSizingHostingView<Content: View>: NSHostingView<Content> {
     /// `layout()` synchronously.
     var onContentSizeChange: ((CGSize) -> Void)?
 
+    /// The coach's answer text does not ask its panel for keyboard focus.
+    /// Other overlays keep the hosting view's existing responder behavior.
+    var permitsKeyboardFocus = true
+
+    override var acceptsFirstResponder: Bool {
+        permitsKeyboardFocus && super.acceptsFirstResponder
+    }
+
+    override var needsPanelToBecomeKey: Bool {
+        permitsKeyboardFocus && super.needsPanelToBecomeKey
+    }
+
     private var lastReportedSize: CGSize = .zero
     private var reportScheduled = false
+    private(set) var sizeReportScheduleCount = 0
     private let tolerance: CGFloat = 0.5
 
     required init(rootView: Content) {
@@ -43,6 +56,7 @@ final class SelfSizingHostingView<Content: View>: NSHostingView<Content> {
     /// Measure now and report if it changed. Safe to call directly (e.g. to
     /// force the first measurement after install).
     func reportCurrentSize() {
+        guard onContentSizeChange != nil else { return }
         let size = measuredContentSize()
         guard isUsable(size), differs(size, from: lastReportedSize) else { return }
         lastReportedSize = size
@@ -50,7 +64,8 @@ final class SelfSizingHostingView<Content: View>: NSHostingView<Content> {
     }
 
     private func scheduleSizeReport() {
-        guard !reportScheduled else { return }
+        guard onContentSizeChange != nil, !reportScheduled else { return }
+        sizeReportScheduleCount += 1
         reportScheduled = true
         Task { @MainActor [weak self] in
             guard let self else { return }

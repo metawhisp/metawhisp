@@ -79,20 +79,20 @@ final class OnboardingRenderTests: XCTestCase {
     /// The pair — Continue with Free, Get Pro, as wide as each other — is centred together: Get Pro starts 6 pt right
     /// of the middle.
     func testTheProScreensPairIsCentred() throws {
-        let image = render(container(on: .pro), settle: Self.proArrived, name: "4-pro")
+        let image = render(container(on: .pro), waitForProHeader: true, name: "4-pro")
         let getPro = try XCTUnwrap(image.choiceCapsule(), "the Get Pro capsule is drawn")
         XCTAssertEqual(getPro.midX, image.width / 2 + 6 + ProScreen.pairWidth / 2, accuracy: 2, "Get Pro, \(getPro)")
     }
 
     // MARK: - The Pro screen's header
 
-    /// Long enough for the Pro screen's header to have arrived (`ProScreen.Reveal`), the saving's spring included.
-    private static let proArrived: TimeInterval = 2.8
+    /// A ceiling for the drawn header, not a fixed settle: the main run loop can lag under load.
+    private static let proArrivalTimeout: TimeInterval = 10
 
     /// Owner 2026-10-25: the billing line and "Included with Pro — no API keys" were filler. Nothing is drawn between
     /// the price and the tiles: what comes next under the price row is the first row of tiles, 16 pt or more below.
     func testNothingSitsBetweenThePriceAndTheTiles() throws {
-        let image = render(container(on: .pro), settle: Self.proArrived, name: "4-pro-arrived")
+        let image = render(container(on: .pro), waitForProHeader: true, name: "4-pro-arrived")
         let bands = image.inkBands(x: 60...660, y: 40...480, background: CGPoint(x: 20, y: 300))
         XCTAssertGreaterThanOrEqual(bands.count, 3, "the chip, the price row, the tiles: \(bands)")
         XCTAssertGreaterThanOrEqual(bands[2].lowerBound - bands[1].upperBound, 16, "under the price: \(bands)")
@@ -102,7 +102,7 @@ final class OnboardingRenderTests: XCTestCase {
     /// not the saving — while the tiles are; once it has arrived, the chip and the price are there, and the saving in
     /// its green.
     func testTheProHeaderArrives() throws {
-        let done = render(container(on: .pro), settle: Self.proArrived, name: "4-pro-arrived")
+        let done = render(container(on: .pro), waitForProHeader: true, name: "4-pro-arrived")
         let ground = CGPoint(x: 20, y: 300)
         let bands = done.inkBands(x: 60...660, y: 40...480, background: ground)
         XCTAssertGreaterThanOrEqual(bands.count, 3, "\(bands)")
@@ -226,8 +226,9 @@ final class OnboardingRenderTests: XCTestCase {
         LicenseService.shared.isPro = false
         _ = render(container(on: .pro), settle: 1.1, name: "4-pro-counting")
         for screen in OnboardingFlow.Screen.allCases {
-            let settle: TimeInterval = screen == .welcome ? 3.6 : screen == .pro ? Self.proArrived : 0.3
-            _ = render(container(on: screen), appearance: .aqua, settle: settle, name: "light-\(screen.rawValue + 1)")
+            let settle: TimeInterval = screen == .welcome ? 3.6 : 0.3
+            _ = render(container(on: screen), appearance: .aqua, settle: settle, waitForProHeader: screen == .pro,
+                       name: "light-\(screen.rawValue + 1)")
         }
     }
 
@@ -264,10 +265,12 @@ final class OnboardingRenderTests: XCTestCase {
     }
 
     /// The window's whole frame, title bar and content, drawn at the screen's scale after `settle` seconds of run
-    /// loop — long enough for the welcome's intro to finish when asked. The appearance is the drawing's own as well
-    /// as the window's, so the app's colors and SwiftUI's resolve alike.
+    /// loop — long enough for the welcome's intro to finish when asked. Arrived Pro renders instead poll the same
+    /// window every 0.2 s for the chip, price and green saving, returning the last drawing at the ceiling so the
+    /// assertions still fail if the header never arrives. The appearance is the drawing's own as well as the window's,
+    /// so the app's colors and SwiftUI's resolve alike.
     private func render(_ view: some View, appearance: NSAppearance.Name = .darkAqua, settle: TimeInterval = 0.3,
-                        name: String) -> Rendered {
+                        waitForProHeader: Bool = false, name: String) -> Rendered {
         let look = NSAppearance(named: appearance)!
         let app = NSApplication.shared
         let previous = app.appearance
@@ -275,10 +278,21 @@ final class OnboardingRenderTests: XCTestCase {
         defer { app.appearance = previous }
         let window = OnboardingWindowController.makeWindow(rootView: view)
         window.appearance = look
-        RunLoop.main.run(until: Date().addingTimeInterval(settle))
+        if !waitForProHeader { RunLoop.main.run(until: Date().addingTimeInterval(settle)) }
         let frame = window.contentView!.superview!
         let rep = frame.bitmapImageRepForCachingDisplay(in: frame.bounds)!
-        look.performAsCurrentDrawingAppearance { frame.cacheDisplay(in: frame.bounds, to: rep) }
+        let deadline = Date().addingTimeInterval(Self.proArrivalTimeout)
+        while true {
+            look.performAsCurrentDrawingAppearance { frame.cacheDisplay(in: frame.bounds, to: rep) }
+            guard waitForProHeader else { break }
+            let image = Rendered(rep: rep, points: frame.bounds.size)
+            let bands = image.inkBands(x: 60...660, y: 40...480, background: CGPoint(x: 20, y: 300))
+            if bands.count >= 3,
+               image.greenPixels(x: 60...660, y: 40...(bands[2].lowerBound - 4)) > 200 { break }
+            let remaining = deadline.timeIntervalSinceNow
+            guard remaining > 0 else { break }
+            RunLoop.main.run(until: Date().addingTimeInterval(min(0.2, remaining)))
+        }
         window.close()
         if let folder = ProcessInfo.processInfo.environment["MW_RENDER_DIR"] {
             try? rep.representation(using: .png, properties: [:])?

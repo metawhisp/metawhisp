@@ -38,6 +38,15 @@ enum LLMProvider: String, CaseIterable, Identifiable {
 
 /// Lightweight OpenAI-compatible Chat Completions client supporting multiple providers.
 actor OpenAIService {
+    typealias Transport = @Sendable (URLRequest) async throws -> (Data, URLResponse)
+
+    private let transport: Transport
+
+    init(transport: @escaping Transport = { request in
+        try await URLSession.shared.data(for: request)
+    }) {
+        self.transport = transport
+    }
 
     struct Response: Decodable {
         struct Choice: Decodable {
@@ -80,7 +89,7 @@ actor OpenAIService {
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
 
         let start = CFAbsoluteTimeGetCurrent()
-        let (data, httpResponse) = try await URLSession.shared.data(for: request)
+        let (data, httpResponse) = try await transport(request)
         let elapsed = (CFAbsoluteTimeGetCurrent() - start) * 1000
 
         if let http = httpResponse as? HTTPURLResponse {
@@ -90,9 +99,11 @@ actor OpenAIService {
                 NSLog("[LLM] ❌ error body: %d chars (content not logged)", bodyStr.count)
                 if let apiErr = try? JSONDecoder().decode(APIError.self, from: data) {
                     throw ProcessingError.http(status: Self.status(http.statusCode, message: apiErr.error.message),
-                                               message: apiErr.error.message)
+                                               message: apiErr.error.message,
+                                               retryAfter: ProAdviceClient.retryAfterSeconds(http))
                 }
-                throw ProcessingError.http(status: http.statusCode, message: "HTTP \(http.statusCode)")
+                throw ProcessingError.http(status: http.statusCode, message: "HTTP \(http.statusCode)",
+                                           retryAfter: ProAdviceClient.retryAfterSeconds(http))
             }
         }
 
@@ -121,14 +132,14 @@ enum ProcessingError: LocalizedError {
     case apiError(String)
     /// ITER-075 step 1 (1.5) — a refusal from the service, with its HTTP
     /// status, so a caller can tell an outage from a request that failed.
-    case http(status: Int, message: String)
+    case http(status: Int, message: String, retryAfter: TimeInterval? = nil)
     case emptyResponse
 
     var errorDescription: String? {
         switch self {
         case .noAPIKey: "API key not set. Add it in Settings."
         case .apiError(let msg): "LLM error: \(msg)"
-        case .http(_, let msg): "LLM error: \(msg)"
+        case .http(_, let msg, _): "LLM error: \(msg)"
         case .emptyResponse: "Empty response from LLM."
         }
     }

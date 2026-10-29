@@ -1,170 +1,240 @@
 import SwiftUI
 
-/// Floating overlay shown during an active meeting. Renders a stack of
-/// LLM-generated suggestions plus a thin live transcript footer. Renders only
-/// when `MeetingCoachState.shared.isVisible == true`.
-///
-/// Visual: glass card, ~360pt wide, anchored to bottom-right of the screen by
-/// the controlling NSWindow. Newest suggestion at the TOP of the stack with a
-/// short fade-in; older items fade slightly. Transcript footer at the bottom
-/// shows the last ~200 chars of speech so the user can see the LLM's context.
+/// The single visible exchange. Natural height is measured by the controller;
+/// every card type shares its viewport and scrolls only beyond that viewport.
+@MainActor
 struct MeetingCoachView: View {
     @ObservedObject var state: MeetingCoachState
-    /// Closure to fire when the user clicks the STOP pill in the header.
-    /// Wired by the window controller to `AppDelegate.toggleMeetingRecording`.
-    var onStop: (() -> Void)?
+    @ObservedObject var presentation: MeetingCoachPresentation
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @AppStorage("screenContextEnabled") private var screenContextEnabled = false
+    var snapshot: MeetingCoachRenderSnapshot?
+    var drawsSurface = true
+    var includesHeader = true
+    var reduceMotionOverride: Bool?
+    var onQuestionFieldReady: ((MeetingCoachQuestionTextField) -> Void)?
+
+    init(state: MeetingCoachState, presentation: MeetingCoachPresentation? = nil,
+         drawsSurface: Bool = true, includesHeader: Bool = true, reduceMotionOverride: Bool? = nil,
+         snapshot: MeetingCoachRenderSnapshot? = nil,
+         onQuestionFieldReady: ((MeetingCoachQuestionTextField) -> Void)? = nil) {
+        self.state = state
+        self.snapshot = snapshot
+        self.presentation = presentation ?? MeetingCoachPresentation()
+        self.drawsSurface = drawsSurface
+        self.includesHeader = includesHeader
+        self.reduceMotionOverride = reduceMotionOverride
+        self.onQuestionFieldReady = onQuestionFieldReady
+    }
+
+    private var content: MeetingCoachRenderSnapshot {
+        snapshot ?? MeetingCoachRenderSnapshot(state: state, expanded: presentation.isExpanded,
+                                               screenContextEnabled: screenContextEnabled)
+    }
+
+    var showsScreenButton: Bool { snapshot?.screenContextEnabled ?? screenContextEnabled }
+
     var body: some View {
-        // Just the card, sized to its content. The drop shadow + envelope live
-        // in a separate pass-through shadow window so THIS card window can be
-        // sized exactly to the card (only the card is clickable/draggable; the
-        // halo + empty space click through). Sizing is measured on the AppKit
-        // side by SelfSizingHostingView — see MeetingCoachWindowController.
-        //
-        // The pill is wrapped in a ZStack so it is NOT the NSHostingView root
-        // (NSHostingView stretches its root to the window bounds, ignoring
-        // `.fixedSize`); as a non-root child the pill's `.fixedSize` is honored.
-        ZStack(alignment: .topLeading) {
-            pillContent
+        VStack(alignment: .leading, spacing: 0) {
+            if includesHeader { MeetingCoachHeaderView(state: state, snapshot: snapshot) }
+            Group {
+                if content.selectedTab == .transcript && !content.isHalted {
+                    transcriptContent.transition(.opacity)
+                } else {
+                    answersContent.transition(.opacity)
+                }
+            }
+            .animation(crossFade, value: content.selectedTab)
+            .padding(.horizontal, 16)
+            .padding(.bottom, 16)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .frame(width: 392, alignment: .leading)
+        .fixedSize(horizontal: false, vertical: true)
+        .background { if drawsSurface { MeetingCoachPanelSurface() } }
+        .focusable(false)
+        .textSelection(.disabled)
+    }
+
+    private var crossFade: Animation? {
+        snapshot != nil || (reduceMotionOverride ?? reduceMotion) ? .easeOut(duration: 0.18) : nil
+    }
+
+    private var answersContent: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            if let question = content.displayedQuestion { questionBubble(question) }
+            if let heard = content.displayedHeard {
+                Text("Them · \(heard)")
+                    .font(.system(size: 12))
+                    .foregroundStyle(MW.textSecondary)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+            }
+            if !content.displayedBlocks.isEmpty {
+                VStack(alignment: .leading, spacing: 6) {
+                    ForEach(Array(content.displayedBlocks.enumerated()), id: \.offset) { index, block in
+                        blockView(block, rendered: content.renderedBlocks[index])
+                    }
+                }
+            }
+            if content.showsThinkingPlaceholder { statusLine("Thinking…") }
+            if let status = content.status { statusLine(status) }
+            if content.canRequestAnswers {
+                Group {
+                    if content.isAskOpen {
+                        questionField.transition(.opacity)
+                    } else if content.isExpanded {
+                        VStack(alignment: .leading, spacing: 10) {
+                            if !content.displayedBlocks.isEmpty || content.status != nil || content.showsThinkingPlaceholder {
+                                Rectangle().fill(MW.border).frame(height: 0.5)
+                            }
+                            actionButtons
+                        }
+                        .transition(.opacity)
+                    }
+                }
+                .animation(crossFade, value: content.isAskOpen)
+                .animation(crossFade, value: content.isExpanded)
+            }
+        }
+    }
+
+    private var transcriptContent: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            if content.transcriptTail.isEmpty {
+                statusLine("No lines yet")
+            } else {
+                ForEach(Array(content.transcriptTail.enumerated()), id: \.offset) { _, line in
+                    HStack(alignment: .top, spacing: 8) {
+                        Text(line.speaker == .them ? "Them" : "Me")
+                            .foregroundStyle(MW.textSecondary)
+                            .frame(width: 38, alignment: .leading)
+                        Text(line.text).foregroundStyle(MW.textPrimary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    .font(.system(size: 13.5))
+                }
+            }
+        }
+    }
+
+    private func questionBubble(_ question: String) -> some View {
+        HStack {
+            Spacer(minLength: 0)
+            Text(question)
+                .font(.system(size: 13))
+                .foregroundStyle(MW.textPrimary)
+                .padding(.vertical, 7).padding(.horizontal, 12)
+                .background(.primary.opacity(0.08), in: UnevenRoundedRectangle(
+                    topLeadingRadius: 16, bottomLeadingRadius: 16, bottomTrailingRadius: 4, topTrailingRadius: 16))
+                .frame(maxWidth: 288, alignment: .trailing)
                 .fixedSize(horizontal: false, vertical: true)
         }
-        .fixedSize(horizontal: false, vertical: true)
     }
 
-    private var pillContent: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            header
-            if state.suggestions.isEmpty {
-                emptyState
-            } else {
-                suggestionList
+    private var questionField: some View {
+        HStack(spacing: 6) {
+            MeetingCoachQuestionField(state: state, placeholder: content.questionPlaceholder,
+                onClose: state.closeAsk, onReady: onQuestionFieldReady)
+                .frame(minWidth: 0, maxWidth: .infinity)
+                .frame(height: 26)
+                .help(content.questionPlaceholder)
+            MeetingCoachButton(title: "Send", isEnabled: !state.questionText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty) {
+                state.submitQuestion()
             }
-            if !state.transcriptTail.isEmpty {
-                Divider().background(MW.hairlineColor)
-                transcriptFooter
-            }
+            .symbol("arrow.up", accent: true)
+            .background(MW.accent, in: Circle())
+            MeetingCoachButton(title: "Close question", action: state.closeAsk)
+                .symbol("xmark")
+                .background(.quaternary, in: Circle())
         }
-        .padding(14)
-        .frame(width: 360, alignment: .leading)
-        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: MW.rLarge, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: MW.rLarge, style: .continuous)
-                .strokeBorder(MW.border, lineWidth: 0.5)
-        )
-        // No `.shadow`/`.padding` envelope here: the shadow is drawn by a
-        // separate pass-through window (CardShadowView) behind this card, so
-        // the card window stays exactly card-sized and only the card is
-        // interactive.
+        .padding(.leading, 12).padding(.trailing, 6).padding(.vertical, 6)
+        .background(.ultraThinMaterial, in: Capsule())
+        .overlay(Capsule().strokeBorder(MW.border, lineWidth: 0.5))
     }
 
-    private var header: some View {
-        HStack(spacing: 8) {
-            Circle()
-                .fill(state.isProcessing ? Color.orange : Color.green)
-                .frame(width: 6, height: 6)
-                .shadow(color: state.isProcessing ? Color.orange.opacity(0.6) : Color.green.opacity(0.6), radius: 4)
-            Text("MEETING COPILOT")
-                .font(.system(size: 9, weight: .semibold))
-                .tracking(1.4)
-                .foregroundStyle(MW.textMuted)
-            Spacer()
-            if state.isProcessing {
-                Text("THINKING…")
-                    .font(.system(size: 9, weight: .medium))
-                    .tracking(1)
-                    .foregroundStyle(MW.textMuted)
-                    .transition(.opacity)
+    private var actionButtons: some View {
+        HStack(spacing: 6) {
+            MeetingCoachButton(title: "Questions") { state.actionPressed(.questions) }.repeatFeedback(content.repeatPulse(for: .questions)).padded(horizontal: 6, vertical: 5).modifier(MeetingCoachChip())
+            MeetingCoachButton(title: "Recap") { state.actionPressed(.recap) }.repeatFeedback(content.repeatPulse(for: .recap)).padded(horizontal: 6, vertical: 5).modifier(MeetingCoachChip())
+            MeetingCoachButton(title: "More", isEnabled: content.canExpandLatest) {
+                state.actionPressed(.more)
+            }.repeatFeedback(content.repeatPulse(for: .more)).padded(horizontal: 6, vertical: 5).modifier(MeetingCoachChip())
+            if showsScreenButton {
+                MeetingCoachButton(title: "Screen", action: state.screenPressed).repeatFeedback(content.repeatPulse(for: .screen)).padded(horizontal: 6, vertical: 5).modifier(MeetingCoachChip())
             }
-            // STOP pill — manual escape hatch so user never gets a stuck
-            // overlay if auto-stop heuristics miss the call end.
-            if let onStop {
-                Button(action: onStop) {
-                    Text("STOP")
-                        .font(.system(size: 9, weight: .bold))
-                        .tracking(1)
-                        .foregroundStyle(.white)
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 3)
-                        .background(
-                            RoundedRectangle(cornerRadius: 4, style: .continuous)
-                                .fill(Color.red.opacity(0.85))
-                        )
-                }
-                .buttonStyle(.plain)
+            MeetingCoachButton(title: "Ask…", action: state.openAsk).padded(horizontal: 6, vertical: 5).modifier(MeetingCoachChip())
+        }
+        .fixedSize()
+    }
+
+    @ViewBuilder
+    private func blockView(_ block: MeetingAnswerBlock, rendered: AttributedString) -> some View {
+        switch block {
+        case .headline:
+            Text(rendered)
+                .font(.system(size: 20, weight: .semibold))
+                .foregroundStyle(MW.textPrimary)
+                .fixedSize(horizontal: false, vertical: true)
+        case .bullet:
+            HStack(alignment: .firstTextBaseline, spacing: 9) {
+                Circle().fill(MW.textSecondary).frame(width: 4, height: 4)
+                    .alignmentGuide(.firstTextBaseline) { $0[VerticalAlignment.center] + 5 }
+                Text(rendered)
+                    .font(.system(size: 14))
+                    .foregroundStyle(MW.textPrimary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
+        case .paragraph:
+            Text(rendered)
+                .font(.system(size: 14))
+                .foregroundStyle(MW.textPrimary)
+                .fixedSize(horizontal: false, vertical: true)
         }
     }
 
-    private var emptyState: some View {
-        Text("Listening… first suggestion appears in ~30 sec")
-            .font(.system(size: 12))
-            .foregroundStyle(MW.textMuted)
-            .padding(.vertical, 4)
-    }
-
-    private var suggestionList: some View {
-        // Newest first.
-        VStack(alignment: .leading, spacing: 8) {
-            ForEach(state.suggestions.reversed()) { item in
-                SuggestionRow(item: item)
-                    .transition(.opacity.combined(with: .move(edge: .top)))
-            }
-        }
-        .animation(.easeOut(duration: 0.25), value: state.suggestions.count)
-    }
-
-    private var transcriptFooter: some View {
-        Text(state.transcriptTail)
-            .font(.system(size: 10.5))
-            .foregroundStyle(MW.textDim)
-            .lineLimit(2)
-            .truncationMode(.head)
+    private func statusLine(_ text: String) -> some View {
+        Text(text).font(.system(size: 12)).foregroundStyle(MW.textMuted)
+            .lineLimit(1).truncationMode(.tail)
     }
 }
 
-/// A single suggestion row. Kind drives accent color + label.
-private struct SuggestionRow: View {
-    let item: MeetingCoachState.Suggestion
-
-    private var accent: Color {
-        switch item.kind {
-        case .question:  return Color.blue
-        case .attention: return Color.orange
-        case .missed:    return Color.purple
-        case .followUp:  return Color.green
-        }
-    }
-
-    private var label: String {
-        switch item.kind {
-        case .question:  return "ASK"
-        case .attention: return "NOTICE"
-        case .missed:    return "MISSED"
-        case .followUp:  return "FOLLOW-UP"
-        }
-    }
-
+struct MeetingCoachPanelSurface: View {
     var body: some View {
-        HStack(alignment: .top, spacing: 10) {
-            Text(label)
-                .font(.system(size: 8, weight: .bold))
-                .tracking(0.8)
-                .foregroundStyle(accent)
-                .padding(.horizontal, 6)
-                .padding(.vertical, 3)
-                .background(
-                    RoundedRectangle(cornerRadius: 4, style: .continuous)
-                        .fill(accent.opacity(0.15))
-                )
-                .overlay(
-                    RoundedRectangle(cornerRadius: 4, style: .continuous)
-                        .strokeBorder(accent.opacity(0.35), lineWidth: 0.5)
-                )
-                .padding(.top, 1)
-            Text(item.text)
-                .font(.system(size: 13, weight: .medium))
-                .foregroundStyle(MW.textPrimary)
-                .fixedSize(horizontal: false, vertical: true)
-                .multilineTextAlignment(.leading)
-        }
+        RoundedRectangle(cornerRadius: 22, style: .continuous)
+            .fill(.ultraThinMaterial)
+            .overlay(RoundedRectangle(cornerRadius: 22, style: .continuous).strokeBorder(MW.border, lineWidth: 0.5))
+            .overlay(alignment: .top) {
+                Capsule().fill(.white.opacity(0.25)).frame(height: 0.5).padding(.horizontal, 22).padding(.top, 0.5)
+            }
+    }
+}
+
+private struct MeetingCoachChip: ViewModifier {
+    func body(content: Content) -> some View {
+        content
+            .background(.ultraThinMaterial, in: Capsule())
+            .overlay(Capsule().strokeBorder(MW.border, lineWidth: 0.5))
+    }
+}
+
+/// The answer as the overlay draws it: the bold sentence that opens it and
+/// the catch points, each as attributed text with its bold run kept.
+///
+/// The markdown is read inline only, and the spaces inside it are kept: a
+/// catch point is a fragment, and its words must not run together.
+enum MeetingAnswerRender {
+    /// The line an earlier answer shows: its headline, or — for an answer
+    /// that has none — its first line.
+    static func headline(_ answer: MeetingAnswer) -> AttributedString {
+        let text = answer.headline ?? answer.blocks.first?.text ?? ""
+        return MeetingAnswerContract.rendered(text)
+    }
+
+    /// A catch point as the card draws it: the marker and the text.
+    static func bullet(_ text: String) -> AttributedString {
+        var line = AttributedString("• ")
+        line.append(MeetingAnswerContract.rendered(text))
+        return line
     }
 }

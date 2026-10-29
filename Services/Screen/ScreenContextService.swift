@@ -499,7 +499,8 @@ final class ScreenContextService: ObservableObject {
     }
 
     /// Force capture current screen context.
-    func captureNow() async -> ScreenContextSnapshot? {
+    func captureNow(isCancelled: () -> Bool = { Task.isCancelled }) async -> ScreenContextSnapshot? {
+        guard !isCancelled() else { return nil }
         // AUD-023 — respect the master toggle. If the user turned Screen Context
         // off, do NOT capture the screen even for an on-demand voice question.
         guard AppSettings.shared.screenContextEnabled else {
@@ -517,7 +518,8 @@ final class ScreenContextService: ObservableObject {
         return await captureActiveWindow(
             blacklist: policy.blacklist,
             whitelist: policy.whitelist,
-            defaultExcluded: []
+            defaultExcluded: [],
+            isCancelled: isCancelled
         )?.snapshot
     }
 
@@ -760,7 +762,8 @@ final class ScreenContextService: ObservableObject {
     private func captureActiveWindow(
         blacklist: Set<String>,
         whitelist: Set<String>?,
-        defaultExcluded: Set<String>
+        defaultExcluded: Set<String>,
+        isCancelled: () -> Bool = { Task.isCancelled }
     ) async -> (snapshot: ScreenContextSnapshot, frame: CGImage?)? {
         guard let frontApp = NSWorkspace.shared.frontmostApplication else { return nil }
         let appName = frontApp.localizedName ?? "Unknown"
@@ -782,11 +785,12 @@ final class ScreenContextService: ObservableObject {
         // capture mark advanced so the window was never retried, and the agent
         // was woken for a frame nobody had managed to read. A failure is now a
         // failure.
-        guard let shot = await captureScreenshot(frontPID: frontApp.processIdentifier) else {
+        guard let shot = await captureScreenshot(frontPID: frontApp.processIdentifier,
+                                                recognizeText: true,
+                                                isCancelled: isCancelled) else {
             lastCaptureOutcome = .captureFailed
             return nil
         }
-        let image = shot.image
         // Prefer the identity read from the window that was actually captured.
         let boundTitle = shot.windowTitle.flatMap { $0.isEmpty ? nil : $0 } ?? windowTitle
 
@@ -794,12 +798,9 @@ final class ScreenContextService: ObservableObject {
         // field here let a voice capture overwrite a poll capture mid-OCR and
         // bind screen B's pixels to screen A's row — and let a full-res image
         // outlive the flow that captured it (Codex P1 ×2).
-        let frame = AppSettings.shared.screenAgentVisualConsent ? image : nil
+        let frame = shot.frame
 
-        // Run OCR on the screenshot (on-device via Vision framework)
-        // ITER-065.5 — Vision runs off the main thread now; the flat text
-        // it produces is byte-identical to what this line used to return.
-        let ocrText = await ScreenOCR.recognize(image).text
+        let ocrText = shot.ocrText
 
         let snapshot = ScreenContextSnapshot(
             timestamp: Date(),
@@ -820,8 +821,32 @@ final class ScreenContextService: ObservableObject {
         return (snapshot, frame)
     }
 
-    /// Capture a screenshot of the screen using ScreenCaptureKit.
-    private func captureScreenshot(frontPID: pid_t) async -> (image: CGImage, windowID: Int, windowTitle: String?)? {
+    /// The same stage boundaries drive live capture and the headless fake pipeline.
+    static func runCapturePipeline<Content, Target, Shot>(
+        isCancelled: () -> Bool,
+        enumerate: () async throws -> Content,
+        prepare: (Content) -> Target?,
+        screenshot: (Target) async throws -> Shot,
+        recognize: (Shot) async -> String
+    ) async rethrows -> (shot: Shot, text: String)? {
+        guard !isCancelled() else { return nil }
+        let content = try await enumerate()
+        // ScreenCaptureKit's enumeration does not itself honor task cancellation.
+        guard !isCancelled() else { return nil }
+        guard let target = prepare(content) else { return nil }
+        guard !isCancelled() else { return nil }
+        let shot = try await screenshot(target)
+        guard !isCancelled() else { return nil }
+        let text = await recognize(shot)
+        return (shot, text)
+    }
+
+    /// Capture a screenshot using ScreenCaptureKit, optionally with on-device OCR.
+    private func captureScreenshot(
+        frontPID: pid_t,
+        recognizeText: Bool = false,
+        isCancelled: () -> Bool = { Task.isCancelled }
+    ) async -> (image: CGImage, windowID: Int, windowTitle: String?, ocrText: String, frame: CGImage?)? {
         guard #available(macOS 14.0, *) else { return nil }
 
         guard CGPreflightScreenCaptureAccess() else {
@@ -831,58 +856,72 @@ final class ScreenContextService: ObservableObject {
         }
 
         do {
-            let content = try await SCShareableContent.current
+            let result = try await Self.runCapturePipeline(
+                isCancelled: isCancelled,
+                enumerate: { try await SCShareableContent.current },
+                prepare: { content -> (filter: SCContentFilter, configuration: SCStreamConfiguration,
+                                       windowID: Int, windowTitle: String?)? in
+                    // ITER-065.8 — AUD-022 excluded other apps but kept every window of
+                    // the front app and captured a whole display, so two windows of one
+                    // app were merged into one blob and a second monitor was ignored
+                    // entirely. Bounds, on-screen state and window level come along now;
+                    // the old mapping supplied only id and pid, leaving every rectangle
+                    // zero.
+                    let refs = content.windows.map {
+                        ActiveAppCaptureFilter.WindowRef(
+                            id: Int($0.windowID),
+                            ownerPID: Int($0.owningApplication?.processID ?? -1),
+                            bounds: $0.frame,
+                            isOnScreen: $0.isOnScreen,
+                            layer: $0.windowLayer
+                        )
+                    }
 
-            // ITER-065.8 — AUD-022 excluded other apps but kept every window of
-            // the front app and captured a whole display, so two windows of one
-            // app were merged into one blob and a second monitor was ignored
-            // entirely. Bounds, on-screen state and window level come along now;
-            // the old mapping supplied only id and pid, leaving every rectangle
-            // zero.
-            let refs = content.windows.map {
-                ActiveAppCaptureFilter.WindowRef(
-                    id: Int($0.windowID),
-                    ownerPID: Int($0.owningApplication?.processID ?? -1),
-                    bounds: $0.frame,
-                    isOnScreen: $0.isOnScreen,
-                    layer: $0.windowLayer
-                )
-            }
+                    let selection = ActiveAppCaptureFilter.selectFocusedWindow(
+                        refs,
+                        frontPID: Int(frontPID),
+                        focusedBounds: focusedWindowBounds(pid: frontPID)
+                    )
+                    guard case .window(let chosenID) = selection else {
+                        // Reading every candidate and labelling the result with one of
+                        // them would be confidently wrong, so nothing is read.
+                        lastCaptureOutcome = selection == .ambiguous ? .ambiguousWindow : .captureFailed
+                        NSLog("[ScreenContext] screenshot skipped: %@ (%d on-screen windows for front app)", lastCaptureOutcome.reasonCode, refs.filter { $0.ownerPID == Int(frontPID) && $0.isOnScreen }.count)
+                        return nil
+                    }
+                    guard let window = content.windows.first(where: { Int($0.windowID) == chosenID }) else {
+                        lastCaptureOutcome = .captureFailed
+                        return nil
+                    }
 
-            let selection = ActiveAppCaptureFilter.selectFocusedWindow(
-                refs,
-                frontPID: Int(frontPID),
-                focusedBounds: focusedWindowBounds(pid: frontPID)
-            )
-            guard case .window(let chosenID) = selection else {
-                // Reading every candidate and labelling the result with one of
-                // them would be confidently wrong, so nothing is read.
-                lastCaptureOutcome = selection == .ambiguous ? .ambiguousWindow : .captureFailed
-                NSLog("[ScreenContext] screenshot skipped: %@ (%d on-screen windows for front app)", lastCaptureOutcome.reasonCode, refs.filter { $0.ownerPID == Int(frontPID) && $0.isOnScreen }.count)
-                return nil
-            }
-            guard let window = content.windows.first(where: { Int($0.windowID) == chosenID }) else {
-                lastCaptureOutcome = .captureFailed
-                return nil
-            }
+                    // Include-only. Filtering a display down by exclusions would still
+                    // carry every sibling window of the same app.
+                    let filter = SCContentFilter(desktopIndependentWindow: window)
+                    let config = SCStreamConfiguration()
+                    config.width = Int(window.frame.width)
+                    config.height = Int(window.frame.height)
+                    config.pixelFormat = kCVPixelFormatType_32BGRA
+                    config.showsCursor = false
 
-            // Include-only. Filtering a display down by exclusions would still
-            // carry every sibling window of the same app.
-            let filter = SCContentFilter(desktopIndependentWindow: window)
-            let config = SCStreamConfiguration()
-            config.width = Int(window.frame.width)
-            config.height = Int(window.frame.height)
-            config.pixelFormat = kCVPixelFormatType_32BGRA
-            config.showsCursor = false
-
-            let image = try await SCScreenshotManager.captureImage(
-                contentFilter: filter,
-                configuration: config
-            )
-            // The chosen window's OWN title: the AX title was sampled before
-            // the SCShareableContent await, and focus can move between two
-            // windows of one app in that gap — pixels from B labelled A.
-            return (image, chosenID, window.title)
+                    // The chosen window's OWN title: the AX title was sampled before
+                    // the SCShareableContent await, and focus can move between two
+                    // windows of one app in that gap — pixels from B labelled A.
+                    return (filter, config, chosenID, window.title)
+                },
+                screenshot: { target in
+                    let image = try await SCScreenshotManager.captureImage(
+                        contentFilter: target.filter, configuration: target.configuration)
+                    // Bind visual consent before OCR, as in the original capture path.
+                    let frame = recognizeText && AppSettings.shared.screenAgentVisualConsent ? image : nil
+                    return (image: image, windowID: target.windowID, windowTitle: target.windowTitle, frame: frame)
+                },
+                recognize: { shot in
+                    guard recognizeText else { return "" }
+                    return await ScreenOCR.recognize(shot.image).text
+                })
+            guard let result else { return nil }
+            return (result.shot.image, result.shot.windowID, result.shot.windowTitle,
+                    result.text, result.shot.frame)
         } catch {
             NSLog("[ScreenContext] Screenshot failed: %@", error.localizedDescription)
             lastCaptureOutcome = .captureFailed

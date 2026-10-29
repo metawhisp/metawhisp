@@ -89,11 +89,31 @@ final class HotkeyService: ObservableObject {
     }
 
     private func handleFlagsChanged(_ event: NSEvent) {
-        let deviceFlags = event.modifierFlags.rawValue & 0xFFFF
+        handleDeviceFlags(event.modifierFlags.rawValue & 0xFFFF)
+    }
+
+    /// The device modifier bits of a flags-changed event: `NX_DEVICERCMDKEYMASK`
+    /// (0x10) and `NX_DEVICERALTKEYMASK` (0x40) live in the low bits.
+    ///
+    /// Split out of `handleFlagsChanged` so the tests can drive the Right ⌥
+    /// and Right ⌘ state without an NSEvent.
+    func handleDeviceFlags(_ deviceFlags: UInt) {
         // Right ⌘ — toggle or PTT depending on settings
         handleRightCmd(isDown: deviceFlags & Self.rightCmdMask != 0)
         // Right ⌥ — tap + long-press (dedicated handler)
         handleRightOpt(isDown: deviceFlags & Self.rightOptMask != 0)
+    }
+
+    /// A key outside the app's own shortcuts was pressed (ITER-076 P5).
+    ///
+    /// The meeting-help shortcut is a Carbon hot key: the app sees it as a
+    /// hot key press and never as a key event. When the combo carries a
+    /// Right ⌥ or Right ⌘, the modifier alone would read as a bare tap and
+    /// fire the translate or dictation action — so the tap is marked as
+    /// spoiled, exactly as the keyDown monitor does for a foreign key.
+    func noteForeignKeyPress() {
+        if rightCmdDown { otherKeysDuringRightCmd = true }
+        if rightOptDown { otherKeysDuringRightOpt = true }
     }
 
     /// Right ⌘: Toggle mode = tap to start/stop. PTT mode = hold to record, release to stop.

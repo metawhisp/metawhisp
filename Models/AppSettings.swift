@@ -140,11 +140,17 @@ final class AppSettings: ObservableObject {
     /// be on simultaneously.
     @AppStorage("meetingRecapPopupEnabled") var meetingRecapPopupEnabled: Bool = true
 
-    /// ITER-019 — Live advice during meeting recording. Periodically transcribes
-    /// the last 30s of audio and feeds it to AdviceService for realtime hints
-    /// ("contradiction with prior call", "matches a memory from last week"). Pro only.
-    /// Off by default — opt-in because it costs ~$0.05 per hour-long meeting.
+    /// ITER-019 — the switch of the in-call hints (relabelled in P5). The old
+    /// live advice pipeline still runs behind it until P6 removes it.
     @AppStorage("liveMeetingAdviceEnabled") var liveMeetingAdviceEnabled: Bool = false
+
+    /// ITER-076 P5 — the in-call hints v2. The automatic answers are off by
+    /// default: every check costs money, and the user has to ask for them.
+    @AppStorage("meetingAutoAnswer") var meetingAutoAnswer: Bool = false
+    /// The help shortcut: the virtual key code (36 = Return) and the Carbon
+    /// modifier mask (control = 0x1000). Together they are ⌃↩.
+    @AppStorage("meetingHelpKeyCode") var meetingHelpKeyCode: Int = MeetingHelpDefaults.keyCode
+    @AppStorage("meetingHelpModifiers") var meetingHelpModifiers: Int = MeetingHelpDefaults.modifiers
 
     // ITER-015 — Proactive surfacing. Opt-in. Silently surfaces a peripheral chip
     // with 2-3 relevant memories / past decisions / pending tasks while user is

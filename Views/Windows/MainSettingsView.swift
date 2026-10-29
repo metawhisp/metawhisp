@@ -25,6 +25,11 @@ struct MainSettingsView: View {
     @State private var geminiKeyDraft = ""
     /// The browser did not open the account page: the link is shown, with Copy.
     @State private var accountLinkShown = false
+    /// ITER-076 P5 — the shortcut recorder. It owns the key monitor while it
+    /// records, and gives the monitor back when it is done.
+    @StateObject private var helpShortcutRecorder = MeetingHelpShortcutRecorder()
+    /// The Carbon shortcut — the row shows why it could not be registered.
+    @ObservedObject private var meetingHelpHotkey = MeetingHelpHotkey.shared
 
     // Tab selection — single column scroll per tab beats the previous two-column wall
     // (1500-line settings was hard to scan).
@@ -125,6 +130,7 @@ struct MainSettingsView: View {
                 cloudSection              // CLOUD LLM (Pro included / BYOK)
                 twoColumn(hotkeySection, overlaySection)
                 optionsSection
+                noticesLink               // the licence notices (§5)
             }
         case .dictation:
             VStack(spacing: MW.sp12) {
@@ -1507,19 +1513,80 @@ struct MainSettingsView: View {
                     .font(MW.monoSm).foregroundStyle(MW.textMuted)
                     .fixedSize(horizontal: false, vertical: true)
 
-                // ITER-019 — Live advice during meeting (Pro only).
+                // ITER-076 — the live hints. One answer at a time: on the
+                // shortcut, or by itself when the other side asks a question.
                 GlassDivider()
-                toggleRow("Live advice during meeting", isOn: $settings.liveMeetingAdviceEnabled)
-                Text(settings.liveMeetingAdviceEnabled
-                     ? "Every 30s during a recording: partial transcribe + advice trigger. Catches contradictions and surfaces relevant memories WHILE you're talking. Pro only · ~$0.05 per hour-long meeting."
-                     : "Advice fires only after the meeting stops. Turn ON for realtime hints during the call.")
+                toggleRow("Live hints during calls", isOn: $settings.liveMeetingAdviceEnabled)
+                Text("During a recorded call, MetaWhisp shows what to say — on your shortcut, or by itself when asked a question.")
                     .font(MW.monoSm).foregroundStyle(MW.textMuted)
                     .fixedSize(horizontal: false, vertical: true)
+
+                if settings.liveMeetingAdviceEnabled {
+                    GlassDivider()
+                    toggleRow("Answer questions automatically", isOn: $settings.meetingAutoAnswer)
+                    Text("When the other side asks you something, MetaWhisp shows an answer. Small talk shows nothing.")
+                        .font(MW.monoSm).foregroundStyle(MW.textMuted)
+                        .fixedSize(horizontal: false, vertical: true)
+
+                    GlassDivider()
+                    helpShortcutRow
+                }
             }
         }
         .padding(MW.sp16)
         .frame(maxWidth: .infinity, alignment: .topLeading)
         .mwCard(radius: MW.rMedium, elevation: .raised)
+    }
+
+    /// ITER-076 P5 — the help shortcut: the combo, the recorder that changes
+    /// it, and the reason it was refused or could not be registered.
+    private var helpShortcutRow: some View {
+        VStack(alignment: .leading, spacing: MW.sp8) {
+            HStack {
+                Text("Help shortcut").font(MW.mono).foregroundStyle(MW.textSecondary)
+                Spacer()
+                if helpShortcutRecorder.isRecording {
+                    Text("PRESS A SHORTCUT…").font(MW.monoSm).foregroundStyle(MW.textMuted)
+                } else {
+                    HStack(spacing: 4) {
+                        ForEach(Array(MeetingHelpLabel.parts(keyCode: settings.meetingHelpKeyCode,
+                                                           modifiers: settings.meetingHelpModifiers).enumerated()),
+                                id: \.offset) { _, part in
+                            Keycap(text: part)
+                        }
+                    }
+                    Button("Change") { startHelpShortcutRecording() }
+                        .buttonStyle(.plain)
+                        .font(MW.label).tracking(0.8)
+                        .foregroundStyle(MW.textSecondary)
+                        .padding(.horizontal, MW.sp8).padding(.vertical, 2)
+                        .overlay(RoundedRectangle(cornerRadius: MW.rSmall, style: .continuous)
+                            .stroke(MW.border, lineWidth: 0.5))
+                }
+            }
+            if let refusal = helpShortcutRecorder.refusal {
+                Text(refusal).font(MW.monoSm).foregroundStyle(.orange.opacity(0.85))
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            if let failure = meetingHelpHotkey.registrationError {
+                Text(failure).font(MW.monoSm).foregroundStyle(.orange.opacity(0.85))
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            if helpShortcutRecorder.isRecording {
+                Text("Esc cancels.").font(MW.monoSm).foregroundStyle(MW.textMuted)
+            }
+        }
+        .onDisappear { helpShortcutRecorder.stop() }
+    }
+
+    /// Starts the recorder: the next key the Settings window sees is the
+    /// shortcut.
+    private func startHelpShortcutRecording() {
+        helpShortcutRecorder.onAccepted = { combo in
+            settings.meetingHelpKeyCode = combo.keyCode
+            settings.meetingHelpModifiers = combo.modifiers
+        }
+        helpShortcutRecorder.start()
     }
 
     /// ITER-015 — Proactive chip that surfaces relevant memories/past decisions/waiting-on
@@ -2968,6 +3035,31 @@ struct MainSettingsView: View {
             .overlay(RoundedRectangle(cornerRadius: MW.rSmall, style: .continuous).stroke(MW.border, lineWidth: 0.5))
             .onTapGesture { settings.screenContextMode = value }
     }
+
+    // MARK: - The licence notices (§5)
+
+    /// The link to the notices of the copied sources. The app has no About
+    /// tab, so they sit at the bottom of the General one.
+    private var noticesLink: some View {
+        HStack {
+            Button("Open-source notices") { openNotices() }
+                .buttonStyle(.plain)
+                .font(MW.monoSm)
+                .foregroundStyle(MW.textSecondary)
+            Spacer(minLength: 0)
+        }
+    }
+
+    /// Opens the notices: the copy inside the app bundle, or the file in the
+    /// repository when the app runs without one (`swift run`).
+    private func openNotices() {
+        if let url = Bundle.main.url(forResource: "THIRD_PARTY_NOTICES", withExtension: "md") {
+            NSWorkspace.shared.open(url)
+            return
+        }
+        guard let url = URL(string: "https://github.com/metawhisp/metawhisp/blob/architecture-phase-1-3/THIRD_PARTY_NOTICES.md") else { return }
+        NSWorkspace.shared.open(url)
+    }
 }
 
 // MARK: - WrappingHStack Helper
@@ -3156,5 +3248,91 @@ private struct FileIndexingStatusLine: View {
         if secs < 3600 { return "\(secs / 60)m ago" }
         let h = secs / 3600
         return h < 24 ? "\(h)h ago" : "\(h / 24)d ago"
+    }
+}
+
+/// The recorder for the help shortcut (Settings → Meetings, §3.8).
+///
+/// A local key monitor, alive only while a combo is being recorded and only
+/// inside the Settings window: the recorder must never see the keys the user
+/// types in the app they are working in. While it is on, the keyboard of the
+/// Settings window belongs to the recorder — everything it sees there is
+/// swallowed, so no stray Return presses a button behind it. The keys of
+/// another window are not the recorder's: they go on to the app.
+final class MeetingHelpShortcutRecorder: ObservableObject {
+    /// True while the recorder is listening.
+    @Published private(set) var isRecording = false
+    /// Why the last combo was refused.
+    @Published private(set) var refusal: String?
+    /// The combo the recorder accepted.
+    var onAccepted: ((MeetingHelpCombo) -> Void)?
+
+    private var monitor: Any?
+    private var window: NSWindow?
+
+    deinit {
+        if let monitor { NSEvent.removeMonitor(monitor) }
+    }
+
+    /// Starts recording. Nothing happens until a key arrives.
+    ///
+    /// The window that records the combo is the Settings window — the app
+    /// leaves it out and the focused window is taken.
+    @MainActor
+    func start(window: NSWindow? = nil) {
+        stop()
+        refusal = nil
+        isRecording = true
+        self.window = window ?? NSApp?.keyWindow
+        monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            guard let self else { return event }
+            return self.monitorHandler(event)
+        }
+    }
+
+    /// Stops recording and takes the monitor down.
+    @MainActor
+    func stop() {
+        if let monitor { NSEvent.removeMonitor(monitor) }
+        monitor = nil
+        window = nil
+        isRecording = false
+    }
+
+    /// The monitor's answer to a press: nil swallows the press, the event
+    /// goes on to the app.
+    @MainActor
+    func monitorHandler(_ event: NSEvent) -> NSEvent? {
+        handle(event) ? nil : event
+    }
+
+    /// One key. Esc cancels; the rest is measured against the rules.
+    ///
+    /// Answers whether the recorder owns the press: a press of another
+    /// window is not the recorder's.
+    @MainActor
+    private func handle(_ event: NSEvent) -> Bool {
+        let keyCode = Int(event.keyCode)
+        let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+        let mask = MeetingHelpModifiers.carbonMask(for: flags)
+        // Only the Settings window's keys are ours.
+        let isOwnWindow = !(window != nil && event.window != nil && event.window !== window)
+        switch MeetingHelpRecorderRules.action(keyCode: keyCode,
+                                               modifiers: mask,
+                                               isOwnWindow: isOwnWindow) {
+        case .pass:
+            return false
+        case .cancelled:
+            stop()
+            return true
+        case .accepted(let combo):
+            refusal = nil
+            stop()
+            onAccepted?(combo)
+            return true
+        case .refused(let reason):
+            refusal = reason.message
+            return true
+        }
     }
 }
