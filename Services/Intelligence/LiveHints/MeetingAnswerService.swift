@@ -65,10 +65,13 @@ struct MeetingAnswer: Identifiable, Equatable, Sendable {
     let createdAt: Date
     /// The typed question owned by this answer's request, when there was one.
     let question: String?
+    /// Captured when the request starts, before any asynchronous work.
+    let requestStartedAt: ContinuousClock.Instant
 
     init(id: UUID, generation: Int = 0, heard: String?, kind: MeetingAnswerKind,
          provenance: MeetingAnswerProvenance, action: MeetingAnswerAction?,
-         blocks: [MeetingAnswerBlock], createdAt: Date, question: String? = nil) {
+         blocks: [MeetingAnswerBlock], createdAt: Date, question: String? = nil,
+         requestStartedAt: ContinuousClock.Instant = .now) {
         self.id = id
         self.generation = generation
         self.heard = heard
@@ -78,6 +81,7 @@ struct MeetingAnswer: Identifiable, Equatable, Sendable {
         self.blocks = blocks
         self.createdAt = createdAt
         self.question = question
+        self.requestStartedAt = requestStartedAt
     }
 
     /// The bold sentence that opens the answer.
@@ -822,7 +826,7 @@ final class MeetingAnswerService {
         }
         let expansion: String?
         if action == .more {
-            guard state.draft == nil, let newest = answers.first, newest.mayBeExpanded else {
+            guard state.displayedDraft == nil, let newest = answers.first, newest.mayBeExpanded else {
                 logPreflightExit(kind, .noExpandableCard)
                 return nil
             }
@@ -1225,8 +1229,13 @@ final class MeetingAnswerService {
         // never reaches the model (§6.15).
         guard preflightIsCurrent(identity, kind: manualKind, check: check) else { return }
 
+        // A terminal stops the transport without invalidating the request that
+        // may still publish a valid deadline partial.
+        let streamHandle = LiveHintsRequestHandle()
+        identity.handle.attach { streamHandle.cancel() }
+        defer { streamHandle.cancel() }
         guard let (route, source) = routes.stream(system: system, user: built.user, deadlineMs: deadlineMs,
-                                         stopToken: stopToken, handle: identity.handle) else {
+                                         stopToken: stopToken, handle: streamHandle) else {
             logPreflightExit(manualKind, .noRoute)
             setStatus(MeetingAnswerStatus.noRoute)
             return
@@ -1253,10 +1262,10 @@ final class MeetingAnswerService {
                 if !filter.visibleText.isEmpty, !filter.isSuppressed {
                     state.showDraft(MeetingAnswerDraft(requestID: identity.uuid, generation: identity.generation,
                                                        kind: .answer, heard: heard?.text, blocks: filter.blocks,
-                                                       question: question))
+                                                       question: question, requestStartedAt: identity.startedAt))
                     if firstDrawMs == -1 { firstDrawMs = milliseconds(since: identity.startedAt) }
                 } else {
-                    clearDraft(identity)
+                    state.hideDraft(requestID: identity.uuid, generation: identity.generation)
                 }
             case .reply(.end(let reply)):
                 httpStatus = reply.status
@@ -1272,6 +1281,8 @@ final class MeetingAnswerService {
             }
         }
 
+        // Retire pending deltas before any terminal cleanup or publication.
+        streamHandle.cancel()
         // Only the newest valid result is published.
         guard isCurrent(identity, check: check) else { return }
 
@@ -1293,7 +1304,8 @@ final class MeetingAnswerService {
                 let answer = MeetingAnswer(id: identity.uuid, generation: identity.generation,
                                            heard: nil, kind: .action,
                                            provenance: action == .screen ? .screen : .transcript, action: action,
-                                           blocks: blocks, createdAt: clock(), question: question)
+                                           blocks: blocks, createdAt: clock(), question: question,
+                                           requestStartedAt: identity.startedAt)
                 timingOutcome = .published
                 await publish(answer, heard: nil, boundary: nil)
                 return
@@ -1327,7 +1339,8 @@ final class MeetingAnswerService {
                                            provenance: .transcript,
                                            action: nil,
                                            blocks: text.blocks,
-                                           createdAt: clock(), question: question)
+                                           createdAt: clock(), question: question,
+                                           requestStartedAt: identity.startedAt)
                 timingOutcome = .published
                 await publish(answer, heard: heard, boundary: boundary)
             }
@@ -1368,7 +1381,8 @@ final class MeetingAnswerService {
     }
 
     private func clearDraft(_ identity: MeetingRequestIdentity) {
-        state.clearDraft(requestID: identity.uuid, generation: identity.generation)
+        state.clearDraft(requestID: identity.uuid, generation: identity.generation,
+                         requestStartedAt: identity.startedAt)
     }
 
     private func cancelUserRequest(_ identity: MeetingRequestIdentity?) {
@@ -1549,6 +1563,7 @@ final class MeetingAnswerService {
 
     /// The user's request is done: the automatic checks may run again.
     private func finishUserRequest(_ identity: MeetingRequestIdentity) {
+        clearDraft(identity)
         state.clearBusy(requestID: identity.uuid, generation: identity.generation)
         identity.handle.finish()
         if runningUserRequest?.handle === identity.handle {

@@ -276,6 +276,15 @@ final class MeetingCoachWindowController: NSObject, NSWindowDelegate {
             self.onTargetMeasured?(total)
             guard self.stagedRevision == revision else { return }
             self.stagedInterval = nil
+            // The coalesced state notification may still be queued when a
+            // request finishes. Never install its already measured draft.
+            let currentDraft = self.state.displayedDraft
+            guard !target.isDraft || (target.requestID == currentDraft?.requestID
+                && target.generation == currentDraft?.generation) else {
+                self.transitionDiagnostics.end(interval)
+                self.scheduleTransition(force: force)
+                return
+            }
             self.commit(target, natural: total, animated: animated, forceVisibility: force, interval: interval)
         }
         if synchronous { finish() }

@@ -200,7 +200,7 @@ private final class AnswerTimingHarness {
         if selected == "pro" { routes.pro = route }
         else if selected == "own-key" { routes.ownKey = route }
         else { routes.local = route }
-        state.arm()
+        state.arm(generation: 0)
         state.autoAnswerOn = true
     }
     func advance(_ milliseconds: Int) { now = now.advanced(by: .milliseconds(milliseconds)) }

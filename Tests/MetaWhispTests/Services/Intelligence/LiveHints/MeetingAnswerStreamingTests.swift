@@ -134,6 +134,7 @@ final class MeetingAnswerStreamingTests: XCTestCase {
         XCTAssertEqual(answer.id, draft.requestID)
         XCTAssertEqual(answer.generation, draft.generation)
         XCTAssertEqual(draft.generation, 37)
+        XCTAssertEqual(answer.requestStartedAt, draft.requestStartedAt)
     }
 
     func testPublishedActionsKeepTheirSynchronouslyCapturedRequestIdentity() async throws {
@@ -153,6 +154,7 @@ final class MeetingAnswerStreamingTests: XCTestCase {
             XCTAssertEqual(answer.action, action)
             XCTAssertEqual(answer.id, identity.uuid)
             XCTAssertEqual(answer.generation, identity.generation)
+            XCTAssertEqual(answer.requestStartedAt, identity.startedAt)
             XCTAssertEqual(identity.generation, 41)
         }
     }
@@ -684,7 +686,7 @@ private final class StreamHarness {
 
     init(state: MeetingCoachState? = nil, generation: @escaping @MainActor () -> Int = { 1 }) {
         self.state = state ?? MeetingCoachState()
-        self.state.arm()
+        self.state.arm(generation: generation())
         self.state.autoAnswerOn = true
         routes.pro = route
         service = MeetingAnswerService(transcript: transcript, routes: routes, clock: { [clock] in clock.now },

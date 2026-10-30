@@ -14,15 +14,18 @@ struct MeetingAnswerDraft: Equatable, Sendable {
     let heard: String?
     let blocks: [MeetingAnswerBlock]
     let question: String?
+    let requestStartedAt: ContinuousClock.Instant
 
     init(requestID: UUID, generation: Int, kind: MeetingAnswerKind, heard: String?,
-         blocks: [MeetingAnswerBlock], question: String? = nil) {
+         blocks: [MeetingAnswerBlock], question: String? = nil,
+         requestStartedAt: ContinuousClock.Instant = .now) {
         self.requestID = requestID
         self.generation = generation
         self.kind = kind
         self.heard = heard
         self.blocks = blocks
         self.question = question
+        self.requestStartedAt = requestStartedAt
     }
 }
 
@@ -81,6 +84,15 @@ final class MeetingCoachState: ObservableObject {
     /// The answers, newest first.
     @Published private(set) var answers: [MeetingAnswer] = []
     @Published private(set) var draft: MeetingAnswerDraft?
+    static let maxFinishedRequests = 256
+    private struct RequestKey: Hashable {
+        let id: UUID
+        let generation: Int
+    }
+    private var finishedRequests: [RequestKey: ContinuousClock.Instant] = [:]
+    private var finishedRequestOrder: [RequestKey] = []
+    private var retiredThrough: ContinuousClock.Instant?
+    var finishedRequestCount: Int { finishedRequests.count }
     /// True while a request runs — the overlay shows "THINKING…".
     @Published private(set) var isThinking: Bool = false
     /// The label of the help shortcut, when one is registered.
@@ -166,6 +178,7 @@ final class MeetingCoachState: ObservableObject {
             isHalted = false
         }
         if recordingGeneration != generation {
+            resetFinishedRequests()
             isStopping = false
             repeatPulses = [:]
             questionText = ""
@@ -214,6 +227,12 @@ final class MeetingCoachState: ObservableObject {
     /// Publishes an answer into the card: the newest one first, and at most
     /// `maxAnswers` of them.
     func publish(_ answer: MeetingAnswer) {
+        finishRequest(answer.id, generation: answer.generation, startedAt: answer.requestStartedAt)
+        if let draft, draft.generation == answer.generation,
+           draft.requestID == answer.id || draft.requestStartedAt <= answer.requestStartedAt {
+            clearDraft(requestID: draft.requestID, generation: draft.generation,
+                       requestStartedAt: draft.requestStartedAt)
+        }
         if panelHidden { hasUnseenAnswer = true }
         answers.insert(answer, at: 0)
         if answers.count > Self.maxAnswers {
@@ -222,19 +241,61 @@ final class MeetingCoachState: ObservableObject {
     }
 
     func showDraft(_ draft: MeetingAnswerDraft) {
+        guard recordingGeneration == nil || recordingGeneration == draft.generation,
+              recordingGeneration == nil || recordingSurface,
+              !isHalted,
+              finishedRequests[RequestKey(id: draft.requestID, generation: draft.generation)] == nil,
+              (self.draft?.requestID == draft.requestID && self.draft?.generation == draft.generation)
+                || (retiredThrough.map({ draft.requestStartedAt > $0 }) ?? true) else { return }
         guard self.draft?.requestID != draft.requestID || self.draft?.generation != draft.generation
             || self.draft?.blocks != draft.blocks else { return }
         self.draft = draft
     }
 
-    /// Late cleanup must not remove a newer request's text.
-    func clearDraft(requestID: UUID, generation: Int) {
+    /// Clearing is terminal, even if the request has not delivered its first delta.
+    func clearDraft(requestID: UUID, generation: Int,
+                    requestStartedAt: ContinuousClock.Instant? = nil) {
+        guard recordingGeneration == nil || recordingGeneration == generation else { return }
+        let start = requestStartedAt ?? (draft?.requestID == requestID && draft?.generation == generation
+            ? draft?.requestStartedAt : nil) ?? .now
+        finishRequest(requestID, generation: generation, startedAt: start)
+        hideDraft(requestID: requestID, generation: generation)
+    }
+
+    /// Filtering an incomplete prefix does not finish its request.
+    func hideDraft(requestID: UUID, generation: Int) {
         guard draft?.requestID == requestID, draft?.generation == generation else { return }
         draft = nil
     }
 
+    private func finishRequest(_ id: UUID, generation: Int, startedAt: ContinuousClock.Instant) {
+        guard recordingGeneration == nil || recordingGeneration == generation else { return }
+        let key = RequestKey(id: id, generation: generation)
+        guard finishedRequests[key] == nil else { return }
+        finishedRequests[key] = startedAt
+        finishedRequestOrder.append(key)
+        if finishedRequestOrder.count > Self.maxFinishedRequests {
+            let oldest = finishedRequestOrder.removeFirst()
+            if let start = finishedRequests.removeValue(forKey: oldest) {
+                retiredThrough = max(retiredThrough ?? start, start)
+            }
+        }
+    }
+
+    private func resetFinishedRequests() {
+        finishedRequests.removeAll(keepingCapacity: true)
+        finishedRequestOrder.removeAll(keepingCapacity: true)
+        retiredThrough = nil
+    }
+
+    private func finishCurrentRequests() {
+        if let draft { clearDraft(requestID: draft.requestID, generation: draft.generation) }
+        if let busyRequest { clearDraft(requestID: busyRequest.requestID, generation: busyRequest.generation) }
+    }
+
     /// Forgets the answers: a new meeting starts clean.
     func clearAnswers() {
+        finishCurrentRequests()
         clearRenderedBlocks()
         busyRequest = nil
         draft = nil
@@ -248,22 +309,30 @@ final class MeetingCoachState: ObservableObject {
 
     /// Only the newest card may be expanded; an older answer is never used
     /// in place of a recap or an answer about the screen.
-    var canExpandLatest: Bool { !isHalted && draft == nil && answers.first?.mayBeExpanded == true }
+    var canExpandLatest: Bool { !isHalted && displayedDraft == nil && answers.first?.mayBeExpanded == true }
+
+    /// Text and identity must select the same request. A late older draft may
+    /// never cover an answer from a request that started at or after it.
+    var displayedDraft: MeetingAnswerDraft? {
+        guard let draft else { return nil }
+        if let answer = answers.first, draft.requestStartedAt <= answer.requestStartedAt { return nil }
+        return draft
+    }
 
     var displayedBlocks: [MeetingAnswerBlock] {
         guard !isHalted else { return [] }
-        return draft?.blocks ?? answers.first?.blocks ?? []
+        return displayedDraft?.blocks ?? answers.first?.blocks ?? []
     }
 
     var displayedHeard: String? {
         guard !isHalted else { return nil }
-        if let draft { return draft.heard }
+        if let draft = displayedDraft { return draft.heard }
         return answers.first?.heard
     }
 
     var displayedQuestion: String? {
         guard recordingSurface, !isHalted else { return nil }
-        if let draft { return draft.question }
+        if let draft = displayedDraft { return draft.question }
         return answers.first?.question
     }
 
@@ -414,12 +483,14 @@ final class MeetingCoachState: ObservableObject {
         isVisible = true
         // The card starts clean: no answers, no status line, nothing running.
         clearAnswers()
+        resetFinishedRequests()
         setStatus(nil)
         setThinking(false)
         isQuestionEditing = false
     }
 
     func haltForBalance() {
+        finishCurrentRequests()
         clearRenderedBlocks()
         closeAsk()
         setSpeaker(.unavailable)
@@ -433,6 +504,7 @@ final class MeetingCoachState: ObservableObject {
     }
 
     func disarm(preservingQuestion: Bool = false) {
+        finishCurrentRequests()
         clearRenderedBlocks()
         closeAsk()
         transcriptTailProvider = nil

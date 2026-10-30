@@ -6,7 +6,7 @@ import XCTest
 final class MeetingCoachPanelTests: XCTestCase {
     func testDraftReplacesPublishedCardAndRejectionRestoresNewestOnly() {
         let state = MeetingCoachState()
-        state.arm()
+        state.arm(generation: 4)
         state.publish(answer("Older"))
         state.publish(answer("Newest"))
         let request = UUID()

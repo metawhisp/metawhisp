@@ -39,6 +39,7 @@ final class MeetingCoachScrollTests: XCTestCase {
         try await settle(controller)
         XCTAssertEqual(distanceFromTop(scroll), 120, accuracy: 1)
 
+        state.arm(generation: 2)
         state.showDraft(draft(id: id, generation: 2, count: 90))
         try await settle(controller)
         XCTAssertEqual(distanceFromTop(scroll), 0, accuracy: 1)

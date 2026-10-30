@@ -51,9 +51,10 @@ struct MeetingCoachRenderSnapshot: Equatable {
         panelHidden = state.panelHidden
         hasUnseenAnswer = state.hasUnseenAnswer
         isStopping = state.isStopping
-        requestID = state.draft?.requestID ?? state.answers.first?.id
-        generation = state.draft?.generation ?? state.answers.first?.generation
-        isDraft = state.draft != nil
+        let displayedDraft = state.displayedDraft
+        requestID = displayedDraft?.requestID ?? state.answers.first?.id
+        generation = displayedDraft?.generation ?? state.answers.first?.generation
+        isDraft = displayedDraft != nil
         shouldShowPanel = state.shouldShowPanel(isExpanded: expanded)
     }
 
