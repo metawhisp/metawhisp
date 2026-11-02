@@ -1,4 +1,27 @@
 
+
+## Session 2026-11-02 — per-action toggles for the four fixed hotkeys (branch `hotkey-per-action-toggles`, PR)
+
+**What:** Settings → General → Hotkeys gives each fixed hotkey its own ON/OFF
+chip (TRANSCRIBE, TRANSLATE, VOICE QUESTION, AUTO-TRANSLATE). An off action
+never fires; a key whose actions are all off is ignored completely; the mode
+picker greys out while TRANSCRIBE is off (in Push-to-Talk the hold IS
+dictation, so its switch alone decides). Switches read when a key arrives —
+changes apply at once, all default ON, no migration. The earlier
+help-shortcut-unset branch of this session was discarded on the user's call
+(PR closed, branch deleted).
+
+**Tests:** HotkeyGatesTests 6/6 ✅ (pure rules: defaults, either-action
+tracking, both-off ignore, Push-to-Talk follows dictation alone);
+GlobalKeyMonitorGuardTests ✅ (no new global monitors). Run with
+`--build-system native`: the default backend's metal launcher is broken on
+this Mac (Xcode 27.2 catalog asks for Metal Toolchain 27B52, only 27B47 is
+served), and the full gate stays blocked by pre-existing base-branch issues
+(DoHereLiveTests WebKit SIGKILL; ActionScript + Layout suite failures).
+
+**Watch out:** НЕ ТРОГАЙ the master global-input switch and the mode picker's
+stored meaning — the toggles sit beneath them, they do not replace them.
+
 ## Released v1.3.8 — 2026-05-29 (meeting cleanup + LLM cost routing + MetaChat hardening)
 
 **Status: SHIPPED (download) via:**
