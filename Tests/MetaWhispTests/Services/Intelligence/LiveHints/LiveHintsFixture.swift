@@ -127,8 +127,8 @@ struct FakeLiveHintsEnvironment {
     let advice = FakeLiveHintsAdvice()
     let state = MeetingCoachState()
     let pro = FakeRoute(routeName: "pro")
-    let combo = LiveValueBox(MeetingHelpCombo(keyCode: MeetingHelpDefaults.keyCode,
-                                              modifiers: MeetingHelpDefaults.modifiers))
+    let combo = LiveValueBox<MeetingHelpCombo?>(MeetingHelpCombo(keyCode: MeetingHelpDefaults.keyCode,
+                                                                 modifiers: MeetingHelpDefaults.modifiers))
     /// The defaults the switch of the automatic answers lives in.
     ///
     /// Its own suite: the tests must not touch the settings of the user.

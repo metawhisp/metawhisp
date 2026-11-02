@@ -23,7 +23,7 @@ final class LiveHintsSessionTests: XCTestCase {
         var advice: FakeLiveHintsAdvice { fakes.advice }
         var state: MeetingCoachState { fakes.state }
         var pro: FakeRoute { fakes.pro }
-        var combo: LiveValueBox<MeetingHelpCombo> { fakes.combo }
+        var combo: LiveValueBox<MeetingHelpCombo?> { fakes.combo }
         /// Turns the automatic answers on or off.
         ///
         /// The switch lives in the defaults, and the session watches it
@@ -127,6 +127,54 @@ final class LiveHintsSessionTests: XCTestCase {
         XCTAssertEqual(harness.hotkey.registrations.last?.keyCode, 31)
         XCTAssertEqual(harness.hotkey.registrations.last?.modifiers, optionKey)
         XCTAssertEqual(harness.hotkey.unregistered, 1, "the old combo was not taken back")
+    }
+
+    // MARK: - The unset shortcut
+
+    /// The user took the shortcut away: nothing is registered, and the
+    /// overlay shows no shortcut (the automatic answers go on working).
+    func testTheShortcutIsNotRegisteredWhenTheUserUnsetIt() async {
+        let harness = makeHarness()
+        harness.combo.value = nil
+        await harness.session.start()
+
+        XCTAssertEqual(harness.hotkey.registrations.count, 0,
+                       "the shortcut was registered although the user unset it")
+        XCTAssertEqual(harness.hotkey.attempts.count, 0,
+                       "an unset shortcut was still offered to the system")
+        XCTAssertNil(harness.state.shortcutLabel,
+                     "the overlay shows a shortcut although the user unset it")
+    }
+
+    /// The user unsets the shortcut while the meeting runs: the shortcut
+    /// goes back.
+    func testTheShortcutIsTakenBackWhenTheUserUnsetsItWhileTheMeetingRuns() async {
+        let harness = makeHarness()
+        await harness.session.start()
+        XCTAssertEqual(harness.hotkey.registrations.count, 1)
+
+        harness.combo.value = nil
+        await harness.waitUntil { harness.hotkey.unregistered == 1 }
+
+        XCTAssertEqual(harness.hotkey.unregistered, 1, "the shortcut stayed registered")
+        XCTAssertNil(harness.state.shortcutLabel, "the overlay still shows a shortcut")
+    }
+
+    /// The user sets a shortcut again while the meeting runs: it is
+    /// registered then, even when it is the combo that had failed before.
+    func testTheShortcutIsRegisteredAgainWhenTheUserSetsItWhileTheMeetingRuns() async {
+        let harness = makeHarness()
+        harness.combo.value = nil
+        await harness.session.start()
+        XCTAssertEqual(harness.hotkey.registrations.count, 0)
+
+        harness.combo.value = MeetingHelpCombo(keyCode: 31, modifiers: optionKey)
+        await harness.waitUntil { harness.hotkey.registrations.count == 1 }
+
+        XCTAssertEqual(harness.hotkey.registrations.count, 1,
+                       "the shortcut the user set again was not registered")
+        XCTAssertEqual(harness.state.shortcutLabel, "⌥O",
+                       "the overlay shows no shortcut")
     }
 
     // MARK: - The global input

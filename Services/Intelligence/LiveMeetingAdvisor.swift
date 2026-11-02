@@ -237,8 +237,10 @@ final class LiveMeetingAdvisor: ObservableObject {
             hotkey: MeetingHelpHotkey.shared,
             state: MeetingCoachState.shared,
             routes: routes,
-            combo: { MeetingHelpCombo(keyCode: settings.meetingHelpKeyCode,
-                                      modifiers: settings.meetingHelpModifiers) },
+            combo: { settings.meetingHelpShortcutIsSet
+                ? MeetingHelpCombo(keyCode: settings.meetingHelpKeyCode,
+                                   modifiers: settings.meetingHelpModifiers)
+                : nil },
             screenEnabled: { settings.screenContextEnabled },
             captureScreen: captureScreen)
     }

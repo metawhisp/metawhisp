@@ -104,8 +104,10 @@ struct LiveHintsEnvironment: Sendable {
     var state: MeetingCoachState
     /// The routes to the model.
     var routes: MeetingAnswerRoutes
-    /// The combo the shortcut is registered with.
-    var combo: @MainActor @Sendable () -> MeetingHelpCombo
+    /// The combo the shortcut is registered with — nil when the user took
+    /// the shortcut away (⌫ in the recorder): nothing is registered, and
+    /// the overlay shows no shortcut.
+    var combo: @MainActor @Sendable () -> MeetingHelpCombo?
     /// How often the advice service hears what was said.
     var adviceInterval: Duration = .seconds(30)
     var screenEnabled: @MainActor @Sendable () -> Bool = { false }
@@ -792,7 +794,8 @@ final class LiveHintsMeeting: LiveHintsSession {
     ///
     /// The global input switch decides whether the app may take a shortcut
     /// at all, as it does for the other hotkeys: with it off, nothing is
-    /// registered and the overlay shows no shortcut (§3.9).
+    /// registered and the overlay shows no shortcut (§3.9). A shortcut the
+    /// user took away behaves the same.
     ///
     /// The combo is remembered only when the shortcut was really taken: a
     /// registration that failed leaves the session without a shortcut, so the
@@ -805,7 +808,16 @@ final class LiveHintsMeeting: LiveHintsSession {
             }
             return
         }
-        let combo = environment.combo()
+        // The user took the shortcut away: nothing is registered and the
+        // overlay shows no shortcut — the automatic answers go on working.
+        guard let combo = environment.combo() else {
+            registeredCombo = nil
+            failedCombo = nil
+            if environment.hotkey.unregister(owner: hotkeyOwner) {
+                setShortcutLabel(nil)
+            }
+            return
+        }
         if environment.hotkey.register(keyCode: combo.keyCode, modifiers: combo.modifiers, owner: hotkeyOwner) {
             registeredCombo = combo
             failedCombo = nil
