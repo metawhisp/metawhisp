@@ -25,6 +25,17 @@ shared `onOffChip` draws both the hotkey rows and every other toggle row;
 the menu-bar popover hides a button's `R⌘`/`R⌥` keycap when that hotkey is
 off (the keycap is a promise that the key works).
 
+**Deep review (independent reviewer + own pass):** verdict fix-then-ship,
+both findings fixed. (1) MAJOR: the tracking guard ran on the key-up too, so
+flipping a key's switches off mid-hold swallowed the release — a PTT/voice
+question recording could run past its key and the state machine stuck. The
+switches now decide on the way down; a release in flight always completes.
+(2) MINOR: armed timers re-read their switch at fire time, so an action
+switched off inside its own arming window (0.15 s / 0.5 s / 1.5 s) never
+starts. New `HotkeyServiceGatingTests` (5) pins the wiring end-to-end through
+`handleDeviceFlags` — red against the old guard (4 failures reproduced),
+green after; 12 hotkey-related tests pass in total.
+
 **Watch out:** НЕ ТРОГАЙ the master global-input switch and the mode picker's
 stored meaning — the toggles sit beneath them, they do not replace them.
 
