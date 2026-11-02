@@ -117,11 +117,18 @@ final class HotkeyService: ObservableObject {
     }
 
     /// Right ⌘: Toggle mode = tap to start/stop. PTT mode = hold to record, release to stop.
+    ///
+    /// The switches of the Settings panel decide first whether the key is
+    /// ours at all: with both of its actions off it is ignored completely
+    /// (and in Push-to-Talk the hold IS dictation, so its switch alone
+    /// decides — `HotkeyGates.tracksRightCommand`).
     private func handleRightCmd(isDown: Bool) {
-        let isPTT = AppSettings.shared.hotkeyMode == "pushToTalk"
+        let settings = AppSettings.shared
+        let gates = HotkeyGates.current(settings)
+        let isPTT = settings.hotkeyMode == "pushToTalk"
+        guard gates.tracksRightCommand(pushToTalk: isPTT) else { return }
 
         if isPTT {
-            // Push-to-Talk: hold to record, release to stop
             // Short taps (< 0.15s) are ignored — only sustained hold triggers recording
             if isDown && !rightCmdDown {
                 rightCmdDown = true
@@ -145,31 +152,36 @@ final class HotkeyService: ObservableObject {
             }
         } else {
             // Toggle mode: tap < 0.4s = dictation toggle, long-press ≥ voiceQuestionHoldMs = voice question.
-            handleRightCmdToggleMode(isDown: isDown)
+            handleRightCmdToggleMode(isDown: isDown, gates: gates)
         }
     }
 
     /// Right ⌘ in Toggle mode: distinguishes tap (dictation) from long-press (voice question to MetaChat).
     /// spec://BACKLOG#Phase6
-    private func handleRightCmdToggleMode(isDown: Bool) {
+    ///
+    /// The gates decide which of the two actions may fire — the other stays
+    /// dead on the same key.
+    private func handleRightCmdToggleMode(isDown: Bool, gates: HotkeyGates) {
         if isDown && !rightCmdDown {
             rightCmdDown = true
             rightCmdDownTime = Date()
             otherKeysDuringRightCmd = false
             rightCmdLongPressFired = false
-
-            // Arm long-press timer.
-            let holdSec = AppSettings.shared.voiceQuestionHoldMs / 1000.0
-            let work = DispatchWorkItem { [weak self] in
-                guard let self else { return }
-                guard self.rightCmdDown else { return }
-                guard !self.otherKeysDuringRightCmd else { return }
-                self.rightCmdLongPressFired = true
-                NSLog("[HotkeyService] Right ⌘ long-press → voice question START")
-                Task { @MainActor in self.onVoiceQuestionStart?() }
+            // Arm long-press timer — only while the voice question is on.
+            var holdSec = 0.0
+            if gates.voiceQuestion {
+                holdSec = AppSettings.shared.voiceQuestionHoldMs / 1000.0
+                let work = DispatchWorkItem { [weak self] in
+                    guard let self else { return }
+                    guard self.rightCmdDown else { return }
+                    guard !self.otherKeysDuringRightCmd else { return }
+                    self.rightCmdLongPressFired = true
+                    NSLog("[HotkeyService] Right ⌘ long-press → voice question START")
+                    Task { @MainActor in self.onVoiceQuestionStart?() }
+                }
+                rightCmdLongPressTimer = work
+                DispatchQueue.main.asyncAfter(deadline: .now() + holdSec, execute: work)
             }
-            rightCmdLongPressTimer = work
-            DispatchQueue.main.asyncAfter(deadline: .now() + holdSec, execute: work)
 
         } else if !isDown && rightCmdDown {
             rightCmdDown = false
@@ -179,7 +191,8 @@ final class HotkeyService: ObservableObject {
             if rightCmdLongPressFired {
                 NSLog("[HotkeyService] Right ⌘ release after long-press → voice question STOP")
                 Task { @MainActor in onVoiceQuestionStop?() }
-            } else if let t = rightCmdDownTime,
+            } else if gates.transcribe,
+                      let t = rightCmdDownTime,
                       Date().timeIntervalSince(t) < maxTapDuration,
                       !otherKeysDuringRightCmd {
                 NSLog("[HotkeyService] Right ⌘ tap")
@@ -189,25 +202,29 @@ final class HotkeyService: ObservableObject {
     }
 
     /// Right ⌥ with long-press support: tap (<0.4s) = transcribe+translate, hold (≥2s) = translate selection.
+    ///
+    /// With both of its actions off the key is ignored completely.
     private func handleRightOpt(isDown: Bool) {
+        let gates = HotkeyGates.current(AppSettings.shared)
+        guard gates.tracksRightOption else { return }
         if isDown && !rightOptDown {
-            // Key just pressed
             rightOptDown = true
             rightOptDownTime = Date()
             otherKeysDuringRightOpt = false
             longPressFired = false
-
-            // Schedule long-press timer
-            let work = DispatchWorkItem { [weak self] in
-                guard let self else { return }
-                guard self.rightOptDown else { NSLog("[HotkeyService] Right ⌥ long-press cancelled: key released"); return }
-                guard !self.otherKeysDuringRightOpt else { NSLog("[HotkeyService] Right ⌥ long-press cancelled: other keys pressed"); return }
-                self.longPressFired = true
-                NSLog("[HotkeyService] Right ⌥ long-press detected (1.5s)")
-                Task { @MainActor in self.onTranslateLongPress?() }
+            // Schedule long-press timer — only while auto-translate is on.
+            if gates.autoTranslate {
+                let work = DispatchWorkItem { [weak self] in
+                    guard let self else { return }
+                    guard self.rightOptDown else { NSLog("[HotkeyService] Right ⌥ long-press cancelled: key released"); return }
+                    guard !self.otherKeysDuringRightOpt else { NSLog("[HotkeyService] Right ⌥ long-press cancelled: other keys pressed"); return }
+                    self.longPressFired = true
+                    NSLog("[HotkeyService] Right ⌥ long-press detected (1.5s)")
+                    Task { @MainActor in self.onTranslateLongPress?() }
+                }
+                longPressTimer = work
+                DispatchQueue.main.asyncAfter(deadline: .now() + longPressDuration, execute: work)
             }
-            longPressTimer = work
-            DispatchQueue.main.asyncAfter(deadline: .now() + longPressDuration, execute: work)
 
         } else if !isDown && rightOptDown {
             // Key released
@@ -215,8 +232,10 @@ final class HotkeyService: ObservableObject {
             longPressTimer?.cancel()
             longPressTimer = nil
 
-            // Fire tap only if: short press, no other keys, long-press didn't fire
-            if let t = rightOptDownTime,
+            // Fire tap only if: the translate switch is on, short press, no
+            // other keys, long-press didn't fire
+            if gates.translate,
+               let t = rightOptDownTime,
                Date().timeIntervalSince(t) < maxTapDuration,
                !otherKeysDuringRightOpt,
                !longPressFired {

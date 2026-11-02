@@ -26,6 +26,14 @@ final class AppSettings: ObservableObject {
     /// If the picked device was unplugged, falls back to system default.
     @AppStorage("preferredInputDeviceUID") var preferredInputDeviceUID: String = ""
     @AppStorage("hotkeyMode") var hotkeyMode: String = "toggle" // toggle, pushToTalk
+    /// The four fixed hotkeys, each off-able on its own (Settings → General
+    /// → Hotkeys). On by default: an install that never touched the panel
+    /// keeps every key working exactly as before. Read when a key arrives,
+    /// so a change takes effect at once.
+    @AppStorage("transcribeHotkeyEnabled") var transcribeHotkeyEnabled: Bool = true
+    @AppStorage("translateHotkeyEnabled") var translateHotkeyEnabled: Bool = true
+    @AppStorage("voiceQuestionHotkeyEnabled") var voiceQuestionHotkeyEnabled: Bool = true
+    @AppStorage("autoTranslateHotkeyEnabled") var autoTranslateHotkeyEnabled: Bool = true
     /// ITER-062 — requested ON by default; runtime activation still requires
     /// macOS Accessibility permission and an active event tap.
     @AppStorage("layoutFixEnabled_iter062") var layoutFixEnabled: Bool = true
