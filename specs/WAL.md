@@ -19,6 +19,12 @@ this Mac (Xcode 27.2 catalog asks for Metal Toolchain 27B52, only 27B47 is
 served), and the full gate stays blocked by pre-existing base-branch issues
 (DoHereLiveTests WebKit SIGKILL; ActionScript + Layout suite failures).
 
+**Follow-ups (user's manual pass):** the hotkey row's TAP/HOLD badge and
+ON/OFF chip no longer wrap — the trailing cluster is all `fixedSize` and one
+shared `onOffChip` draws both the hotkey rows and every other toggle row;
+the menu-bar popover hides a button's `R⌘`/`R⌥` keycap when that hotkey is
+off (the keycap is a promise that the key works).
+
 **Watch out:** НЕ ТРОГАЙ the master global-input switch and the mode picker's
 stored meaning — the toggles sit beneath them, they do not replace them.
 
