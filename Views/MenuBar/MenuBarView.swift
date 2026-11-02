@@ -400,6 +400,7 @@ struct MenuBarView: View {
                     icon: coordinator.stage == .recording ? "stop.fill" : "mic.fill",
                     label: coordinator.stage == .recording ? "STOP" : "RECORD",
                     hint: "R\u{2318}",
+                    hotkeyOn: settings.transcribeHotkeyEnabled,
                     active: coordinator.stage == .recording
                 )
             }
@@ -416,6 +417,7 @@ struct MenuBarView: View {
                     icon: "globe",
                     label: "TRANSLATE",
                     hint: "R\u{2325}",
+                    hotkeyOn: settings.translateHotkeyEnabled,
                     active: coordinator.translateNext
                 )
             }
@@ -430,7 +432,10 @@ struct MenuBarView: View {
     /// badge right-aligned. Compact: padding 8×10, icon 11pt. Matches the old
     /// 48pt-height action row height-wise; only chrome (accent icon, capsule
     /// hotkey) is the Liquid Glass refresh.
-    private func controlBtn(icon: String, label: String, hint: String, active: Bool) -> some View {
+    ///
+    /// The keycap is a promise that the key works: when the user has turned
+    /// that hotkey off in Settings, the promise is withdrawn — no keycap.
+    private func controlBtn(icon: String, label: String, hint: String, hotkeyOn: Bool, active: Bool) -> some View {
         HStack(spacing: 6) {
             Image(systemName: icon)
                 .font(.system(size: 11, weight: .medium))
@@ -440,7 +445,9 @@ struct MenuBarView: View {
                 .font(MW.label).tracking(0.6).lineLimit(1).fixedSize()
                 .foregroundStyle(active ? .white : MW.textPrimary)
             Spacer(minLength: 4)
-            Keycap(text: hint).layoutPriority(1)
+            if hotkeyOn {
+                Keycap(text: hint).layoutPriority(1)
+            }
         }
         .padding(.horizontal, 10)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
