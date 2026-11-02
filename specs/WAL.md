@@ -1,4 +1,26 @@
 
+
+## Session 2026-11-02 — unsettable help shortcut (branch `help-shortcut-unset`, PR)
+
+**What:** Settings → Meetings → Help shortcut can now be unset: bare ⌫ in
+the recorder clears it (settings hold keyCode −1, impossible as a real
+Carbon code), the row shows None with a Set button, and during a meeting
+nothing is registered — the card shows no shortcut line and automatic
+answers keep working. Setting a combo again works live, mid-meeting.
+
+**Tests:** recorder rules + monitor (MeetingHelpShortcutRecorderTests),
+session nil-combo wiring (LiveHintsSessionTests). NOT run on this Mac:
+CLT-only toolchain (no Xcode) cannot expand SwiftData/SwiftUI macros with
+`--build-system native`, and the default swiftbuild backend hits the CLT
+27 + Swift 6.4 init bug ("Unknown error parsing property list",
+swiftlang/swift-package-manager#10561). All edited files pass
+`swiftc -parse`; run `swift test --filter MeetingHelpShortcutRecorderTests`
+and `--filter LiveHintsSessionTests`, then `bash scripts/regression.sh`,
+on an Xcode machine before merging.
+
+**Watch out:** НЕ ТРОГАЙ the fixed Right ⌘/Right ⌥ hotkeys — they are not
+user-settable and already gated by the global input switch.
+
 ## Released v1.3.8 — 2026-05-29 (meeting cleanup + LLM cost routing + MetaChat hardening)
 
 **Status: SHIPPED (download) via:**
