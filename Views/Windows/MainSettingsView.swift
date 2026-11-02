@@ -1016,15 +1016,9 @@ struct MainSettingsView: View {
                     Keycap(text: key)
                         .opacity(isOn.wrappedValue ? 1 : 0.35)
                 }
-                Text(isOn.wrappedValue ? "ON" : "OFF")
-                    .font(MW.monoSm)
-                    .foregroundStyle(isOn.wrappedValue ? MW.textPrimary : MW.textMuted)
-                    .padding(.horizontal, MW.sp8)
-                    .padding(.vertical, 2)
-                    .background(isOn.wrappedValue ? MW.elevated : .clear)
-                    .overlay(Rectangle().stroke(isOn.wrappedValue ? MW.textMuted : MW.border, lineWidth: MW.hairline))
-                    .onTapGesture { isOn.wrappedValue.toggle() }
+                onOffChip(isOn: isOn)
             }
+            .layoutPriority(1)
         }
     }
 
@@ -1034,6 +1028,8 @@ struct MainSettingsView: View {
         Text(text)
             .font(.system(size: 9, weight: .semibold, design: .default))
             .tracking(0.6)
+            .lineLimit(1)
+            .fixedSize()
             .foregroundStyle(text == "HOLD" ? MW.accent : MW.textMuted)
             .padding(.horizontal, 6).padding(.vertical, 3)
             .background {
@@ -1266,15 +1262,25 @@ struct MainSettingsView: View {
         HStack {
             Text(label).font(MW.mono).foregroundStyle(MW.textSecondary)
             Spacer()
-            Text(isOn.wrappedValue ? "ON" : "OFF")
-                .font(MW.monoSm)
-                .foregroundStyle(isOn.wrappedValue ? MW.textPrimary : MW.textMuted)
-                .padding(.horizontal, MW.sp8)
-                .padding(.vertical, 2)
-                .background(isOn.wrappedValue ? MW.elevated : .clear)
-                .overlay(Rectangle().stroke(isOn.wrappedValue ? MW.textMuted : MW.border, lineWidth: MW.hairline))
-                .onTapGesture { isOn.wrappedValue.toggle() }
+            onOffChip(isOn: isOn)
         }
+    }
+
+    /// The panel's ON/OFF chip, drawn the same everywhere it appears.
+    ///
+    /// `fixedSize` keeps the label whole when the row runs out of width —
+    /// the text never wraps or truncates inside the chip.
+    private func onOffChip(isOn: Binding<Bool>) -> some View {
+        Text(isOn.wrappedValue ? "ON" : "OFF")
+            .font(MW.monoSm)
+            .lineLimit(1)
+            .fixedSize()
+            .foregroundStyle(isOn.wrappedValue ? MW.textPrimary : MW.textMuted)
+            .padding(.horizontal, MW.sp8)
+            .padding(.vertical, 2)
+            .background(isOn.wrappedValue ? MW.elevated : .clear)
+            .overlay(Rectangle().stroke(isOn.wrappedValue ? MW.textMuted : MW.border, lineWidth: MW.hairline))
+            .onTapGesture { isOn.wrappedValue.toggle() }
     }
 
     // MARK: - Recording Overlay
