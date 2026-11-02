@@ -1548,14 +1548,18 @@ struct MainSettingsView: View {
                 if helpShortcutRecorder.isRecording {
                     Text("PRESS A SHORTCUT…").font(MW.monoSm).foregroundStyle(MW.textMuted)
                 } else {
-                    HStack(spacing: 4) {
-                        ForEach(Array(MeetingHelpLabel.parts(keyCode: settings.meetingHelpKeyCode,
-                                                           modifiers: settings.meetingHelpModifiers).enumerated()),
-                                id: \.offset) { _, part in
-                            Keycap(text: part)
+                    if settings.meetingHelpShortcutIsSet {
+                        HStack(spacing: 4) {
+                            ForEach(Array(MeetingHelpLabel.parts(keyCode: settings.meetingHelpKeyCode,
+                                                               modifiers: settings.meetingHelpModifiers).enumerated()),
+                                    id: \.offset) { _, part in
+                                Keycap(text: part)
+                            }
                         }
+                    } else {
+                        Text("None").font(MW.monoSm).foregroundStyle(MW.textMuted)
                     }
-                    Button("Change") { startHelpShortcutRecording() }
+                    Button(settings.meetingHelpShortcutIsSet ? "Change" : "Set") { startHelpShortcutRecording() }
                         .buttonStyle(.plain)
                         .font(MW.label).tracking(0.8)
                         .foregroundStyle(MW.textSecondary)
@@ -1573,7 +1577,7 @@ struct MainSettingsView: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
             if helpShortcutRecorder.isRecording {
-                Text("Esc cancels.").font(MW.monoSm).foregroundStyle(MW.textMuted)
+                Text("⌫ unsets. Esc cancels.").font(MW.monoSm).foregroundStyle(MW.textMuted)
             }
         }
         .onDisappear { helpShortcutRecorder.stop() }
@@ -1585,6 +1589,9 @@ struct MainSettingsView: View {
         helpShortcutRecorder.onAccepted = { combo in
             settings.meetingHelpKeyCode = combo.keyCode
             settings.meetingHelpModifiers = combo.modifiers
+        }
+        helpShortcutRecorder.onCleared = {
+            settings.meetingHelpKeyCode = MeetingHelpDefaults.unsetKeyCode
         }
         helpShortcutRecorder.start()
     }
@@ -3266,6 +3273,8 @@ final class MeetingHelpShortcutRecorder: ObservableObject {
     @Published private(set) var refusal: String?
     /// The combo the recorder accepted.
     var onAccepted: ((MeetingHelpCombo) -> Void)?
+    /// Called when a bare ⌫ took the shortcut away.
+    var onCleared: (() -> Void)?
 
     private var monitor: Any?
     private var window: NSWindow?
@@ -3324,6 +3333,10 @@ final class MeetingHelpShortcutRecorder: ObservableObject {
             return false
         case .cancelled:
             stop()
+            return true
+        case .cleared:
+            stop()
+            onCleared?()
             return true
         case .accepted(let combo):
             refusal = nil

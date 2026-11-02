@@ -38,6 +38,20 @@ final class MeetingHelpShortcutRecorderTests: XCTestCase {
                        "the Esc of another window cancelled the recording")
     }
 
+    /// A bare ⌫ takes the shortcut away: no combo is registered during a
+    /// meeting, and the automatic answers go on working.
+    func testBackspaceTakesTheShortcutAway() {
+        XCTAssertEqual(MeetingHelpRecorderRules.action(keyCode: 51, modifiers: 0, isOwnWindow: true),
+                       .cleared,
+                       "⌫ did not take the shortcut away")
+        XCTAssertEqual(MeetingHelpRecorderRules.action(keyCode: 51, modifiers: 0, isOwnWindow: false),
+                       .pass,
+                       "the ⌫ of another window took the shortcut away")
+        XCTAssertEqual(MeetingHelpRecorderRules.action(keyCode: 51, modifiers: controlKey, isOwnWindow: true),
+                       .accepted(MeetingHelpCombo(keyCode: 51, modifiers: controlKey)),
+                       "⌃⌫ is a combo, not the clearing key")
+    }
+
     // MARK: - The monitor
 
     /// The monitor lets the keys of another window through: they belong to
@@ -95,5 +109,35 @@ final class MeetingHelpShortcutRecorderTests: XCTestCase {
 
         XCTAssertNil(result, "the key of the recording window was not swallowed")
         recorder.stop()
+    }
+
+    /// ⌫ of the recording window takes the shortcut away and ends the
+    /// recording.
+    func testTheMonitorSwallowsBackspaceAndClears() throws {
+        _ = NSApplication.shared
+        let settings = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 400, height: 300),
+                                styleMask: [.titled], backing: .buffered, defer: false)
+        settings.orderFront(nil)
+
+        let recorder = MeetingHelpShortcutRecorder()
+        recorder.start(window: settings)
+        var cleared = 0
+        recorder.onCleared = { cleared += 1 }
+
+        let event = try XCTUnwrap(NSEvent.keyEvent(with: .keyDown,
+                                                   location: .zero,
+                                                   modifierFlags: [],
+                                                   timestamp: 0,
+                                                   windowNumber: settings.windowNumber,
+                                                   context: nil,
+                                                   characters: "\u{7F}",
+                                                   charactersIgnoringModifiers: "\u{7F}",
+                                                   isARepeat: false,
+                                                   keyCode: 51))
+        let result = recorder.monitorHandler(event)
+
+        XCTAssertNil(result, "the ⌫ of the recording window was not swallowed")
+        XCTAssertEqual(cleared, 1, "⌫ did not take the shortcut away")
+        XCTAssertFalse(recorder.isRecording, "the recording went on after ⌫")
     }
 }

@@ -10,6 +10,10 @@ enum MeetingHelpDefaults {
     static let keyCode = 36
     /// Control.
     static let modifiers = controlKey
+    /// What the settings hold when the user has taken the shortcut away.
+    ///
+    /// Carbon virtual key codes run 0…127, so −1 can never be a real key.
+    static let unsetKeyCode = -1
 }
 
 /// The help shortcut as the settings store it: a virtual key code and a
@@ -151,6 +155,9 @@ enum MeetingHelpRecorderAction: Equatable {
     case pass
     /// Esc: the recording is over and the shortcut stays as it was.
     case cancelled
+    /// A bare ⌫: the shortcut is taken away — no combo is registered during
+    /// a meeting, and the automatic answers go on working.
+    case cleared
     /// The combo was accepted.
     case accepted(MeetingHelpCombo)
     /// The combo was refused.
@@ -175,6 +182,8 @@ enum MeetingHelpRecorderRules {
         guard isOwnWindow else { return .pass }
         // Esc: the shortcut stays as it was.
         if keyCode == 53 { return .cancelled }
+        // A bare ⌫ takes the shortcut away. ⌃⌫ and its friends stay combos.
+        if keyCode == 51 && modifiers == 0 { return .cleared }
         switch MeetingHelpComboValidator.validate(keyCode: keyCode, modifiers: modifiers) {
         case .success(let combo): return .accepted(combo)
         case .failure(let reason): return .refused(reason)

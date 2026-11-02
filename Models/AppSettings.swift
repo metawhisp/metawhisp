@@ -148,9 +148,15 @@ final class AppSettings: ObservableObject {
     /// default: every check costs money, and the user has to ask for them.
     @AppStorage("meetingAutoAnswer") var meetingAutoAnswer: Bool = false
     /// The help shortcut: the virtual key code (36 = Return) and the Carbon
-    /// modifier mask (control = 0x1000). Together they are ⌃↩.
+    /// modifier mask (control = 0x1000). Together they are ⌃↩. A key code of
+    /// `MeetingHelpDefaults.unsetKeyCode` means the user took the shortcut
+    /// away: no key is registered during a meeting.
     @AppStorage("meetingHelpKeyCode") var meetingHelpKeyCode: Int = MeetingHelpDefaults.keyCode
     @AppStorage("meetingHelpModifiers") var meetingHelpModifiers: Int = MeetingHelpDefaults.modifiers
+    /// Whether the user's help shortcut is set at all.
+    var meetingHelpShortcutIsSet: Bool {
+        meetingHelpKeyCode != MeetingHelpDefaults.unsetKeyCode
+    }
 
     // ITER-015 — Proactive surfacing. Opt-in. Silently surfaces a peripheral chip
     // with 2-3 relevant memories / past decisions / pending tasks while user is
