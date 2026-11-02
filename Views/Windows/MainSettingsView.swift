@@ -955,19 +955,23 @@ struct MainSettingsView: View {
 
             hotkeyRow(
                 "TRANSCRIBE", desc: "Right ⌘ — short tap. Result auto-pasted to active app.",
-                badge: "TAP", keys: ["RIGHT", "\u{2318}"]
+                badge: "TAP", keys: ["RIGHT", "\u{2318}"],
+                isOn: $settings.transcribeHotkeyEnabled
             )
             hotkeyRow(
                 "TRANSLATE", desc: "Right ⌥ — short tap. Translates to your preferred target language.",
-                badge: "TAP", keys: ["RIGHT", "\u{2325}"]
+                badge: "TAP", keys: ["RIGHT", "\u{2325}"],
+                isOn: $settings.translateHotkeyEnabled
             )
             hotkeyRow(
                 "VOICE QUESTION", desc: "Hold Right ⌘ ≥ 0.5s — speak, release. Reply spoken aloud.",
-                badge: "HOLD", keys: ["RIGHT", "\u{2318}"]
+                badge: "HOLD", keys: ["RIGHT", "\u{2318}"],
+                isOn: $settings.voiceQuestionHotkeyEnabled
             )
             hotkeyRow(
                 "AUTO-TRANSLATE (INPUT)", desc: "Hold Right ⌥ ≥ 1.5s — translates live mic input as you speak.",
-                badge: "HOLD", keys: ["RIGHT", "\u{2325}"]
+                badge: "HOLD", keys: ["RIGHT", "\u{2325}"],
+                isOn: $settings.autoTranslateHotkeyEnabled
             )
 
             Rectangle().fill(MW.border).frame(height: MW.hairline)
@@ -980,8 +984,12 @@ struct MainSettingsView: View {
                 modeButton("PUSH-TO-TALK", value: "pushToTalk",
                            desc: "hold to record")
             }
+            .opacity(settings.transcribeHotkeyEnabled ? 1 : 0.4)
+            .disabled(!settings.transcribeHotkeyEnabled)
 
-            Text("Tap the key from any app to start/stop recording.")
+            Text(settings.transcribeHotkeyEnabled
+                 ? "Tap the key from any app to start/stop recording."
+                 : "TRANSCRIBE is off — the mode returns when it is back on.")
                 .font(MW.monoSm).foregroundStyle(MW.textMuted)
         }
         .padding(MW.sp16)
@@ -989,7 +997,11 @@ struct MainSettingsView: View {
         .mwCard(radius: MW.rMedium, elevation: .raised)
     }
 
-    private func hotkeyRow(_ action: String, desc: String, badge: String, keys: [String]) -> some View {
+    /// One fixed hotkey: what it does, its keys, and the switch that turns
+    /// just this action off. An off row dims its keys — the panel shows what
+    /// the app will answer.
+    private func hotkeyRow(_ action: String, desc: String, badge: String, keys: [String],
+                           isOn: Binding<Bool>) -> some View {
         HStack(alignment: .center, spacing: MW.sp12) {
             VStack(alignment: .leading, spacing: 2) {
                 Text(action).font(MW.mono).foregroundStyle(MW.textPrimary)
@@ -999,9 +1011,19 @@ struct MainSettingsView: View {
             Spacer(minLength: 8)
             HStack(spacing: 4) {
                 hotkeyBadge(badge)
+                    .opacity(isOn.wrappedValue ? 1 : 0.35)
                 ForEach(keys, id: \.self) { key in
                     Keycap(text: key)
+                        .opacity(isOn.wrappedValue ? 1 : 0.35)
                 }
+                Text(isOn.wrappedValue ? "ON" : "OFF")
+                    .font(MW.monoSm)
+                    .foregroundStyle(isOn.wrappedValue ? MW.textPrimary : MW.textMuted)
+                    .padding(.horizontal, MW.sp8)
+                    .padding(.vertical, 2)
+                    .background(isOn.wrappedValue ? MW.elevated : .clear)
+                    .overlay(Rectangle().stroke(isOn.wrappedValue ? MW.textMuted : MW.border, lineWidth: MW.hairline))
+                    .onTapGesture { isOn.wrappedValue.toggle() }
             }
         }
     }
