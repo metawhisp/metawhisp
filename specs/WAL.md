@@ -8,15 +8,16 @@ Carbon code), the row shows None with a Set button, and during a meeting
 nothing is registered — the card shows no shortcut line and automatic
 answers keep working. Setting a combo again works live, mid-meeting.
 
-**Tests:** recorder rules + monitor (MeetingHelpShortcutRecorderTests),
-session nil-combo wiring (LiveHintsSessionTests). NOT run on this Mac:
-CLT-only toolchain (no Xcode) cannot expand SwiftData/SwiftUI macros with
-`--build-system native`, and the default swiftbuild backend hits the CLT
-27 + Swift 6.4 init bug ("Unknown error parsing property list",
-swiftlang/swift-package-manager#10561). All edited files pass
-`swiftc -parse`; run `swift test --filter MeetingHelpShortcutRecorderTests`
-and `--filter LiveHintsSessionTests`, then `bash scripts/regression.sh`,
-on an Xcode machine before merging.
+**Tests (run 2026-11-02, Xcode 27.2 installed, `--build-system native` —
+the default backend's metal launcher is broken on this Mac):**
+MeetingHelpShortcutRecorderTests 7/7 ✅, LiveHintsSessionTests 41/41 ✅,
+MeetingHelpHotkeyTests ✅, AppSettingsMeetingHintsTests ✅ — each alone and
+inside the full-suite run (4750 executed). The gate itself cannot pass on
+this Mac for reasons that reproduce on the base branch with no PR changes:
+DoHereLiveTests kills the runner (WebKit SIGKILL:
+crashDueToApplicationCallingMainThreadOnlyWebKitAPIFromBackgroundThread),
+and ActionScript + 5 Layout suites fail (68 assertion failures on base).
+Those are pre-existing on macOS 27.0.1 / Xcode 27.2 — not this branch.
 
 **Watch out:** НЕ ТРОГАЙ the fixed Right ⌘/Right ⌥ hotkeys — they are not
 user-settable and already gated by the global input switch.
