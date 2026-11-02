@@ -344,3 +344,53 @@ final class MeetingTranscriptSanitizerTests: XCTestCase {
         XCTAssertEqual(S.tokenSimilarity([], ["b"]), 0.0)
     }
 }
+
+extension MeetingTranscriptSanitizerTests {
+    func test_sanitize_preciseChannelsEchoWindowBoundaries() {
+        for delta in [-0.5001, -0.5, 0.5, 0.5001] {
+            let source = seg("we should approve this contract", 10, 12, .them)
+            let copy = seg(source.text, 10 + delta, 12 + delta, .me)
+            let segments = [source, copy].sorted { $0.startSec < $1.startSec }
+            let result = S.sanitize(segments, policy: .preciseChannels)
+            if abs(delta) <= 0.5 {
+                XCTAssertEqual(result.kept, [source], "delta: \(delta)")
+                XCTAssertEqual(result.dropped, [.init(segment: copy, reason: "cross-channel-echo")])
+            } else {
+                XCTAssertEqual(result.kept, segments, "delta: \(delta)")
+                XCTAssertTrue(result.dropped.isEmpty)
+            }
+        }
+    }
+
+    func test_sanitize_decoderTranscriptRetainsOriginalEchoWindow() {
+        for delta in [-2.0001, -2, 4, 4.0001] {
+            let source = seg("we should approve this contract", 10, 12, .them)
+            let copy = seg(source.text, 10 + delta, 12 + delta, .me)
+            let segments = [source, copy].sorted { $0.startSec < $1.startSec }
+            let result = S.sanitize(segments, policy: .decoderTranscript)
+            XCTAssertEqual(S.sanitize(segments), result)
+            if delta >= -2 && delta <= 4 {
+                XCTAssertEqual(result.kept, [source], "delta: \(delta)")
+                XCTAssertEqual(result.dropped, [.init(segment: copy, reason: "cross-channel-echo")])
+            } else {
+                XCTAssertEqual(result.kept, segments, "delta: \(delta)")
+                XCTAssertTrue(result.dropped.isEmpty)
+            }
+        }
+    }
+
+    func test_sanitize_defaultRetainsDecoderDropOrder() {
+        let source = seg("we should approve this contract", 10, 12, .them)
+        let copy = seg(source.text, 13, 15, .me)
+        let first = seg("yes.", 20, 21, .me)
+        let repeated = seg("yes.", 30, 31, .me)
+        let segments = [source, copy, first, repeated]
+        let result = S.sanitize(segments)
+        XCTAssertEqual(result, S.sanitize(segments, policy: .decoderTranscript))
+        XCTAssertEqual(result.kept, [source, first])
+        XCTAssertEqual(result.dropped, [
+            .init(segment: repeated, reason: "consecutive-duplicate"),
+            .init(segment: copy, reason: "cross-channel-echo"),
+        ])
+    }
+}

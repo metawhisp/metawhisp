@@ -2205,7 +2205,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
                 let dgStart = CFAbsoluteTimeGetCurrent()
                 do {
                     let text = try await DeepgramMeetingTranscriber()
-                        .transcribe(mic: micSamples, system: sysSamples, apiKey: deepgramKey)
+                        .transcribe(mic: micSamples, system: sysSamples, apiKey: deepgramKey,
+                                    language: TranscriptionLanguageResolver.resolveLanguage(AppSettings.shared.transcriptionLanguage))
                     let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
                     guard !trimmed.isEmpty else { throw DeepgramMeetingTranscriber.DGError.emptyTranscript }
                     let duration = Double(max(micSamples.count, sysSamples.count)) / 16000.0

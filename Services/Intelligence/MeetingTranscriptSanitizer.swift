@@ -9,6 +9,23 @@ import NaturalLanguage
 /// не удаляется молча.
 enum MeetingTranscriptSanitizer {
 
+    struct Policy {
+        let echoStartWindow: ClosedRange<Double>
+        let collapsesConsecutiveDuplicates: Bool
+        let dropsForeignFragments: Bool
+
+        /// Decoder timestamps can drift; repeated turns and foreign fragments
+        /// may be decoding artifacts.
+        static let decoderTranscript = Policy(echoStartWindow: -2...4,
+                                              collapsesConsecutiveDuplicates: true,
+                                              dropsForeignFragments: true)
+
+        /// Precise channel timestamps need only near-simultaneous echo removal.
+        static let preciseChannels = Policy(echoStartWindow: -0.5...0.5,
+                                            collapsesConsecutiveDuplicates: false,
+                                            dropsForeignFragments: false)
+    }
+
     struct SanitizeResult: Equatable {
         var kept: [StreamSegment]
         var dropped: [Drop]
@@ -76,10 +93,19 @@ enum MeetingTranscriptSanitizer {
     /// Run all cross-segment cleanups in order: consecutive-identical dedup →
     /// cross-channel echo dedup → language-profile foreign-fragment filter.
     static func sanitize(_ merged: [StreamSegment]) -> SanitizeResult {
+        sanitize(merged, policy: .decoderTranscript)
+    }
+
+    static func sanitize(_ merged: [StreamSegment], policy: Policy) -> SanitizeResult {
         var dropped: [Drop] = []
-        var kept = dedupeConsecutiveIdentical(merged, dropped: &dropped)
-        kept = dedupeCrossChannelEcho(kept, dropped: &dropped)
-        kept = filterForeignFragments(kept, dropped: &dropped)
+        var kept = merged
+        if policy.collapsesConsecutiveDuplicates {
+            kept = dedupeConsecutiveIdentical(kept, dropped: &dropped)
+        }
+        kept = dedupeCrossChannelEcho(kept, dropped: &dropped, policy: policy)
+        if policy.dropsForeignFragments {
+            kept = filterForeignFragments(kept, dropped: &dropped)
+        }
         return SanitizeResult(kept: kept, dropped: dropped)
     }
 
@@ -129,14 +155,13 @@ enum MeetingTranscriptSanitizer {
     ///   с добавленным содержанием («…, правильно я понимаю?») — оставляем.
     ///   Одно новое слово допускаем: bleed регулярно коверкает один токен
     ///   («задеплоим» → «задиплоят»). (Codex review 2026-08-07.)
-    private static let echoWindowBeforeSec: Double = 2
-    private static let echoWindowAfterSec: Double = 4
     private static let echoMinWords = 4
     private static let echoSimilarityThreshold: Double = 0.8
     private static let echoMaxLengthRatio: Double = 1.5
     private static let echoMaxNewWords = 1
 
-    static func dedupeCrossChannelEcho(_ segments: [StreamSegment], dropped: inout [Drop]) -> [StreamSegment] {
+    static func dedupeCrossChannelEcho(_ segments: [StreamSegment], dropped: inout [Drop],
+                                       policy: Policy = .decoderTranscript) -> [StreamSegment] {
         let themSegments = segments.filter { $0.speaker == .them }
         guard !themSegments.isEmpty else { return segments }
 
@@ -153,7 +178,7 @@ enum MeetingTranscriptSanitizer {
             }
             let isEcho = themSegments.contains { them in
                 let delta = seg.startSec - them.startSec
-                guard delta >= -echoWindowBeforeSec, delta <= echoWindowAfterSec else { return false }
+                guard policy.echoStartWindow.contains(delta) else { return false }
                 let themTokens = normalizedTokens(them.text)
                 guard !themTokens.isEmpty,
                       Double(meTokens.count) <= Double(themTokens.count) * echoMaxLengthRatio,

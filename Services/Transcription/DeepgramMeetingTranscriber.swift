@@ -1,21 +1,7 @@
 import Foundation
 
-/// ITER-054 — BYOK Deepgram diarization for meetings (founder decision
-/// 2026-07-15: «юзер пусть вставит свой ключ на любом из тарифов»).
-///
-/// When the user pastes their OWN Deepgram API key in Settings, meetings are
-/// transcribed in ONE pass: mic + system are mixed to a single mono stream and
-/// sent to Deepgram `nova-3` with native diarization (`diarize=true`), which
-/// returns per-utterance speaker labels from that one stream. Deepgram's
-/// numeric speakers are then mapped to `Me`/`Them` by comparing per-utterance
-/// channel energy (mic vs system) — the raw channel buffers are the source of
-/// truth for who is who. Cost lands on the USER's Deepgram account; the
-/// request never touches our worker, so it works on any tier and books no
-/// Pro-quota minutes.
-///
-/// Failure of any kind falls back to the existing Whisper dual-stream path in
-/// `AppDelegate.transcribeMeetingDualStream` — this feature can only add
-/// quality, never lose a meeting.
+/// Meeting transcription using the user's Deepgram key. Mic and system audio
+/// remain separate stereo channels, so attribution follows the audio source.
 struct DeepgramMeetingTranscriber {
 
     // MARK: - Response model (the subset we consume)
@@ -27,40 +13,152 @@ struct DeepgramMeetingTranscriber {
         let speaker: Int
     }
 
+    /// Prerecorded utterances carry a scalar channel even without diarization.
+    struct DGChannelUtterance: Decodable, Equatable {
+        let start: Double
+        let end: Double
+        let transcript: String
+        let channel: Int
+        let speaker: Int?
+    }
+
     struct DGResponse: Decodable {
-        struct Results: Decodable {
-            let utterances: [DGUtterance]?
+        struct Metadata: Decodable {
+            struct ModelInfo: Decodable {
+                let name: String?
+                let version: String?
+            }
+            let requestID: String?
+            let duration: Double?
+            let modelInfo: [String: ModelInfo]?
+
+            enum CodingKeys: String, CodingKey {
+                case requestID = "request_id"
+                case duration
+                case modelInfo = "model_info"
+            }
         }
+        struct Channel: Decodable {
+            struct Alternative: Decodable {
+                struct Word: Decodable {
+                    let end: Double?
+                }
+                let transcript: String?
+                let words: [Word]?
+            }
+            let alternatives: [Alternative]?
+        }
+        struct Results: Decodable {
+            let utterances: [DGChannelUtterance]?
+            let channels: [Channel]?
+        }
+        let metadata: Metadata?
         let results: Results?
     }
 
     enum DGError: LocalizedError {
         case http(Int, String)
         case emptyTranscript
+        case recordingTooLarge
 
         var errorDescription: String? {
             switch self {
             case .http(let code, let body): return "Deepgram HTTP \(code): \(body)"
             case .emptyTranscript: return "Deepgram returned no utterances"
+            case .recordingTooLarge: return "Recording is too large for a stereo WAV file"
             }
         }
     }
 
     // MARK: - Pure helpers (unit-tested)
 
-    /// Request URL. `nova-3` + `language=multi` (code-switching: covers the
-    /// RU/EN mix our users actually speak; per-language routing can come
-    /// later). The API key goes in the Authorization HEADER — never the URL.
-    static func requestURL() -> URL {
+    /// Honor the selected language; Auto uses multilingual recognition.
+    /// The API key goes in the authorization header, never the URL.
+    static func requestURL(language: String?) -> URL {
         var comps = URLComponents(string: "https://api.deepgram.com/v1/listen")!
         comps.queryItems = [
             URLQueryItem(name: "model", value: "nova-3"),
-            URLQueryItem(name: "diarize", value: "true"),
+            URLQueryItem(name: "multichannel", value: "true"),
             URLQueryItem(name: "utterances", value: "true"),
             URLQueryItem(name: "smart_format", value: "true"),
-            URLQueryItem(name: "language", value: "multi"),
+            URLQueryItem(name: "language", value: language ?? "multi"),
         ]
         return comps.url!
+    }
+
+    /// Map source channels, trim blanks, and merge on the recording clock.
+    /// Mic precedes system when start times tie, regardless of response order.
+    static func channelSegments(utterances: [DGChannelUtterance]) -> [StreamSegment] {
+        func segments(channel: Int, speaker: Speaker) -> [StreamSegment] {
+            utterances.filter { $0.channel == channel }.compactMap { utterance in
+                let text = utterance.transcript.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !text.isEmpty else { return nil }
+                return StreamSegment(text: text, startSec: utterance.start,
+                                     endSec: utterance.end, speaker: speaker)
+            }
+        }
+        return DualStreamMerger.mergeStreams(mic: segments(channel: 0, speaker: .me),
+                                            system: segments(channel: 1, speaker: .them))
+    }
+
+    /// Shared cleanup precedes glossary correction; retain original dropped
+    /// segments so the caller can write them to the recovery log.
+    static func cleanChannelSegments(utterances: [DGChannelUtterance]) -> MeetingTranscriptSanitizer.SanitizeResult {
+        let sanitized = MeetingTranscriptSanitizer.sanitize(channelSegments(utterances: utterances), policy: .preciseChannels)
+        let corrected = sanitized.kept.map {
+            StreamSegment(text: BrandGlossary.applyCorrections($0.text),
+                          startSec: $0.startSec, endSec: $0.endSec, speaker: $0.speaker)
+        }
+        return MeetingTranscriptSanitizer.SanitizeResult(kept: corrected, dropped: sanitized.dropped)
+    }
+
+    static func renderChannelTranscript(_ result: MeetingTranscriptSanitizer.SanitizeResult) throws -> String {
+        let transcript = DualStreamMerger.renderTranscript(result.kept)
+        guard !transcript.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            throw DGError.emptyTranscript
+        }
+        return transcript
+    }
+
+    /// Counts and provider identifiers only. Both sent channels include the
+    /// zero-padded tail; original source durations are labeled separately.
+    static func diagnosticLine(response: DGResponse, micSampleCount: Int, systemSampleCount: Int,
+                               cleanedSegments: [StreamSegment]) -> String {
+        func seconds(_ value: Double?) -> String {
+            guard let value else { return "unknown" }
+            return String(format: "%.3f", locale: Locale(identifier: "en_US_POSIX"), value)
+        }
+        func identifier(_ value: String?) -> String {
+            guard let value, !value.isEmpty else { return "unknown" }
+            return value.split(whereSeparator: { $0.isWhitespace }).joined(separator: "_")
+        }
+        let metadata = response.metadata
+        let models = (metadata?.modelInfo ?? [:]).sorted { $0.key < $1.key }.map {
+            "\(identifier($0.key)):\(identifier($0.value.name))@\(identifier($0.value.version))"
+        }
+        let sentSeconds = Double(max(micSampleCount, systemSampleCount)) / 16_000
+        let utterances = response.results?.utterances ?? []
+        let channels = response.results?.channels ?? []
+        var fields = [
+            "[Deepgram] diag",
+            "request_id=\(identifier(metadata?.requestID))",
+            "models=[\(models.isEmpty ? "unknown" : models.joined(separator: ","))]",
+            "sent_ch0_s=\(seconds(sentSeconds))", "sent_ch1_s=\(seconds(sentSeconds))",
+            "source_ch0_s=\(seconds(Double(micSampleCount) / 16_000))",
+            "source_ch1_s=\(seconds(Double(systemSampleCount) / 16_000))",
+            "processed_s=\(seconds(metadata?.duration))",
+        ]
+        for channel in 0..<2 {
+            let alternative = channels.indices.contains(channel) ? channels[channel].alternatives?.first : nil
+            let utteranceChars = utterances.filter { $0.channel == channel }.reduce(0) { $0 + $1.transcript.count }
+            let transcriptChars = (alternative?.transcript).map { String($0.count) } ?? "unknown"
+            fields.append("ch\(channel){utterance_chars=\(utteranceChars),channel_transcript_chars=\(transcriptChars),last_word_end_s=\(seconds(alternative?.words?.last?.end))}")
+        }
+        let beforeChars = channelSegments(utterances: utterances).reduce(0) { $0 + $1.text.count }
+        let afterChars = cleanedSegments.reduce(0) { $0 + $1.text.count }
+        fields.append("total_chars_before_cleanup=\(beforeChars)")
+        fields.append("total_chars_after_cleanup=\(afterChars)")
+        return fields.joined(separator: " ")
     }
 
     /// Map each Deepgram speaker id to `Me`/`Them` by which channel carries
@@ -191,24 +289,78 @@ struct DeepgramMeetingTranscriber {
         return Double(total) / 16_000.0
     }
 
+    /// Standard 44-byte RIFF header for 16 kHz stereo 16-bit PCM.
+    static func stereoWAVHeader(frameCount: Int) throws -> Data {
+        guard let frames = UInt64(exactly: frameCount) else { throw DGError.recordingTooLarge }
+        let (dataBytes, dataOverflow) = frames.multipliedReportingOverflow(by: 4)
+        let (riffBytes, riffOverflow) = dataBytes.addingReportingOverflow(36)
+        guard !dataOverflow, !riffOverflow,
+              dataBytes <= UInt64(UInt32.max), riffBytes <= UInt64(UInt32.max) else {
+            throw DGError.recordingTooLarge
+        }
+        var data = Data()
+        func le32(_ value: UInt32) { withUnsafeBytes(of: value.littleEndian) { data.append(contentsOf: $0) } }
+        func le16(_ value: UInt16) { withUnsafeBytes(of: value.littleEndian) { data.append(contentsOf: $0) } }
+        data.append(contentsOf: "RIFF".utf8); le32(UInt32(riffBytes))
+        data.append(contentsOf: "WAVE".utf8)
+        data.append(contentsOf: "fmt ".utf8); le32(16)
+        le16(1); le16(2)
+        le32(16_000); le32(64_000)
+        le16(4); le16(16)
+        data.append(contentsOf: "data".utf8); le32(UInt32(dataBytes))
+        return data
+    }
+
+    /// Stream interleaved mic/system frames, padding the shorter source with
+    /// zeroes. Only one PCM slice is allocated, independent of meeting length.
+    static func writeStereoWAV(mic: [Float], system: [Float], to url: URL) throws -> Double {
+        let total = max(mic.count, system.count)
+        let header = try stereoWAVHeader(frameCount: total)
+        FileManager.default.createFile(atPath: url.path, contents: nil)
+        let handle = try FileHandle(forWritingTo: url)
+        defer { try? handle.close() }
+        try handle.write(contentsOf: header)
+
+        let slice = 1_048_576
+        var pcm = [Int16](repeating: 0, count: min(slice, total) * 2)
+        func sample(_ value: Float) -> Int16 {
+            Int16(max(-1.0, min(1.0, MeetingRecorder.softClip(value))) * 32767).littleEndian
+        }
+        var i = 0
+        while i < total {
+            let end = min(total, i + slice)
+            let count = end - i
+            for k in 0..<count {
+                let j = i + k
+                pcm[k * 2] = sample(j < mic.count ? mic[j] : 0)
+                pcm[k * 2 + 1] = sample(j < system.count ? system[j] : 0)
+            }
+            try pcm.withUnsafeBufferPointer { buffer in
+                try handle.write(contentsOf: Data(buffer: UnsafeBufferPointer(rebasing: buffer[0..<(count * 2)])))
+            }
+            i = end
+        }
+        return Double(total) / 16_000
+    }
+
     // MARK: - Network
 
     /// One-pass transcription of a whole meeting. The WAV streams from a temp
     /// file (never a full in-memory body); generous timeout for long uploads.
-    func transcribe(mic: [Float], system: [Float], apiKey: String) async throws -> String {
+    func transcribe(mic: [Float], system: [Float], apiKey: String, language: String?) async throws -> String {
         let tmp = FileManager.default.temporaryDirectory
             .appendingPathComponent("dg-meeting-\(UUID().uuidString).wav")
-        let seconds = try Self.writeMixedWAV(mic: mic, system: system, to: tmp)
+        let seconds = try Self.writeStereoWAV(mic: mic, system: system, to: tmp)
         defer { try? FileManager.default.removeItem(at: tmp) }
 
-        var req = URLRequest(url: Self.requestURL())
+        var req = URLRequest(url: Self.requestURL(language: language))
         req.httpMethod = "POST"
         req.setValue("Token \(apiKey)", forHTTPHeaderField: "Authorization")
         req.setValue("audio/wav", forHTTPHeaderField: "Content-Type")
         req.timeoutInterval = 600
 
         let sizeBytes = ((try? FileManager.default.attributesOfItem(atPath: tmp.path))?[.size] as? Int) ?? 0
-        NSLog("[Deepgram] Uploading %.0fs meeting (%.1f MB, streamed from disk) for diarized transcription",
+        NSLog("[Deepgram] Uploading %.0fs meeting (%.1f MB, streamed from disk) for multichannel transcription",
               seconds, Double(sizeBytes) / 1_048_576.0)
         let (data, resp) = try await URLSession.shared.upload(for: req, fromFile: tmp)
         let code = (resp as? HTTPURLResponse)?.statusCode ?? -1
@@ -218,18 +370,18 @@ struct DeepgramMeetingTranscriber {
         }
 
         let decoded = try JSONDecoder().decode(DGResponse.self, from: data)
-        guard let utterances = decoded.results?.utterances, !utterances.isEmpty else {
-            throw DGError.emptyTranscript
+        let sanitized = Self.cleanChannelSegments(utterances: decoded.results?.utterances ?? [])
+        NSLog("%@", Self.diagnosticLine(response: decoded, micSampleCount: mic.count,
+                                       systemSampleCount: system.count, cleanedSegments: sanitized.kept))
+        NSLog("[Deepgram] sanitize: %d kept, %d dropped - %d consecutive-duplicate, %d cross-channel-echo, %d foreign-language-fragment",
+              sanitized.kept.count, sanitized.dropped.count,
+              sanitized.dropped.filter { $0.reason == "consecutive-duplicate" }.count,
+              sanitized.dropped.filter { $0.reason == "cross-channel-echo" }.count,
+              sanitized.dropped.filter { $0.reason.hasPrefix("foreign-language-fragment") }.count)
+        for drop in sanitized.dropped {
+            SuspectTranscriptLog.append(drop.segment.text, reason: drop.reason,
+                                        context: drop.segment.speaker == .me ? "Deepgram Me merged" : "Deepgram Them merged")
         }
-
-        let mapping = Self.mapSpeakersToChannels(
-            utterances: utterances,
-            micEnergy: { Self.windowRMS(mic, startSec: $0, endSec: $1) },
-            systemEnergy: { Self.windowRMS(system, startSec: $0, endSec: $1) }
-        )
-        let segs = Self.segments(utterances: utterances, mapping: mapping)
-        NSLog("[Deepgram] ✅ %d utterances, %d speakers → Me/Them via channel energy",
-              utterances.count, Set(utterances.map(\.speaker)).count)
-        return DualStreamMerger.renderTranscript(segs)
+        return try Self.renderChannelTranscript(sanitized)
     }
 }

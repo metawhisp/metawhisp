@@ -21,8 +21,17 @@ struct StreamSegment: Equatable {
 
 enum DualStreamMerger {
     /// Merge two channel-labeled segment lists into a single time-sorted list.
+    /// Equal starts put mic first, then preserve input order within a channel.
     static func mergeStreams(mic: [StreamSegment], system: [StreamSegment]) -> [StreamSegment] {
-        return (mic + system).sorted { $0.startSec < $1.startSec }
+        return (mic + system).enumerated().sorted {
+            if $0.element.startSec != $1.element.startSec {
+                return $0.element.startSec < $1.element.startSec
+            }
+            if $0.element.speaker != $1.element.speaker {
+                return $0.element.speaker == .me
+            }
+            return $0.offset < $1.offset
+        }.map(\.element)
     }
 
     /// Render merged segments as a `Me: …` / `Them: …` transcript.

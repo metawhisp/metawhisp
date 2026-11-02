@@ -107,4 +107,15 @@ final class DualStreamMergerTests: XCTestCase {
         XCTAssertFalse(out.hasPrefix("\n"), "no leading blank lines when the transcript was empty")
         XCTAssertTrue(out.contains("1"))
     }
+
+    func test_merge_equalStartsPutMicFirstFromSystemFirstInput() {
+        let system = StreamSegment(text: "System speech", startSec: 10, endSec: 12, speaker: .them)
+        let mic = StreamSegment(text: "Mic speech", startSec: 10, endSec: 13, speaker: .me)
+        let earlier = StreamSegment(text: "Earlier speech", startSec: 9, endSec: 10, speaker: .them)
+        let later = StreamSegment(text: "Later speech", startSec: 11, endSec: 14, speaker: .me)
+
+        // Source labels must determine tie priority even in an already mixed list.
+        let merged = DualStreamMerger.mergeStreams(mic: [], system: [system, mic, later, earlier])
+        XCTAssertEqual(merged, [earlier, mic, system, later])
+    }
 }
