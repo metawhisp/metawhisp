@@ -44,6 +44,8 @@ final class PracticeRecorder: ObservableObject {
     /// microphone is the app's, and the next practice records on it
     /// (round-2 N3).
     private var listeningSession: Int?
+    private var pttSession: Int?
+    private var voiceQuestionSession: Int?
 
     init(microphone: any AudioSource,
          engine: @escaping @MainActor () -> (any TranscriptionEngine)?,
@@ -75,6 +77,30 @@ final class PracticeRecorder: ObservableObject {
     /// The record button, Space, Right ⌘.
     func toggle() {
         phase == .listening ? stop() : start()
+    }
+
+    func startPTT() {
+        guard phase != .listening else { return }
+        start()
+        if phase == .listening { pttSession = listeningSession }
+    }
+
+    func stopPTT() {
+        defer { pttSession = nil }
+        guard phase == .listening, pttSession == microphone.captureSession else { return }
+        stop()
+    }
+
+    func startVoiceQuestion() {
+        guard phase != .listening else { return }
+        start()
+        if phase == .listening { voiceQuestionSession = listeningSession }
+    }
+
+    func stopVoiceQuestion() {
+        defer { voiceQuestionSession = nil }
+        guard phase == .listening, voiceQuestionSession == microphone.captureSession else { return }
+        stop()
     }
 
     func start() {

@@ -34,6 +34,9 @@ final class HotkeyService: ObservableObject {
     private var rightCmdDown = false
     private var rightCmdDownTime: Date?
     private var otherKeysDuringRightCmd = false
+    private var rightCmdHoldIsPTT: Bool?
+    private var pttTimer: DispatchWorkItem?
+    private var pttStarted = false
 
     // Right Option state
     private var rightOptDown = false
@@ -44,6 +47,32 @@ final class HotkeyService: ObservableObject {
 
     private let maxTapDuration: TimeInterval = 0.4
     private let longPressDuration: TimeInterval = 1.5
+
+    private let schedule: (TimeInterval, DispatchWorkItem) -> Void
+    private let clock: () -> Date
+
+    init(schedule: @escaping (TimeInterval, DispatchWorkItem) -> Void = { delay, work in
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: work)
+    }, clock: @escaping () -> Date = Date.init) {
+        self.schedule = schedule
+        self.clock = clock
+    }
+
+    private var callbackDelivery: Task<Void, Never>?
+
+    /// Snapshot the callback and serialize it after earlier key actions, off the monitor stack.
+    private func deliver(_ callback: (() -> Void)?) {
+        guard let callback else { return }
+        let previous = callbackDelivery
+        callbackDelivery = Task { @MainActor in
+            await previous?.value
+            callback()
+        }
+    }
+
+    func waitForPendingCallbacks() async {
+        await callbackDelivery?.value
+    }
 
     func register(
         onToggle: @escaping () -> Void,
@@ -117,111 +146,171 @@ final class HotkeyService: ObservableObject {
     }
 
     /// Right ⌘: Toggle mode = tap to start/stop. PTT mode = hold to record, release to stop.
+    ///
+    /// The switches decide on the way down whether the key is ours at all;
+    /// a release in flight always completes, so a recording cannot outlive
+    /// its key when a switch flips mid-hold (`HotkeyGates.tracksRightCommand`
+    /// — in Push-to-Talk the hold IS dictation, so that switch alone decides).
     private func handleRightCmd(isDown: Bool) {
-        let isPTT = AppSettings.shared.hotkeyMode == "pushToTalk"
+        let settings = AppSettings.shared
+        let gates = HotkeyGates.current(settings)
+        // A mode change applies to the next press, not the release of this hold.
+        let isPTT = rightCmdHoldIsPTT ?? (settings.hotkeyMode == "pushToTalk")
 
         if isPTT {
-            // Push-to-Talk: hold to record, release to stop
             // Short taps (< 0.15s) are ignored — only sustained hold triggers recording
             if isDown && !rightCmdDown {
+                guard gates.tracksRightCommand(pushToTalk: true) else { return }
                 rightCmdDown = true
-                rightCmdDownTime = Date()
+                rightCmdDownTime = clock()
+                rightCmdHoldIsPTT = true
+                pttStarted = false
                 // Delay start — only fire if still held after 0.15s
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { [weak self] in
+                let work = DispatchWorkItem { [weak self] in
                     guard let self, self.rightCmdDown else { return }
+                    // Re-read at fire time: dictation switched off inside
+                    // the window never opens the mic.
+                    guard HotkeyGates.current(AppSettings.shared).transcribe else { return }
+                    guard let start = self.onPTTStart else { return }
+                    self.pttStarted = true
                     NSLog("[HotkeyService] Right ⌘ PTT START (held)")
-                    Task { @MainActor in self.onPTTStart?() }
+                    self.deliver(start)
                 }
+                pttTimer = work
+                schedule(0.15, work)
             } else if !isDown && rightCmdDown {
-                let held = Date().timeIntervalSince(rightCmdDownTime ?? Date())
+                // Always complete a hold already in flight — whatever the
+                // switches say now, the recording must stop with the key.
+                let held = clock().timeIntervalSince(rightCmdDownTime ?? clock())
                 rightCmdDown = false
-                // Only stop if recording actually started (held > 0.3s)
-                if held >= 0.3 {
+                rightCmdDownTime = nil
+                rightCmdHoldIsPTT = nil
+                pttTimer?.cancel()
+                pttTimer = nil
+                let started = pttStarted
+                pttStarted = false
+                // Pair the callback delivered by this hold, regardless of elapsed time or gates.
+                if started {
                     NSLog("[HotkeyService] Right ⌘ PTT STOP (held %.1fs)", held)
-                    Task { @MainActor in onPTTStop?() }
+                    deliver(onPTTStop)
                 } else {
                     NSLog("[HotkeyService] Right ⌘ PTT ignored short tap (%.2fs)", held)
                 }
             }
         } else {
             // Toggle mode: tap < 0.4s = dictation toggle, long-press ≥ voiceQuestionHoldMs = voice question.
-            handleRightCmdToggleMode(isDown: isDown)
+            handleRightCmdToggleMode(isDown: isDown, gates: gates)
         }
     }
 
     /// Right ⌘ in Toggle mode: distinguishes tap (dictation) from long-press (voice question to MetaChat).
     /// spec://BACKLOG#Phase6
-    private func handleRightCmdToggleMode(isDown: Bool) {
+    ///
+    /// The gates decide which of the two actions may fire — the other stays
+    /// dead on the same key.
+    private func handleRightCmdToggleMode(isDown: Bool, gates: HotkeyGates) {
         if isDown && !rightCmdDown {
+            // The switches decide on the way down: with both of Right ⌘'s
+            // actions off the key is not ours in this mode either.
+            guard gates.tracksRightCommand(pushToTalk: false) else { return }
             rightCmdDown = true
-            rightCmdDownTime = Date()
+            rightCmdDownTime = clock()
+            rightCmdHoldIsPTT = false
             otherKeysDuringRightCmd = false
             rightCmdLongPressFired = false
-
-            // Arm long-press timer.
-            let holdSec = AppSettings.shared.voiceQuestionHoldMs / 1000.0
-            let work = DispatchWorkItem { [weak self] in
-                guard let self else { return }
-                guard self.rightCmdDown else { return }
-                guard !self.otherKeysDuringRightCmd else { return }
-                self.rightCmdLongPressFired = true
-                NSLog("[HotkeyService] Right ⌘ long-press → voice question START")
-                Task { @MainActor in self.onVoiceQuestionStart?() }
+            // Arm long-press timer — only while the voice question is on.
+            if gates.voiceQuestion {
+                let holdSec = AppSettings.shared.voiceQuestionHoldMs / 1000.0
+                let work = DispatchWorkItem { [weak self] in
+                    guard let self else { return }
+                    guard self.rightCmdDown else { return }
+                    guard !self.otherKeysDuringRightCmd else { return }
+                    // Re-read at fire time: a question switched off inside
+                    // the hold window never starts, and the release then
+                    // owes nothing.
+                    guard HotkeyGates.current(AppSettings.shared).voiceQuestion else { return }
+                    guard let start = self.onVoiceQuestionStart else { return }
+                    self.rightCmdLongPressFired = true
+                    NSLog("[HotkeyService] Right ⌘ long-press → voice question START")
+                    self.deliver(start)
+                }
+                rightCmdLongPressTimer = work
+                schedule(holdSec, work)
             }
-            rightCmdLongPressTimer = work
-            DispatchQueue.main.asyncAfter(deadline: .now() + holdSec, execute: work)
 
         } else if !isDown && rightCmdDown {
             rightCmdDown = false
             rightCmdLongPressTimer?.cancel()
             rightCmdLongPressTimer = nil
+            rightCmdHoldIsPTT = nil
+            let started = rightCmdLongPressFired
+            rightCmdLongPressFired = false
+            let downTime = rightCmdDownTime
+            rightCmdDownTime = nil
 
-            if rightCmdLongPressFired {
+            if started {
                 NSLog("[HotkeyService] Right ⌘ release after long-press → voice question STOP")
-                Task { @MainActor in onVoiceQuestionStop?() }
-            } else if let t = rightCmdDownTime,
-                      Date().timeIntervalSince(t) < maxTapDuration,
+                deliver(onVoiceQuestionStop)
+            } else if gates.transcribe,
+                      let t = downTime,
+                      clock().timeIntervalSince(t) < maxTapDuration,
                       !otherKeysDuringRightCmd {
                 NSLog("[HotkeyService] Right ⌘ tap")
-                Task { @MainActor in onToggle?() }
+                deliver(onToggle)
             }
         }
     }
 
     /// Right ⌥ with long-press support: tap (<0.4s) = transcribe+translate, hold (≥2s) = translate selection.
+    ///
+    /// With both of its actions off the key is ignored completely.
     private func handleRightOpt(isDown: Bool) {
+        let gates = HotkeyGates.current(AppSettings.shared)
         if isDown && !rightOptDown {
-            // Key just pressed
+            // With both of Right ⌥'s actions off the key is not ours.
+            guard gates.tracksRightOption else { return }
             rightOptDown = true
-            rightOptDownTime = Date()
+            rightOptDownTime = clock()
             otherKeysDuringRightOpt = false
             longPressFired = false
-
-            // Schedule long-press timer
-            let work = DispatchWorkItem { [weak self] in
-                guard let self else { return }
-                guard self.rightOptDown else { NSLog("[HotkeyService] Right ⌥ long-press cancelled: key released"); return }
-                guard !self.otherKeysDuringRightOpt else { NSLog("[HotkeyService] Right ⌥ long-press cancelled: other keys pressed"); return }
-                self.longPressFired = true
-                NSLog("[HotkeyService] Right ⌥ long-press detected (1.5s)")
-                Task { @MainActor in self.onTranslateLongPress?() }
+            // Schedule long-press timer — only while auto-translate is on.
+            if gates.autoTranslate {
+                let work = DispatchWorkItem { [weak self] in
+                    guard let self else { return }
+                    guard self.rightOptDown else { NSLog("[HotkeyService] Right ⌥ long-press cancelled: key released"); return }
+                    guard !self.otherKeysDuringRightOpt else { NSLog("[HotkeyService] Right ⌥ long-press cancelled: other keys pressed"); return }
+                    // Re-read at fire time: auto-translate switched off
+                    // inside the window never starts.
+                    guard HotkeyGates.current(AppSettings.shared).autoTranslate else { return }
+                    guard let action = self.onTranslateLongPress else { return }
+                    self.longPressFired = true
+                    NSLog("[HotkeyService] Right ⌥ long-press detected (1.5s)")
+                    self.deliver(action)
+                }
+                longPressTimer = work
+                schedule(longPressDuration, work)
             }
-            longPressTimer = work
-            DispatchQueue.main.asyncAfter(deadline: .now() + longPressDuration, execute: work)
 
         } else if !isDown && rightOptDown {
-            // Key released
+            // Always complete a hold already in flight: cancel its timer,
+            // settle the state, and let the tap gate below speak.
             rightOptDown = false
             longPressTimer?.cancel()
             longPressTimer = nil
+            let fired = longPressFired
+            longPressFired = false
+            let downTime = rightOptDownTime
+            rightOptDownTime = nil
 
-            // Fire tap only if: short press, no other keys, long-press didn't fire
-            if let t = rightOptDownTime,
-               Date().timeIntervalSince(t) < maxTapDuration,
+            // Fire tap only if: the translate switch is on, short press, no
+            // other keys, long-press didn't fire
+            if gates.translate,
+               let t = downTime,
+               clock().timeIntervalSince(t) < maxTapDuration,
                !otherKeysDuringRightOpt,
-               !longPressFired {
+               !fired {
                 NSLog("[HotkeyService] Right ⌥ tap detected")
-                Task { @MainActor in onTranslateToggle?() }
+                deliver(onTranslateToggle)
             }
         }
     }
@@ -231,12 +320,12 @@ final class HotkeyService: ObservableObject {
         otherKeys: inout Bool, name: String, action: (() -> Void)?
     ) {
         if isDown && !wasDown {
-            wasDown = true; downTime = Date(); otherKeys = false
+            wasDown = true; downTime = clock(); otherKeys = false
         } else if !isDown && wasDown {
             wasDown = false
-            if let t = downTime, Date().timeIntervalSince(t) < maxTapDuration && !otherKeys {
+            if let t = downTime, clock().timeIntervalSince(t) < maxTapDuration && !otherKeys {
                 NSLog("[HotkeyService] %@ tap detected", name)
-                Task { @MainActor in action?() }
+                deliver(action)
             }
         }
     }
@@ -252,23 +341,45 @@ final class HotkeyService: ObservableObject {
     func reinstallMonitors() {
         guard let onToggle, let onPTTStart, let onPTTStop, let onTranslateToggle,
               let onTranslateLongPress, let onVoiceQuestionStart, let onVoiceQuestionStop else { return }
-        unregister()
+        // Replacing observers must preserve the hold that still owns the next release.
+        removeMonitors()
         register(onToggle: onToggle, onPTTStart: onPTTStart, onPTTStop: onPTTStop,
                  onTranslateToggle: onTranslateToggle, onTranslateLongPress: onTranslateLongPress,
                  onVoiceQuestionStart: onVoiceQuestionStart, onVoiceQuestionStop: onVoiceQuestionStop)
     }
 
-    func unregister() {
-        longPressTimer?.cancel()
-        longPressTimer = nil
-        rightCmdLongPressTimer?.cancel()
-        rightCmdLongPressTimer = nil
+    private func removeMonitors() {
         if let m = flagsMonitor { NSEvent.removeMonitor(m) }
         if let m = localFlagsMonitor { NSEvent.removeMonitor(m) }
         if let m = keyMonitor { NSEvent.removeMonitor(m) }
         if let m = localKeyMonitor { NSEvent.removeMonitor(m) }
         flagsMonitor = nil; localFlagsMonitor = nil
         keyMonitor = nil; localKeyMonitor = nil
+    }
+
+    func unregister() {
+        let pttStop = pttStarted ? onPTTStop : nil
+        let voiceQuestionStop = rightCmdLongPressFired ? onVoiceQuestionStop : nil
+        pttTimer?.cancel()
+        pttTimer = nil
+        longPressTimer?.cancel()
+        longPressTimer = nil
+        rightCmdLongPressTimer?.cancel()
+        rightCmdLongPressTimer = nil
+        rightCmdDown = false
+        rightCmdDownTime = nil
+        rightCmdHoldIsPTT = nil
+        pttStarted = false
+        rightCmdLongPressFired = false
+        otherKeysDuringRightCmd = false
+        rightOptDown = false
+        rightOptDownTime = nil
+        longPressFired = false
+        otherKeysDuringRightOpt = false
+        // Settle each fired hold on the same queue, before its handlers are removed.
+        deliver(pttStop)
+        deliver(voiceQuestionStop)
+        removeMonitors()
         onToggle = nil; onPTTStart = nil; onPTTStop = nil
         onTranslateToggle = nil; onTranslateLongPress = nil
         onVoiceQuestionStart = nil; onVoiceQuestionStop = nil

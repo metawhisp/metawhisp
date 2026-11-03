@@ -1095,12 +1095,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         if AppSettings.shared.globalInputEnabled {
             hotkeyService.register(
                 onToggle: hotkey({ $0.toggle() }, practice: { $0.toggle() }),
-                onPTTStart: hotkey({ $0.startPTT() }, practice: { $0.start() }),
-                onPTTStop: hotkey({ $0.stopPTT() }, practice: { $0.stop() }),
+                onPTTStart: hotkey({ $0.startPTT() }, practice: { $0.startPTT() }),
+                onPTTStop: hotkey({ $0.stopPTT() }, practice: { $0.stopPTT() }),
                 onTranslateToggle: hotkey({ $0.toggleWithTranslation() }, practice: { $0.toggle() }),
                 onTranslateLongPress: { [weak self] in self?.selectionTranslator.translateSelection() },
-                onVoiceQuestionStart: hotkey({ $0.startVoiceQuestion() }, practice: { $0.start() }),
-                onVoiceQuestionStop: hotkey({ $0.stopVoiceQuestion() }, practice: { $0.stop() })
+                onVoiceQuestionStart: hotkey({ $0.startVoiceQuestion() }, practice: { $0.startVoiceQuestion() }),
+                onVoiceQuestionStop: hotkey({ $0.stopVoiceQuestion() }, practice: { $0.stopVoiceQuestion() })
             )
             // ITER-076 P5 — the meeting-help shortcut is a Carbon hot key: the
             // app sees it as a hot key press and never as a key event. It has

@@ -124,18 +124,18 @@ final class MeetingHelpHotkeyTests: XCTestCase {
 
     func testAPressWithinASecondIsIgnored() {
         let registrar = FakeMeetingHotkeyRegistrar()
-        var now = Date()
-        let hotkey = MeetingHelpHotkey(registrar: registrar, clock: { now })
+        let scheduler = ManualHotkeyScheduler()
+        let hotkey = MeetingHelpHotkey(registrar: registrar, clock: { scheduler.now })
         var presses = 0
         hotkey.onPress = { presses += 1 }
         hotkey.register(keyCode: 36, modifiers: controlKey, owner: owner)
 
         registrar.press()
-        now = now.addingTimeInterval(0.5)
+        scheduler.advance(by: 0.5)
         registrar.press()
         XCTAssertEqual(presses, 1, "the second press is the same press")
 
-        now = now.addingTimeInterval(0.6)
+        scheduler.advance(by: 0.6)
         registrar.press()
         XCTAssertEqual(presses, 2, "a second later it is a new press")
     }
@@ -144,7 +144,8 @@ final class MeetingHelpHotkeyTests: XCTestCase {
     /// global monitors see that ⌥ as a bare tap. The press has to spoil it,
     /// or every answer would translate the selected text as well.
     func testThePressSpoilsTheRightOptionTap() async {
-        let service = HotkeyService()
+        let scheduler = ManualHotkeyScheduler()
+        let service = HotkeyService(schedule: scheduler.schedule, clock: { scheduler.now })
         var translateTaps = 0
         service.register(onToggle: {}, onPTTStart: {}, onPTTStop: {},
                          onTranslateToggle: { translateTaps += 1 },
@@ -155,20 +156,20 @@ final class MeetingHelpHotkeyTests: XCTestCase {
         service.handleDeviceFlags(0x40)
 
         let registrar = FakeMeetingHotkeyRegistrar()
-        let hotkey = MeetingHelpHotkey(registrar: registrar)
+        let hotkey = MeetingHelpHotkey(registrar: registrar, clock: { scheduler.now })
         hotkey.hotkeyService = service
         hotkey.register(keyCode: 36, modifiers: optionKey, owner: owner)
         registrar.press()
 
         // Right ⌥ comes up: without the press this would have been a tap.
         service.handleDeviceFlags(0)
-        try? await Task.sleep(for: .milliseconds(50))
+        await service.waitForPendingCallbacks()
         XCTAssertEqual(translateTaps, 0, "the translate tap must not fire")
 
         // The control: with nothing spoiling it, the same tap does fire.
         service.handleDeviceFlags(0x40)
         service.handleDeviceFlags(0)
-        try? await Task.sleep(for: .milliseconds(50))
+        await service.waitForPendingCallbacks()
         XCTAssertEqual(translateTaps, 1, "the tap fires when nothing spoils it")
     }
 
@@ -177,7 +178,8 @@ final class MeetingHelpHotkeyTests: XCTestCase {
     /// foreign key, and the tap it would otherwise be must be spoiled every
     /// time (§3.9).
     func testARepeatedPressStillSpoilsTheRightOptionTap() async {
-        let service = HotkeyService()
+        let scheduler = ManualHotkeyScheduler()
+        let service = HotkeyService(schedule: scheduler.schedule, clock: { scheduler.now })
         var translateTaps = 0
         service.register(onToggle: {}, onPTTStart: {}, onPTTStop: {},
                          onTranslateToggle: { translateTaps += 1 },
@@ -185,8 +187,7 @@ final class MeetingHelpHotkeyTests: XCTestCase {
         defer { service.unregister() }
 
         let registrar = FakeMeetingHotkeyRegistrar()
-        var now = Date()
-        let hotkey = MeetingHelpHotkey(registrar: registrar, clock: { now })
+        let hotkey = MeetingHelpHotkey(registrar: registrar, clock: { scheduler.now })
         hotkey.hotkeyService = service
         hotkey.register(keyCode: 36, modifiers: optionKey, owner: owner)
 
@@ -195,19 +196,19 @@ final class MeetingHelpHotkeyTests: XCTestCase {
         service.handleDeviceFlags(0x40)
         registrar.press()
         service.handleDeviceFlags(0)
-        try? await Task.sleep(for: .milliseconds(50))
+        await service.waitForPendingCallbacks()
         XCTAssertEqual(translateTaps, 0, "the translate tap must not fire")
 
         // Right ⌥ goes down again: the flag is reset.
         service.handleDeviceFlags(0x40)
         // The combo is pressed again inside a second: the shortcut ignores
         // the repeat, but the Right ⌥ is still a foreign key.
-        now = now.addingTimeInterval(0.3)
+        scheduler.advance(by: 0.3)
         registrar.press()
 
         // Right ⌥ comes up: the tap must not fire.
         service.handleDeviceFlags(0)
-        try? await Task.sleep(for: .milliseconds(50))
+        await service.waitForPendingCallbacks()
         XCTAssertEqual(translateTaps, 0,
                        "the repeated press let the translate tap fire")
     }

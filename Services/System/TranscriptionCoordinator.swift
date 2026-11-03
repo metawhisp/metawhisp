@@ -22,6 +22,9 @@ final class TranscriptionCoordinator: ObservableObject {
     @Published var translateNext = false
 
     private let recorder: any AudioSource
+    // AudioSource gives every recording a new captureSession, including menu/tap recordings.
+    private var pttSession: Int?
+    private var voiceQuestionSession: Int?
     /// The on-device WhisperKit model id currently loaded and ready (nil = none).
     /// Every loader records its model here: launch, the auto-load after a
     /// download, a pick in Settings, an engine switch, the best-model swap.
@@ -206,6 +209,7 @@ final class TranscriptionCoordinator: ObservableObject {
 
     private static let debounceInterval: TimeInterval = 0.03
     private var lastToggleTime: Date = .distantPast
+    private let clock: () -> Date
 
     /// Tests pass their own `cloudEngine`, `openMicrophoneSettings` and
     /// `voiceQuestions`, so they reach neither the network, System Settings nor
@@ -225,8 +229,10 @@ final class TranscriptionCoordinator: ObservableObject {
         },
         proxyAvailable: @escaping @MainActor () -> Bool = {
             LicenseService.shared.isPro && LicenseService.shared.licenseKey != nil
-        }
+        },
+        clock: @escaping () -> Date = Date.init
     ) {
+        self.clock = clock
         self.proxyAvailable = proxyAvailable
         self.recorder = recorder
         self.whisperEngine = whisperEngine
@@ -356,12 +362,13 @@ final class TranscriptionCoordinator: ObservableObject {
             return
         }
         NSLog("[Coordinator] PTT start")
-        startRecording()
+        if startRecording() == nil { pttSession = recorder.captureSession }
     }
 
     /// PTT stop — called on key release in push-to-talk mode.
     func stopPTT() {
-        guard stage == .recording else {
+        defer { pttSession = nil }
+        guard stage == .recording, pttSession == recorder.captureSession else {
             NSLog("[Coordinator] PTT stop ignored: stage=%@", "\(stage)")
             return
         }
@@ -371,7 +378,7 @@ final class TranscriptionCoordinator: ObservableObject {
 
     /// Toggle recording on/off. Debounces rapid presses.
     func toggle() {
-        let now = Date()
+        let now = clock()
         guard now.timeIntervalSince(lastToggleTime) > Self.debounceInterval else {
             NSLog("[Coordinator] Debounced toggle")
             return
@@ -419,11 +426,13 @@ final class TranscriptionCoordinator: ObservableObject {
             return
         }
         voiceQuestion = question
+        voiceQuestionSession = recorder.captureSession
     }
 
     /// Right ⌘ release after long-press → stop + transcribe + send to ChatService.
     func stopVoiceQuestion() {
-        guard stage == .recording, voiceQuestion != nil else {
+        defer { voiceQuestionSession = nil }
+        guard stage == .recording, voiceQuestionSession == recorder.captureSession else {
             NSLog("[Coordinator] Voice question stop called but not in voice question recording state")
             return
         }
