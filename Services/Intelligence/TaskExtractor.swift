@@ -132,30 +132,34 @@ final class TaskExtractor: ObservableObject {
         // transcript so the LLM can name people correctly in extracted tasks
         // ("Send draft to Maya" instead of "Send draft to him").
         let calendarContext = fetchCalendarContext(conversationId: conversationId, in: ctx)
-        let useLocal = LocalLLMService.shared.isReady
+        // ITER-081 — the route is chosen once: the prompt is sized for it and
+        // sent to it.
+        let route = ExtractionRoute.current(localReady: LocalLLMService.shared.isReady,
+                                            isPro: LicenseService.shared.isPro,
+                                            licenseKey: LicenseService.shared.licenseKey)
         let prompt = buildPrompt(
             fragments: fragments,
             existing: existing,
             startedAt: startedAt,
             calendarContext: calendarContext,
-            localBudget: useLocal ? 6000 : nil
+            route: route
         )
 
         // Use the last fragment's source app if available (proxy for what app user was in most).
         let sourceApp = items.last.flatMap { $0.source } ?? "conversation"
-        NSLog("[TaskExtractor] Start: convo %@, %d fragments, %d transcript chars, %d prompt chars, %d dedup refs, calendar=%@, route=%@", conversationId.uuidString.prefix(8) as CVarArg, fragments.count, totalChars, prompt.count, existing.count, calendarContext == nil ? "no" : "yes", useLocal ? "local" : ((LicenseService.shared.isPro && LicenseService.shared.licenseKey?.isEmpty == false) ? "pro" : "byok"))
+        NSLog("[TaskExtractor] Start: convo %@, %d fragments, %d transcript chars, %d prompt chars, %d dedup refs, calendar=%@, route=%@", conversationId.uuidString.prefix(8) as CVarArg, fragments.count, totalChars, prompt.count, existing.count, calendarContext == nil ? "no" : "yes", route.name)
 
         do {
             let response: String
             // ITER-039 — local LLM takes priority when loaded.
-            if LocalLLMService.shared.isReady {
+            if route == .local {
                 NSLog("[TaskExtractor] Extracting via local Phi (convo %@, %d fragments)",
                       conversationId.uuidString.prefix(8) as CVarArg, fragments.count)
                 response = try await LocalLLMService.shared.completeBlocking(
                     system: Self.systemPrompt, user: prompt,
                     maxUserChars: 6000, maxTokens: 384   // F1.2 — was default 2000: transcript got cut after dedup context
                 )
-            } else if LicenseService.shared.isPro, let licenseKey = LicenseService.shared.licenseKey {
+            } else if case .pro(let licenseKey) = route {
                 NSLog("[TaskExtractor] Extracting via Pro proxy (convo %@, %d fragments, %d chars)",
                       conversationId.uuidString.prefix(8) as CVarArg, fragments.count, totalChars)
                 response = try await callProProxy(system: Self.systemPrompt, user: prompt, licenseKey: licenseKey)
@@ -418,19 +422,23 @@ final class TaskExtractor: ObservableObject {
     CRITICAL OUTPUT RULE: Respond with ONLY the JSON object. No translation. No explanation. No preamble. No markdown fences.
     """
 
-    private func buildPrompt(
+    /// Internal, with the clock and time zone injectable, so
+    /// `ExtractorPromptCharacterizationTests` can pin the exact text.
+    func buildPrompt(
         fragments: [String],
         existing: [TaskItem],
         startedAt: Date,
         calendarContext: CalendarMeetingContext?,
-        localBudget: Int? = nil
+        route: ExtractionRoute,
+        now: Date = Date(),
+        timeZone: TimeZone = .current
     ) -> String {
         var parts: [String] = []
+        let localBudget: Int? = route == .local ? route.unitLimit : nil
 
-        let now = Date()
         let nowISO = ISO8601DateFormatter().string(from: now)
         let startedISO = ISO8601DateFormatter().string(from: startedAt)
-        let tz = TimeZone.current.identifier
+        let tz = timeZone.identifier
 
         // REFERENCE_TIME hint — surfaces whether the conversation is recent or
         // stale so the LLM can apply the >7-day rule from the system prompt.
@@ -449,13 +457,23 @@ final class TaskExtractor: ObservableObject {
         // in real names instead of "Speaker 0" / "him".
         if let cal = calendarContext {
             parts.append("CALENDAR MEETING CONTEXT:")
-            parts.append("- Title: \(cal.title)")
+            // ITER-081 — the calendar's own text is bounded, so it can never
+            // take the room the transcript needs.
+            let title = PromptFit.prefix(cal.title, units: 600)
+            parts.append("- Title: \(title)\(title.utf16.count < cal.title.utf16.count ? "…" : "")")
             let df = DateFormatter()
             df.locale = Locale(identifier: "en_US_POSIX")
+            df.timeZone = timeZone
             df.dateFormat = "yyyy-MM-dd HH:mm zzz"
             parts.append("- Scheduled: \(df.string(from: cal.startDate)) → \(df.string(from: cal.endDate))")
             if !cal.attendees.isEmpty {
-                parts.append("- Participants: \(cal.attendees.joined(separator: ", "))")
+                var shown: [String] = []
+                for name in cal.attendees {
+                    if (shown + [name]).joined(separator: ", ").utf16.count > 2_000 { break }
+                    shown.append(name)
+                }
+                let more = cal.attendees.count - shown.count
+                parts.append("- Participants: \(shown.joined(separator: ", "))\(more > 0 ? " (+\(more) more)" : "")")
             }
             parts.append("")
         }
@@ -463,26 +481,19 @@ final class TaskExtractor: ObservableObject {
         if !existing.isEmpty {
             parts.append("EXISTING ACTION ITEMS FROM PAST \(dedupWindowDays) DAYS (do NOT duplicate):")
             let df = ISO8601DateFormatter()
-            // ITER-051 review fix — see MemoryExtractor.buildPrompt: with the
-            // local model, dedup context is capped so it can't starve the
-            // transcript out of the prefix-kept budget.
-            if let budget = localBudget {
-                var used = 0, shown = 0
-                for t in existing {
-                    let dueStr = t.dueAt.map { df.string(from: $0) } ?? "no due"
-                    let status = t.completed ? "completed" : "pending"
-                    let line = "- \(t.taskDescription) (due: \(dueStr)) [\(status)]"
-                    if used + line.count > budget * 3 / 10 { break }
-                    parts.append(line); used += line.count; shown += 1
-                }
-                if shown < existing.count { parts.append("(+\(existing.count - shown) more omitted)") }
-            } else {
-                for t in existing {
-                    let dueStr = t.dueAt.map { df.string(from: $0) } ?? "no due"
-                    let status = t.completed ? "completed" : "pending"
-                    parts.append("- \(t.taskDescription) (due: \(dueStr)) [\(status)]")
-                }
+            // ITER-051 review fix — see MemoryExtractor.buildPrompt: dedup
+            // context is capped so it can't starve the transcript. ITER-081 —
+            // on every route (the cloud ones were uncapped and then cut from
+            // the head), in the units the proxy counts.
+            var used = 0, shown = 0
+            for t in existing {
+                let dueStr = t.dueAt.map { df.string(from: $0) } ?? "no due"
+                let status = t.completed ? "completed" : "pending"
+                let line = "- \(t.taskDescription) (due: \(dueStr)) [\(status)]"
+                if used + line.utf16.count > route.unitLimit * 3 / 10 { break }
+                parts.append(line); used += line.utf16.count; shown += 1
             }
+            if shown < existing.count { parts.append("(+\(existing.count - shown) more omitted)") }
             parts.append("")
         }
 
@@ -501,6 +512,12 @@ final class TaskExtractor: ObservableObject {
                     + "\n[…middle omitted…]\n"
                     + String(fragText.suffix(fragBudget * 3 / 10))
             }
+        }
+        // ITER-081 — the cloud routes keep the whole meeting when it fits, and
+        // its beginning and end when it does not; the end used to be cut off.
+        guard localBudget != nil else {
+            return PromptFit.fit(header: parts.joined(separator: "\n"), transcript: fragText,
+                                 unitLimit: route.unitLimit)
         }
         parts.append(fragText)
 
@@ -643,19 +660,8 @@ final class TaskExtractor: ObservableObject {
     // MARK: - Pro proxy (reuses existing endpoint)
 
     private func callProProxy(system: String, user: String, licenseKey: String) async throws -> String {
-        let url = URL(string: "https://api.metawhisp.com/api/pro/advice")!
-        var request = URLRequest(url: url)
-        request.httpMethod = "POST"
-        request.setValue("Bearer \(licenseKey)", forHTTPHeaderField: "Authorization")
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.timeoutInterval = 30
-
-        let body = LLMRequestBody.proAdviceBody(
-            system: system, user: user,
-            tier: Self.llmTier, serviceId: Self.llmServiceId
-        )
-        request.httpBody = try JSONSerialization.data(withJSONObject: body)
-
+        let request = try ExtractionRoute.proAdviceRequest(system: system, user: user, licenseKey: licenseKey,
+                                                           tier: Self.llmTier, serviceId: Self.llmServiceId)
         let (data, response) = try await URLSession.shared.data(for: request)
         if let http = response as? HTTPURLResponse, http.statusCode != 200 {
             throw ProcessingError.apiError("Task proxy HTTP \(http.statusCode)")

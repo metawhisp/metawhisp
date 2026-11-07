@@ -210,6 +210,25 @@ final class ChromeTabGuardLiveTests: XCTestCase {
         XCTAssertEqual(world.fixtures.served, [], "no request went out")
     }
 
+    /// An http address Chrome first asks for in its https form (a
+    /// `.home.arpa` name since Chrome 157): both requests are refused and the
+    /// tab stays on its page — it is never left on Chrome's own error page.
+    @MainActor
+    func testAnAddressChromeTriesAsHttpsFirstLeavesTheTabOnItsPage() async throws {
+        let world = try await ChromeWorld.start()
+        defer { world.stop() }
+        let (tab, _) = try await world.open("https://site-1.test/")
+        for name in ["router.home.arpa", "printer.home.arpa"] {
+            _ = try await world.bridge.run("location.assign('http://\(name)/'), 'x'", in: tab)
+            let seen = try await events(in: tab, world) { $0.contains(.addressRefused) }
+            XCTAssertTrue(!seen.isEmpty && seen.allSatisfy { $0 == .addressRefused }, "\(name): \(seen)")
+            try await Task.sleep(for: .milliseconds(500))
+            let now = try await address(of: tab, world)
+            XCTAssertEqual(now, "https://site-1.test/", "\(name): the tab stays where it was")
+        }
+        XCTAssertFalse(world.fixtures.blocked.contains { $0.contains(".home.arpa") }, "\(world.fixtures.blocked)")
+    }
+
     /// A public page that redirects the tab to such a name: the redirect
     /// itself is asked for, the request it makes is refused, and the tab
     /// stays where it was.

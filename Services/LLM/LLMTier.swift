@@ -35,6 +35,11 @@ enum LLMRequestBody {
     /// What a caller should actually put in one prompt: the limit less room
     /// for the joining and framing the fold adds around it.
     static let safePromptChars = 30_000
+    /// What the proxy accepts in `user` from the task and memory extractors
+    /// only (service ids `TaskExtractor` and `MemoryExtractor`, ITER-081): a
+    /// whole meeting in one prompt, about 3.9 hours at 47,000 characters per
+    /// 87 minutes. Every other caller keeps `maxPromptChars`.
+    static let extractionMaxPromptChars = 128_000
 
     /// What a refused request actually said. The proxy answers
     /// `{"error": "…"}` on every failure it can name; that sentence is the

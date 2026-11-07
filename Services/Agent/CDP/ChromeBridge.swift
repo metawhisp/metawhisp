@@ -775,8 +775,9 @@ final class ChromeBridge: TrustedInputBridge {
     /// the Mac's own resolver takes that name (`leadsHome`, ITER-076 stage
     /// 9e); as its answer comes, one that is a download. Never kept paused
     /// longer than its host's lookup (a reference browser agent's
-    /// `_handle_paused`, `session.py` 617-629, MIT); a refusal fails it as
-    /// aborted, which leaves the page where it was, as a download does. A
+    /// `_handle_paused`, `session.py` 617-629, MIT). A refusal leaves the page
+    /// where it was: at the request it is answered "204 No Content", as the
+    /// answer comes (a download) it fails as aborted. A
     /// document the tab draws comes with `sandbox`: it opens no window
     /// (ITER-076 I-10). One whose answer cannot be given so is refused.
     private func pass(_ event: CDPEvent, on session: String, in watch: TabWatch) {
@@ -786,10 +787,11 @@ final class ChromeBridge: TrustedInputBridge {
         }
         let refusal: BrowserEvent?
         var drawn: CDPValue?
+        let atRequest = event.params["responseStatusCode"] == nil && event.params["responseErrorReason"] == nil
         // A web document's host, as it is asked for: where its name leads is
         // read before it goes on.
         var host: String?
-        if event.params["responseStatusCode"] != nil || event.params["responseErrorReason"] != nil {
+        if !atRequest {
             var headers: [String: String] = [:]
             for header in event.params["responseHeaders"]?.array ?? [] {
                 if let name = header["name"]?.string?.lowercased() { headers[name] = header["value"]?.string ?? "" }
@@ -858,6 +860,15 @@ final class ChromeBridge: TrustedInputBridge {
                 }
             } else if !refused {
                 _ = try? await self.send("Fetch.continueRequest", ["requestId": .string(request)], session: session)
+            } else if atRequest {
+                // A document refused at its request is answered "204 No
+                // Content": the tab stays on its page and nothing goes out.
+                // Aborting it did the same until Chrome 157, which first asks
+                // for an http address's https form and, when both requests are
+                // aborted, draws its own error page in the tab (2026-11-07,
+                // `router.home.arpa`).
+                _ = try? await self.send("Fetch.fulfillRequest", ["requestId": .string(request), "responseCode": .number(204),
+                                                                  "responseHeaders": .array([])], session: session)
             } else {
                 _ = try? await self.send("Fetch.failRequest", ["requestId": .string(request), "errorReason": "Aborted"],
                                          session: session)

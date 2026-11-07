@@ -124,9 +124,12 @@ final class MemoryExtractor: ObservableObject {
         guard totalChars >= 20 else { return .completed }
 
         let existing = fetchExistingMemories()
-        let useLocal = LocalLLMService.shared.isReady
-        let prompt = buildPrompt(fragments: fragments, existing: existing,
-                                 localBudget: useLocal ? 6000 : nil)
+        // ITER-081 — the route is chosen once: the prompt is sized for it and
+        // sent to it.
+        let route = ExtractionRoute.current(localReady: LocalLLMService.shared.isReady,
+                                            isPro: LicenseService.shared.isPro,
+                                            licenseKey: LicenseService.shared.licenseKey)
+        let prompt = buildPrompt(fragments: fragments, existing: existing, route: route)
 
         let sourceApp = items.last.flatMap { $0.source } ?? "conversation"
         let windowTitle: String? = nil  // on-close extraction has no real-time window context
@@ -134,14 +137,14 @@ final class MemoryExtractor: ObservableObject {
         do {
             let response: String
             // ITER-039 — local LLM takes priority when loaded.
-            if LocalLLMService.shared.isReady {
+            if route == .local {
                 NSLog("[MemoryExtractor] Extracting via local Phi (convo %@, %d fragments)",
                       conversationId.uuidString.prefix(8) as CVarArg, fragments.count)
                 response = try await LocalLLMService.shared.completeBlocking(
                     system: Self.systemPrompt, user: prompt,
                     maxUserChars: 6000, maxTokens: 384   // F1.2 — was default 2000: transcript got cut after dedup context
                 )
-            } else if LicenseService.shared.isPro, let licenseKey = LicenseService.shared.licenseKey {
+            } else if case .pro(let licenseKey) = route {
                 NSLog("[MemoryExtractor] Extracting via Pro proxy (convo %@, %d fragments, %d chars)",
                       conversationId.uuidString.prefix(8) as CVarArg, fragments.count, totalChars)
                 response = try await callProProxy(system: Self.systemPrompt, user: prompt, licenseKey: licenseKey)
@@ -422,12 +425,15 @@ final class MemoryExtractor: ObservableObject {
     /// existing-memories list starved the transcript to zero — the model
     /// extracted from dedup context alone. When set, existing gets ≤30% of
     /// the budget and the transcript owns the rest (head+tail).
-    /// The whole prompt's ceiling. The Pro proxy refuses more than 32 000
-    /// (`LLMRequestBody.maxPromptChars`); this stays well under it.
+    /// The base of the known-facts share on the cloud routes (30% of it), so
+    /// a short conversation's prompt stays what it was. The prompt's ceiling
+    /// is the route's (`ExtractionRoute.unitLimit`, ITER-081).
     private let maxPromptChars = 20_000
 
-    private func buildPrompt(fragments: [String], existing: [UserMemory], localBudget: Int? = nil) -> String {
+    /// Internal so `ExtractorPromptCharacterizationTests` can pin the exact text.
+    func buildPrompt(fragments: [String], existing: [UserMemory], route: ExtractionRoute) -> String {
         var parts: [String] = []
+        let localBudget: Int? = route == .local ? route.unitLimit : nil
 
         // The known-facts block keeps its share on EVERY path. It used to be
         // written uncapped whenever `localBudget` was nil — both cloud routes
@@ -457,6 +463,13 @@ final class MemoryExtractor: ObservableObject {
                     + "\n[…middle omitted…]\n"
                     + String(fragText.suffix(fragBudget * 3 / 10))
             }
+        }
+        // ITER-081 — the cloud routes keep the whole conversation when it
+        // fits, and its beginning and end when it does not; the end used to be
+        // cut off.
+        guard localBudget != nil else {
+            return PromptFit.fit(header: parts.joined(separator: "\n"), transcript: fragText,
+                                 unitLimit: route.unitLimit)
         }
         parts.append(fragText)
 
@@ -613,19 +626,8 @@ final class MemoryExtractor: ObservableObject {
     // MARK: - Pro proxy (reuses existing endpoint)
 
     private func callProProxy(system: String, user: String, licenseKey: String) async throws -> String {
-        let url = URL(string: "https://api.metawhisp.com/api/pro/advice")!
-        var request = URLRequest(url: url)
-        request.httpMethod = "POST"
-        request.setValue("Bearer \(licenseKey)", forHTTPHeaderField: "Authorization")
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.timeoutInterval = 30
-
-        let body = LLMRequestBody.proAdviceBody(
-            system: system, user: user,
-            tier: Self.llmTier, serviceId: Self.llmServiceId
-        )
-        request.httpBody = try JSONSerialization.data(withJSONObject: body)
-
+        let request = try ExtractionRoute.proAdviceRequest(system: system, user: user, licenseKey: licenseKey,
+                                                           tier: Self.llmTier, serviceId: Self.llmServiceId)
         let (data, response) = try await URLSession.shared.data(for: request)
         if let http = response as? HTTPURLResponse, http.statusCode != 200 { NSLog("[MemoryExtractor] Pro proxy refused — HTTP %d (%@), %d-byte body", http.statusCode, http.statusCode == 401 || http.statusCode == 403 ? "license rejected" : (http.statusCode == 429 ? "rate limited" : (http.statusCode >= 500 ? "proxy or model error" : "bad request")), data.count) }
         if let http = response as? HTTPURLResponse, http.statusCode != 200 {

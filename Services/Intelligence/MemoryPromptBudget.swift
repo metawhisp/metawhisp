@@ -26,11 +26,14 @@ enum MemoryPromptBudget {
     /// Take known facts in order until the share is used, and say how many
     /// were left out — a dedup list that silently stops is worse than one that
     /// admits its end, because the model then proposes the missing ones again.
+    /// Measured in UTF-16 units, what the Pro proxy counts (ITER-081): one fact
+    /// can be one Character and thousands of units, and a share counted in
+    /// Characters could then fill the whole prompt and push the conversation out.
     static func fit(existing: [String], into budget: Int) -> [String] {
         var kept: [String] = []
         var used = 0
         for line in existing {
-            let cost = line.count + 1
+            let cost = line.utf16.count + 1
             if used + cost > budget { break }
             kept.append(line); used += cost
         }
