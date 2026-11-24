@@ -144,13 +144,13 @@ final class MicRecoveryTests: XCTestCase {
 
     private func tick(_ state: MicStreamState,
                       rate: Int = 0, healthy: Int = 0, low: Int = 0, window: Double = 1,
-                      elapsed: Double = 60, outage: Bool = false, due: Bool = false,
+                      elapsed: Double = 60, sinceBind: Double? = nil, outage: Bool = false, due: Bool = false,
                       permission: Bool = true) -> MicTickDecision {
         MicRecoveryPolicy.decide(.init(hasPermission: permission, state: state,
                                        producedSinceLastTick: rate,
                                        healthyTicks: healthy, lowRateTicks: low,
                                        secondsSinceLastTick: window,
-                                       elapsed: elapsed, outageOpen: outage, attemptDue: due),
+                                       elapsed: elapsed, sinceBind: sinceBind, outageOpen: outage, attemptDue: due),
                                  sampleRate: 16_000)
     }
 
@@ -292,6 +292,29 @@ final class MicRecoveryTests: XCTestCase {
     func testAStartThatNeverProducesOpensAfterTheStallWindow() {
         XCTAssertNil(tick(.binding, elapsed: 2).open)
         XCTAssertEqual(tick(.binding, elapsed: 5).open, "no samples since start")
+    }
+
+    /// 2026-11-24 10:01: a device-change follow rebound the meeting mic at minute sixty, and the next tick — 46 ms
+    /// later — judged the fresh bind from the meeting's start, opened "no samples since start" and restarted a
+    /// working microphone (a 1.9 s gap). A bind is judged from the bind.
+    func testAFollowRebindIsJudgedFromItsBindNotFromTheMeetingStart() {
+        XCTAssertNil(tick(.binding, elapsed: 3600, sinceBind: 0.05).open)
+        XCTAssertNil(tick(.binding, elapsed: 3600, sinceBind: 4.9).open)
+    }
+
+    /// Its pair: a rebind that never delivers is still an outage, five seconds after the bind.
+    func testAFollowRebindThatNeverDeliversStillOpensAfterTheStallWindow() {
+        XCTAssertEqual(tick(.binding, elapsed: 3600, sinceBind: 5).open, "no samples since the bind")
+    }
+
+    /// 2026-11-24 09:01: a meeting stopped the instant its mic was rebound after an eight-minute freeze; the stop's
+    /// tail fill (485 s) was treated as clock drift and the card said "1.4 s". The tail is drift only on a stream that
+    /// is delivering; on any other it is the outage's last stretch.
+    func testTheStopTailIsMissingMicrophoneTimeUnlessTheStreamIsDelivering() {
+        XCTAssertFalse(MicRecoveryPolicy.tailCountsAsOutage(.delivering), "a healthy mic is not called down by drift (v14)")
+        for state in [MicStreamState.binding, .stalled, .dead, .down] {
+            XCTAssertTrue(MicRecoveryPolicy.tailCountsAsOutage(state), "\(state)")
+        }
     }
 
     func testAHealthyStreamDecidesNothing() {

@@ -576,6 +576,7 @@ struct MainSettingsView: View {
     /// default. List is enumerated on view appear; the refresh button re-pulls
     /// for newly-plugged devices.
     @State private var availableInputs: [AudioInputDevice] = []
+    @State private var loadingInputs = false
 
     private var microphoneSection: some View {
         VStack(alignment: .leading, spacing: MW.sp12) {
@@ -598,7 +599,7 @@ struct MainSettingsView: View {
                 .pickerStyle(.menu)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 Button {
-                    availableInputs = AudioInputCatalog.availableInputDevices()
+                    loadInputs()
                 } label: {
                     Image(systemName: "arrow.clockwise")
                         .font(.system(size: 11))
@@ -617,8 +618,20 @@ struct MainSettingsView: View {
         .frame(maxWidth: .infinity, alignment: .topLeading)
         .mwCard(radius: MW.rMedium, elevation: .raised)
         .onAppear {
-            availableInputs = AudioInputCatalog.availableInputDevices()
+            loadInputs()
         }
+    }
+
+    /// The device list is read off the main thread, one read at a time and with a deadline: a call into the audio
+    /// system can wait on coreaudiod (ITER-086). A read that does not answer keeps the list as it was and frees the
+    /// refresh button; its late answer is dropped (Kimi review, P3).
+    private func loadInputs() {
+        guard !loadingInputs else { return }
+        loadingInputs = true
+        MicHardware().run({ AudioInputCatalog.availableInputDevices() }, done: { result in
+            loadingInputs = false
+            if case .success(let devices) = result { availableInputs = devices }
+        }, late: { _ in })
     }
 
     // MARK: - Language

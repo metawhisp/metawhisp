@@ -24,10 +24,10 @@ enum MetaWhispSchemaV1: VersionedSchema {
 
     static var models: [any PersistentModel.Type] {
         [
-            HistoryItem.self, ScreenContext.self, AdviceItem.self,
+            MetaWhispFrozenMeeting.HistoryItem.self, ScreenContext.self, AdviceItem.self,
             MetaWhispFrozenMemory.UserMemory.self,
             MetaWhispSchemaV2.TaskItem.self,            // frozen pre-relevanceScore shape (same in V1+V2)
-            ChatMessage.self, Conversation.self,
+            ChatMessage.self, MetaWhispFrozenMeeting.Conversation.self,
             MetaWhispSchemaV1.ScreenObservation.self,   // frozen pre-embedding shape
             IndexedFile.self, DailySummary.self, Goal.self, ProjectAlias.self,
             AuditLog.self, PatternDigest.self,
@@ -85,10 +85,10 @@ enum MetaWhispSchemaV2: VersionedSchema {
 
     static var models: [any PersistentModel.Type] {
         [
-            HistoryItem.self, ScreenContext.self, AdviceItem.self,
+            MetaWhispFrozenMeeting.HistoryItem.self, ScreenContext.self, AdviceItem.self,
             MetaWhispFrozenMemory.UserMemory.self,
             MetaWhispSchemaV2.TaskItem.self,   // frozen pre-relevanceScore shape
-            ChatMessage.self, Conversation.self, ScreenObservation.self,
+            ChatMessage.self, MetaWhispFrozenMeeting.Conversation.self, ScreenObservation.self,
             IndexedFile.self, DailySummary.self, Goal.self, ProjectAlias.self,
             AuditLog.self, PatternDigest.self,
         ]
@@ -150,9 +150,9 @@ enum MetaWhispSchemaV3: VersionedSchema {
 
     static var models: [any PersistentModel.Type] {
         [
-            HistoryItem.self, ScreenContext.self, AdviceItem.self,
+            MetaWhispFrozenMeeting.HistoryItem.self, ScreenContext.self, AdviceItem.self,
             MetaWhispFrozenMemory.UserMemory.self,
-            TaskItem.self, ChatMessage.self, Conversation.self, ScreenObservation.self,
+            TaskItem.self, ChatMessage.self, MetaWhispFrozenMeeting.Conversation.self, ScreenObservation.self,
             IndexedFile.self, DailySummary.self, Goal.self, ProjectAlias.self,
             AuditLog.self, PatternDigest.self,
         ]
@@ -362,8 +362,8 @@ enum MetaWhispSchemaV8: VersionedSchema {
 
     static var models: [any PersistentModel.Type] {
         [
-            HistoryItem.self, ScreenContext.self, AdviceItem.self, UserMemory.self,
-            TaskItem.self, ChatMessage.self, Conversation.self, ScreenObservation.self,
+            MetaWhispFrozenMeeting.HistoryItem.self, ScreenContext.self, AdviceItem.self, UserMemory.self,
+            TaskItem.self, ChatMessage.self, MetaWhispFrozenMeeting.Conversation.self, ScreenObservation.self,
             IndexedFile.self, DailySummary.self, Goal.self, ProjectAlias.self,
             AuditLog.self, PatternDigest.self,
             ScreenAgentItem.self, ScreenAgentRun.self, ScreenAgentDeliveryRecord.self,
@@ -384,6 +384,101 @@ enum MetaWhispSchemaV9: VersionedSchema {
     }
 }
 
+/// ITER-083 — V10 adds the meeting's own recording to `Conversation`
+/// (`calendarOccurrenceKey`, `recordingOrigin`) and each part's recording
+/// interval to `HistoryItem` (`recordedAt`, `recordedUntil`). Additive optional
+/// columns → lightweight stage. V1…V9 pin the frozen pre-ITER-083 shapes below
+/// (the V5 lesson: a field added to a live model that older versions reference
+/// changes what those versions claim the store looked like).
+enum MetaWhispSchemaV10: VersionedSchema {
+    static var versionIdentifier = Schema.Version(10, 0, 0)
+
+    static var models: [any PersistentModel.Type] {
+        [
+            HistoryItem.self, ScreenContext.self, AdviceItem.self, UserMemory.self,
+            TaskItem.self, ChatMessage.self, Conversation.self, ScreenObservation.self,
+            IndexedFile.self, DailySummary.self, Goal.self, ProjectAlias.self,
+            AuditLog.self, PatternDigest.self,
+            ScreenAgentItem.self, ScreenAgentRun.self, ScreenAgentDeliveryRecord.self,
+            ContextVisitRecord.self, ScreenAgentRunMetrics.self,
+        ]
+    }
+}
+
+/// FROZEN pre-ITER-083 shapes of `HistoryItem` and `Conversation`, nested so
+/// the entity names match the store. Referenced by V1…V9, across which they did
+/// not change; V10 adds the recording fields. Never edit these copies.
+enum MetaWhispFrozenMeeting {
+    @Model
+    final class HistoryItem {
+        var id: UUID
+        var text: String
+        var processedText: String?
+        var translatedTo: String?
+        var language: String?
+        var audioDuration: Double
+        var processingTime: Double
+        var wordCount: Int
+        var createdAt: Date
+        var modelName: String?
+        var source: String?
+        var conversationId: UUID?
+
+        init(text: String, language: String?, audioDuration: Double, processingTime: Double) {
+            self.id = UUID()
+            self.text = text
+            self.language = language
+            self.audioDuration = audioDuration
+            self.processingTime = processingTime
+            self.wordCount = text.split(separator: " ").count
+            self.createdAt = Date()
+        }
+    }
+
+    @Model
+    final class Conversation {
+        var id: UUID
+        var startedAt: Date
+        var finishedAt: Date?
+        var source: String
+        var status: String
+        var discarded: Bool
+        var title: String?
+        var overview: String?
+        var category: String?
+        var emoji: String?
+        var starred: Bool
+        var createdAt: Date
+        var updatedAt: Date
+        var embedding: Data?
+        var primaryProject: String?
+        var topicsJSON: String?
+        var structuredBackfillAttempted: Bool?
+        var decisionsJSON: String?
+        var actionItemsJSON: String?
+        var participantsJSON: String?
+        var keyQuotesJSON: String?
+        var nextStepsJSON: String?
+        var calendarEventId: String?
+        var calendarEventTitle: String?
+        var calendarEventStartDate: Date?
+        var calendarEventEndDate: Date?
+        var calendarAttendeesJSON: String?
+        var callContext: String?
+
+        init(source: String, startedAt: Date = Date()) {
+            self.id = UUID()
+            self.startedAt = startedAt
+            self.source = source
+            self.status = "inProgress"
+            self.discarded = false
+            self.starred = false
+            self.createdAt = Date()
+            self.updatedAt = Date()
+        }
+    }
+}
+
 /// Migration plan for the live store: V1 → V2 (ScreenObservation.embedding) →
 /// V3 (TaskItem.relevanceScore). All lightweight (additive optional columns),
 /// verified by `SchemaMigrationTests`.
@@ -391,7 +486,8 @@ enum MetaWhispMigrationPlan: SchemaMigrationPlan {
     static var schemas: [any VersionedSchema.Type] {
         [MetaWhispSchemaV1.self, MetaWhispSchemaV2.self, MetaWhispSchemaV3.self,
          MetaWhispSchemaV4.self, MetaWhispSchemaV5.self, MetaWhispSchemaV6.self,
-         MetaWhispSchemaV7.self, MetaWhispSchemaV8.self, MetaWhispSchemaV9.self]
+         MetaWhispSchemaV7.self, MetaWhispSchemaV8.self, MetaWhispSchemaV9.self,
+         MetaWhispSchemaV10.self]
     }
     static var stages: [MigrationStage] {
         [
@@ -426,6 +522,10 @@ enum MetaWhispMigrationPlan: SchemaMigrationPlan {
             MigrationStage.lightweight(
                 fromVersion: MetaWhispSchemaV8.self,
                 toVersion: MetaWhispSchemaV9.self
+            ),
+            MigrationStage.lightweight(
+                fromVersion: MetaWhispSchemaV9.self,
+                toVersion: MetaWhispSchemaV10.self
             ),
         ]
     }

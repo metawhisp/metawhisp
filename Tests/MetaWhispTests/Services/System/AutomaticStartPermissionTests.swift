@@ -34,7 +34,7 @@ final class AutomaticStartPermissionTests: XCTestCase {
     }
 
     private func store() throws -> ModelContainer {
-        try ModelContainer(for: Schema(versionedSchema: MetaWhispSchemaV9.self),
+        try ModelContainer(for: Schema(versionedSchema: MetaWhispSchemaV10.self),
                            configurations: ModelConfiguration(isStoredInMemoryOnly: true))
     }
 

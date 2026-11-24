@@ -2,6 +2,41 @@
 
 ## Active specification
 
+## ITER-083 — a meeting knows which call it is (2026-11-08)
+
+`ITER-083-meeting-identity.md`. Approved by the owner on 2026-11-07 («начни делать по итерациям по очереди давая на
+ревью то кодексу то кими»). Branch `fix/meeting-identity-i3` (lanes `lane-identity*`), from 1.4.5.
+- **I1** `2b1e9eb` + `9f0a2ac` — RecordingContext frozen at stop and written onto the meeting; schema V10 with the
+  pre-ITER-083 shapes frozen for V1–V9 (a copy of the owner's real store opens: 2223 conversations, 10500 parts);
+  parts read in recording order everywhere; the linker never guesses a meeting saved with a context; the gate and
+  back-to-back keyed by occurrence. Kimi ×2 (3 P1 fixed, then 4 of 5 closed; the rest closed in I3).
+- **I2** `e3ba27c` + `dc6ce52` — one end rule for the silence and calendar-end stops (a call seen holds the
+  recording, 15 quiet minutes end it anyway); stop outcomes; the app-end hold on the window (app + call), released
+  when it leaves front; retries end once something was delivered. Codex ×2, ACCEPT.
+- **I3** `4c39d72` + `ed77f76` + `45e1569` — a meeting is processed once: at once after a person's stop or the next event,
+  after a 10-min settling window when the app ended it; joins on real times by occurrence/call; no meeting set
+  "in progress"; the 9 stuck ones are settled once with their summary rewritten; settling waits for a continuation
+  in flight and completes only after its processing is queued on disk. Kimi ×2.
+- **I4** `22c68fd` on `fix/meeting-identity-i4` — NOT merged: Codex refused deleting old Obsidian notes by the
+  8-character suffix (4 P1). Renames are rare after I3; the duplicate-on-rename issue is pre-existing and parked in
+  BACKLOG with Codex's constraints.
+- **I5** `c7728a2` + `9cfe891` — the install script's schema check: a schema-raising build is released, not swapped;
+  `--rollback` refuses a kept build that reads less. Codex ×2, ACCEPT.
+- The whole suite without on-screen tests: 4080 tests, 1 failure before I5 (the N7 tripwire, fixed by I5).
+- Release review (owner 2026-11-08: «предварительно полное ревью кодекс кими минимакс»), the whole range by
+  Codex, Kimi and MiniMax: all three NOT ACCEPT, the same core P1s. Fixed in `32b1cb1` + `d01ae30` (Codex
+  re-reviews): a stopped meeting is completed only once its processing is queued (a quit no longer loses it; until
+  then it is "processing", closed to joins across a restart); a stopped part waits for an
+  earlier part of its call still being saved; a failed start forgets its recording; a ceiling on every hold (1 h
+  for a save in flight, 12 tries for a rewrite); a rewritten stuck meeting keeps its last part's end; no swap to a
+  lower schema. Each fix mutated and caught. Parked in BACKLOG with reasons: a calendar call continued from its
+  window after the app ended it (needs a decision), the daily recap before settling, keyless pre-V9 bundles, the
+  reader guard, a quit while a stopped meeting transcribes (pre-existing).
+- Not yet: the full gate (needs the owner's word: it shows windows), release 1.4.6, the 3-day live check
+  (`ITER-083` DoD). ITER-082 (`lane-commitments`, another session) touches StructuredGenerator/TaskExtractor in
+  other regions; whichever lands second rebases.
+
+
 `ITER-076-jev-agent.md` — the Jev agent: voice or MetaChat → a browser errand or a web form.
 - **Approved** by the owner on 2026-09-26 ("сделай"). It replaces ITER-075's order. Built for users.
 - **The owner checks only the final product** (2026-09-28): the final task in the browser, then

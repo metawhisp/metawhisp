@@ -67,7 +67,7 @@ final class OnboardingAppFixture {
     func controller(openMainWindow: @escaping () -> Void = {}) -> OnboardingWindowController {
         let controller = OnboardingWindowController()
         controller.dependencies = .init(coordinator: coordinator, modelPreparer: preparer, captureArbiter: arbiter,
-                                        microphone: AudioRecordingService(path: .inputOnly),
+                                        microphone: AudioRecordingService(),
                                         openMainWindow: openMainWindow)
         controllers.append(controller)
         return controller

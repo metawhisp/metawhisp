@@ -93,7 +93,8 @@ final class CalendarEndStopDecisionTests: XCTestCase {
     /// The pair to the test above: what ends the recording once the card has
     /// been shown. Audio going quiet still stops it — on the spot when the
     /// room and the screen are clear, and by the hard stop once the budget is
-    /// spent, call or no call.
+    /// spent — with the call still seen, after the end rule's 15 quiet minutes
+    /// (ITER-083).
     func test_overrunCardShown_recordingStopFiresAnywayAfterAudioGoesQuiet() {
         let quietAfterTheCard = CalendarEndStopDecision.evaluate(
             now: now.addingTimeInterval(400),
@@ -105,6 +106,8 @@ final class CalendarEndStopDecisionTests: XCTestCase {
         )
         XCTAssertEqual(quietAfterTheCard, .stopNow)
 
+        // ITER-083 — with the call still seen, the hard stop needs the end
+        // rule's 15 quiet minutes, not 30 seconds.
         let quietPastTheBudget = CalendarEndStopDecision.evaluate(
             now: now.addingTimeInterval(1000),
             eventEnd: now,
@@ -112,7 +115,8 @@ final class CalendarEndStopDecisionTests: XCTestCase {
             notifyAttemptsSoFar: 3,
             recentAudioActive: false,
             lastCallSeenAt: now.addingTimeInterval(1000),
-            overrunCardShown: true
+            overrunCardShown: true,
+            quietForSeconds: MeetingEndPolicy.quietCeilingSeconds
         )
         XCTAssertEqual(quietPastTheBudget, .hardStop)
     }
@@ -332,7 +336,40 @@ final class CalendarEndStopDecisionTests: XCTestCase {
             audioRMSLastNSec: 0.05,
             notifyAttemptsSoFar: 3,
             recentAudioActive: false,
-            lastCallSeenAt: now.addingTimeInterval(2000)
+            lastCallSeenAt: nil
+        )
+        XCTAssertEqual(decision, .hardStop)
+    }
+
+    /// ITER-083 — the 2026-11-04 13:16 cut: the budget was spent, the room had
+    /// been quiet for 30 s, and the call detector had seen the call 24 s
+    /// before. The call went on; the recording must too.
+    func test_budgetSpentButCallSeen_keepsRecording() {
+        let decision = CalendarEndStopDecision.evaluate(
+            now: now.addingTimeInterval(2000),
+            eventEnd: now,
+            audioRMSLastNSec: 0.001,
+            notifyAttemptsSoFar: 3,
+            recentAudioActive: false,
+            lastCallSeenAt: now.addingTimeInterval(2000 - 24),
+            quietForSeconds: 30
+        )
+        guard case .silentExtend = decision else {
+            return XCTFail("a call still seen must not be cut, got \(decision)")
+        }
+    }
+
+    /// …and the pair: a seen call holds the recording only up to the end
+    /// rule's ceiling of 15 quiet minutes (an abandoned tab looks the same).
+    func test_budgetSpentAndCallSeen_stopsAnywayAfterFifteenQuietMinutes() {
+        let decision = CalendarEndStopDecision.evaluate(
+            now: now.addingTimeInterval(3000),
+            eventEnd: now,
+            audioRMSLastNSec: 0.001,
+            notifyAttemptsSoFar: 3,
+            recentAudioActive: false,
+            lastCallSeenAt: now.addingTimeInterval(3000),
+            quietForSeconds: 900
         )
         XCTAssertEqual(decision, .hardStop)
     }

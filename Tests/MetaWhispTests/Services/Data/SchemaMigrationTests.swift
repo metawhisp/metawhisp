@@ -51,7 +51,7 @@ final class SchemaMigrationTests: XCTestCase {
         }
 
         // 2. Reopen the SAME file under the latest schema + the migration plan.
-        let latestSchema = Schema(versionedSchema: MetaWhispSchemaV9.self)
+        let latestSchema = Schema(versionedSchema: MetaWhispSchemaV10.self)
         let cfg2 = ModelConfiguration(schema: latestSchema, url: storeURL)
         let container2 = try ModelContainer(
             for: latestSchema, migrationPlan: MetaWhispMigrationPlan.self, configurations: [cfg2])
@@ -88,7 +88,7 @@ final class SchemaMigrationTests: XCTestCase {
             try ctx.save()
         }
 
-        let latestSchema = Schema(versionedSchema: MetaWhispSchemaV9.self)
+        let latestSchema = Schema(versionedSchema: MetaWhispSchemaV10.self)
         let cfg = ModelConfiguration(schema: latestSchema, url: storeURL)
         let container = try ModelContainer(
             for: latestSchema, migrationPlan: MetaWhispMigrationPlan.self, configurations: [cfg])
@@ -100,7 +100,7 @@ final class SchemaMigrationTests: XCTestCase {
     }
 
     func testFreshStoreCreatesUnderV3() throws {
-        let latestSchema = Schema(versionedSchema: MetaWhispSchemaV9.self)
+        let latestSchema = Schema(versionedSchema: MetaWhispSchemaV10.self)
         let cfg = ModelConfiguration(schema: latestSchema, url: storeURL)
         XCTAssertNoThrow(try ModelContainer(
             for: latestSchema, migrationPlan: MetaWhispMigrationPlan.self, configurations: [cfg]))
@@ -123,7 +123,7 @@ final class SchemaMigrationTests: XCTestCase {
             try ctx.save()
         }
 
-        let latestSchema = Schema(versionedSchema: MetaWhispSchemaV9.self)
+        let latestSchema = Schema(versionedSchema: MetaWhispSchemaV10.self)
         let cfg = ModelConfiguration(schema: latestSchema, url: storeURL)
         let container = try ModelContainer(
             for: latestSchema, migrationPlan: MetaWhispMigrationPlan.self, configurations: [cfg])
@@ -176,7 +176,7 @@ final class SchemaMigrationTests: XCTestCase {
             try ctx.save()
         }
 
-        let latestSchema = Schema(versionedSchema: MetaWhispSchemaV9.self)
+        let latestSchema = Schema(versionedSchema: MetaWhispSchemaV10.self)
         let cfg = ModelConfiguration(schema: latestSchema, url: storeURL)
         let container = try ModelContainer(
             for: latestSchema, migrationPlan: MetaWhispMigrationPlan.self, configurations: [cfg])
@@ -209,7 +209,7 @@ final class SchemaMigrationTests: XCTestCase {
             try ctx.save()
         }
 
-        let latestSchema = Schema(versionedSchema: MetaWhispSchemaV9.self)
+        let latestSchema = Schema(versionedSchema: MetaWhispSchemaV10.self)
         let cfg = ModelConfiguration(schema: latestSchema, url: storeURL)
         let container = try ModelContainer(
             for: latestSchema, migrationPlan: MetaWhispMigrationPlan.self, configurations: [cfg])
@@ -239,7 +239,7 @@ final class SchemaMigrationTests: XCTestCase {
             try ctx.save()
         }
 
-        let latestSchema = Schema(versionedSchema: MetaWhispSchemaV9.self)
+        let latestSchema = Schema(versionedSchema: MetaWhispSchemaV10.self)
         let cfg = ModelConfiguration(schema: latestSchema, url: storeURL)
         let container = try ModelContainer(
             for: latestSchema, migrationPlan: MetaWhispMigrationPlan.self, configurations: [cfg])
@@ -252,10 +252,75 @@ final class SchemaMigrationTests: XCTestCase {
                       + "and a zero row would read as «it cost nothing»")
     }
 
+    /// ITER-083 — the store on people's machines is V9. Its meetings and their
+    /// parts open under V10 with every row intact and the recording fields
+    /// empty: a meeting saved before recordings carried their own context says
+    /// nothing about how it started, so the linker may still guess for it.
+    func testV9StoreMigratesToV10WithMeetingsIntactAndNoRecordingInvented() throws {
+        let conversationID: UUID
+        do {
+            let v9Schema = Schema(versionedSchema: MetaWhispSchemaV9.self)
+            let cfg = ModelConfiguration(schema: v9Schema, url: storeURL)
+            let container = try ModelContainer(for: v9Schema, configurations: [cfg])
+            let ctx = ModelContext(container)
+            let conv = MetaWhispFrozenMeeting.Conversation(source: "meeting")
+            conv.status = "completed"
+            conv.calendarEventId = "series-1"
+            conv.callContext = "Weekly sync"
+            conversationID = conv.id
+            let part = MetaWhispFrozenMeeting.HistoryItem(text: "Them: the release is on Friday.",
+                                                          language: "en", audioDuration: 60, processingTime: 2)
+            part.source = "meeting"
+            part.conversationId = conv.id
+            ctx.insert(conv)
+            ctx.insert(part)
+            try ctx.save()
+        }
+
+        let latestSchema = Schema(versionedSchema: MetaWhispSchemaV10.self)
+        let cfg = ModelConfiguration(schema: latestSchema, url: storeURL)
+        let container = try ModelContainer(
+            for: latestSchema, migrationPlan: MetaWhispMigrationPlan.self, configurations: [cfg])
+        let ctx = ModelContext(container)
+
+        let convs = try ctx.fetch(FetchDescriptor<Conversation>())
+        XCTAssertEqual(convs.map(\.id), [conversationID], "the meeting survives the upgrade")
+        XCTAssertEqual(convs.first?.calendarEventId, "series-1")
+        XCTAssertNil(convs.first?.calendarOccurrenceKey)
+        XCTAssertNil(convs.first?.recordingOrigin, "no recording context is invented for an old meeting")
+        let parts = try ctx.fetch(FetchDescriptor<HistoryItem>())
+        XCTAssertEqual(parts.count, 1)
+        XCTAssertEqual(parts.first?.conversationId, conversationID)
+        XCTAssertNil(parts.first?.recordedAt)
+        XCTAssertNil(parts.first?.recordedUntil)
+    }
+
+    /// The frozen pre-ITER-083 shapes, pinned as full property sets: V9 is
+    /// what the shipped store looks like (the V5 lesson).
+    func testFrozenMeetingShapesAreStable() throws {
+        let v9Schema = Schema(versionedSchema: MetaWhispSchemaV9.self)
+        let history = Set(try XCTUnwrap(v9Schema.entities.first { $0.name == "HistoryItem" }).properties.map(\.name))
+        XCTAssertEqual(history, ["id", "text", "processedText", "translatedTo", "language", "audioDuration",
+                                 "processingTime", "wordCount", "createdAt", "modelName", "source", "conversationId"])
+        let conversation = Set(try XCTUnwrap(v9Schema.entities.first { $0.name == "Conversation" }).properties.map(\.name))
+        XCTAssertEqual(conversation, [
+            "id", "startedAt", "finishedAt", "source", "status", "discarded", "title", "overview", "category",
+            "emoji", "starred", "createdAt", "updatedAt", "embedding", "primaryProject", "topicsJSON",
+            "structuredBackfillAttempted", "decisionsJSON", "actionItemsJSON", "participantsJSON",
+            "keyQuotesJSON", "nextStepsJSON", "calendarEventId", "calendarEventTitle", "calendarEventStartDate",
+            "calendarEventEndDate", "calendarAttendeesJSON", "callContext",
+        ])
+        let v10Schema = Schema(versionedSchema: MetaWhispSchemaV10.self)
+        let liveConversation = Set(try XCTUnwrap(v10Schema.entities.first { $0.name == "Conversation" }).properties.map(\.name))
+        XCTAssertEqual(liveConversation.subtracting(conversation), ["calendarOccurrenceKey", "recordingOrigin"])
+        let liveHistory = Set(try XCTUnwrap(v10Schema.entities.first { $0.name == "HistoryItem" }).properties.map(\.name))
+        XCTAssertEqual(liveHistory.subtracting(history), ["recordedAt", "recordedUntil"])
+    }
+
     /// One row per run, enforced by the store rather than by everyone
     /// remembering: a second row would double every total silently.
     func testARunCannotBeMeasuredTwice() throws {
-        let schema = Schema(versionedSchema: MetaWhispSchemaV9.self)
+        let schema = Schema(versionedSchema: MetaWhispSchemaV10.self)
         let cfg = ModelConfiguration(schema: schema, url: storeURL)
         let container = try ModelContainer(for: schema, configurations: [cfg])
         let ctx = ModelContext(container)
@@ -329,7 +394,7 @@ final class SchemaMigrationTests: XCTestCase {
             throw XCTSkip("Set MW_REAL_STORE_COPY to a copy of the real store to run this proof")
         }
         let url = URL(fileURLWithPath: path)
-        let latestSchema = Schema(versionedSchema: MetaWhispSchemaV9.self)
+        let latestSchema = Schema(versionedSchema: MetaWhispSchemaV10.self)
         let cfg = ModelConfiguration(schema: latestSchema, url: url)
         let container = try ModelContainer(
             for: latestSchema, migrationPlan: MetaWhispMigrationPlan.self, configurations: [cfg])
@@ -372,7 +437,7 @@ extension SchemaMigrationTests {
         }
 
         // Reopen it the way the shipped app will.
-        let latest = Schema(versionedSchema: MetaWhispSchemaV9.self)
+        let latest = Schema(versionedSchema: MetaWhispSchemaV10.self)
         let container = try ModelContainer(
             for: latest, migrationPlan: MetaWhispMigrationPlan.self,
             configurations: [ModelConfiguration(schema: latest, url: storeURL)])
@@ -425,12 +490,12 @@ extension SchemaMigrationTests {
             ctx.insert(MetaWhispSchemaV4.ScreenAgentItem(
                 runID: UUID(), headline: "Anna needs the deck by 16:00", body: "",
                 sourceApp: "Slack", sourceWindowTitle: "#launch", capturedAt: Date()))
-            ctx.insert(HistoryItem(text: "a dictation the user would hate to lose",
-                                   language: "en", audioDuration: 3, processingTime: 1))
+            ctx.insert(MetaWhispFrozenMeeting.HistoryItem(text: "a dictation the user would hate to lose",
+                                                          language: "en", audioDuration: 3, processingTime: 1))
             try ctx.save()
         }
 
-        let latest = Schema(versionedSchema: MetaWhispSchemaV9.self)
+        let latest = Schema(versionedSchema: MetaWhispSchemaV10.self)
         let container = try ModelContainer(
             for: latest, migrationPlan: MetaWhispMigrationPlan.self,
             configurations: [ModelConfiguration(schema: latest, url: storeURL)])

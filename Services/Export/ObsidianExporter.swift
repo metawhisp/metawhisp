@@ -122,7 +122,7 @@ final class ObsidianExporter: ObservableObject {
         allDesc.fetchLimit = 50
         let candidates = ((try? ctx.fetch(allDesc)) ?? [])
             .filter { $0.conversationId == cid }
-            .sorted { $0.createdAt < $1.createdAt }
+            .sorted(by: HistoryItem.inRecordingOrder)
         let firstText = candidates.first?.processedText ?? candidates.first?.text
         let snippet = ObsidianMarkdownRenderer.firstSnippet(firstText, maxLength: 60)
             ?? "conversation"
@@ -174,7 +174,7 @@ final class ObsidianExporter: ObservableObject {
         hDesc.fetchLimit = 500
         let history = ((try? ctx.fetch(hDesc)) ?? [])
             .filter { $0.conversationId == id }
-            .sorted { $0.createdAt < $1.createdAt }
+            .sorted(by: HistoryItem.inRecordingOrder)
         let fullTranscript = history.map { $0.displayText }.joined(separator: "\n\n")
 
         // Attendees JSON → array
@@ -218,7 +218,7 @@ final class ObsidianExporter: ObservableObject {
         allHistory.fetchLimit = 1000
         let voices = ((try? ctx.fetch(allHistory)) ?? [])
             .filter { $0.conversationId == conv.id && $0.source != "meeting" }
-            .sorted { $0.createdAt < $1.createdAt }
+            .sorted(by: HistoryItem.inRecordingOrder)
 
         let voiceLines: [ObsidianMarkdownRenderer.VoiceLine] = voices.map { v in
             let snippet = ObsidianMarkdownRenderer.firstSnippet(v.processedText ?? v.text, maxLength: 80) ?? "(voice)"

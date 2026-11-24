@@ -4,10 +4,7 @@ import XCTest
 /// finished or not: both start through `applicationDidFinishLaunching` and the
 /// same `setupServices`, so neither may call an API that asks for a
 /// permission. Permissions are asked from their own buttons, when a feature is
-/// turned on, and by the first record press. The audio warm-up, which can
-/// bring the microphone prompt up too, is handed to
-/// `TranscriptionCoordinator.prepareMicrophoneAtLaunch`, which runs it only on
-/// a grant.
+/// turned on, and by the first record press.
 ///
 /// Step-1 review #1 — the launch functions' own bodies are not enough: a
 /// prompt reached the launch through `startMonitoring`. So every call that
@@ -152,10 +149,6 @@ final class LaunchPermissionGuardTests: XCTestCase {
                 let where_ = "AppDelegate.swift:\(number): \(code.trimmingCharacters(in: .whitespaces))"
                 for call in asking {
                     XCTAssertFalse(code.contains(call), "a launch-path prompt — \(where_)")
-                }
-                if code.contains(".warmUp()") {
-                    XCTAssertTrue(code.contains("prepareMicrophoneAtLaunch(warmUp:"),
-                                  "the warm-up runs only through the microphone's launch check — \(where_)")
                 }
             }
         }

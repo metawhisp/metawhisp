@@ -52,18 +52,54 @@ final class MicrophoneFirstUseTests: XCTestCase {
         }
     }
 
+    // MARK: - A microphone that does not answer (ITER-086)
+
+    /// The microphone opens off the main thread; one that never answers ends the dictation with words a person can
+    /// act on, and the coordinator is free for the next press — instead of the app hanging.
+    func testADictationWhoseMicrophoneDoesNotAnswerEndsWithTheError() {
+        let microphone = microphone(.granted)
+        microphone.bindError = AudioRecordingService.RecordingError.notResponding
+        let flow = coordinator(microphone)
+        flow.startPTT()
+        XCTAssertEqual(flow.stage, .recording, "the press is answered at once")
+        spin(until: { flow.stage == .idle })
+        XCTAssertEqual(flow.stage, .idle)
+        XCTAssertEqual(flow.lastError, "The microphone isn't responding. Try again in a few seconds.")
+        XCTAssertEqual(microphone.stops, 1, "the recording that could not open is stopped")
+    }
+
+    /// A push-to-talk tap shorter than the bind: the release stops the recording before the microphone answered, and
+    /// its answer — whatever it is — changes nothing after (no error, no stage moved).
+    func testAPushToTalkTapBeforeTheMicrophoneAnsweredLeavesNoError() {
+        let microphone = microphone(.granted)
+        microphone.bindError = AudioRecordingService.RecordingError.notResponding
+        let flow = coordinator(microphone)
+        flow.startPTT()
+        flow.stopPTT()
+        RunLoop.main.run(until: Date().addingTimeInterval(0.1))
+        XCTAssertNil(flow.lastError, "the answer of a recording already stopped is dropped")
+        XCTAssertEqual(microphone.stops, 1, "stopped once, by the release")
+    }
+
+    /// Its pair: a microphone that answers keeps the dictation recording.
+    func testADictationWhoseMicrophoneAnswersKeepsRecording() {
+        let flow = coordinator(microphone(.granted))
+        flow.startPTT()
+        RunLoop.main.run(until: Date().addingTimeInterval(0.05))
+        XCTAssertEqual(flow.stage, .recording)
+        XCTAssertNil(flow.lastError)
+        flow.stopPTT()
+    }
+
     // MARK: - Launch
 
-    /// The warm-up touches the input node, which can bring the prompt up as
-    /// well, so only a granted microphone is warmed.
-    func testLaunchAsksForNothingAndWarmsOnlyAGrantedMicrophone() {
+    /// Nothing is opened at launch (ITER-086: no engine to warm), and nothing is asked.
+    func testLaunchAsksForNothing() {
         for answer in [Answer.granted, .neverAsked, .denied] {
             let microphone = microphone(answer)
             let flow = coordinator(microphone)
-            var warmUps = 0
-            flow.prepareMicrophoneAtLaunch(warmUp: { warmUps += 1 })
+            flow.prepareMicrophoneAtLaunch()
             XCTAssertEqual(microphone.permissionRequests, 0, "\(answer.rawValue): launch asks nothing")
-            XCTAssertEqual(warmUps, answer == .granted ? 1 : 0, answer.rawValue)
         }
         XCTAssertEqual(settingsOpened, 0)
     }
@@ -71,15 +107,15 @@ final class MicrophoneFirstUseTests: XCTestCase {
     /// The popover's red line is the slot that says so; nothing is added to the popover.
     func testAMissingMicrophoneIsSaidInTheRedLineThatExists() {
         let neverAsked = coordinator(microphone(.neverAsked))
-        neverAsked.prepareMicrophoneAtLaunch(warmUp: {})
+        neverAsked.prepareMicrophoneAtLaunch()
         XCTAssertEqual(neverAsked.lastError, TranscriptionCoordinator.microphoneNotAllowedYet)
 
         let denied = coordinator(microphone(.denied))
-        denied.prepareMicrophoneAtLaunch(warmUp: {})
+        denied.prepareMicrophoneAtLaunch()
         XCTAssertEqual(denied.lastError, TranscriptionCoordinator.microphoneDeniedAtLaunch)
 
         let granted = coordinator(microphone(.granted))
-        granted.prepareMicrophoneAtLaunch(warmUp: {})
+        granted.prepareMicrophoneAtLaunch()
         XCTAssertNil(granted.lastError)
     }
 

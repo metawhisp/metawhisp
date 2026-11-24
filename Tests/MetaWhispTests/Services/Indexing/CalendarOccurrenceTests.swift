@@ -79,6 +79,35 @@ final class CalendarOccurrenceTests: XCTestCase {
                        CalendarOccurrencePicker.startingNow(in: [other, one], at: now))
     }
 
+    /// ITER-083 — what the calendar calls the event, kept apart from the word
+    /// the countdown card shows: an event without a title is saved without
+    /// one, so the meeting's own title is used, not the word "Meeting".
+    func testTheRawTitleIsWhatTheCalendarSays() {
+        XCTAssertEqual(occurrence(start: today, title: "  Weekly sync ").rawTitle, "Weekly sync")
+        XCTAssertNil(occurrence(start: today, title: "   ").rawTitle)
+        XCTAssertNil(occurrence(start: today, title: nil).rawTitle)
+        XCTAssertEqual(occurrence(start: today, title: nil).title, "Meeting", "the card still has a word")
+        XCTAssertEqual(occurrence(start: today, title: "Busy").rawTitle, "Busy", "as the calendar shows it")
+    }
+
+    func testAttendeesTravelWithTheOccurrence() {
+        let o = CalendarOccurrence(eventID: "x", title: "A", start: today, end: today.addingTimeInterval(60),
+                                   attendees: ["Sam", "alex@example.com"])
+        XCTAssertEqual(o?.attendees, ["Sam", "alex@example.com"])
+        XCTAssertEqual(CalendarOccurrence(eventID: "x", title: "A", start: today, end: today)?.attendees, [])
+    }
+
+    /// ITER-083 — the gate and the back-to-back check are told an occurrence,
+    /// not a series: with the series id, one day's refusal, attempts and
+    /// boundary carried into the next day's meeting of the same series.
+    func testTheGateIdentityIsTheOccurrence() {
+        let monday = occurrence(start: today)
+        let tuesday = occurrence(start: today.addingTimeInterval(24 * 3600))
+        XCTAssertEqual(monday.gateEvent.id, monday.key)
+        XCTAssertNotEqual(monday.gateEvent.id, tuesday.gateEvent.id)
+        XCTAssertEqual(monday.gateEvent.title, monday.title)
+    }
+
     func testStartingNowOnlyInItsFirst65Seconds() {
         let current = occurrence(start: today)
         XCTAssertEqual(CalendarOccurrencePicker.startingNow(in: [candidate(current)], at: today.addingTimeInterval(65)),

@@ -91,6 +91,24 @@ final class MeetingAutoStartGate {
     /// itself again 2.5 min, 26 s and 13 s later, each time from the window).
     private var heldCalls: Set<String> = []
 
+    /// ITER-083 — the call window in front when the app itself ended a
+    /// recording, as app + call name ("Google Meet" alone names every Meet
+    /// window in every browser). It starts nothing while it stays in front (a
+    /// tab left open after the call would record itself again) and is let go
+    /// the first tick it is not: unlike a stop by hand, the next call must
+    /// still start.
+    private var endedInFront: String?
+
+    /// ITER-083 — starts the post-start sniff threw away (the first minute was
+    /// silent), per call window, while that window stays in front. A muted call
+    /// in front is tried at most `maxEmptyStarts` times, by the calendar retry
+    /// and the window together, not forever.
+    private var emptyStarts: [String: Int] = [:]
+    static let maxEmptyStarts = 3
+
+    /// The call window in front at the last tick, as app + call name.
+    private var callInFront: String?
+
     /// The calendar event running at the last tick: a stop by hand refuses its
     /// retry too, even when the recording was not started for it.
     private var eventInProgress: String?
@@ -157,6 +175,38 @@ final class MeetingAutoStartGate {
               Int(Self.heldCallRelease / 60))
     }
 
+    /// ITER-083 — the app's end rule ended the recording. The window still in
+    /// front starts nothing until it leaves front; the event running now is
+    /// not retried (`recordingSaved` covers that once the capture is kept).
+    func endedByApp() {
+        endedInFront = callInFront
+        reset()
+        NSLog("[AutoStartGate] the recording ended itself — %@ will not start again until it leaves front",
+              callInFront ?? "no call")
+    }
+
+    /// ITER-083 — a recording of this occurrence captured something and is
+    /// being saved: the occurrence is over, and the retry (meant for a start
+    /// that captured nothing, `CalendarAutoStartRetry`) does not fire for it.
+    func recordingSaved(eventID: String) {
+        guard !eventID.isEmpty, declinedEvents.insert(eventID).inserted else { return }
+        NSLog("[AutoStartGate] %@ recorded — it is not retried", eventID)
+    }
+
+    /// ITER-083 — a start was thrown away by the post-start sniff. Counted
+    /// against the call window in front, while it stays in front.
+    func startCapturedNothing() {
+        guard let callInFront else { return }
+        emptyStarts[callInFront, default: 0] += 1
+        NSLog("[AutoStartGate] %@ started and captured nothing (%d of %d while in front)",
+              callInFront, emptyStarts[callInFront] ?? 0, Self.maxEmptyStarts)
+    }
+
+    /// The window in front has used up its empty starts.
+    private var frontIsSpent: Bool {
+        callInFront.map { (emptyStarts[$0] ?? 0) >= Self.maxEmptyStarts } ?? false
+    }
+
     /// Whether a stop by hand still holds this call.
     func isHeld(_ callName: String) -> Bool {
         heldCalls.contains(callName)
@@ -173,6 +223,7 @@ final class MeetingAutoStartGate {
 
     func evaluate(
         callName: String?,
+        callApp: String? = nil,
         calendarEventNow: (id: String, title: String)?,
         calendarEventInProgress: (id: String, title: String)?,
         isRecording: Bool,
@@ -182,7 +233,7 @@ final class MeetingAutoStartGate {
         // made the wait expire while it ran, so a stop was followed instantly
         // by the next attempt.
         if isRecording { ticksSinceCalendarAttempt = 0 } else { ticksSinceCalendarAttempt += 1 }
-        noteWhatIsInFront(callName, isRecording: isRecording, eventInProgress: calendarEventInProgress?.id)
+        noteWhatIsInFront(callName, app: callApp, isRecording: isRecording, eventInProgress: calendarEventInProgress?.id)
 
         // Every proposal now would be refused. Three refused countdowns used
         // to spend all of an event's attempts, and it never started after the
@@ -202,7 +253,7 @@ final class MeetingAutoStartGate {
 
         // The event is still running and the last attempt left nothing
         // recording. Ask again — bounded.
-        if let ev = calendarEventInProgress,
+        if let ev = calendarEventInProgress, !frontIsSpent,
            CalendarAutoStartRetry.shouldRetry(attempts: calendarAttempts[ev.id] ?? 0,
                                               ticksSinceLast: ticksSinceCalendarAttempt,
                                               isRecording: isRecording,
@@ -221,8 +272,10 @@ final class MeetingAutoStartGate {
             return .idle
         }
 
-        // The call the person stopped by hand starts nothing until it is over.
-        if heldCalls.contains(name) {
+        // The call the person stopped by hand starts nothing until it is over;
+        // the window left in front after the app's own end, and a muted call
+        // already tried enough, start nothing while they stay in front.
+        if heldCalls.contains(name) || (endedInFront != nil && endedInFront == callInFront) || frontIsSpent {
             frontStreak = 0
             currentCallName = nil
             return .idle
@@ -249,8 +302,13 @@ final class MeetingAutoStartGate {
     /// Keeps what a stop by hand needs: which calls were in front and when, and
     /// the event running now. A held call out of front for `heldCallRelease`
     /// is let go here.
-    private func noteWhatIsInFront(_ callName: String?, isRecording: Bool, eventInProgress: String?) {
+    private func noteWhatIsInFront(_ callName: String?, app: String?, isRecording: Bool, eventInProgress: String?) {
         let t = now()
+        // ITER-083 — what is held only while in front is let go once it is not.
+        let window = callName.map { "\(app ?? "")|\($0)" }
+        if let held = endedInFront, held != window { endedInFront = nil }
+        emptyStarts = emptyStarts.filter { $0.key == window }
+        callInFront = window
         if isRecording != wasRecording { inFrontWhileRecording = [] }
         wasRecording = isRecording
         if let callName {

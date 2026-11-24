@@ -122,7 +122,15 @@ final class PracticeRecorder: ObservableObject {
             return
         }
         do {
-            try microphone.start()
+            // The microphone opens off the main thread (ITER-086): one that did not open ends this listening.
+            var session = 0
+            try microphone.start(reported: { [weak self] error in
+                guard let self, let error, self.phase == .listening, self.listeningSession == session else { return }
+                _ = self.microphone.stop()
+                self.listeningSession = nil
+                self.finish(.failed("Couldn't start the microphone: \(error.localizedDescription)"))
+            })
+            session = microphone.captureSession
         } catch {
             phase = .failed("Couldn't start the microphone: \(error.localizedDescription)")
             return

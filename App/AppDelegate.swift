@@ -37,7 +37,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     /// voice question (long-press). Records the input alone, not through an
     /// AVAudioEngine: a Bluetooth headset switching to its call profile reset
     /// the engine in a loop that recorded nothing (see `InputOnlyCapture`).
-    let recorder = AudioRecordingService(path: .inputOnly)
+    let recorder = AudioRecordingService()
     let systemAudioCapture = SystemAudioCaptureService()
     /// Dedicated mic capture for meeting recording. SEPARATE instance from
     /// `recorder` — sharing one AudioRecordingService caused 3 cascading bugs:
@@ -46,15 +46,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     ///     so the meeting captured 0 mic samples for the rest of the call;
     /// (c) MeetingCoach repeatedly asked "Turn on microphone" because the mic
     ///     literally went silent mid-meeting after the user did a voice question.
-    /// Each AudioRecordingService owns its own capture (this one an
-    /// AVAudioEngine) — several clients of one input device coexist fine.
+    /// Each AudioRecordingService owns its own capture of the input — several
+    /// clients of one input device coexist fine.
     private let meetingMic = AudioRecordingService()
     /// The onboarding practice's own microphone (C6), kept by the app so the
-    /// next practice records on the same one. It records the way dictation
-    /// does — `recorder`'s path, the input alone: on the engine, which
-    /// dictation left for a Bluetooth headset's sake, the practice recorded
-    /// nothing on one.
-    private lazy var practiceMic = AudioRecordingService(path: recorder.path)
+    /// next practice records on the same one.
+    private lazy var practiceMic = AudioRecordingService()
     /// Captures mic + system audio in parallel for meeting recording.
     lazy var meetingRecorder = MeetingRecorder(mic: meetingMic, systemAudio: systemAudioCapture)
     var whisperEngine: WhisperKitEngine?
@@ -346,25 +343,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     /// True while the 5-sec countdown plashka is up. Prevents the fast tick
     /// loop from re-firing the gate while a countdown is already running.
     private var meetingCountdownInFlight = false
-    /// ITER-028.2 (2026-05-06) — calendar `EKEvent.eventIdentifier` captured
-    /// at the moment the current recording started. Used by the fast-tick
-    /// loop together with `BackToBackTransition.decide(...)` to detect when
-    /// the user transitioned from calendar event A to calendar event B.
-    /// `nil` for fallback/manual recordings — those don't have a comparable
-    /// calendar baseline, so back-to-back logic skips them.
-    ///
-    /// Replaces the previous `recordingFrontmostTitle` window-title heuristic
-    /// which misfired daily because Google Meet tab titles mutate from
-    /// generic to specific in the first ~1s after page mount. See
-    /// `specs/health-reports/2026-05-05.md` and `2026-05-06-morning.md` for
-    /// the 100% kill rate that motivated this rewrite.
-    private var recordingCalendarEventID: String?
-    /// Display name of the call context that was detected when the current
-    /// meeting recording started ("Google Meet", "Zoom"). Used by
-    /// `ConversationGrouper.assign(...)` at close so a lid-bounce reopens the
-    /// SAME conversation instead of fragmenting one real call into N rows.
-    /// Set on auto-start path; nil when user pressed RECORD manually.
-    private var currentMeetingCallContext: String?
+    /// ITER-083 — the recording running now: how it started, its name, its
+    /// calendar occurrence (calendar starts only) and its start. Its
+    /// occurrence key is what the back-to-back check (ITER-028.2) and the
+    /// calendar-end check compare against. A stop hands a frozen copy to the
+    /// save and clears this, so the next recording can never rename the one
+    /// still being transcribed — the two fields this replaces were read at
+    /// save time, after the next start had overwritten them.
+    private var currentRecording: RecordingContext?
+    /// ITER-083 — stopped recordings whose transcript is still being made,
+    /// by stop. With `currentRecording` they are what the settling sweep must
+    /// not settle past: one of them may be the continuation of a meeting.
+    private var meetingSavesInFlight: [UUID: RecordingContext] = [:]
+
+    /// The recordings that may still join a settling meeting.
+    private var meetingRecordingsInFlight: [RecordingContext] {
+        Array(meetingSavesInFlight.values) + (currentRecording.map { [$0] } ?? [])
+    }
 
     /// The links macOS hands the app, held until the launch can act on them (`LinkInbox`).
     let linkInbox = LinkInbox()
@@ -1063,7 +1058,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         // state: the microphone on the first record press, Accessibility from
         // its own button. A granted microphone is pre-warmed (eliminates the
         // ~150ms cold start); a missing one is said in the popover's red line.
-        coordinator.prepareMicrophoneAtLaunch(warmUp: { [recorder] in recorder.warmUp() })
+        coordinator.prepareMicrophoneAtLaunch()
         NSLog("[MetaWhisp] Accessibility: %@", AXIsProcessTrusted() ? "YES" : "NO — not asked at launch")
 
         // ITER-075 step 0, US-0.3 — a permission granted at any time takes
@@ -1224,6 +1219,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             NSLog("[MeetingRecorder] Auto-stop fired: %@", String(describing: reason))
             NotificationService.shared.postMeetingAutoStopped(reason: reason)
             self.stopMeetingRecording(reason: "recorder-auto-stop:\(reason)")
+        }
+        // ITER-083 release review — a start that never recorded leaves no
+        // recording behind. Its snapshot held the call's last meeting open as
+        // a continuation until the app restarted, and its calendar-end check
+        // waited on nothing. It counts as a start that captured nothing, so a
+        // call with no audio is tried at most three times while in front.
+        meetingRecorder.onStartAbandoned = { [weak self] in
+            guard let self else { return }
+            if self.didAutoStartRecording { MeetingAutoStartGate.shared.startCapturedNothing() }
+            self.didAutoStartRecording = false
+            self.currentRecording = nil
+            self.calendarHardStopTask?.cancel()
+            self.calendarHardStopTask = nil
+        }
+        // ITER-083 — the silence stop asks the one end rule: a call the
+        // detector still sees holds the recording, up to 15 quiet minutes.
+        meetingRecorder.endsOnQuiet = { [weak self] quietFor, window in
+            MeetingEndPolicy.quietEnds(quietFor: quietFor, quietNeeded: window,
+                                       lastCallSeenAt: self?.screenContext.lastCallSeenAt, now: Date())
         }
         // ITER-026 v2 — manual recordings get a non-blocking 2h reminder
         // instead of auto-stop. Card just informs; recording continues until
@@ -1564,6 +1578,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             while true {
                 try? await Task.sleep(for: .seconds(60))
                 self?.conversationGrouper.closeStaleConversations()
+                // ITER-083 — meetings the app ended by itself, once their join
+                // window has passed; and any an earlier version left in progress.
+                if let self { self.conversationGrouper.settleMeetings(inFlight: self.meetingRecordingsInFlight) }
             }
         }
 
@@ -1903,8 +1920,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         // ITER-026 v2 — `manualMode: true` because this path is the user's
         // explicit RECORD action (menu bar / hotkey). No silence/maxDuration
         // auto-stops; just a 2h heartbeat card.
+        let sessionStart = Date()
         guard meetingRecorder.start(manualMode: true, ask: PermissionAsk()) else { return }
         NSLog("[MetaWhisp] ▶️ Meeting recording start requested (manual mode)")
+        // ITER-083 — a hand on the record button names no meeting: no event
+        // is attached, whatever the calendar shows.
+        currentRecording = RecordingContext.manual(startedAt: sessionStart)
 
         // Calendar-based auto-stop was REMOVED 2026-04-29 — meetings routinely
         // overrun their scheduled end (a 30-min meeting going 50 min is normal),
@@ -1916,8 +1937,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         calendarHardStopTask = nil
     }
 
+    /// ITER-083 — the recap of a meeting that was just processed, once: a
+    /// meeting the app ended by itself is processed when its join window has
+    /// passed, so its recap waits for that too. Dictations get none.
+    func scheduleMeetingRecap(_ conversationId: UUID) {
+        guard AppSettings.shared.meetingRecapNotifications else { return }
+        var desc = FetchDescriptor<Conversation>(predicate: #Predicate { $0.id == conversationId })
+        desc.fetchLimit = 1
+        guard (try? ModelContext(historyService.modelContainer).fetch(desc))?.first?.source == "meeting" else { return }
+        // Long enough for the extractors the close just started to populate.
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .seconds(8))
+            self?.fireMeetingRecap(for: conversationId)
+        }
+    }
+
     /// ITER-012: builds the per-meeting recap notification ~8s after the meeting
-    /// stops. By that point StructuredGenerator + extractors have usually finished;
+    /// is processed. By that point StructuredGenerator + extractors have usually finished;
     /// even if title/overview are still empty we send a minimal recap with counts.
     /// Click → opens Library tab.
     private func fireMeetingRecap(for conversationId: UUID) {
@@ -1963,7 +1999,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             predicate: #Predicate { $0.conversationId == conversationId }
         )
         let hist = (try? ctx.fetch(histDesc)) ?? []
-        let transcript = hist.sorted { $0.createdAt < $1.createdAt }
+        let transcript = hist.sorted(by: HistoryItem.inRecordingOrder)
             .map { $0.text }.joined(separator: "\n\n")
 
         let durationSec: Double = {
@@ -2124,27 +2160,36 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
 
     private func stopMeetingRecording(reason: String) {
         NSLog("[MetaWhisp] ▶️ stopMeetingRecording reason=%@", reason)
+        // ITER-083 — this recording's own snapshot, frozen before anything is
+        // cleared and before the transcription task: the save reads only this.
+        // ITER-083 — what this stop was decides what may start next, and
+        // whether the meeting waits for a continuation before it is processed.
+        let outcome = StopOutcome.of(stopReason: reason)
+        let recording = currentRecording?.stopped(at: Date(), outcome: outcome)
         // A hand on the stop button ends this calendar event's auto-start for
         // good. Without it the retry restarted a meeting the owner had just
         // stopped, three times in four minutes while they were not on a call
         // (owner's report, 2026-09-22 18:31).
-        if let eventID = recordingCalendarEventID, CalendarAutoStartRetry.isRefusal(stopReason: reason) {
+        if let eventID = recording?.occurrenceKey, outcome == .refusal {
             MeetingAutoStartGate.shared.decline(eventID: eventID)
         }
         // …and the call's window in front does not start it again either: the
         // owner's Meet, stopped by hand at 19:22:52, 19:30:40 and 19:32:43 on
         // 2026-10-20, started itself 2.5 min, 26 s and 13 s later.
-        if CalendarAutoStartRetry.isRefusal(stopReason: reason) {
+        if outcome == .refusal {
             MeetingAutoStartGate.shared.stoppedByHand()
         }
+        // The app's own end: the window left in front (a tab open after the
+        // call) must not record itself again 14 s later (2026-11-04 13:16).
+        if outcome == .ended { MeetingAutoStartGate.shared.endedByApp() }
         // Reset auto-detect flag — any follow-up manual recording starts from a clean slate.
         // Without this a subsequent manual recording would be auto-stopped on the next call-end event.
         didAutoStartRecording = false
         autoRecordCountdownTask?.cancel()
         autoRecordCountdownTask = nil
-        // ITER-028.2 — clear calendar event baseline so the next recording
-        // captures its own. (Replaced the old `recordingFrontmostTitle` clear.)
-        recordingCalendarEventID = nil
+        // ITER-028.2 — clear the baseline so the next recording captures its
+        // own; the snapshot above goes to the save.
+        currentRecording = nil
 
         // Mark the active call session as user-declined, so its card is not
         // announced again; the gate's hold above is what keeps the recording
@@ -2155,11 +2200,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             NSLog("[CallDetect] stopMeetingRecording — marked session declined for %@",
                   currentCallSession?.name ?? "(none)")
         }
-        // Do NOT clear `currentMeetingCallContext` here — `persistMeetingTranscript`
-        // runs in the Task below and needs to read it for `conversationGrouper.assign`.
-        // It's overwritten on the next auto-start; manual starts begin with whatever
-        // was last set (which is harmless for the resume window check — that lookup
-        // is filtered to recent inProgress/completed conversations regardless).
         // Clear pending callEnded debounce + calendar hard stop — they're stale
         // now that recording is ending.
         callEndedDebounceTask?.cancel()
@@ -2190,11 +2230,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             leaseTracker.meetingTranscriptionFinished()
             return
         }
+        // ITER-083 — something was captured and goes to the save: this
+        // occurrence is recorded, and its retry (for a start that captured
+        // nothing) does not fire again.
+        // Counted on what was delivered: a mic outage pads its timeline with
+        // silence, which is no capture.
+        if let eventID = recording?.occurrenceKey, capture.deliveredSamples > 16000 {
+            MeetingAutoStartGate.shared.recordingSaved(eventID: eventID)
+        }
 
         reportMicOutageIfAny(capture)
 
+        let saveToken = UUID()
+        if let recording { meetingSavesInFlight[saveToken] = recording }
         Task {
             defer { self.leaseTracker.meetingTranscriptionFinished() }
+            defer { self.meetingSavesInFlight[saveToken] = nil }
             // ITER-054 — BYOK Deepgram (optional): one diarized pass on the
             // user's own key. Real speaker labels, 1× cost on THEIR Deepgram
             // account, no engine needed, no Pro-quota booking (never touches
@@ -2211,7 +2262,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
                     guard !trimmed.isEmpty else { throw DeepgramMeetingTranscriber.DGError.emptyTranscript }
                     let duration = Double(max(micSamples.count, sysSamples.count)) / 16000.0
                     self.persistMeetingTranscript(fullText: trimmed, duration: duration,
-                                                  elapsed: CFAbsoluteTimeGetCurrent() - dgStart)
+                                                  elapsed: CFAbsoluteTimeGetCurrent() - dgStart, recording: recording)
                     NSLog("[MetaWhisp] ✅ Meeting transcribed via Deepgram BYOK: %.0fs audio in %.1fs",
                           duration, CFAbsoluteTimeGetCurrent() - dgStart)
                     return
@@ -2239,7 +2290,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
                     }
                     let duration = Double(max(micSamples.count, sysSamples.count)) / 16000.0
                     self.persistMeetingTranscript(fullText: trimmed, duration: duration,
-                                                  elapsed: CFAbsoluteTimeGetCurrent() - gStart)
+                                                  elapsed: CFAbsoluteTimeGetCurrent() - gStart, recording: recording)
                     NSLog("[MetaWhisp] ✅ Meeting transcribed via Gemini BYOK: %.0fs audio in %.1fs",
                           duration, CFAbsoluteTimeGetCurrent() - gStart)
                     return
@@ -2335,7 +2386,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             // so a finished transcript sat in memory, unsaved, for the whole
             // of it, and a quit or a crash in that window took it (audit, P1).
             // Booking cannot fail the meeting; losing the meeting can.
-            self.persistMeetingTranscript(fullText: fullText, duration: duration, elapsed: elapsed)
+            self.persistMeetingTranscript(fullText: fullText, duration: duration, elapsed: elapsed,
+                                          recording: recording)
 
             // ITER-054 — book the meeting's quota ONCE, by wall-clock length,
             // for what the Pro proxy transcribed of it (chunks went out
@@ -2810,7 +2862,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     /// Persist the assembled transcript + downstream side effects (history,
     /// conversation grouping, recap notification, advice trigger). Identical
     /// for both the live-reuse and chunked-fallback paths.
-    private func persistMeetingTranscript(fullText: String, duration: Double, elapsed: TimeInterval) {
+    private func persistMeetingTranscript(fullText: String, duration: Double, elapsed: TimeInterval,
+                                          recording: RecordingContext?) {
         let result = TranscriptionResult(
             text: fullText,
             language: AppSettings.shared.transcriptionLanguage,
@@ -2857,21 +2910,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             // Assign to Conversation (C1.1) — grouper creates a dedicated completed
             // conversation for the meeting and fires scheduleOnClose (structured gen +
             // memory + task extractors) automatically.
-            // `currentMeetingCallContext` enables grouper's resume-window logic
-            // so a lid-bounce/wake-from-sleep doesn't fragment one call into N rows.
-            conversationGrouper.assign(historyItem: item, callContext: currentMeetingCallContext, meetingDurationSec: duration)
+            // The recording's own snapshot (ITER-083): its event and real times
+            // go onto the meeting, and its call name drives the grouper's
+            // resume window, so a lid-bounce/wake-from-sleep doesn't fragment one
+            // call into N rows.
+            if recording == nil {
+                NSLog("[MetaWhisp] ⚠️ meeting saved without its recording's snapshot — no event, times from its length")
+            }
+            conversationGrouper.assign(historyItem: item, recording: recording, meetingDurationSec: duration,
+                                      inFlight: self.meetingRecordingsInFlight.filter { $0 != recording })
             NSLog("[MetaWhisp] meeting transcript saved: %d chars, %.0fs audio, conversation=%@", fullText.count, duration, item.conversationId?.uuidString ?? "(none)")
 
-            // ITER-012: per-meeting recap notification. Wait long enough for
-            // StructuredGenerator (300ms delay → LLM ≈ 3-5s) and the per-transcript
-            // extractors to populate, then summarise into a notification.
-            if AppSettings.shared.meetingRecapNotifications,
-               let conversationId = item.conversationId {
-                Task { @MainActor [weak self] in
-                    try? await Task.sleep(for: .seconds(8))
-                    self?.fireMeetingRecap(for: conversationId)
-                }
-            }
+            // ITER-012 recap notification: fired by the meeting's processing
+            // (`ConversationGrouper.scheduleOnClose` → `scheduleMeetingRecap`),
+            // once, when the meeting is final — not per saved part (ITER-083).
 
         // AdviceService stays per-transcript (it's a real-time signal — user dictates,
         // advice surfaces immediately). Memory + Task extractors now run on conversation
@@ -3141,13 +3193,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
                 // attempt that captured nothing can be made again (the gate
                 // bounds how often, see CalendarAutoStartRetry).
                 let runningOccurrence = self.calendarReader.occurrenceInProgress()
-                let calendarEvent = startingOccurrence.map { (id: $0.eventID, title: $0.title) }
-                let calendarRunning = runningOccurrence.map { (id: $0.eventID, title: $0.title) }
+                // ITER-083 — the gate is told occurrences, not series: every day
+                // of a daily shares one series id.
+                let calendarEvent = startingOccurrence.map(\.gateEvent)
+                let calendarRunning = runningOccurrence.map(\.gateEvent)
                 // The gate only answers with an id from this tick's occurrences;
                 // a miss would start a recording with no calendar end check, so
                 // it is logged loudly.
                 func occurrence(_ eventID: String) -> CalendarOccurrence? {
-                    let found = [startingOccurrence, runningOccurrence].compactMap { $0 }.first { $0.eventID == eventID }
+                    let found = [startingOccurrence, runningOccurrence].compactMap { $0 }.first { $0.key == eventID }
                     if found == nil {
                         NSLog("[CallDetect] ❌ the gate chose eventID=%@, which is not among this tick's occurrences — the recording has no calendar end check",
                               eventID)
@@ -3157,6 +3211,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
 
                 let decision = MeetingAutoStartGate.shared.evaluate(
                     callName: callName,
+                    callApp: callName == nil ? nil : bundleID,
                     calendarEventNow: calendarEvent,
                     calendarEventInProgress: calendarRunning,
                     isRecording: self.meetingRecorder.isRecording || self.meetingRecorder.isStarting,
@@ -3172,14 +3227,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
                 // inside `BackToBackTransition.decide`.
                 if self.meetingRecorder.isRecording {
                     let bbDecision = BackToBackTransition.decide(
-                        currentRecordingEventID: self.recordingCalendarEventID,
+                        currentRecordingEventID: self.currentRecording?.occurrenceKey,
                         gateDecision: decision,
                         isManualMode: self.meetingRecorder.isManualMode
                     )
                     if case let .stopAndRestart(newEventID, newName) = bbDecision {
                         NSLog("[CallDetect] back-to-back via eventID: newID=%@ (title %d chars) != recordedID=%@ → stop A, immediately fire B countdown",
                               newEventID, newName.count,
-                              self.recordingCalendarEventID ?? "(nil)")
+                              self.currentRecording?.occurrenceKey ?? "(nil)")
                         self.stopMeetingRecording(reason: "back-to-back-eventID:\(newEventID)")
                         // CC-14 fix: gate already consumed its single
                         // `.calendarReady(B)` emission this tick, and won't
@@ -3239,7 +3294,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
                                                occurrence: CalendarOccurrence?) async {
         // One source for the event: the id the recording is tagged with is the
         // occurrence's, so the end check can never disagree with it.
-        let calendarEventID = occurrence?.eventID
+        let calendarEventID = occurrence?.key
         meetingCountdownInFlight = true
         defer { meetingCountdownInFlight = false }
 
@@ -3292,13 +3347,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         }
         NSLog("[CallDetect] ▶️ %@ auto-start (%@, eventID=%@)", name, source, calendarEventID ?? "(nil)")
         didAutoStartRecording = true
-        currentMeetingCallContext = name
-        // ITER-028.2 (2026-05-06) — store the calendar event ID so the
-        // back-to-back detector can compare against gate ticks. Stable
-        // across the meeting; replaces the flaky window-title heuristic.
-        // `nil` for fallback path (sustained-window) — those don't have a
-        // comparable calendar baseline; back-to-back simply skips them.
-        recordingCalendarEventID = calendarEventID
+        // ITER-083 — what this recording is, fixed now. A calendar start has
+        // its occurrence (the back-to-back detector compares its key, ITER-028.2);
+        // a fallback start has only the call's name.
+        currentRecording = occurrence.map { RecordingContext.calendar($0, startedAt: sessionStart) }
+            ?? RecordingContext.fallback(callName: name, startedAt: sessionStart)
         calendarEndNotifyAttempts = 0
         calendarEndOverrunCardShown = false
 
@@ -3310,7 +3363,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         if let occurrence {
             let durationSec = occurrence.end.timeIntervalSince(occurrence.start)
             if durationSec <= 6 * 3600 {
-                self.armCalendarEndStopTask(eventID: occurrence.eventID, eventEnd: occurrence.end,
+                self.armCalendarEndStopTask(eventID: occurrence.key, eventEnd: occurrence.end,
                                             sessionStart: sessionStart)
             } else {
                 NSLog("[CalendarEndStop] skip arming (title %d chars, duration %.0fs > 6h, treated as all-day)",
@@ -3365,8 +3418,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             // finds the mic had been down, the discard is still said out loud.
             let discarded = meetingRecorder.stop()
             reportMicOutageIfAny(discarded, discarded: true)
+            // ITER-083 — the window starts it again, but not forever.
+            MeetingAutoStartGate.shared.startCapturedNothing()
             didAutoStartRecording = false
-            currentMeetingCallContext = nil
+            currentRecording = nil
             calendarHardStopTask?.cancel()
             calendarHardStopTask = nil
         }
@@ -3394,7 +3449,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             guard let self, !Task.isCancelled else { return }
             // If recording stopped/changed underneath us, bail.
             guard self.meetingRecorder.isRecording,
-                  self.recordingCalendarEventID == eventID else {
+                  self.currentRecording?.occurrenceKey == eventID else {
                 NSLog("[CalendarEndStop] fire — but state moved on, skip")
                 return
             }
@@ -3429,7 +3484,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
                 notifyAttemptsSoFar: self.calendarEndNotifyAttempts,
                 recentAudioActive: recentAudioActive,
                 lastCallSeenAt: lastCallSeenAt,
-                overrunCardShown: self.calendarEndOverrunCardShown
+                overrunCardShown: self.calendarEndOverrunCardShown,
+                quietForSeconds: self.meetingRecorder.quietFor
             )
             NSLog("[CalendarEndStop] fire eventID=%@ rms=%.4f recentAudio=%@ callSeen=%@ attempts=%d cardShown=%@ decision=%@",
                   eventID, rms,

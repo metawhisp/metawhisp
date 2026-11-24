@@ -92,7 +92,8 @@ final class CalendarReaderService: ObservableObject {
         let predicate = store.predicateForEvents(withStart: start, end: end, calendars: nil)
         return store.events(matching: predicate).compactMap { ev in
             guard let occurrence = CalendarOccurrence(eventID: ev.eventIdentifier, title: ev.title,
-                                                      start: ev.startDate, end: ev.endDate) else { return nil }
+                                                      start: ev.startDate, end: ev.endDate,
+                                                      attendees: Self.attendeeNames(ev.attendees)) else { return nil }
             let declined = ev.attendees?.first(where: { $0.isCurrentUser })?.participantStatus == .declined
             return CalendarCandidate(occurrence: occurrence, isAllDay: ev.isAllDay,
                                      isCanceled: ev.status == .canceled, declinedByMe: declined)
@@ -128,6 +129,9 @@ final class CalendarReaderService: ObservableObject {
         guard let conv = (try? ctx.fetch(convDesc))?.first else { return }
         // Skip if already linked (idempotent — backfill won't re-clobber a known link).
         guard conv.calendarEventId == nil else { return }
+        // ITER-083 — a meeting whose recording carried its own context is
+        // never guessed: its event, or the absence of one, is what was observed.
+        guard Self.mayGuessEvent(for: conv) else { return }
 
         let convStart = conv.startedAt
         // Determine reasonable convEnd: last HistoryItem.createdAt for this conv,
@@ -194,11 +198,7 @@ final class CalendarReaderService: ObservableObject {
         conv.calendarEventTitle = matched.title
         conv.calendarEventStartDate = matched.startDate
         conv.calendarEventEndDate = matched.endDate
-        let attendeeNames = (matched.attendees ?? []).compactMap { participant -> String? in
-            // Display name preferred, fall back to URL last component (email).
-            if let name = participant.name, !name.isEmpty { return name }
-            return participant.url.absoluteString.split(separator: ":").last.map(String.init)
-        }
+        let attendeeNames = Self.attendeeNames(matched.attendees)
         conv.calendarAttendeesJSON = (try? String(data: JSONEncoder().encode(attendeeNames), encoding: .utf8)) ?? "[]"
         conv.updatedAt = Date()
         try? ctx.save()
@@ -240,6 +240,22 @@ final class CalendarReaderService: ObservableObject {
             try? await Task.sleep(for: .milliseconds(20))
         }
         NSLog("[Calendar] backfill links: ✅ %d / %d linked", linked, candidates.count)
+    }
+
+    /// ITER-083 — only a meeting saved before recordings carried their own
+    /// context may have its event guessed. Every guessing entry point (the
+    /// close, the summary, the launch backfill) passes through
+    /// `linkConversation`, which asks this.
+    static func mayGuessEvent(for conv: Conversation) -> Bool {
+        conv.recordingOrigin == nil
+    }
+
+    /// Display name preferred, falling back to the address's last component.
+    static func attendeeNames(_ participants: [EKParticipant]?) -> [String] {
+        (participants ?? []).compactMap { participant -> String? in
+            if let name = participant.name, !name.isEmpty { return name }
+            return participant.url.absoluteString.split(separator: ":").last.map(String.init)
+        }
     }
 
     // MARK: - Linker scoring helpers (pure)

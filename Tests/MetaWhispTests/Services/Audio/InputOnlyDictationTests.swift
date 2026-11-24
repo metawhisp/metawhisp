@@ -6,30 +6,37 @@ import XCTest
 /// macOS; a Bluetooth headset switches to its call profile the moment its microphone opens, which changes the
 /// output side, and the engine resets — the recorder followed, the new engine opened the microphone again, and the
 /// owner's three headset dictations of 2026-10-13 each ended with 0 samples after 3, 5 and 6 switches. A capture of
-/// the input alone is not touched by the output side. Meetings keep the engine.
+/// the input alone is not touched by the output side. Meetings record through it too since ITER-086.
 @MainActor
 final class InputOnlyDictationTests: XCTestCase {
 
     private var recorder: AudioRecordingService!
-    private var captures: [FakeCapture] = []
-    private var devices: [AudioDeviceID] = []
+    /// What the capture seam saw and made — it runs off the main thread (ITER-086), so it is shared under a lock.
+    private let capturesMade = SharedValue<[FakeCapture]>([])
+    private let devicesAsked = SharedValue<[AudioDeviceID]>([])
+    private let failure = SharedValue<Error?>(nil)
+    private let defaultDevice = SharedValue<AudioDeviceID>(4242)
+    private var captures: [FakeCapture] { capturesMade.value }
+    private var devices: [AudioDeviceID] { devicesAsked.value }
+    private var captureError: Error? { get { failure.value } set { failure.value = newValue } }
+    private var defaultInput: AudioDeviceID { get { defaultDevice.value } set { defaultDevice.value = newValue } }
     private var delays: [Double] = []
-    private var defaultInput: AudioDeviceID = 4242
     private var now = SuspendingClock.now
-    private var captureError: Error?
     /// Each follow waits on the next of these when a test queues them; otherwise it only yields.
     private var followHolds: [Hold] = []
 
     override func setUp() async throws {
-        recorder = AudioRecordingService(path: .inputOnly)
-        recorder.makeCapture = { [unowned self] device in
-            self.devices.append(device)
-            if let captureError = self.captureError { throw captureError }
+        recorder = AudioRecordingService()
+        let capturesMade = capturesMade, devicesAsked = devicesAsked, failure = failure, defaultDevice = defaultDevice
+        recorder.makeCapture = { device in
+            dispatchPrecondition(condition: .notOnQueue(.main))   // ITER-086: never on the main thread
+            devicesAsked.mutate { $0.append(device) }
+            if let error = failure.value { throw error }
             let capture = FakeCapture()
-            self.captures.append(capture)
+            capturesMade.mutate { $0.append(capture) }
             return capture
         }
-        recorder.defaultInputDevice = { [unowned self] in self.defaultInput }
+        recorder.defaultInputDevice = { defaultDevice.value }
         recorder.followDelay = { [unowned self] seconds in
             self.delays.append(seconds)
             if self.followHolds.isEmpty { await Task.yield() } else { await self.followHolds.removeFirst().wait() }
@@ -43,11 +50,169 @@ final class InputOnlyDictationTests: XCTestCase {
         recorder = nil
     }
 
-    // MARK: - Which path
+    // MARK: - An audio system that does not answer (ITER-086)
 
-    func testMeetingsKeepTheEngine() {
-        XCTAssertEqual(AudioRecordingService().path, .engine)
-        XCTAssertEqual(recorder.path, .inputOnly)
+    /// 2026-11-24: a call into Core Audio held the main thread eight minutes after a call ended. Now the bind runs off
+    /// the main thread: at the deadline the start hears "not responding", and the main actor ran all the while.
+    func testAMicrophoneThatDoesNotAnswerIsNotRespondingAndTheMainThreadRuns() async throws {
+        let release = hang()
+        var answer: Error?
+        try recorder.start(reported: { answer = $0 ?? CancellationError() })
+        var ticks = 0
+        let ticking = Task { @MainActor in while !Task.isCancelled { ticks += 1; try? await Task.sleep(for: .milliseconds(5)) } }
+        await until { answer != nil }
+        ticking.cancel()
+        XCTAssertEqual(answer as? AudioRecordingService.RecordingError, .notResponding)
+        XCTAssertGreaterThan(ticks, 3, "the main actor ran while the audio system hung")
+        XCTAssertFalse(recorder.isRecording)
+        XCTAssertFalse(recorder.binding)
+        release.signal()
+    }
+
+    /// While that call is out no new bind is tried: each would leave one more thread waiting on Core Audio.
+    func testNoNewBindWhileTheHungCallIsOut() async throws {
+        let release = hang()
+        var answer: Error?
+        try recorder.start(reported: { answer = $0 })
+        await until { answer != nil }
+        _ = recorder.stop()
+        XCTAssertThrowsError(try recorder.start()) {
+            XCTAssertEqual($0 as? AudioRecordingService.RecordingError, .notResponding)
+        }
+        XCTAssertEqual(devices.count, 1, "no second call into the audio system")
+        release.signal()
+    }
+
+    /// Its release: once the hung call returns, the microphone binds again — and what that call opened late is put away.
+    func testTheMicrophoneBindsAgainOnceTheHungCallReturns() async throws {
+        let release = hang()
+        var answer: Error?
+        try recorder.start(reported: { answer = $0 })
+        await until { answer != nil }
+        _ = recorder.stop()
+        release.signal()
+        await until { !self.recorder.waitingOnHungCall }
+        XCTAssertFalse(recorder.waitingOnHungCall)
+        await until { self.captures.first?.stopped == true }
+        XCTAssertTrue(captures.first?.stopped == true, "opened after it was given up, and stopped")
+        try await startBound()
+        XCTAssertEqual(captures.count, 2)
+    }
+
+    /// And its ceiling: a call hung for a minute no longer blocks — one more attempt goes through.
+    func testAHungCallOlderThanAMinuteLetsOneMoreAttemptThrough() async throws {
+        let release = hang()
+        var answer: Error?
+        try recorder.start(reported: { answer = $0 })
+        await until { answer != nil }
+        _ = recorder.stop()
+        now = now + .seconds(AudioRecordingService.wedgeRetryAfterSeconds + 1)
+        XCTAssertNoThrow(try recorder.start())
+        await until { self.devices.count == 2 }
+        XCTAssertEqual(devices.count, 2, "one more attempt")
+        release.signal()
+    }
+
+    /// The second call — the capture's start — hangs: "not responding" at the deadline, the capture is stopped once,
+    /// after its start returns (never while it runs), and nothing records (Kimi review: the start phase untested).
+    func testAStartThatHangsIsNotRespondingAndItsCaptureStopsOnceItReturns() async throws {
+        recorder.hardware = MicHardware(deadline: 0.1)
+        let release = DispatchSemaphore(value: 0)
+        let capturesMade = capturesMade
+        recorder.makeCapture = { _ in
+            let capture = FakeCapture()
+            capture.holdStart = release
+            capturesMade.mutate { $0.append(capture) }
+            return capture
+        }
+        var answer: Error?
+        try recorder.start(reported: { answer = $0 })
+        await until { answer != nil }
+        XCTAssertEqual(answer as? AudioRecordingService.RecordingError, .notResponding)
+        XCTAssertFalse(recorder.isRecording)
+        XCTAssertTrue(recorder.waitingOnHungCall)
+        XCTAssertEqual(captures.first?.stops, 0, "not stopped while its start still runs")
+        release.signal()
+        await until { self.captures.first?.stops == 1 }
+        XCTAssertEqual(captures.first?.stops, 1, "stopped once, after its start returned")
+        await until { !self.recorder.waitingOnHungCall }
+        XCTAssertFalse(recorder.waitingOnHungCall)
+    }
+
+    /// An older hung call returning releases only itself: the newer one still out keeps the gate (Kimi review, P1).
+    func testAnOlderHungCallReturningDoesNotReleaseANewerOne() async throws {
+        recorder.hardware = MicHardware(deadline: 0.1)
+        let first = DispatchSemaphore(value: 0), second = DispatchSemaphore(value: 0)
+        let calls = SharedValue(0)
+        recorder.makeCapture = { _ in
+            calls.mutate { $0 += 1 }
+            (calls.value == 1 ? first : second).wait()
+            return FakeCapture()
+        }
+        var answer: Error?
+        try recorder.start(reported: { answer = $0 })
+        await until { answer != nil }
+        _ = recorder.stop()
+        now = now + .seconds(AudioRecordingService.wedgeRetryAfterSeconds + 1)
+        answer = nil
+        try recorder.start(reported: { answer = $0 })   // the minute is up: one more attempt, which hangs too
+        await until { answer != nil }
+        _ = recorder.stop()
+        first.signal()                                  // the older call returns
+        await settle()
+        try? await Task.sleep(for: .milliseconds(50))
+        XCTAssertTrue(recorder.waitingOnHungCall, "the newer hung call still holds the gate")
+        XCTAssertThrowsError(try recorder.start())
+        second.signal()
+        await until { !self.recorder.waitingOnHungCall }
+        XCTAssertFalse(recorder.waitingOnHungCall)
+    }
+
+    /// Every capture the recorder starts is started off the main thread.
+    func testTheCaptureIsStartedOffTheMainThread() async throws {
+        try await startBound()
+        XCTAssertEqual(captures.first?.startedOnMain, false)
+    }
+
+    /// Makes the next capture hang until the returned semaphore is signalled; the deadline is short.
+    private func hang() -> DispatchSemaphore {
+        let release = DispatchSemaphore(value: 0)
+        let hung = SharedValue(true)
+        let capturesMade = capturesMade, devicesAsked = devicesAsked
+        recorder.hardware = MicHardware(deadline: 0.1)
+        recorder.makeCapture = { device in
+            devicesAsked.mutate { $0.append(device) }
+            if hung.value { hung.value = false; release.wait() }
+            let capture = FakeCapture()
+            capturesMade.mutate { $0.append(capture) }
+            return capture
+        }
+        return release
+    }
+
+    // MARK: - Under a meeting
+
+    /// ITER-086 — meetings record through the input-only capture too (2026-11-24: the engine's input+output device
+    /// held the main thread eight minutes after a call ended). The meeting's own recovery tick owns its microphone;
+    /// dictation's readiness loop — one rebind, then a message to the user — must not run beside it: two owners
+    /// rebinding one capture is the race the follow's flag exists to prevent.
+    func testUnderAMeetingTheDictationReadinessLoopDoesNotRun() async throws {
+        var checks = 0
+        recorder.readinessDelay = { _ in checks += 1; await Task.yield() }
+        recorder.beginTimeline()
+        try await startBound()
+        await settle()
+        XCTAssertEqual(checks, 0)
+        XCTAssertTrue(recorder.isRecording)
+    }
+
+    /// Its pair: a dictation still has the loop.
+    func testADictationStillHasTheReadinessLoop() async throws {
+        var checks = 0
+        recorder.readinessDelay = { _ in checks += 1; await Task.yield() }
+        try await startBound()
+        await until { checks > 0 }
+        XCTAssertGreaterThan(checks, 0)
     }
 
     // MARK: - Recording
@@ -55,7 +220,7 @@ final class InputOnlyDictationTests: XCTestCase {
     /// What the device delivers is what the dictation holds: converted to 16 kHz mono by the same handler the
     /// engine's tap uses.
     func testADictationRecordsWhatItsDeviceDelivers() async throws {
-        try recorder.start()
+        try await startBound()
         XCTAssertTrue(recorder.isRecording)
         XCTAssertEqual(devices, [4242], "the system default, as macOS reports it")
         captures[0].deliver(frames: 4_800, sampleTime: 0)
@@ -67,7 +232,7 @@ final class InputOnlyDictationTests: XCTestCase {
     }
 
     func testStopTurnsTheCaptureOff() async throws {
-        try recorder.start()
+        try await startBound()
         _ = recorder.stop()
         XCTAssertFalse(recorder.isRecording)
         await until { self.captures[0].stopped }
@@ -76,11 +241,28 @@ final class InputOnlyDictationTests: XCTestCase {
         XCTAssertEqual(captures.count, 1, "nothing binds after stop")
     }
 
-    /// A capture that cannot start is an error at start, as the engine's was.
-    func testACaptureThatCannotStartFailsTheStart() {
+    /// A capture that cannot be opened is the start's answer: reported after `start` returned (ITER-086).
+    func testACaptureThatCannotStartFailsTheStart() async throws {
         captureError = AudioRecordingService.RecordingError.noInputDevice
-        XCTAssertThrowsError(try recorder.start())
+        var answer: Error?
+        try recorder.start(reported: { answer = $0 })
+        await until { answer != nil }
+        XCTAssertEqual(answer as? AudioRecordingService.RecordingError, .noInputDevice)
         XCTAssertFalse(recorder.isRecording)
+        XCTAssertTrue(recorder.lastBindFoundNoDevice)
+    }
+
+    /// A push-to-talk tap: stopped before the microphone answered. The capture opened after the stop is put away, and
+    /// nothing records.
+    func testAStopBeforeTheBindAnsweredLeavesNothingRunning() async throws {
+        var heard = false
+        try recorder.start(reported: { _ in heard = true })
+        _ = recorder.stop()
+        await until { self.captures.first?.stopped == true }
+        XCTAssertTrue(captures.first?.stopped == true, "opened after the stop, and stopped")
+        await settle()
+        XCTAssertFalse(recorder.isRecording)
+        XCTAssertFalse(heard, "no report for a recording the caller stopped")
     }
 
     // MARK: - The device changes
@@ -88,7 +270,7 @@ final class InputOnlyDictationTests: XCTestCase {
     /// The headset disconnected, the default moved: the recording goes on, on whatever the input is now, and keeps
     /// what it had.
     func testADeviceThatGoesAwayIsFollowedKeepingTheAudio() async throws {
-        try recorder.start()
+        try await startBound()
         captures[0].deliver(frames: 4_800, sampleTime: 0)
         await until { self.recorder.currentSampleCount > 0 }
         let before = recorder.currentSampleCount
@@ -106,7 +288,7 @@ final class InputOnlyDictationTests: XCTestCase {
     /// The device's input format changed under the capture: bound again at once, on the same device — waiting
     /// would only lose speech.
     func testAFormatChangeIsFollowedAtOnce() async throws {
-        try recorder.start()
+        try await startBound()
         captures[0].emit(.formatChanged)
         await until { self.captures.count == 2 && self.recorder.isRecording }
         XCTAssertEqual(delays, [0])
@@ -114,7 +296,7 @@ final class InputOnlyDictationTests: XCTestCase {
     }
 
     func testAnEventFromARetiredCaptureChangesNothing() async throws {
-        try recorder.start()
+        try await startBound()
         captures[0].emit(.formatChanged)
         await until { self.captures.count == 2 && self.recorder.isRecording }
         captures[0].emit(.deviceGone)
@@ -125,23 +307,23 @@ final class InputOnlyDictationTests: XCTestCase {
 
     /// AirPods arriving mid-dictation become the default; a recording on the default follows it.
     func testTheDefaultMovingMidDictationIsFollowed() async throws {
-        try recorder.start()
+        try await startBound()
         defaultInput = 4343
-        recorder.defaultInputChanged()
+        recorder.defaultInputChanged(to: defaultInput)
         await until { self.captures.count == 2 && self.recorder.isRecording }
         XCTAssertEqual(devices, [4242, 4343])
     }
 
     func testTheDefaultMovingWhileIdleBindsNothing() async {
         defaultInput = 4343
-        recorder.defaultInputChanged()
+        recorder.defaultInputChanged(to: defaultInput)
         await settle()
         XCTAssertTrue(captures.isEmpty)
     }
 
     /// The input-only path keeps the follow's rule: the user stopping while it waits leaves the microphone off.
     func testAFollowPendingAtStopLeavesTheMicrophoneOff() async throws {
-        try recorder.start()
+        try await startBound()
         captures[0].emit(.deviceGone)
         _ = recorder.stop()
         await settle()
@@ -152,7 +334,7 @@ final class InputOnlyDictationTests: XCTestCase {
     // MARK: - Judged by the clock
 
     func testNoAudioByTheDeadlineBindsOnceMoreThenTellsTheUser() async throws {
-        try recorder.start()
+        try await startBound()
         await advance(by: 1.1)
         await until { self.captures.count == 2 }
         XCTAssertEqual(captures.count, 2, "one more bind")
@@ -165,7 +347,7 @@ final class InputOnlyDictationTests: XCTestCase {
     }
 
     func testADeliveringMicrophoneIsLeftAlone() async throws {
-        try recorder.start()
+        try await startBound()
         var sampleTime: Int64 = 0
         for _ in 0..<12 {
             captures[0].deliver(frames: 4_800, sampleTime: sampleTime)
@@ -178,7 +360,7 @@ final class InputOnlyDictationTests: XCTestCase {
     }
 
     func testAStreamThatStopsIsBoundAgain() async throws {
-        try recorder.start()
+        try await startBound()
         captures[0].deliver(frames: 4_800, sampleTime: 0)
         await until { self.recorder.producedByTap > 0 }
         await advance(by: 0.25)
@@ -191,7 +373,7 @@ final class InputOnlyDictationTests: XCTestCase {
     func testTheClockWaitsWhileAFollowIsInFlight() async throws {
         let held = Hold()
         recorder.followDelay = { _ in await held.wait() }
-        try recorder.start()
+        try await startBound()
         captures[0].emit(.deviceGone)
         await advance(by: 5)
         XCTAssertEqual(captures.count, 1, "the clock stands down")
@@ -201,7 +383,7 @@ final class InputOnlyDictationTests: XCTestCase {
     }
 
     func testTheClockStopsWithTheRecording() async throws {
-        try recorder.start()
+        try await startBound()
         _ = recorder.stop()
         await advance(by: 5)
         XCTAssertEqual(captures.count, 1)
@@ -211,7 +393,7 @@ final class InputOnlyDictationTests: XCTestCase {
     /// A follow that could not bind leaves the recording without a microphone; the clock binds once more, then
     /// tells the user.
     func testAFollowThatFailsIsBoundOnceMoreThenTheUserIsTold() async throws {
-        try recorder.start()
+        try await startBound()
         captureError = AudioRecordingService.RecordingError.noInputDevice
         captures[0].emit(.deviceGone)
         await until { self.devices.count == 2 && !self.recorder.followInFlight }
@@ -226,11 +408,11 @@ final class InputOnlyDictationTests: XCTestCase {
     func testAnOldFollowLeavesTheNextRecordingsFollowInFlight() async throws {
         let old = Hold(), current = Hold()
         followHolds = [old, current]
-        try recorder.start()
+        try await startBound()
         captures[0].emit(.deviceGone)
         _ = recorder.stop()
         XCTAssertFalse(recorder.followInFlight, "a stopped recorder has no follow in flight")
-        try recorder.start()
+        try await startBound()
         captures[1].emit(.deviceGone)
         XCTAssertTrue(recorder.followInFlight)
         old.release()
@@ -246,7 +428,7 @@ final class InputOnlyDictationTests: XCTestCase {
 
     /// The verdict is about now: audio arriving after it — the microphone came back — clears it.
     func testAudioAfterTheVerdictClearsIt() async throws {
-        try recorder.start()
+        try await startBound()
         await advance(by: 1.1)
         await until { self.captures.count == 2 }
         await advance(by: 1.1)
@@ -260,7 +442,7 @@ final class InputOnlyDictationTests: XCTestCase {
     /// A Bluetooth headset can open with a second of exact zeros while its link comes up; once its audio arrives,
     /// the dictation is fine and must not end with a dead-microphone message.
     func testAHeadsetThatOpensWithZerosIsNotCalledDead() async throws {
-        try recorder.start()
+        try await startBound()
         var sampleTime: Int64 = 0
         for _ in 0..<12 {
             captures[0].deliver(frames: 4_800, sampleTime: sampleTime, silent: true)
@@ -289,6 +471,13 @@ final class InputOnlyDictationTests: XCTestCase {
         await settle()
     }
 
+    /// Starts and waits for the bind, which answers off the main thread.
+    private func startBound() async throws {
+        try recorder.start()
+        await until { self.recorder.isRecording }
+        XCTAssertTrue(recorder.isRecording, "bound")
+    }
+
     private func settle() async {
         for _ in 0..<50 { await Task.yield() }
         try? await Task.sleep(for: .milliseconds(5))
@@ -307,15 +496,24 @@ final class FakeCapture: MicCapture, @unchecked Sendable {
     private var onEvent: (@MainActor (MicCaptureEvent) -> Void)?
     private let lock = NSLock()
     private var stoppedValue = false
+    private var stopsValue = 0
+    private var startedOnMainValue = false
+    /// A start that waits for this before it returns — an audio system that does not answer.
+    var holdStart: DispatchSemaphore?
 
     var stopped: Bool { lock.withLock { stoppedValue } }
+    var stops: Int { lock.withLock { stopsValue } }
+    /// ITER-086: the recorder starts a capture off the main thread.
+    var startedOnMain: Bool { lock.withLock { startedOnMainValue } }
 
     func start(handler: @escaping AVAudioNodeTapBlock, onEvent: @escaping @MainActor (MicCaptureEvent) -> Void) throws {
+        lock.withLock { startedOnMainValue = startedOnMainValue || Thread.isMainThread }
+        holdStart?.wait()
         self.handler = handler
         self.onEvent = onEvent
     }
 
-    func stop() { lock.withLock { stoppedValue = true } }
+    func stop() { lock.withLock { stoppedValue = true; stopsValue += 1 } }
 
     /// `frames` of a tone — or of exact zeros — stamped with the device's sample time.
     func deliver(frames: Int, sampleTime: Int64, silent: Bool = false) {

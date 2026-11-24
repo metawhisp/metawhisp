@@ -198,7 +198,9 @@ final class StructuredGenerator: ObservableObject {
             sortBy: [SortDescriptor(\.createdAt, order: .forward)]
         )
         let candidates = (try? ctx.fetch(desc)) ?? []
+        // ITER-083 — a meeting's parts in recording order.
         return candidates.filter { $0.conversationId == conversationId }
+            .sorted(by: HistoryItem.inRecordingOrder)
     }
 
     /// Backfill — retries generation for conversations stuck on placeholder fields.

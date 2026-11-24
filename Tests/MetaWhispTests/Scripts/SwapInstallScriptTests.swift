@@ -825,11 +825,71 @@ final class SwapInstallScriptTests: XCTestCase {
         XCTAssertEqual(marker(in: swapDir.appendingPathComponent("MetaWhisp.failed")), "new")
     }
 
-    /// N7: a new SwiftData schema version breaks --rollback across it; the
-    /// swap's schema check comes first (app-install.sh, known limits).
-    func testTheSchemaCountIsPinnedUntilTheSwapChecksSchemas() {
-        XCTAssertEqual(MetaWhispMigrationPlan.schemas.count, 9,
-                       "a new schema version breaks --rollback: add the swap's schema check first")
+    /// N7 (ITER-083): a new SwiftData schema version would break a rollback
+    /// across it. Every build declares the schema it reads.
+    func testTheBuildDeclaresTheSchemaItReads() throws {
+        let plist = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+            .appendingPathComponent("../../../Resources/Info.plist").standardized
+        let info = try XCTUnwrap(PropertyListSerialization.propertyList(from: Data(contentsOf: plist), format: nil) as? [String: Any])
+        XCTAssertEqual(info["MWSchemaVersion"] as? Int, MetaWhispMigrationPlan.schemas.count,
+                       "a new schema version raises MWSchemaVersion with it")
+    }
+
+    /// ITER-083: a build that reads a newer schema migrates the data when it
+    /// starts, and no automatic rollback could undo that: it is not swapped in.
+    func testASwapToABuildThatReadsANewerSchemaIsRefused() throws {
+        try makeBundle(at: app, marker: "old")                 // from before the key: reads 9
+        let new = try newBundle("new", schema: 10)
+        let run = try runLib("mw_swap_app \"$1\"", [new.path], env: ["FAKE_OPEN_STARTS": "1", "FAKE_OPEN_WRITES_LEASE": "1"])
+        XCTAssertNotEqual(run.status, 0)
+        XCTAssertTrue(run.output.contains("installed through a release"), run.output)
+        XCTAssertEqual(marker(in: app), "old", "nothing was touched")
+        XCTAssertTrue(log(openLog).isEmpty, "nothing was opened")
+    }
+
+    /// Release review: the other direction — a build that reads an older
+    /// schema than the installed one opens none of the data it has moved.
+    func testASwapToABuildThatReadsAnOlderSchemaIsRefused() throws {
+        try makeBundle(at: app, marker: "old", schema: 10)
+        let new = try newBundle("new")                         // from before the key: reads 9
+        let run = try runLib("mw_swap_app \"$1\"", [new.path], env: ["FAKE_OPEN_STARTS": "1", "FAKE_OPEN_WRITES_LEASE": "1"])
+        XCTAssertNotEqual(run.status, 0)
+        XCTAssertTrue(run.output.contains("reads data schema 9, and the installed one has moved your data to schema 10"),
+                      run.output)
+        XCTAssertEqual(marker(in: app), "old", "nothing was touched")
+        XCTAssertTrue(log(openLog).isEmpty, "nothing was opened")
+    }
+
+    /// The pair: a build of the same schema is still swapped in.
+    func testASwapOfTheSameSchemaStillWorks() throws {
+        try makeBundle(at: app, marker: "old", schema: 10)
+        let new = try newBundle("new", schema: 10)
+        let run = try runLib("mw_swap_app \"$1\"", [new.path], env: ["FAKE_OPEN_STARTS": "1", "FAKE_OPEN_WRITES_LEASE": "1"])
+        XCTAssertEqual(run.status, 0, run.output)
+        XCTAssertEqual(marker(in: app), "new")
+    }
+
+    /// ITER-083: --rollback refuses a kept build that reads an older schema
+    /// than the installed one, which has moved the data; nothing is touched.
+    func testARollbackToABuildThatReadsAnOlderSchemaIsRefused() throws {
+        try makeBundle(at: app, marker: "new", schema: 10)
+        try makeBundle(at: previous, marker: "old")
+        let run = try runLib("mw_restore_previous", env: ["FAKE_OPEN_STARTS": "1", "FAKE_OPEN_WRITES_LEASE": "1"])
+        XCTAssertNotEqual(run.status, 0)
+        XCTAssertTrue(run.output.contains("reads data schema 9, and the installed one has moved your data to schema 10"),
+                      run.output)
+        XCTAssertEqual(marker(in: app), "new")
+        XCTAssertEqual(marker(in: previous), "old", "the kept build is still kept")
+        XCTAssertTrue(log(openLog).isEmpty, "nothing was opened")
+    }
+
+    /// The pair: a kept build of the same schema is put back.
+    func testARollbackToABuildOfTheSameSchemaStillWorks() throws {
+        try makeBundle(at: app, marker: "new", schema: 10)
+        try makeBundle(at: previous, marker: "old", schema: 10)
+        let run = try runLib("mw_restore_previous", env: ["FAKE_OPEN_STARTS": "1", "FAKE_OPEN_WRITES_LEASE": "1"])
+        XCTAssertEqual(run.status, 0, run.output)
+        XCTAssertEqual(marker(in: app), "old")
     }
 
     /// N8: an interrupt while the installed app is still quitting opens it
@@ -1178,9 +1238,9 @@ final class SwapInstallScriptTests: XCTestCase {
     }
 
     /// A new build to install, outside the install folder.
-    private func newBundle(_ marker: String) throws -> URL {
+    private func newBundle(_ marker: String, schema: Int? = nil) throws -> URL {
         let url = temp.appendingPathComponent("\(marker)/MetaWhisp.app", isDirectory: true)
-        try makeBundle(at: url, marker: marker)
+        try makeBundle(at: url, marker: marker, schema: schema)
         return url
     }
 
@@ -1188,12 +1248,14 @@ final class SwapInstallScriptTests: XCTestCase {
     /// executable, a marker file, and optionally the designated requirement the
     /// fake `codesign` reports for it.
     private func makeBundle(at url: URL, marker: String, bundleID: String = "com.metawhisp.app",
-                            executable: String = "MetaWhisp", requirement: String? = nil) throws {
+                            executable: String = "MetaWhisp", requirement: String? = nil,
+                            schema: Int? = nil) throws {
         let contents = url.appendingPathComponent("Contents", isDirectory: true)
         try FileManager.default.createDirectory(at: contents.appendingPathComponent("MacOS", isDirectory: true),
                                                 withIntermediateDirectories: true)
         try marker.write(to: contents.appendingPathComponent("marker.txt"), atomically: true, encoding: .utf8)
-        let info: [String: Any] = ["CFBundleIdentifier": bundleID, "CFBundleExecutable": executable]
+        var info: [String: Any] = ["CFBundleIdentifier": bundleID, "CFBundleExecutable": executable]
+        if let schema { info["MWSchemaVersion"] = schema }
         let data = try PropertyListSerialization.data(fromPropertyList: info, format: .xml, options: 0)
         try data.write(to: contents.appendingPathComponent("Info.plist"))
         if let requirement {

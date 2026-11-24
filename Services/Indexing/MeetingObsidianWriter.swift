@@ -57,7 +57,7 @@ final class MeetingObsidianWriter {
         histDesc.fetchLimit = 500
         let allHist = (try? ctx.fetch(histDesc)) ?? []
         let transcripts = allHist.filter { $0.conversationId == conversationId }
-            .sorted { $0.createdAt < $1.createdAt }
+            .sorted(by: HistoryItem.inRecordingOrder)
         let fullTranscript = transcripts.map { $0.text }.joined(separator: "\n\n")
 
         // Filename.

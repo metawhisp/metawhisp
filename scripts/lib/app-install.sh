@@ -31,7 +31,12 @@
 # Known limits (reviews of 0.1, 2026-09-27):
 #   - A rollback puts back an older build. If a newer build already moved the
 #     app's data to a new SwiftData schema version, the older one can't open
-#     it: an iteration that adds a schema version adds a schema check here first.
+#     it. Each build declares the schema it reads (MWSchemaVersion in its
+#     Info.plist; every build without the key reads 9 or less). A build that
+#     reads a newer schema than the installed one is not swapped in — its
+#     automatic rollback could not undo the migration — and comes through a
+#     release (Sparkle or the DMG); --rollback refuses a kept build that reads
+#     less than the installed one (ITER-083).
 #   - Two swaps that find the same stale lock within milliseconds can both run.
 #   - The busy check and the quit are tens of milliseconds apart.
 #   - The swap folder and /Applications must be on one volume, so that one
@@ -68,6 +73,15 @@ MW_HEALTH_TIMEOUT="${MW_HEALTH_TIMEOUT:-20}"
 MW_LAUNCH_SETTLE="${MW_LAUNCH_SETTLE:-3}"
 MW_SELF_CHECK_TIMEOUT="${MW_SELF_CHECK_TIMEOUT:-60}"
 MW_SELF_CHECK_GRACE="${MW_SELF_CHECK_GRACE:-5}"
+
+# ITER-083 — the SwiftData schema version a bundle reads; builds from before
+# the key existed read 9.
+mw_bundle_schema() {
+    local v
+    v=$("$MW_PLISTBUDDY" -c "Print :MWSchemaVersion" "$1/Contents/Info.plist" 2>/dev/null) || v=""
+    case "$v" in ''|*[!0-9]*) echo 9 ;; *) echo "$v" ;; esac
+}
+
 
 # The state of a swap under way; mw_rollback, mw_recover_unarmed and mw_on_exit
 # read it.
@@ -434,6 +448,21 @@ mw_swap_app_locked() {
 
     mw_same_requirement "$new" "$target" || return 1
 
+    # ITER-083 — a build that reads a newer data schema migrates the data when
+    # it starts; an automatic rollback after that would put back an app that
+    # opens none of it. Such a build comes through a release (Sparkle or the
+    # DMG), not a swap.
+    if [ -e "$target" ] && [ "$(mw_bundle_schema "$new")" -gt "$(mw_bundle_schema "$target")" ]; then
+        mw_fail "The new $MW_APP_NAME moves your data to schema $(mw_bundle_schema "$new"), and the installed one reads schema $(mw_bundle_schema "$target"): a swap could not roll that back, so it is installed through a release (Sparkle or the DMG). Nothing was touched."
+        return 1
+    fi
+    # …and one that reads an older schema opens none of the data the
+    # installed one has moved (release review).
+    if [ -e "$target" ] && [ "$(mw_bundle_schema "$new")" -lt "$(mw_bundle_schema "$target")" ]; then
+        mw_fail "The new $MW_APP_NAME reads data schema $(mw_bundle_schema "$new"), and the installed one has moved your data to schema $(mw_bundle_schema "$target"): the new one would open none of it, so nothing was touched."
+        return 1
+    fi
+
     # The new build is copied beside the installed one and checked there
     # while the installed app still runs: nothing in the install folder
     # changes until one rename puts the checked copy in place. A copy left by
@@ -667,6 +696,10 @@ mw_restore_previous_locked() {
     fi
     if [ ! -d "$previous" ]; then
         mw_fail "There is no kept previous $MW_APP_NAME in $MW_SWAP_DIR, so nothing was touched."
+        return 1
+    fi
+    if [ -e "$(mw_target)" ] && [ "$(mw_bundle_schema "$previous")" -lt "$(mw_bundle_schema "$(mw_target)")" ]; then
+        mw_fail "The kept $MW_APP_NAME reads data schema $(mw_bundle_schema "$previous"), and the installed one has moved your data to schema $(mw_bundle_schema "$(mw_target)"): the kept one would open none of it, so nothing was touched."
         return 1
     fi
     rm -rf "$staged" 2>/dev/null || true

@@ -8,6 +8,33 @@
 
 ## ⏸ Parked — вернёмся позже
 
+- **Obsidian meeting notes (found in ITER-083, 2026-11-08).** Three gaps, none caused by ITER-083:
+  - A meeting's note is named after its title and its start's day. When the title changes (the summary's first
+    title, the user's "regenerate", a re-summarised stuck meeting), a second note is written beside the first. An
+    attempt in ITER-083 (`fix/meeting-identity-i4`, not merged) deleted older notes by the 8-character id suffix;
+    Codex refused it with 4 P1, which any fix must meet: delete only after the new note was written; prove identity
+    by the full id in the note's frontmatter and only for a regular file the exporter owns; no tree walk on the main
+    actor per meeting; follow symlinked day folders. Likely shape: a small index of each meeting's last exported path.
+  - The exporter reads tasks, memories and history with a global `fetchLimit = 500` and filters by conversation
+    afterwards (`ObsidianExporter.swift`, the meeting and conversation writers), so on a large store a note can miss
+    its own transcript, tasks and memories.
+  - Audio rescued at quit, when the engine was not ready, or when the store refused a save is written to the
+    Recovery folder, but nothing turns it back into a meeting.
+
+- **Meetings after the 1.4.6 release review (ITER-083, 2026-11-08).** Left open on purpose:
+  - A calendar recording the app ended while its event still runs is not retried; when the person brings the call
+    window back, the window starts a recording without the event, and it becomes a second meeting. Joining it needs
+    a decision: today only a calendar start may carry an event.
+  - The daily recap can run while a meeting is still settling (up to 10 min after the app ended it) and then misses
+    that meeting's tasks and memories; nothing refreshes it.
+  - The install script reads a bundle without `MWSchemaVersion` as schema 9; a kept build older than V9 would be
+    misread (none exists on the owner's Mac).
+  - The guard that every transcript reader orders parts checks file names only; the real-store migration test runs
+    only with a store path in the environment.
+  - A quit (⌘Q, Sparkle's Install and Relaunch) while a stopped meeting is still being transcribed loses it: the
+    samples left the recorder at stop, and `MeetingShutdown` rescues only a meeting still capturing. Needs the quit
+    to wait a bounded time for saves in flight and write their audio to Recovery on timeout. Not caused by ITER-083.
+
 - **Browser errands for Claude over MCP (owner, 2026-09-27: «отдельная фишка»).** Claude Desktop or Claude Code hands MetaWhisp a browser errand, for example "collect 10 competitors into a sheet" or "fill this form". MetaWhisp's own agent runs it in its own Chrome tab, and Jev decides each step.
   - The safety rules are the same as for an errand started by voice or MetaChat. The agent never touches passwords, codes or card numbers, and nothing irreversible happens without [Yes] on the errand card.
   - Today `metawhisp-mcp` (`Sources/MetaWhispMCP/main.swift`) is read-only. It serves a JSON snapshot of memories, tasks and conversations over stdio, and it cannot reach the running app. An errand tool needs a live channel from the MCP process to the app, because only the app holds the Pro license, the Chrome bridge and the errand card.

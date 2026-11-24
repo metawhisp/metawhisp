@@ -212,6 +212,9 @@ struct MicTickInput: Equatable {
     var followInFlight = false
     /// Since the meeting started.
     var elapsed: Double
+    /// Since the current bind was made; nil when no bind was made. A bind that has produced nothing is judged from
+    /// here, never from the meeting's start (2026-11-24: a follow rebind at minute sixty was opened 46 ms after it).
+    var sinceBind: Double? = nil
     var outageOpen: Bool
     var attemptDue: Bool
 }
@@ -232,6 +235,12 @@ enum MicRecoveryPolicy {
     /// No production for this long from a bind that produced before is a
     /// stall: a live tap delivers tens of buffers a second.
     static let stalledAfterSeconds: Double = 5
+
+    /// Whether the stop's tail fill — the clock's view of the end, placed as silence — is missing microphone time.
+    /// On a stream that is delivering it is drift and latency, and a healthy mic must not be called down by it
+    /// (independent review, v14). On any other it is the outage's last stretch: a meeting stopped the instant its mic
+    /// was rebound after an eight-minute freeze had its 485 s reported as 1.4 s (2026-11-24, 09:01).
+    static func tailCountsAsOutage(_ state: MicStreamState) -> Bool { state != .delivering }
     /// A healthy tick produces at least this much of the time it covers.
     /// Well under one — the tick and the audio clock are not aligned — and
     /// well over what a dripping device manages.
@@ -313,9 +322,13 @@ enum MicRecoveryPolicy {
         case .dead:       d.open = "digital silence"
         case .stalled:    d.open = "stream stalled"
         case .binding:
-            // Outside an outage this can only be the meeting's own start:
-            // rebinds happen inside one.
-            if i.elapsed >= stalledAfterSeconds { d.open = "no samples since start" }
+            // A bind that has produced nothing yet, outside an outage: the meeting's own start, or a device-change
+            // follow's rebind. Judged from the bind when there is one.
+            if let sinceBind = i.sinceBind {
+                if sinceBind >= stalledAfterSeconds { d.open = "no samples since the bind" }
+            } else if i.elapsed >= stalledAfterSeconds {
+                d.open = "no samples since start"
+            }
         case .delivering:
             // Producing, but too little for too long: a device that drips is
             // an outage the stall timer would never see.
@@ -350,9 +363,9 @@ struct MicRecoverySchedule {
     /// asked for by name — it is always there.
     static let attemptsBeforeBuiltIn = 3
 
-    /// `builtInAttempts` counts attempts that ACTUALLY bound the built-in
-    /// microphone, as reported by the engine after the bind — an attempt that
-    /// asked for it and did not get it is not evidence against it.
+    /// `builtInAttempts` counts attempts made on the built-in microphone: asked for by name, or made while the last
+    /// bind found no input device at all. The bind answers after the tick (ITER-086), so the attempt is counted by
+    /// what was asked, not by what bound.
     func delay(afterAttempts attempts: Int, builtInAttempts: Int = 0) -> TimeInterval {
         let cap = builtInAttempts >= Self.builtInAttemptsBeforeSlowing
             ? Self.maxDelayOnBuiltInSeconds : Self.maxDelaySeconds
@@ -372,7 +385,8 @@ struct MicOutageEpisode {
     /// When it went down, on the monotonic clock.
     let since: SuspendingClock.Instant
     private(set) var attempts = 0
-    /// Attempts that actually bound the built-in microphone.
+    /// Attempts made on the built-in microphone: asked for by name, or made with no input device found (see
+    /// `MicRecoverySchedule.delay`).
     private(set) var builtInAttempts = 0
     private(set) var nextAttemptAt: TimeInterval
     private let schedule: MicRecoverySchedule

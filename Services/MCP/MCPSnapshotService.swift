@@ -134,7 +134,8 @@ final class MCPSnapshotService {
 
         // Conversations: last 100 finished, NOT discarded, with title or overview.
         var convoDesc = FetchDescriptor<Conversation>(
-            predicate: #Predicate { !$0.discarded && $0.finishedAt != nil },
+            // ITER-083 — a settling meeting has an end but is not processed yet.
+            predicate: #Predicate { !$0.discarded && $0.finishedAt != nil && $0.status == "completed" },
             sortBy: [SortDescriptor(\.startedAt, order: .reverse)]
         )
         convoDesc.fetchLimit = 100

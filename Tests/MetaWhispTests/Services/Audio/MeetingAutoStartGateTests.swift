@@ -158,6 +158,28 @@ final class GateRespectsAManualStopTests: XCTestCase {
         }
     }
 
+    /// ITER-083 — every occurrence of a daily series shares one series id. Told
+    /// the series, the gate carried Monday's "no" into Tuesday's meeting, and a
+    /// daily with nothing else in the calendar between two days never fired
+    /// again ("one fire per boundary" saw the same id).
+    func testADailySeriesIsANewMeetingEachDay() {
+        let start = Date(timeIntervalSince1970: 1_790_330_400)
+        let monday = CalendarOccurrence(eventID: "daily", title: "Daily", start: start,
+                                        end: start.addingTimeInterval(900))!.gateEvent
+        let tuesday = CalendarOccurrence(eventID: "daily", title: "Daily", start: start.addingTimeInterval(86_400),
+                                         end: start.addingTimeInterval(87_300))!.gateEvent
+        let g = MeetingAutoStartGate()
+        _ = g.evaluate(callName: nil, calendarEventNow: monday, calendarEventInProgress: monday,
+                       isRecording: false, practiceHoldsCapture: false)
+        g.decline(eventID: monday.id)
+        let next = g.evaluate(callName: nil, calendarEventNow: tuesday, calendarEventInProgress: tuesday,
+                              isRecording: false, practiceHoldsCapture: false)
+        guard case .calendarReady(_, let id) = next else {
+            return XCTFail("the next day's daily must start, got \(next)")
+        }
+        XCTAssertEqual(id, tuesday.id)
+    }
+
     /// The cooldown is time spent NOT recording: counting through the meeting
     /// let a retry fire 98 ms after a stop (owner's log, 16:17:30).
     func testTheCooldownDoesNotRunWhileAMeetingIsRecording() {
@@ -356,8 +378,11 @@ final class ManualStopReachesTheGateTests: XCTestCase {
 
     func testAStopByHandHoldsTheCall() throws {
         let stop = try body(of: "private func stopMeetingRecording(reason: String)", in: appDelegate(), length: 1800)
-        XCTAssertTrue(stop.contains("if CalendarAutoStartRetry.isRefusal(stopReason: reason) {\n            MeetingAutoStartGate.shared.stoppedByHand()"),
+        XCTAssertTrue(stop.contains("let outcome = StopOutcome.of(stopReason: reason)"))
+        XCTAssertTrue(stop.contains("if outcome == .refusal {\n            MeetingAutoStartGate.shared.stoppedByHand()"),
                       "only a stop by hand holds the call, and every one does")
+        // The outcome itself: every hand stop is a refusal (`StopOutcomeTests`).
+        XCTAssertEqual(StopOutcome.of(stopReason: "card-tap-stop"), .refusal)
     }
 
     func testADismissedCountdownHoldsTheCall() throws {
@@ -434,5 +459,117 @@ final class GateWaitsForThePracticeTests: XCTestCase {
         XCTAssertNil(ticksUntilProposed(g, within: 5 * CalendarAutoStartRetry.cooldownTicks), "three attempts ran")
         g.refund(eventID: "an event never proposed")
         XCTAssertNil(ticksUntilProposed(g, within: 2 * CalendarAutoStartRetry.cooldownTicks))
+    }
+}
+
+/// ITER-083 I2 — what may start after the app itself ended a recording.
+/// A person's stop holds the call for 30 minutes out of front; the app's own
+/// end holds only the window still in front, so an abandoned tab does not
+/// record itself again, and the next call in the same app still starts.
+@MainActor
+final class GateAfterTheAppEndsARecordingTests: XCTestCase {
+
+    private func ticks(_ g: MeetingAutoStartGate, call: String?, app: String? = "app.dia", _ n: Int,
+                       recording: Bool = false,
+                       running: (id: String, title: String)? = nil) -> MeetingAutoStartGate.Decision {
+        var last: MeetingAutoStartGate.Decision = .idle
+        for _ in 0..<n {
+            last = g.evaluate(callName: call, callApp: call == nil ? nil : app, calendarEventNow: nil,
+                              calendarEventInProgress: running, isRecording: recording, practiceHoldsCapture: false)
+        }
+        return last
+    }
+
+    /// Whether any of `n` ticks proposes a start from the window.
+    private func fires(_ g: MeetingAutoStartGate, call: String, app: String = "app.dia", within n: Int) -> Bool {
+        (0..<n).contains { _ in
+            if case .fallbackReady = g.evaluate(callName: call, callApp: app, calendarEventNow: nil,
+                                               calendarEventInProgress: nil, isRecording: false,
+                                               practiceHoldsCapture: false) { return true }
+            return false
+        }
+    }
+
+    func testTheWindowLeftInFrontStartsNothing() {
+        let g = MeetingAutoStartGate()
+        _ = ticks(g, call: "Google Meet", 5, recording: true)
+        g.endedByApp()
+        XCTAssertFalse(fires(g, call: "Google Meet", within: 60), "the tab left open after the call")
+    }
+
+    /// The pair: released the moment it leaves front.
+    func testTheWindowStartsAgainOnceItHasLeftFront() {
+        let g = MeetingAutoStartGate()
+        _ = ticks(g, call: "Google Meet", 5, recording: true)
+        g.endedByApp()
+        _ = ticks(g, call: nil, 1)
+        XCTAssertTrue(fires(g, call: "Google Meet", within: 10), "the next call in the same app must start")
+    }
+
+    /// Codex, I2 review — "Google Meet" names every Meet window. The hold is
+    /// on the window that stayed in front, not the name: a Meet in another
+    /// browser, switched to directly, starts.
+    func testAnotherAppsCallOfTheSameNameStillStarts() {
+        let g = MeetingAutoStartGate()
+        _ = ticks(g, call: "Google Meet", app: "app.dia", 5, recording: true)
+        g.endedByApp()
+        XCTAssertTrue(fires(g, call: "Google Meet", app: "com.google.Chrome", within: 10),
+                      "a different window with the same call name must start")
+    }
+
+    /// The retry is for a start that captured nothing. A meeting that was
+    /// saved is over for its occurrence: on 2026-11-06 12:28 a correct silence
+    /// stop was followed by a retry 68 s later, which the owner stopped by hand.
+    func testASavedMeetingIsNotRetried() {
+        let g = MeetingAutoStartGate()
+        let ev = (id: "E@1", title: "Weekly")
+        _ = g.evaluate(callName: nil, calendarEventNow: ev, calendarEventInProgress: ev,
+                       isRecording: false, practiceHoldsCapture: false)
+        _ = ticks(g, call: nil, 30, recording: true, running: ev)
+        g.recordingSaved(eventID: ev.id)
+        for tick in 0..<(CalendarAutoStartRetry.cooldownTicks * 3) {
+            let d = g.evaluate(callName: nil, calendarEventNow: nil, calendarEventInProgress: ev,
+                               isRecording: false, practiceHoldsCapture: false)
+            XCTAssertEqual(d, .idle, "tick \(tick): a recorded occurrence is not started again")
+        }
+    }
+
+    /// A muted call in front: the first minute was silent, the start was
+    /// thrown away, and the window starts it again — at most three times while
+    /// it stays in front.
+    func testAMutedCallInFrontIsTriedAtMostThreeTimes() {
+        let g = MeetingAutoStartGate()
+        _ = ticks(g, call: "Zoom", 1, recording: true)
+        for _ in 0..<MeetingAutoStartGate.maxEmptyStarts { g.startCapturedNothing() }
+        XCTAssertFalse(fires(g, call: "Zoom", within: 60))
+    }
+
+    /// The pair: below the bound it still starts, and leaving front starts the count over.
+    func testAMutedCallStartsAgainBelowTheBoundOrAfterLeavingFront() {
+        let g = MeetingAutoStartGate()
+        _ = ticks(g, call: "Zoom", 1, recording: true)
+        g.startCapturedNothing()
+        g.startCapturedNothing()
+        XCTAssertTrue(fires(g, call: "Zoom", within: 10), "two empty starts: try again")
+        g.startCapturedNothing()
+        _ = ticks(g, call: nil, 1)
+        XCTAssertTrue(fires(g, call: "Zoom", within: 10), "out of front starts over")
+    }
+
+    /// Codex, I2 review — a calendar start's empty minute counts against the
+    /// call in front too, and the calendar retry respects the same bound: one
+    /// muted call in front gets three tries in all, not three per path.
+    func testTheCalendarRetryCountsTheSameEmptyStarts() {
+        let g = MeetingAutoStartGate()
+        let ev = (id: "E@1", title: "Weekly")
+        _ = g.evaluate(callName: "Zoom", callApp: "us.zoom", calendarEventNow: ev, calendarEventInProgress: ev,
+                       isRecording: false, practiceHoldsCapture: false)
+        _ = ticks(g, call: "Zoom", app: "us.zoom", 1, recording: true, running: ev)
+        for _ in 0..<MeetingAutoStartGate.maxEmptyStarts { g.startCapturedNothing() }
+        for tick in 0..<(CalendarAutoStartRetry.cooldownTicks * 2) {
+            let d = g.evaluate(callName: "Zoom", callApp: "us.zoom", calendarEventNow: nil, calendarEventInProgress: ev,
+                               isRecording: false, practiceHoldsCapture: false)
+            XCTAssertEqual(d, .idle, "tick \(tick)")
+        }
     }
 }

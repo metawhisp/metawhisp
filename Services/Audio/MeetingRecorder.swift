@@ -70,6 +70,19 @@ final class MeetingRecorder: ObservableObject {
     /// Owner installs this to receive auto-stop events. Closure runs on MainActor.
     var onAutoStop: ((AutoStopReason) -> Void)?
 
+    /// ITER-083 release review — told when a start ends without recording
+    /// (`startFailed`): the owner forgets the recording it set up for it.
+    var onStartAbandoned: (() -> Void)?
+
+    /// ITER-083 — asked once the silence window is reached: is the meeting
+    /// over? (`MeetingEndPolicy`, which knows whether a call is still seen.)
+    /// Arguments: how long it has been quiet, and the silence window. Not
+    /// installed → the window alone decides, as before.
+    var endsOnQuiet: ((_ quietFor: TimeInterval, _ window: TimeInterval) -> Bool)?
+    /// The quiet stretch the end rule already declined to end, so its log
+    /// line is written once per stretch, not every second.
+    private var quietHoldLogged = false
+
     /// ITER-026 v2 — fires when a manual recording crosses the 2h mark. The
     /// owner (AppDelegate) shows a non-blocking "still recording" card.
     /// Recording is NOT stopped — manual sessions keep going until the user
@@ -264,6 +277,15 @@ final class MeetingRecorder: ObservableObject {
         /// Which meeting this was. A finalization that finishes after the next
         /// meeting started must not write its outcome over the live one.
         let generation: Int
+        /// System samples the stream delivered, without the leading silence
+        /// placed to line a late channel up (ITER-083).
+        var systemDelivered: Int = 0
+
+        /// ITER-083 — what was really heard: the mic tap's own samples and
+        /// the system stream's, without the silence either timeline is padded
+        /// with (a mic outage, a late channel). The buffers' lengths include
+        /// that padding, so they cannot say whether anything was captured.
+        var deliveredSamples: Int { tapSamples + systemDelivered }
     }
 
     /// Record a finalization outcome for the meeting it belongs to. Ignored
@@ -415,8 +437,7 @@ final class MeetingRecorder: ObservableObject {
             do {
                 try self.systemAudio.start(leadingSilenceSeconds: 0, ask: ask)
             } catch {
-                self.lastError = "Meeting start failed: \(error.localizedDescription)"
-                self.isStarting = false
+                self.startFailed("Meeting start failed: \(error.localizedDescription)")
                 return
             }
 
@@ -444,10 +465,9 @@ final class MeetingRecorder: ObservableObject {
                 switch MeetingStartPolicy.start(micAvailable: self.mic.hasPermission,
                                                 systemAvailable: false) {
                 case .abandon:
-                    self.lastError = "No audio available — \(why)"
                     NSLog("[MeetingRecorder] ❌ start abandoned — no channel available (system: %@, mic permission: %@)",
                           why, self.mic.hasPermission ? "granted" : "denied")
-                    self.isStarting = false
+                    self.startFailed("No audio available — \(why)")
                     return
                 case .record:
                     self.systemAudioDown = true
@@ -501,6 +521,14 @@ final class MeetingRecorder: ObservableObject {
             }
         }
         return true
+    }
+
+    /// The start ended without recording: said on the popover's line, and to
+    /// the owner, which forgets the recording it set up (`onStartAbandoned`).
+    func startFailed(_ message: String) {
+        lastError = message
+        isStarting = false
+        onStartAbandoned?()
     }
 
     /// ITER-026 v2 — mark mic stream paused. User just triggered a dictation
@@ -605,9 +633,12 @@ final class MeetingRecorder: ObservableObject {
         // only; the stream's own state decides whether the mic was down.
         let accounting = mic.takeAccounting()
         if mic.producedByTapThisRecording > 0 { mic.fillSilence() }
-        _ = mic.takeAccounting()   // the tail's own seconds are not an outage
-        micOutageSeconds += accounting.silencePlacedSeconds + accounting.deadZeroSeconds
+        // The tail's own seconds are drift on a stream that is delivering, and missing microphone time on any other.
+        let tail = mic.takeAccounting()
+        let tailSeconds = MicRecoveryPolicy.tailCountsAsOutage(liveState) ? tail.silencePlacedSeconds : 0
+        micOutageSeconds += accounting.silencePlacedSeconds + accounting.deadZeroSeconds + tailSeconds
         let latchedLoss = accounting.silencePlacedSeconds >= 1 || accounting.deadTripped || micCarriedLoss
+            || tailSeconds >= 1
         micCarriedLoss = false
         // A tail of a second or more (past the jitter allowance) is missing
         // microphone time and is counted as an outage; a permission gone or
@@ -648,7 +679,7 @@ final class MeetingRecorder: ObservableObject {
         // for a mic that never produced.
         var micUnavailable: Capture.Unavailable? = nil
         if !mic.hasPermission { micUnavailable = .noPermission }
-        else if tapSamples == 0, AudioInputCatalog.availableInputDevices().isEmpty { micUnavailable = .noInputDevice }
+        else if tapSamples == 0, mic.lastBindFoundNoDevice { micUnavailable = .noInputDevice }   // the bind's own finding
         let micZeroRunSeconds = mic.longestZeroRunSecondsAfterAudio
         // Audio (not zeros) within the last seconds: a permission the system
         // reports as off while the stream still carries audio must not be
@@ -687,7 +718,8 @@ final class MeetingRecorder: ObservableObject {
                        micChannelWasSilent: micChannelWasSilent, outages: outages,
                        outageSeconds: outageSeconds, micDownAtStop: micDownAtStop,
                        micUnavailable: micUnavailable, micZeroRunSeconds: micZeroRunSeconds,
-                       micAudioAtStop: micAudioAtStop, generation: liveGeneration)
+                       micAudioAtStop: micAudioAtStop, generation: liveGeneration,
+                       systemDelivered: max(0, sysSamples.count - systemAudio.placedLeadingSilence))
     }
 
     // MARK: - Mic recovery
@@ -845,6 +877,9 @@ final class MeetingRecorder: ObservableObject {
                                  secondsSinceLastTick: rateWindow,
                                  followInFlight: mic.followInFlight,
                                  elapsed: now,
+                                 // While the bind answers too (Kimi review, P2): a follow's bind at minute sixty is
+                                 // judged from the bind, never from the meeting's start.
+                                 sinceBind: mic.bindStartedAt.map { (tickAt - $0).seconds },
                                  outageOpen: micOutage != nil,
                                  attemptDue: micOutage?.shouldAttempt(at: now) ?? false)
         let decision = MicRecoveryPolicy.decide(input, sampleRate: sampleRate)
@@ -881,39 +916,25 @@ final class MeetingRecorder: ObservableObject {
         if decision.attempt, var outage = micOutage {
             mic.preferBuiltInInput = outage.preferBuiltIn
             var boundBuiltIn = false
-            // A Mac with no input device at all: probing the device list is a
-            // property read; building an engine to learn the same thing is
-            // churn. The probe counts as a built-in attempt so the schedule
-            // slows to its 30 s cadence — and that cadence is the release:
-            // when a microphone appears, the next probe binds it.
-            if AudioInputCatalog.availableInputDevices().isEmpty {
+            // The bind reads the device list itself, off the main thread (ITER-086), and runs on after this tick: the
+            // attempt is paced by what is known now. A built-in microphone asked for, or a Mac whose last bind found no
+            // input device at all, slows the schedule to its 30 s cadence — and that cadence is the release: when a
+            // microphone appears, the next attempt binds it.
+            boundBuiltIn = outage.preferBuiltIn || mic.lastBindFoundNoDevice
+            if mic.lastBindFoundNoDevice, !micLoggedNoDevice {
+                micLoggedNoDevice = true
+                NSLog("[MeetingRecorder] mic recovery: no input device on this Mac — trying every %.0f s",
+                      MicRecoverySchedule.maxDelayOnBuiltInSeconds)
+            }
+            do {
+                guard try mic.restart() else { return }   // a bind still answering: this tick asks for nothing
+                NSLog("[MeetingRecorder] mic recovery attempt %d — binding (%@)", outage.attempts + 1,
+                      outage.preferBuiltIn ? "built-in asked for" : "default input")
+            } catch {
+                // A recorder still waiting on a call the audio system never answered tries nothing new.
                 boundBuiltIn = true
-                if !micLoggedNoDevice {
-                    micLoggedNoDevice = true
-                    NSLog("[MeetingRecorder] mic recovery: no input device on this Mac — probing every %.0f s",
-                          MicRecoverySchedule.maxDelayOnBuiltInSeconds)
-                }
-            } else {
-                do {
-                    try mic.restart()
-                    // A Mac with no built-in microphone (mini, Studio, Pro)
-                    // that was asked for it has nothing else to try either:
-                    // the schedule slows as if the built-in bind had failed
-                    // (independent review, v17).
-                    let builtInAskedForButAbsent = outage.preferBuiltIn && AudioInputCatalog.builtInMicrophone() == nil
-                    boundBuiltIn = mic.boundInputIsBuiltIn || builtInAskedForButAbsent
-                    NSLog("[MeetingRecorder] mic recovery attempt %d bound (%@)",
-                          outage.attempts + 1,
-                          mic.boundInputIsBuiltIn ? "built-in" : builtInAskedForButAbsent ? "default input; no built-in exists" : "default input")
-                } catch {
-                    // A throw — the device vanished between the probe and the
-                    // bind, a format the pipeline cannot take — slows the
-                    // schedule like a failed built-in bind: there is nothing
-                    // else to try.
-                    boundBuiltIn = true
-                    NSLog("[MeetingRecorder] mic recovery attempt %d failed: %@",
-                          outage.attempts + 1, error.localizedDescription)
-                }
+                NSLog("[MeetingRecorder] mic recovery attempt %d failed: %@",
+                      outage.attempts + 1, error.localizedDescription)
             }
             outage.noteAttempt(at: (SuspendingClock.now - clockStart).seconds, boundBuiltIn: boundBuiltIn)
             micOutage = outage
@@ -932,7 +953,7 @@ final class MeetingRecorder: ObservableObject {
     private func micOutageStart(for state: MicStreamState,
                                 clockStart: SuspendingClock.Instant) -> SuspendingClock.Instant {
         switch state {
-        case .binding: return clockStart
+        case .binding: return mic.bindStartedAt ?? clockStart   // a bind that never produced: lost since the bind
         case .dead:    return mic.lastAudioAt ?? mic.firstBufferAt ?? mic.lastProducedAt ?? SuspendingClock.now
         default:       return mic.lastProducedAt ?? clockStart
         }
@@ -984,6 +1005,7 @@ final class MeetingRecorder: ObservableObject {
     private func armSilenceGuard() {
         silenceCheckTimer?.cancel()
         silentSince = nil
+        quietHoldLogged = false
         let windowMinutes = max(0.5, AppSettings.shared.meetingSilenceStopMinutes)
         let windowSeconds = windowMinutes * 60
         // Use a periodic timer (cheap) over $audioLevel.debounce to keep
@@ -999,14 +1021,22 @@ final class MeetingRecorder: ObservableObject {
                         self.silentSince = Date()
                     } else if let start = self.silentSince,
                               Date().timeIntervalSince(start) >= windowSeconds {
-                        NSLog("[MeetingRecorder] 🤫 Silence (%.1fm < %.4f RMS) — auto-stop",
-                              windowMinutes, Self.silenceRMSThreshold)
-                        self.onAutoStop?(.silenceTimeout)
+                        let quiet = Date().timeIntervalSince(start)
+                        if self.endsOnQuiet?(quiet, windowSeconds) ?? true {
+                            NSLog("[MeetingRecorder] 🤫 Silence (%.1fm < %.4f RMS) — auto-stop",
+                                  quiet / 60, Self.silenceRMSThreshold)
+                            self.onAutoStop?(.silenceTimeout)
+                        } else if !self.quietHoldLogged {
+                            self.quietHoldLogged = true
+                            NSLog("[MeetingRecorder] 🤫 Silence (%.1fm) but a call is still seen — recording on",
+                                  quiet / 60)
+                        }
                     }
                 } else {
                     // Audio came back — reset the silence window.
                     if self.silentSince != nil {
                         self.silentSince = nil
+                        self.quietHoldLogged = false
                     }
                 }
             }
@@ -1023,6 +1053,7 @@ final class MeetingRecorder: ObservableObject {
         silenceCheckTimer?.cancel()
         silenceCheckTimer = nil
         silentSince = nil
+        quietHoldLogged = false
         manualHeartbeatTask?.cancel()
         manualHeartbeatTask = nil
     }
@@ -1044,6 +1075,11 @@ final class MeetingRecorder: ObservableObject {
     /// Caller convention: pass 30s for the calendar-end probe. Shorter
     /// windows risk the same instantaneous-sample problem; longer windows
     /// burn the user's grace budget.
+    /// How long both channels have been continuously quiet; 0 while sound is on.
+    var quietFor: TimeInterval {
+        silentSince.map { Date().timeIntervalSince($0) } ?? 0
+    }
+
     func hasBeenContinuouslyQuiet(forAtLeast seconds: TimeInterval) -> Bool {
         guard let start = silentSince else { return false }
         return Date().timeIntervalSince(start) >= seconds

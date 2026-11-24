@@ -66,7 +66,7 @@ final class StatusLineTests: XCTestCase {
 
     func testAModelReadyWhileTheMicrophoneIsMissingKeepsTheMicrophoneLine() {
         let (flow, microphone, _) = wired(.neverAsked)
-        flow.prepareMicrophoneAtLaunch(warmUp: {})
+        flow.prepareMicrophoneAtLaunch()
         XCTAssertEqual(flow.lastError, TranscriptionCoordinator.microphoneNotAllowedYet, "the microphone comes first")
 
         loadTheQuickModel(flow)
@@ -80,7 +80,7 @@ final class StatusLineTests: XCTestCase {
 
     func testWithTheMicrophoneAllowedTheLineFollowsTheModel() {
         let (flow, _, models) = wired(.granted)
-        flow.prepareMicrophoneAtLaunch(warmUp: {})
+        flow.prepareMicrophoneAtLaunch()
         XCTAssertEqual(flow.lastError, TranscriptionCoordinator.noModelLoaded, "nothing on disk")
 
         models.downloadProgress = 0.4     // the quick start begins — its progress while it runs (A4)
@@ -95,7 +95,7 @@ final class StatusLineTests: XCTestCase {
 
     func testADeniedMicrophoneOutranksAMissingModel() {
         let (flow, _, _) = wired(.denied)
-        flow.prepareMicrophoneAtLaunch(warmUp: {})
+        flow.prepareMicrophoneAtLaunch()
         XCTAssertEqual(flow.lastError, TranscriptionCoordinator.microphoneDeniedAtLaunch)
     }
 

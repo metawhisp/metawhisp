@@ -50,7 +50,8 @@ enum CalendarEndStopDecisionRules {
     static let defaultExtensionSeconds: TimeInterval = 300
     /// A call the detector saw this recently still counts as on. One re-check
     /// interval: a call seen at any point since the previous check counts.
-    static let defaultCallSeenWithinSeconds: TimeInterval = 300
+    /// The one end rule's own value, so the two stops cannot drift apart.
+    static let defaultCallSeenWithinSeconds: TimeInterval = MeetingEndPolicy.callSeenWithinSeconds
     static let defaultQuietRMSThreshold: Float = 0.005
     static let defaultMaxNotifyAttempts: Int = 3
 }
@@ -87,6 +88,9 @@ extension CalendarEndStopDecision {
     ///     with no capture in that minute, three of them while the detector
     ///     held «Google Meet (app=Dia)». One source answers "is a call on"
     ///     now: the detector's.
+    ///   - quietForSeconds: how long both channels have been continuously
+    ///     quiet (ITER-083); with a call seen, the hard stop needs
+    ///     `MeetingEndPolicy.quietCeilingSeconds` of it.
     ///   - overrunCardShown: whether this recording already pushed the
     ///     «still recording» card. Ask once: with audio on the recording
     ///     continues whether or not the card is tapped, so a second card asks
@@ -112,6 +116,7 @@ extension CalendarEndStopDecision {
         recentAudioActive: Bool = false,
         lastCallSeenAt: Date? = nil,
         overrunCardShown: Bool = false,
+        quietForSeconds: TimeInterval = 0,
         graceSeconds: TimeInterval = CalendarEndStopDecisionRules.defaultGraceSeconds,
         extensionSeconds: TimeInterval = CalendarEndStopDecisionRules.defaultExtensionSeconds,
         callSeenWithinSeconds: TimeInterval = CalendarEndStopDecisionRules.defaultCallSeenWithinSeconds,
@@ -132,8 +137,14 @@ extension CalendarEndStopDecision {
         // shouldn't get killed when there's clearly still conversation.
         // The safety valve fires ONLY when room is genuinely quiet.
         // (That probe was replaced by the call detector on 2026-10-20.)
+        // ITER-083 — the same end rule as the silence stop: a call still seen
+        // holds the recording until 15 quiet minutes (`MeetingEndPolicy`). The
+        // 2026-11-04 13:16 cut came 24 s after the detector had seen the call.
         if notifyAttemptsSoFar >= maxNotifyAttempts && !recentAudioActive {
-            return .hardStop
+            if !callSeen || quietForSeconds >= MeetingEndPolicy.quietCeilingSeconds {
+                return .hardStop
+            }
+            return .silentExtend(newDeadline: now.addingTimeInterval(extensionSeconds))
         }
         // Audio still active after 3 uncertain rounds — extend silently
         // rather than killing the recording; the recorder keeps capturing.

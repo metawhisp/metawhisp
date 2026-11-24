@@ -678,7 +678,9 @@ final class DailySummaryService: ObservableObject {
             sortBy: [SortDescriptor(\.createdAt, order: .forward)]
         )
         let idSet = Set(ids)
-        guard let items = try? ctx.fetch(desc) else { return [:] }
+        guard let fetched = try? ctx.fetch(desc) else { return [:] }
+        // ITER-083 — each conversation's parts in recording order.
+        let items = fetched.sorted(by: HistoryItem.inRecordingOrder)
         var bufs: [UUID: String] = [:]
         for item in items {
             guard let cid = item.conversationId, idSet.contains(cid) else { continue }

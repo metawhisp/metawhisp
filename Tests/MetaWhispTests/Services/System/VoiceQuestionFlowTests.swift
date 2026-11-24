@@ -355,7 +355,7 @@ final class VoiceQuestionFlowTests: XCTestCase {
 
     /// History on a store of its own, in memory: never the app's.
     private func history() throws -> HistoryService {
-        HistoryService(container: try ModelContainer(for: Schema(versionedSchema: MetaWhispSchemaV9.self),
+        HistoryService(container: try ModelContainer(for: Schema(versionedSchema: MetaWhispSchemaV10.self),
                                                      configurations: ModelConfiguration(isStoredInMemoryOnly: true)))
     }
 
@@ -792,10 +792,16 @@ final class FakeMicrophone: AudioSource {
         return hasPermission
     }
 
-    func start() throws {
+    /// The microphone's answer after `start` returned, as the real one opens off the main thread (ITER-086): nil, or
+    /// this error — a microphone that would not open.
+    var bindError: Error?
+
+    func start(reported: @escaping @MainActor (Error?) -> Void) throws {
         if let startError { throw startError }
         captureSession += 1
-        isRecording = true
+        isRecording = bindError == nil
+        let answer = bindError
+        Task { @MainActor in reported(answer) }
     }
 
     /// What `stop` hands back: one second, loud enough to pass the silence checks.

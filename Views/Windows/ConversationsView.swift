@@ -437,7 +437,7 @@ struct ConversationsView: View {
             sortBy: [SortDescriptor(\.createdAt, order: .forward)]
         )
         descriptor.fetchLimit = 50
-        return (try? modelContext.fetch(descriptor)) ?? []
+        return ((try? modelContext.fetch(descriptor)) ?? []).sorted(by: HistoryItem.inRecordingOrder)
     }
 
     private func fetchTasks(conversationId: UUID) -> [TaskItem] {

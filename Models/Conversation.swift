@@ -133,6 +133,15 @@ final class Conversation {
     /// app, instead of fragmenting one real meeting into 3-5 conversations.
     var callContext: String?
 
+    /// ITER-083 — `CalendarOccurrence.key` of the event the recording started
+    /// from: the series id is shared by every day of a daily, the key is not.
+    var calendarOccurrenceKey: String?
+    /// ITER-083 — how the meeting's recording started ("calendar", "fallback",
+    /// "manual"); written from the recording's own context at save. Set means
+    /// the calendar fields are what the recording observed, so nothing may
+    /// guess an event for it afterwards. nil for meetings saved before ITER-083.
+    var recordingOrigin: String?
+
     init(source: String, startedAt: Date = Date()) {
         self.id = UUID()
         self.startedAt = startedAt

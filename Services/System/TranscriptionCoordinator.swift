@@ -293,11 +293,9 @@ final class TranscriptionCoordinator: ObservableObject {
     }
 
     /// Launch reads the microphone permission and never asks for it (PRD P0 1):
-    /// the first record press does. The warm-up touches the input node, which
-    /// can bring the prompt up as well, so it runs only on a grant.
-    func prepareMicrophoneAtLaunch(warmUp: () -> Void) {
+    /// the first record press does. Nothing is opened at launch: every recording opens its own capture.
+    func prepareMicrophoneAtLaunch() {
         if recorder.hasPermission {
-            warmUp()
             NSLog("[MetaWhisp] Microphone: granted")
         } else if recorder.permissionUndetermined {
             NSLog("[MetaWhisp] Microphone: never asked — the first record press asks")
@@ -503,11 +501,12 @@ final class TranscriptionCoordinator: ObservableObject {
         do {
             // Remember which app had focus before recording (for auto-paste back)
             textInserter.savePreviousApp()
-            try recorder.start()
+            // The microphone opens off the main thread (ITER-086); what came of it arrives after `start` returned.
+            var session = 0
+            try recorder.start(reported: { [weak self] error in self?.microphoneAnswered(error, session: session) })
+            session = recorder.captureSession
             stage = .recording
             lastError = nil
-            soundService.playStart()
-            NSLog("[Coordinator] ✅ Recording started (translate=%@)", translateNext ? "YES" : "NO")
             return nil
         } catch {
             translateNext = false
@@ -518,6 +517,31 @@ final class TranscriptionCoordinator: ObservableObject {
             // don't leave a dangling pause window.
             AppDelegate.shared?.dictationDidEnd()
             return "Couldn't start the microphone: \(error.localizedDescription)"
+        }
+    }
+
+    /// How the microphone of recording `session` opened. The start sound plays when it runs, so the speaker starts
+    /// after it as before; one that could not be opened — or did not answer within `MicHardware.deadline` — ends the
+    /// recording the way a failed start always did, and a voice question with it.
+    private func microphoneAnswered(_ error: Error?, session: Int) {
+        guard stage == .recording, recorder.captureSession == session else { return }   // stopped or replaced meanwhile
+        guard let error else {
+            soundService.playStart()
+            NSLog("[Coordinator] ✅ Recording started (translate=%@)", translateNext ? "YES" : "NO")
+            return
+        }
+        _ = recorder.stop()
+        stage = .idle
+        translateNext = false
+        pttSession = nil
+        lastError = error.localizedDescription
+        NSLog("[Coordinator] ❌ Failed to start: %@", error.localizedDescription)
+        soundService.playError()
+        AppDelegate.shared?.dictationDidEnd()
+        if let question = voiceQuestion {
+            voiceQuestion = nil
+            voiceQuestionSession = nil
+            voiceQuestions.failed(question, "Couldn't start the microphone: \(error.localizedDescription)")
         }
     }
 

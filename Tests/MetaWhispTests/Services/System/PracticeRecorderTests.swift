@@ -26,7 +26,7 @@ final class PracticeRecorderTests: XCTestCase {
         AppSettings.shared.transcriptionEngine = "cloud"   // the spy engine stands in for the cloud one
         AppSettings.shared.autoSubmit = false
         recoverySaves = 0
-        let container = try ModelContainer(for: Schema(versionedSchema: MetaWhispSchemaV9.self),
+        let container = try ModelContainer(for: Schema(versionedSchema: MetaWhispSchemaV10.self),
                                            configurations: ModelConfiguration(isStoredInMemoryOnly: true))
         history = HistoryService(container: container)
         engine = PracticeEngine()
@@ -280,19 +280,14 @@ final class PracticeRecorderTests: XCTestCase {
 
     // MARK: - Dictation's capture
 
-    /// The practice records the way dictation records: the input alone (`InputOnlyCapture`), not the
-    /// AVAudioEngine a Bluetooth headset resets until it records nothing (59a8953 moved dictation, and the practice
-    /// stayed behind on the engine). The app makes the practice's microphone from dictation's own path, so the two
-    /// cannot part again.
-    func testThePracticeRecordsOnDictationsCapturePath() throws {
+    /// The practice records the way dictation and meetings record: the input alone (`InputOnlyCapture`). Since
+    /// ITER-086 the recorder has no other way to capture — no AVAudioEngine tap, which a Bluetooth headset reset until
+    /// it recorded nothing (59a8953) and a call ending held for eight minutes on the main thread (2026-11-24).
+    func testEveryRecordingCapturesTheInputAlone() throws {
+        let recorder = try OnboardingWindowTests.codeLines(of: "Services/Audio/AudioRecordingService.swift")
+        XCTAssertFalse(recorder.contains { $0.contains("installTap(") }, "no engine tap in the recorder")
         let app = try OnboardingWindowTests.codeLines(of: "App/AppDelegate.swift")
-        let dictation = try XCTUnwrap(app.first { $0.contains("let recorder = AudioRecordingService(") })
-        XCTAssertTrue(dictation.contains("path: .inputOnly"), "dictation records the input alone: \(dictation)")
-        let practices = app.filter { $0.contains("practiceMic = AudioRecordingService(") }
-        XCTAssertEqual(practices.count, 1, "\(practices)")
-        XCTAssertTrue(practices.allSatisfy { $0.contains("AudioRecordingService(path: recorder.path)") },
-                      "the practice takes dictation's path: \(practices)")
-        XCTAssertTrue(app.contains { $0.contains("microphone: practiceMic") }, "and the onboarding gets that one")
+        XCTAssertTrue(app.contains { $0.contains("microphone: practiceMic") }, "and the onboarding gets the practice's")
     }
 
     // MARK: - The source holds no way out

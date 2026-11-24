@@ -51,7 +51,7 @@ final class AppIdentityTests: XCTestCase {
     /// The backup of an unopenable store relies on `storeURL` naming that same
     /// file — for both apps, the Dev name's space included.
     func testTheStoreURLIsWhereSwiftDataKeepsTheNamedStore() throws {
-        let schema = Schema(versionedSchema: MetaWhispSchemaV9.self)
+        let schema = Schema(versionedSchema: MetaWhispSchemaV10.self)
         let appSupport = try XCTUnwrap(FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first)
         for bundle in ["com.metawhisp.app", "com.metawhisp.app.dev"] {
             let id = AppIdentity(bundleIdentifier: bundle)

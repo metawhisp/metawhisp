@@ -261,7 +261,7 @@ final class OnboardingRenderTests: XCTestCase {
     }
 
     private func container(_ flow: OnboardingFlow) -> some View {
-        OnboardingContainer(flow: flow, preparer: fixture.preparer, microphone: AudioRecordingService(path: .inputOnly))
+        OnboardingContainer(flow: flow, preparer: fixture.preparer, microphone: AudioRecordingService())
     }
 
     /// The window's whole frame, title bar and content, drawn at the screen's scale after `settle` seconds of run

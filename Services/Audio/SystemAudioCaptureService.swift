@@ -73,6 +73,12 @@ final class SystemAudioCaptureService: NSObject, ObservableObject, AudioSource {
     /// passes one.
     func start() throws { try start(leadingSilenceSeconds: 0) }
 
+    /// `AudioSource`'s start; this capture's own errors arrive on its stream (`lastError`), so the report is nil.
+    func start(reported: @escaping @MainActor (Error?) -> Void) throws {
+        try start()
+        Task { @MainActor in reported(nil) }
+    }
+
     func start(leadingSilenceSeconds: Double, ask: PermissionAsk? = nil) throws {
         guard !isRecording, !isStarting else { return }
         let lead = Self.leadingSilenceSamples(seconds: leadingSilenceSeconds, rate: targetSampleRate)

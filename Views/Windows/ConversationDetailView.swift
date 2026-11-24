@@ -105,7 +105,7 @@ struct ConversationDetailView: View {
                     .foregroundStyle(MW.textSecondary)
                     .frame(width: 32, height: 32)
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(conv.title ?? (conv.status == "inProgress" ? "In progress…" : "Untitled"))
+                    Text(conv.title ?? conv.calendarEventTitle ?? (conv.status == "inProgress" ? "In progress…" : "Untitled"))
                         .font(MW.monoTitle)
                         .foregroundStyle(MW.textPrimary)
                         .lineLimit(2)
@@ -636,7 +636,7 @@ struct ConversationDetailView: View {
             predicate: #Predicate { $0.conversationId == id },
             sortBy: [SortDescriptor(\.createdAt, order: .forward)]
         )
-        transcript = (try? modelContext.fetch(histDesc)) ?? []
+        transcript = ((try? modelContext.fetch(histDesc)) ?? []).sorted(by: HistoryItem.inRecordingOrder)
         let taskDesc = FetchDescriptor<TaskItem>(
             predicate: #Predicate { !$0.isDismissed && $0.conversationId == id },
             sortBy: [SortDescriptor(\.createdAt, order: .reverse)]

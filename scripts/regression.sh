@@ -67,6 +67,9 @@ CRITICAL_SUITES=(
     DeadMicDetectorTests
     MicRecoveryTests
     MicDeviceFollowTests
+    # the main thread never waits on the audio system (ITER-086, 2026-11-24 eight-minute freeze)
+    MicHardwareTests
+    InputOnlyDictationTests
     MeetingStartPolicyTests
     MeetingAutoStartGateTests
     CalendarAutoStartRetryTests

@@ -324,7 +324,7 @@ final class EmbeddingService: ObservableObject {
             sortBy: [SortDescriptor(\.createdAt, order: .forward)]
         )
         histDesc.fetchLimit = 50
-        let items = (try? ctx.fetch(histDesc)) ?? []
+        let items = ((try? ctx.fetch(histDesc)) ?? []).sorted(by: HistoryItem.inRecordingOrder)
         var transcript = items.map(\.displayText).joined(separator: " ")
         if transcript.count > transcriptCharLimit {
             transcript = String(transcript.prefix(transcriptCharLimit))
