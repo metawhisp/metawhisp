@@ -270,6 +270,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     let overlay = RecordingOverlayController()
     let mainWindow = MainWindowController()
     let onboardingWindow = OnboardingWindowController()
+    /// ITER-085 — the Target window: once after the update, and from Settings for a Free user's tap on Target.
+    let targetIntroWindow = TargetIntroWindowController()
+    /// Checks every 5 s, from launch, whether the Target window may show (`TargetIntro.gate`); gone once it showed or never will.
+    private var targetIntroCheck: Timer?
     var selectionTranslator: SelectionTranslator!
     var updaterController: SPUStandardUpdaterController!
     /// Sparkle's delegate: an install waits for a running errand (ITER-076 stage 9d, № 209). The controller holds
@@ -694,6 +698,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         if !AppSettings.shared.hasCompletedOnboarding {
             showOnboarding()
         }
+        scheduleTargetIntro()
+        watchForTargetAfterPayment()
 
         // Menu bar icon stays MW logo — no state changes needed
         // (the floating pill overlay shows state instead)
@@ -1033,6 +1039,60 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     }
 
     /// The onboarding — at the first launch, and from Settings' "Show onboarding".
+    /// ITER-085 — the Target window. From Settings (`turningOn`) it opens on the Pro screen and takes the keyboard;
+    /// after the update it takes nothing.
+    func showTargetIntro(turningOn: Bool, takesFocus: Bool) {
+        targetIntroWindow.show(turningOn: turningOn, takesFocus: takesFocus)
+    }
+
+    /// The Target window after the update: once, at the first idle moment from 10 s after launch, to someone who
+    /// finished the onboarding before Target existed. Busy — a recording, a meeting, an errand, the onboarding window —
+    /// only postpones it to the next check; the end of that busy spell releases it.
+    private func scheduleTargetIntro() {
+        let launched = Date()
+        targetIntroCheck = Timer.scheduledTimer(withTimeInterval: 5, repeats: true) { [weak self] _ in
+            Task { @MainActor in
+                guard let self else { return }
+                let gate = TargetIntro.gate(seen: TargetIntro.isSeen(), onboarded: AppSettings.shared.hasCompletedOnboarding,
+                                            sinceLaunch: Date().timeIntervalSince(launched),
+                                            busy: self.leaseTracker.current != .idle || self.onboardingWindow.window != nil)
+                switch gate {
+                case .wait:
+                    return
+                case .never:
+                    break
+                case .show:
+                    TargetIntro.markSeen()
+                    self.showTargetIntro(turningOn: false, takesFocus: false)
+                }
+                self.targetIntroCheck?.invalidate()
+                self.targetIntroCheck = nil
+            }
+        }
+    }
+
+    /// ITER-085 — a Free user who pressed Turn on Target and then paid: when Pro becomes active (now, or at a launch
+    /// that finds it cached), Target is turned on and a banner says so — within 7 days of the press, and once.
+    private func watchForTargetAfterPayment() {
+        LicenseService.shared.$isPro
+            .removeDuplicates()
+            .sink { isPro in
+                Task { @MainActor in
+                    guard let wantedAt = TargetIntro.wantedAt() else { return }
+                    if TargetIntro.turnsOn(wantedAt: wantedAt, isPro: isPro, now: Date()) {
+                        AppSettings.shared.processingMode = ProcessingMode.target.rawValue
+                        TargetIntro.forgetWanted()
+                        NSLog("[TargetIntro] Pro is active — Target turned on, as the user asked")
+                        NotificationService.shared.postSignInResult(
+                            title: "Target is on", body: "Pro is active. Your words now fit the place they go.")
+                    } else if !TargetIntro.turnsOn(wantedAt: wantedAt, isPro: true, now: Date()) {
+                        TargetIntro.forgetWanted()   // older than 7 days: never out of the blue
+                    }
+                }
+            }
+            .store(in: &cancellables)
+    }
+
     func showOnboarding() {
         onboardingWindow.dependencies = .init(
             coordinator: coordinator, modelPreparer: modelPreparer, captureArbiter: captureArbiter, microphone: practiceMic,

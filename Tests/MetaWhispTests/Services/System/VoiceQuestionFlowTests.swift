@@ -899,11 +899,12 @@ final class HeldEngine: TranscriptionEngine, @unchecked Sendable {
 @MainActor
 final class HeldProcessor: TranscriptPostProcessor {
     var needsProcessing: Bool { true }
+    var wantsPlace: Bool { false }
     private var waiting: CheckedContinuation<(String, Bool), Error>?
 
     var isWaiting: Bool { waiting != nil }
 
-    func process(_ text: String, translate: Bool) async throws -> (String, Bool) {
+    func process(_ text: String, translate: Bool, place: PlaceAddress?) async throws -> (String, Bool) {
         try await withCheckedThrowingContinuation { waiting = $0 }
     }
 

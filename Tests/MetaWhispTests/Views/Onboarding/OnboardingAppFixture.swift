@@ -12,7 +12,7 @@ final class OnboardingAppFixture {
     /// What the onboarding, the preparer and the Dashboard read or write in the app's own defaults.
     static let keys = ["hasCompletedOnboarding", "selectedModel", "transcriptionEngine", "pendingBestModelUpgrade",
                        "bestModelUpgradeAttempts", "transcriptionLanguage", "cloudTranscriptionProvider",
-                       OnboardingFlow.resumeKey]
+                       OnboardingFlow.resumeKey, TargetIntro.seenKey]
 
     /// The free space the preparer reads.
     final class FreeSpace { var bytes: Int64 = 50_000_000_000 }

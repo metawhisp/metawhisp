@@ -471,8 +471,12 @@ final class AppSettings: ObservableObject {
     /// first, so no install ever reads as "finished onboarding, no language".
     static func recordOnboardingCompleted(in defaults: UserDefaults = .standard) {
         let language = defaults.string(forKey: "transcriptionLanguage") ?? OnboardingLanguageDefault.freshInstallDefault
+        let firstTime = !defaults.bool(forKey: "hasCompletedOnboarding")
         defaults.set(language, forKey: "transcriptionLanguage")
         defaults.set(true, forKey: "hasCompletedOnboarding")
+        // ITER-085 — a new user meets Target on the onboarding's Pro screen: no window about it after. A replay from
+        // Settings changes nothing (E3), so an existing user still gets the window.
+        if firstTime { TargetIntro.markSeen(defaults) }
     }
 
     /// The active API key for the selected provider.

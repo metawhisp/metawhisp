@@ -212,6 +212,15 @@ final class OnboardingFlow: ObservableObject {
         complete(.getPro)
     }
 
+    /// The Pro screen's buttons: Back, Continue with Free, Get Pro, Sign in, and Continue as a Pro user.
+    var proActions: ProScreen.Actions {
+        ProScreen.Actions(back: { [weak self] in self?.back() },
+                          free: { [weak self] in self?.complete(.free) },
+                          getPro: { [weak self] in self?.getPro() },
+                          signIn: { [weak self] in self?.signIn() },
+                          continueAsPro: { [weak self] in self?.complete(.pro) })
+    }
+
     /// MetaWhisp is in front again — back from System Settings or a prompt.
     func appBecameActive() {
         refreshPermissions()

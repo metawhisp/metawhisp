@@ -135,6 +135,10 @@ final class TranscriptionCoordinator: ObservableObject {
 
     /// The Pro proxy: Pro with its licence key, read at each ask. Tests pass their own.
     private let proxyAvailable: @MainActor () -> Bool
+    /// ITER-085 — reads where a Target dictation goes: `PlaceReader` in the app, a test's own in tests.
+    private let readPlace: @MainActor (NSRunningApplication?) async -> PlaceAddress
+    /// The place read as the current recording started; Target only.
+    private var placeRead: Task<PlaceAddress, Never>?
 
     /// A4 — whether the engine in use is the cloud one: cloud is chosen AND can be used — the Pro proxy, or the
     /// user's own key for the chosen provider. Without either, the on-device engine transcribes, so dictation keeps
@@ -230,9 +234,11 @@ final class TranscriptionCoordinator: ObservableObject {
         proxyAvailable: @escaping @MainActor () -> Bool = {
             LicenseService.shared.isPro && LicenseService.shared.licenseKey != nil
         },
+        readPlace: @escaping @MainActor (NSRunningApplication?) async -> PlaceAddress = { await PlaceReader.read($0) },
         clock: @escaping () -> Date = Date.init
     ) {
         self.clock = clock
+        self.readPlace = readPlace
         self.proxyAvailable = proxyAvailable
         self.recorder = recorder
         self.whisperEngine = whisperEngine
@@ -418,7 +424,8 @@ final class TranscriptionCoordinator: ObservableObject {
         // Any answer still being read aloud stops before the microphone starts,
         // so the new question never records it (ITER-079 review).
         answerer?.stopSpeaking()
-        if let failure = startRecording() {
+        // A voice question goes to MetaChat: the window behind it is not read (ITER-085).
+        if let failure = startRecording(readsPlace: false) {
             NSLog("[Coordinator] 🎤 voice question could not record")
             voiceQuestions.failed(question, failure)
             return
@@ -446,6 +453,8 @@ final class TranscriptionCoordinator: ObservableObject {
     private func voiceQuestionClosed(_ question: UUID) {
         if voiceQuestion == question, stage == .recording {
             voiceQuestion = nil
+            placeRead?.cancel()
+            placeRead = nil
             _ = recorder.stop()
             AppDelegate.shared?.dictationDidEnd()
             translateNext = false
@@ -470,7 +479,9 @@ final class TranscriptionCoordinator: ObservableObject {
     /// Starts the microphone; on failure, says why in words for the voice
     /// island (a dictation shows `lastError`).
     @discardableResult
-    private func startRecording() -> String? {
+    private func startRecording(readsPlace: Bool = true) -> String? {
+        placeRead?.cancel()
+        placeRead = nil
         if let refusal = captureArbiter?.refusal {
             translateNext = false
             lastError = refusal
@@ -501,6 +512,12 @@ final class TranscriptionCoordinator: ObservableObject {
         do {
             // Remember which app had focus before recording (for auto-paste back)
             textInserter.savePreviousApp()
+            // ITER-085 — Target reads where the words go once, now, off the main thread; no other mode reads it.
+            if readsPlace, textProcessor?.wantsPlace == true {
+                let app = textInserter.previousApp
+                let read = readPlace
+                placeRead = Task { await read(app) }
+            }
             // The microphone opens off the main thread (ITER-086); what came of it arrives after `start` returned.
             var session = 0
             try recorder.start(reported: { [weak self] error in self?.microphoneAnswered(error, session: session) })
@@ -510,6 +527,8 @@ final class TranscriptionCoordinator: ObservableObject {
             return nil
         } catch {
             translateNext = false
+            placeRead?.cancel()
+            placeRead = nil
             lastError = error.localizedDescription
             NSLog("[Coordinator] ❌ Failed to start: %@", error.localizedDescription)
             soundService.playError()
@@ -559,6 +578,8 @@ final class TranscriptionCoordinator: ObservableObject {
         // Capture & reset translate flag immediately — prevents leaking to next recording
         let shouldTranslate = translateNext
         translateNext = false
+        let placeRead = self.placeRead
+        self.placeRead = nil
         stage = .processing
         soundService.playStop()
         NSLog("[Coordinator] Recording stopped, %d samples, translate=%@", samples.count, shouldTranslate ? "YES" : "NO")
@@ -614,7 +635,7 @@ final class TranscriptionCoordinator: ObservableObject {
 
         let transcription = Task {
             await transcribe(samples: samples, shouldTranslate: shouldTranslate, rms: rms, question: question,
-                             micLoss: micLoss)
+                             micLoss: micLoss, placeRead: placeRead)
             if let question, voiceTranscription?.question == question { voiceTranscription = nil }
         }
         if let question { voiceTranscription = (question, transcription) }
@@ -655,7 +676,7 @@ final class TranscriptionCoordinator: ObservableObject {
     }
 
     private func transcribe(samples: [Float], shouldTranslate: Bool, rms: Float, question: UUID?,
-                            micLoss: String? = nil) async {
+                            micLoss: String? = nil, placeRead: Task<PlaceAddress, Never>? = nil) async {
         func report(_ message: String) { lastError = Self.withMicLoss(micLoss, message) }
         // A question closed before its audio went out costs no transcription.
         if isClosed(question) {
@@ -801,7 +822,12 @@ final class TranscriptionCoordinator: ObservableObject {
             if let processor = textProcessor, needsProcess {
                 stage = .postProcessing
                 do {
-                    let (processed, wasProcessed) = try await processor.process(finalText, translate: shouldTranslate)
+                    // A voice question goes to MetaChat, whatever window was behind it (ITER-085).
+                    let place: PlaceAddress? = processor.wantsPlace
+                        ? (question != nil ? .metaChat : await placeRead?.value)
+                        : nil
+                    let (processed, wasProcessed) = try await processor.process(finalText, translate: shouldTranslate,
+                                                                                place: place)
                     if wasProcessed {
                         finalText = processed
                         NSLog("[Coordinator] ✅ Post-processed: %d chars", processed.count)

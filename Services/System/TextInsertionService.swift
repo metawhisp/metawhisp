@@ -119,7 +119,8 @@ private struct PasteboardSnapshot {
 final class TextInsertionService {
 
     /// The app that was active before MetaWhisp took focus (for restoring focus before paste).
-    private var previousApp: NSRunningApplication?
+    /// The app the paste goes to; Target reads its place from it (ITER-085).
+    private(set) var previousApp: NSRunningApplication?
 
     /// Remember the currently focused app (call before MetaWhisp steals focus).
     func savePreviousApp() {

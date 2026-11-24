@@ -74,7 +74,8 @@ final class ProScreenTests: XCTestCase {
         XCTAssertEqual(ProScreen.tiles.map(\.title), ["Cloud dictation", "AI polish", "Translation", "MetaChat",
                                                       "Meeting notes", "Day and week summaries", "Search by meaning",
                                                       "Natural voices"])
-        XCTAssertEqual(ProScreen.tiles.map(\.detail), ["5,400 minutes a month", "Clean, structured text",
+        // ITER-085: AI polish names Target with the other two.
+        XCTAssertEqual(ProScreen.tiles.map(\.detail), ["5,400 minutes a month", "Clean, Structured and Target",
                                                        "Into 11 languages, by voice or selection",
                                                        "Ask about your notes and meetings", "Summaries, tasks and memories",
                                                        "A short recap of each day and week",

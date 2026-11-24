@@ -170,7 +170,7 @@ struct MainWindowView: View {
     /// Decides the processing-mode label based on which paths the user
     /// has actually wired up. Source-of-truth flags:
     ///   - `coordinator.usesCloud`: the dictation engine in use — cloud only with Pro or a key (A4)
-    ///   - `processingMode == "structured"`: post-transcription LLM cleanup
+    ///   - `processingMode` Structured or Target (`usesModel`): post-transcription LLM cleanup
     ///   - `proactiveEnabled`: ITER-027 insight extraction (cloud LLM)
     ///   - `ttsCloudEnabled`: cloud TTS for voice replies
     ///   - `liveMeetingAdviceEnabled`: live coach during meetings
@@ -196,7 +196,8 @@ struct MainWindowView: View {
         let hasLocalLLM = settings.localLLMEnabled
             && !settings.localLLMActiveModelID.isEmpty
             && LocalLLMService.shared.isReady
-        let cloudFeatures = settings.processingMode == "structured"
+        let cloudFeatures = ProcessingMode(rawValue: settings.processingMode)?
+            .asksModel(isPro: license.isPro && license.licenseKey != nil) == true
             || settings.proactiveEnabled
             || settings.ttsCloudEnabled
             || settings.liveMeetingAdviceEnabled

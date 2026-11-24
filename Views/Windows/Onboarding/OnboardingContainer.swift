@@ -38,7 +38,7 @@ struct OnboardingContainer: View {
             if let practice = flow.practice {
                 TryVoiceScreen(flow: flow, practice: practice, preparer: preparer, microphone: microphone)
             }
-        case .pro: ProScreen(flow: flow, license: .shared)
+        case .pro: ProScreen(actions: flow.proActions, accountLinkShown: flow.accountLinkShown, license: .shared)
         }
     }
 }

@@ -128,13 +128,14 @@ final class EmbeddingService: ObservableObject {
         Task { @MainActor [weak self] in
             guard let self else { return }
             let texts = memories.map(\.content)
+            let ids = memories.map(\.persistentModelID)
+            let container = ctx.container
             do {
                 let vectors = try await self.embed(texts)
-                for (memory, vec) in zip(memories, vectors) {
-                    memory.embedding = Self.encode(vec)
+                let written = Self.saveEmbeddings(Array(zip(ids, vectors)), in: container) { (row: UserMemory, data) in
+                    row.embedding = data
                 }
-                try? ctx.save()
-                NSLog("[EmbeddingService] Embedded %d new memories", memories.count)
+                NSLog("[EmbeddingService] Embedded %d new memories", written)
             } catch {
                 NSLog("[EmbeddingService] Memory embed failed (graceful): %@", error.localizedDescription)
             }
@@ -147,13 +148,14 @@ final class EmbeddingService: ObservableObject {
         Task { @MainActor [weak self] in
             guard let self else { return }
             let texts = tasks.map(\.taskDescription)
+            let ids = tasks.map(\.persistentModelID)
+            let container = ctx.container
             do {
                 let vectors = try await self.embed(texts)
-                for (task, vec) in zip(tasks, vectors) {
-                    task.embedding = Self.encode(vec)
+                let written = Self.saveEmbeddings(Array(zip(ids, vectors)), in: container) { (row: TaskItem, data) in
+                    row.embedding = data
                 }
-                try? ctx.save()
-                NSLog("[EmbeddingService] Embedded %d new tasks", tasks.count)
+                NSLog("[EmbeddingService] Embedded %d new tasks", written)
             } catch {
                 NSLog("[EmbeddingService] Task embed failed (graceful): %@", error.localizedDescription)
             }
@@ -170,15 +172,15 @@ final class EmbeddingService: ObservableObject {
             // Codex review — embed() rejects >100 texts per call; a 200-row
             // backfill batch used to fail WHOLESALE and retry forever. Chunk.
             var embedded = 0
+            let container = ctx.container
             for chunk in stride(from: 0, to: observations.count, by: 100).map({ Array(observations[$0..<min($0 + 100, observations.count)]) }) {
                 let texts = chunk.map { "\($0.appName): \($0.contextSummary) — \($0.currentActivity)" }
+                let ids = chunk.map(\.persistentModelID)
                 do {
                     let vectors = try await self.embed(texts)
-                    for (obs, vec) in zip(chunk, vectors) {
-                        obs.embedding = Self.encode(vec)
+                    embedded += Self.saveEmbeddings(Array(zip(ids, vectors)), in: container) { (row: ScreenObservation, data) in
+                        row.embedding = data
                     }
-                    try? ctx.save()
-                    embedded += chunk.count
                 } catch {
                     NSLog("[EmbeddingService] Observation embed failed (graceful): %@", error.localizedDescription)
                     break   // provider down — the rest retries next launch/batch
@@ -207,23 +209,65 @@ final class EmbeddingService: ObservableObject {
     /// from `title + overview + transcript prefix` so the LLM sees both the structured
     /// summary and concrete content (names, projects, decisions). Fire-and-forget;
     /// nil embedding just means MetaChat falls back to recency for this conversation.
-    nonisolated func embedConversationInBackground(_ conversation: Conversation,
+    nonisolated func embedConversationInBackground(_ conversationId: UUID,
                                                     sourceText: String,
-                                                    in ctx: ModelContext) {
+                                                    in container: ModelContainer) {
         let text = sourceText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { return }
         Task { @MainActor [weak self] in
             guard let self else { return }
             do {
                 let vec = try await self.embedOne(text)
-                conversation.embedding = Self.encode(vec)
-                try? ctx.save()
-                NSLog("[EmbeddingService] Embedded conversation %@",
-                      conversation.id.uuidString.prefix(8) as CVarArg)
+                Self.saveEmbedding(vec, ofConversation: conversationId, in: container)
             } catch {
                 NSLog("[EmbeddingService] Conversation embed failed (graceful): %@",
                       error.localizedDescription)
             }
+        }
+    }
+
+    /// Writes a conversation's embedding on the conversation as it is now. A save writes back every field of the
+    /// object it saves, so the copy the generator read before the embedding call is never saved after it: on
+    /// 2026-11-24 that copy reopened meetings the settling sweep had just completed, which were then rewritten
+    /// every ten minutes for hours.
+    /// Writes each vector on its row as the store holds it now, in a context of its own, and saves once. The rows
+    /// were read before the embedding call; a save of those copies would write back every field of each, undoing
+    /// whatever changed during the call — a task ticked done, a meeting completed (2026-11-24). A row deleted
+    /// meanwhile gets none. Returns how many were written.
+    @discardableResult
+    static func saveEmbeddings<Row: PersistentModel>(_ vectors: [(PersistentIdentifier, [Float])],
+                                                    in container: ModelContainer,
+                                                    assign: (Row, Data) -> Void) -> Int {
+        let ctx = ModelContext(container)
+        var written = 0
+        for (id, vector) in vectors {
+            var desc = FetchDescriptor<Row>(predicate: #Predicate { $0.persistentModelID == id })
+            desc.fetchLimit = 1
+            guard let row = try? ctx.fetch(desc).first else { continue }
+            assign(row, encode(vector))
+            written += 1
+        }
+        guard written > 0 else { return 0 }
+        do {
+            try ctx.save()
+            return written
+        } catch {
+            NSLog("[EmbeddingService] %d embeddings not saved: %@", written, error.localizedDescription)
+            return 0
+        }
+    }
+
+    static func saveEmbedding(_ vector: [Float], ofConversation id: UUID, in container: ModelContainer) {
+        let ctx = ModelContext(container)
+        var desc = FetchDescriptor<Conversation>(predicate: #Predicate { $0.id == id })
+        desc.fetchLimit = 1
+        guard let conversation = try? ctx.fetch(desc).first else { return }
+        conversation.embedding = encode(vector)
+        do {
+            try ctx.save()
+            NSLog("[EmbeddingService] Embedded conversation %@", id.uuidString.prefix(8) as CVarArg)
+        } catch {
+            NSLog("[EmbeddingService] Conversation embedding not saved: %@", error.localizedDescription)
         }
     }
 
@@ -289,11 +333,11 @@ final class EmbeddingService: ObservableObject {
               memories.count, tasks.count, convSources.count)
 
         do {
-            try await backfill(items: memories, text: { $0.content }, assign: { $0.embedding = $1 }, ctx: ctx, kind: "memories")
-            try await backfill(items: tasks, text: { $0.taskDescription }, assign: { $0.embedding = $1 }, ctx: ctx, kind: "tasks")
+            try await backfill(items: memories, text: { $0.content }, assign: { $0.embedding = $1 }, container: container, kind: "memories")
+            try await backfill(items: tasks, text: { $0.taskDescription }, assign: { $0.embedding = $1 }, container: container, kind: "tasks")
             // Conversations need a paired (item, text) tuple because the source text
             // isn't a single property — it's title + overview + transcript prefix.
-            try await backfillPaired(pairs: convSources, assign: { $0.embedding = $1 }, ctx: ctx, kind: "conversations")
+            try await backfillPaired(pairs: convSources, assign: { $0.embedding = $1 }, container: container, kind: "conversations")
             NSLog("[EmbeddingBackfill] ✅ Embedded %d memories, %d tasks, %d conversations",
                   memories.count, tasks.count, convSources.count)
         } catch {
@@ -333,21 +377,19 @@ final class EmbeddingService: ObservableObject {
         return parts.joined(separator: " · ")
     }
 
-    private func backfill<Item: AnyObject>(items: [Item],
-                                           text: (Item) -> String,
-                                           assign: (Item, Data) -> Void,
-                                           ctx: ModelContext,
-                                           kind: String) async throws {
+    private func backfill<Item: PersistentModel>(items: [Item],
+                                                 text: (Item) -> String,
+                                                 assign: (Item, Data) -> Void,
+                                                 container: ModelContainer,
+                                                 kind: String) async throws {
         let batchSize = 50
         for batchStart in stride(from: 0, to: items.count, by: batchSize) {
             let batchEnd = min(batchStart + batchSize, items.count)
             let batch = Array(items[batchStart..<batchEnd])
             let texts = batch.map(text)
+            let ids = batch.map(\.persistentModelID)
             let vectors = try await embed(texts)
-            for (item, vec) in zip(batch, vectors) {
-                assign(item, Self.encode(vec))
-            }
-            try? ctx.save()
+            Self.saveEmbeddings(Array(zip(ids, vectors)), in: container, assign: assign)
             NSLog("[EmbeddingBackfill] %@ batch %d/%d done", kind, batchEnd, items.count)
             // Tiny pause so backfill doesn't starve other tasks.
             try? await Task.sleep(for: .milliseconds(200))
@@ -356,20 +398,18 @@ final class EmbeddingService: ObservableObject {
 
     /// Same as `backfill` but the source text is precomputed per item (e.g. when text
     /// is built from multiple fields + DB lookups, not a single property accessor).
-    private func backfillPaired<Item: AnyObject>(pairs: [(Item, String)],
-                                                  assign: (Item, Data) -> Void,
-                                                  ctx: ModelContext,
-                                                  kind: String) async throws {
+    private func backfillPaired<Item: PersistentModel>(pairs: [(Item, String)],
+                                                       assign: (Item, Data) -> Void,
+                                                       container: ModelContainer,
+                                                       kind: String) async throws {
         let batchSize = 50
         for batchStart in stride(from: 0, to: pairs.count, by: batchSize) {
             let batchEnd = min(batchStart + batchSize, pairs.count)
             let batch = Array(pairs[batchStart..<batchEnd])
             let texts = batch.map(\.1)
+            let ids = batch.map(\.0.persistentModelID)
             let vectors = try await embed(texts)
-            for ((item, _), vec) in zip(batch, vectors) {
-                assign(item, Self.encode(vec))
-            }
-            try? ctx.save()
+            Self.saveEmbeddings(Array(zip(ids, vectors)), in: container, assign: assign)
             NSLog("[EmbeddingBackfill] %@ batch %d/%d done", kind, batchEnd, pairs.count)
             try? await Task.sleep(for: .milliseconds(200))
         }

@@ -53,6 +53,12 @@ final class ConversationGrouper {
     private var failedRewrites: [UUID: Int] = [:]
     private var rewriteNotBefore: [UUID: Date] = [:]
     private var rewriteWaits: [UUID: Int] = [:]
+    /// Meetings left "in progress" that this launch has rewritten and completed. A rewrite is a paid model call, and
+    /// "once" was kept only by the store: on 2026-11-24 the store lost each completion and the same 65 meetings were
+    /// rewritten every ten minutes for hours (1,533 calls in 4.5 h). One that is in progress again is reported and
+    /// completed again with the summary it has — no model call — until the next launch.
+    private var rewrittenThisLaunch: Set<UUID> = []
+    private var reportedReopened: Set<UUID> = []
     static let maxRewriteAttempts = 3
     static let maxRewriteWaitSeconds: TimeInterval = 1800
     /// The ceiling of the wait (release review): this many tries that could
@@ -225,6 +231,14 @@ final class ConversationGrouper {
                 continue
             }
             let wasStuck = conv.status == "inProgress"
+            if wasStuck, rewrittenThisLaunch.contains(conv.id) {
+                if reportedReopened.insert(conv.id).inserted {
+                    NSLog("[ConversationGrouper] ⚠️ meeting %@ is in progress again after its rewrite completed it — completed again with the summary it has",
+                          conv.id.uuidString.prefix(8) as CVarArg)
+                }
+                finishSettling(conv.id)
+                continue
+            }
             if wasStuck, let notBefore = rewriteNotBefore[conv.id], now < notBefore { continue }
             let lastPart = wasStuck ? conv.updatedAt : (conv.finishedAt ?? conv.updatedAt)
             guard now.timeIntervalSince(lastPart) >= Self.meetingJoinWindowSeconds else { continue }
@@ -253,7 +267,10 @@ final class ConversationGrouper {
               ["settling", "processing", "inProgress"].contains(conv.status) else { return }
         // Its last part's time: the summary just rewritten moved `updatedAt`
         // to now (release review).
-        if conv.status == "inProgress" { conv.finishedAt = lastPart(of: id, in: ctx) ?? conv.updatedAt }
+        if conv.status == "inProgress" {
+            conv.finishedAt = lastPart(of: id, in: ctx) ?? conv.updatedAt
+            rewrittenThisLaunch.insert(id)
+        }
         conv.status = "completed"
         do {
             try ctx.save()

@@ -655,7 +655,7 @@ struct MainSettingsView: View {
             WrappingHStack(items: languages, spacing: MW.sp4) { lang in
                 Text(lang.0)
                     .font(MW.monoSm)
-                    .foregroundStyle(settings.transcriptionLanguage == lang.1 ? Color.black : MW.textSecondary)
+                    .foregroundStyle(settings.transcriptionLanguage == lang.1 ? MW.textPrimary : MW.textSecondary)
                     .padding(.horizontal, MW.sp8)
                     .padding(.vertical, MW.sp4)
                     .background(settings.transcriptionLanguage == lang.1 ? MW.elevated : .clear)
@@ -679,6 +679,12 @@ struct MainSettingsView: View {
                     Text(mode.displayName.uppercased())
                         .font(MW.mono)
                         .foregroundStyle(settings.processingMode == mode.rawValue ? MW.textPrimary : MW.textSecondary)
+                    if mode.needsPro && !license.isPro {
+                        Text("PRO").font(.system(size: 8, weight: .bold, design: .monospaced))
+                            .foregroundStyle(Color(red: 0.78, green: 0.71, blue: 0.55))
+                            .padding(.horizontal, 5).padding(.vertical, 2)
+                            .background(Color(red: 0.78, green: 0.71, blue: 0.55).opacity(0.1))
+                    }
                     Spacer()
                     if settings.processingMode == mode.rawValue {
                         Text("\u{25CF}").font(.system(size: 8)).foregroundStyle(MW.textPrimary)
@@ -694,7 +700,7 @@ struct MainSettingsView: View {
                     lineWidth: MW.hairline
                 ))
                 .contentShape(Rectangle())
-                .onTapGesture { settings.processingMode = mode.rawValue }
+                .onTapGesture { pickProcessingMode(mode) }
             }
 
             let desc = (ProcessingMode(rawValue: settings.processingMode) ?? .raw).description
@@ -703,6 +709,16 @@ struct MainSettingsView: View {
         .padding(MW.sp16)
         .frame(maxWidth: .infinity, alignment: .topLeading)
         .mwCard(radius: MW.rMedium, elevation: .raised)
+    }
+
+    /// A tap on a mode. Target without Pro opens the Target window on its Pro screen instead (ITER-085); any choice
+    /// here ends a "turn Target on once Pro is active" press.
+    private func pickProcessingMode(_ mode: ProcessingMode) {
+        TargetIntro.forgetWanted()
+        switch ProcessingModePick.tap(mode, isPro: license.isPro) {
+        case .select: settings.processingMode = mode.rawValue
+        case .showPro: AppDelegate.shared?.showTargetIntro(turningOn: true, takesFocus: true)
+        }
     }
 
     // MARK: - Translation
@@ -714,7 +730,7 @@ struct MainSettingsView: View {
             WrappingHStack(items: translateLanguages, spacing: MW.sp4) { lang in
                 Text(lang.0)
                     .font(MW.monoSm)
-                    .foregroundStyle(settings.translateTo == lang.1 ? Color.black : MW.textSecondary)
+                    .foregroundStyle(settings.translateTo == lang.1 ? MW.textPrimary : MW.textSecondary)
                     .padding(.horizontal, MW.sp8)
                     .padding(.vertical, MW.sp4)
                     .background(settings.translateTo == lang.1 ? MW.elevated : .clear)
@@ -722,7 +738,7 @@ struct MainSettingsView: View {
                     .onTapGesture { settings.translateTo = lang.1 }
             }
 
-            Text("Press Right \u{2325} to record + translate. Requires OpenAI API key.")
+            Text("Press Right \u{2325} to record + translate.")
                 .font(MW.monoSm).foregroundStyle(MW.textMuted)
         }
         .padding(MW.sp16)
@@ -1507,7 +1523,7 @@ struct MainSettingsView: View {
         VStack(alignment: .leading, spacing: MW.sp10) {
             toggleRow("Meeting Recording", isOn: $settings.meetingRecordingEnabled)
             if settings.meetingRecordingEnabled {
-                Text("Records system audio from Zoom, Meet, Teams. Transcribed locally via WhisperKit.")
+                Text("Records system audio from Zoom, Meet, Teams.")
                     .font(MW.monoSm).foregroundStyle(MW.textMuted)
                     .fixedSize(horizontal: false, vertical: true)
                 // ITER-054 — BYOK Deepgram diarization. Lives HERE (not in the

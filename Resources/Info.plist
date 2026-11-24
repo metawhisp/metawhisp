@@ -21,7 +21,7 @@
 	<key>MWSchemaVersion</key>
 	<integer>10</integer>
 	<key>CFBundleShortVersionString</key>
-	<string>1.4.6</string>
+	<string>1.4.7</string>
 	<key>CFBundleSignature</key>
 	<string>????</string>
 	<key>CFBundleSupportedPlatforms</key>
@@ -40,7 +40,7 @@
 		</dict>
 	</array>
 	<key>CFBundleVersion</key>
-	<string>49</string>
+	<string>50</string>
 	<key>LSMinimumSystemVersion</key>
 	<string>14.0</string>
 	<key>LSUIElement</key>

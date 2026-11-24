@@ -180,6 +180,17 @@ final class StructuredGenerator: ObservableObject {
         return (try? String(data: JSONEncoder().encode(cleaned), encoding: .utf8))
     }
 
+    /// The conversation as the store holds it now, in a context of its own: what a run writes after waiting on the
+    /// calendar or a model goes onto this. A save writes back every field of the object it saves, so the copy read
+    /// before the wait would undo whatever changed meanwhile (2026-11-24). nil — deleted meanwhile.
+    static func current(_ id: UUID, in container: ModelContainer) throws -> (Conversation, ModelContext)? {
+        let ctx = ModelContext(container)
+        var desc = FetchDescriptor<Conversation>(predicate: #Predicate { $0.id == id })
+        desc.fetchLimit = 1
+        guard let conversation = try ctx.fetch(desc).first else { return nil }
+        return (conversation, ctx)
+    }
+
     /// Helper shared by the main path + retry path.
     /// In-memory filter instead of a SwiftData predicate — `$0.conversationId
     /// == conversationId` (where model is `UUID?` and captured is `UUID`)
@@ -214,46 +225,24 @@ final class StructuredGenerator: ObservableObject {
         // return "not now" at each launch.
         guard hasCloudLLMAccess else { return }
         guard let container = modelContainer else { return }
-        let ctx = ModelContext(container)
-        // Match conversations where StructuredGenerator clearly hadn't run successfully:
-        // - title is the "Quick note" placeholder, OR
-        // - overview is the "(empty)" placeholder (LLM call failed but title written).
-        // ITER-035-followup (2026-05-12) — also require structuredBackfillAttempted != true.
-        // Before this guard, the backfill kept retrying the same short-transcript
-        // conversations every launch + every 30 min → user reported $16/day Groq
-        // spend from a runaway loop. Now each conversation gets at MOST one
-        // backfill attempt regardless of outcome.
-        //
-        // NB: in-memory filter for `structuredBackfillAttempted` rather than
-        // SwiftData predicate — `#Predicate` can't type-check optional-Bool
-        // boolean compounds reliably, gave a timeout. Fetch broader set,
-        // then `.filter` in Swift.
-        var desc = FetchDescriptor<Conversation>(
-            predicate: #Predicate {
-                !$0.discarded
-                && ($0.title == "Quick note" || $0.overview == "(empty)")
-            }
-        )
-        desc.fetchLimit = 500  // wider fetch — in-memory filter narrows below
-        let allCandidates = (try? ctx.fetch(desc)) ?? []
-        let placeholders = Array(
-            allCandidates
-                .filter { $0.structuredBackfillAttempted != true }
-                .prefix(100)
-        )
-        guard !placeholders.isEmpty else { return }
-        NSLog("[StructuredGenerator] Backfilling %d placeholder conversations", placeholders.count)
-        for conv in placeholders {
+        let candidates = Self.placeholderCandidates(in: ModelContext(container))
+        guard !candidates.isEmpty else { return }
+        NSLog("[StructuredGenerator] Backfilling %d placeholder conversations", candidates.count)
+        for id in candidates {
+            // Each write goes on the conversation as the store holds it now: the
+            // runs below take turns with the settling sweep and the queue, and a
+            // copy read before them would put back what they wrote (2026-11-24).
+            guard case let (conv, ctx)? = try? Self.current(id, in: container) else { continue }
             // Mark attempted BEFORE LLM call so even on failure / cancel we don't
             // retry next pass. Successful generate() runs through with the flag
             // already set — harmless, it's checked only on selection.
             conv.structuredBackfillAttempted = true
             // Only retry if there's actually a real transcript available.
-            let items = Self.fetchHistoryItems(conversationId: conv.id, in: ctx)
+            let items = Self.fetchHistoryItems(conversationId: id, in: ctx)
             let transcript = items.map { $0.displayText }.joined(separator: "\n")
             guard transcript.count >= minTranscriptChars else {
                 // Short transcript — flag stays set, persist + skip LLM call.
-                NSLog("[StructuredGenerator] backfill: conv %@ skipped — transcript %d chars < %d, marked attempted", conv.id.uuidString.prefix(8) as CVarArg, transcript.count, minTranscriptChars)
+                NSLog("[StructuredGenerator] backfill: conv %@ skipped — transcript %d chars < %d, marked attempted", id.uuidString.prefix(8) as CVarArg, transcript.count, minTranscriptChars)
                 try? ctx.save()
                 continue
             }
@@ -267,16 +256,37 @@ final class StructuredGenerator: ObservableObject {
             // a second DB fetch for the same data. `preferCloud: true` keeps
             // accumulated backfill OFF the local model — large prompts × N
             // conversations would otherwise freeze a freshly-activated Phi-4.
-            let outcome = await generate(conversationId: conv.id, knownTranscript: transcript, preferCloud: true,
+            let outcome = await generate(conversationId: id, knownTranscript: transcript, preferCloud: true,
                                          isRegeneration: true)
             // A run that never happened (no key for the cloud path, or the
             // network or the service down) doesn't use up the conversation's
             // one attempt.
-            if outcome == .notNow {
-                conv.structuredBackfillAttempted = false
-                try? ctx.save()
+            if outcome == .notNow, case let (again, after)? = try? Self.current(id, in: container) {
+                again.structuredBackfillAttempted = false
+                try? after.save()
             }
         }
+    }
+
+    /// The conversations the launch pass retries: completed, not discarded, not tried before, with a placeholder
+    /// summary — the "Quick note" title, or the "(empty)" overview a failed call left. Completed only: a meeting
+    /// still settling, or left in progress, is the settling sweep's, which rewrites it itself; the pass taking it
+    /// too paid twice and reopened it (review, 2026-11-24). At most 100 per launch.
+    ///
+    /// ITER-035-followup (2026-05-12) — `structuredBackfillAttempted != true`: before it, the pass retried the
+    /// same short-transcript conversations every launch and every 30 min ($16/day Groq spend from the loop); each
+    /// conversation gets at most one attempt. Filtered in Swift: `#Predicate` could not type-check the
+    /// optional-Bool compound reliably (a timeout).
+    static func placeholderCandidates(in ctx: ModelContext) -> [UUID] {
+        var desc = FetchDescriptor<Conversation>(
+            predicate: #Predicate {
+                !$0.discarded && $0.status == "completed"
+                && ($0.title == "Quick note" || $0.overview == "(empty)")
+            }
+        )
+        desc.fetchLimit = 500  // wider fetch — in-memory filter narrows below
+        let all = (try? ctx.fetch(desc)) ?? []
+        return Array(all.filter { $0.structuredBackfillAttempted != true }.prefix(100).map(\.id))
     }
 
     /// ITER-021 — Periodic backfill loop. Catches conversations that close while
@@ -433,15 +443,6 @@ final class StructuredGenerator: ObservableObject {
         // (8s after stop) before the old fire-and-forget linker had finished.
         if Self.linksToCalendar(conv), let calendarReader {
             await calendarReader.linkConversation(conversationId)
-            // Pull the updated row into our context so subsequent saves don't
-            // stomp the freshly-set calendar fields.
-            if let refreshed = try? ctx.fetch(descriptor).first {
-                conv.calendarEventId = refreshed.calendarEventId
-                conv.calendarEventTitle = refreshed.calendarEventTitle
-                conv.calendarEventStartDate = refreshed.calendarEventStartDate
-                conv.calendarEventEndDate = refreshed.calendarEventEndDate
-                conv.calendarAttendeesJSON = refreshed.calendarAttendeesJSON
-            }
         }
 
         guard transcript.count >= minTranscriptChars else {
@@ -452,22 +453,28 @@ final class StructuredGenerator: ObservableObject {
                 NSLog("[StructuredGenerator] Short transcript (%d chars) — the existing title stays", transcript.count)
                 return .unchanged
             }
+            let now: (Conversation, ModelContext)?
+            do { now = try Self.current(conversationId, in: container) } catch {
+                NSLog("[StructuredGenerator] conv %@ could not be read — %@", conversationId.uuidString.prefix(8) as CVarArg, error.localizedDescription)
+                return .failed
+            }
+            guard case let (target, out)? = now else { return .unchanged }
             // Too short — give a placeholder so UI has something to show.
             // Calendar event name still wins if linked (preserve user's
             // naming even on a sub-300-char meeting).
-            conv.title = ConversationTitleResolver.resolve(
-                calendarEventTitle: conv.calendarEventTitle,
+            target.title = ConversationTitleResolver.resolve(
+                calendarEventTitle: target.calendarEventTitle,
                 llmTitle: "Quick note"
             )
-            conv.overview = transcript.isEmpty ? "(empty)" : String(transcript.prefix(80))
-            conv.category = "other"
-            conv.emoji = "bubble.left"  // SF Symbol, monochrome
-            conv.updatedAt = Date()
+            target.overview = transcript.isEmpty ? "(empty)" : String(transcript.prefix(80))
+            target.category = "other"
+            target.emoji = "bubble.left"  // SF Symbol, monochrome
+            target.updatedAt = Date()
             // `written` only once the save went through.
             do {
-                try ctx.save()
+                try out.save()
             } catch {
-                ctx.rollback()
+                out.rollback()
                 NSLog("[StructuredGenerator] ❌ conv %@ placeholder not saved — %@", conversationId.uuidString.prefix(8) as CVarArg, error.localizedDescription)
                 return .failed
             }
@@ -522,8 +529,14 @@ final class StructuredGenerator: ObservableObject {
             // inference ("Discussing Project Updates And Marketing").
             // 2026-05-07 user report. Fix scoped to new conversations only;
             // pre-existing rows keep their LLM-generated titles per user spec.
+            // The answer is written on the conversation as it is now, not on the
+            // copy read before the model call: a save writes back every field of
+            // what it saves, and while the model was answering a meeting may
+            // have been completed, starred or linked to its calendar event
+            // (2026-11-24: completed meetings reopened, then rewritten for hours).
+            guard case let (target, out)? = try Self.current(conversationId, in: container) else { return .unchanged }
             let resolvedTitle = ConversationTitleResolver.resolve(
-                calendarEventTitle: conv.calendarEventTitle,
+                calendarEventTitle: target.calendarEventTitle,
                 llmTitle: parsed.title
             )
             // The check is on the title that will be written, after the
@@ -533,17 +546,17 @@ final class StructuredGenerator: ObservableObject {
                 NSLog("[StructuredGenerator] ⚠️ conv %@ — empty title or overview in the answer", conversationId.uuidString.prefix(8) as CVarArg)
                 return .failed
             }
-            conv.title = resolvedTitle
-            conv.overview = parsed.overview
-            conv.category = parsed.category
-            conv.emoji = validateSFSymbol(parsed.icon)
+            target.title = resolvedTitle
+            target.overview = parsed.overview
+            target.category = parsed.category
+            target.emoji = validateSFSymbol(parsed.icon)
             // ITER-014 — write project + topics (canonical name resolved later
             // by ProjectAggregator; we store the raw LLM value for audit trail).
             if let rawProject = parsed.project?.trimmingCharacters(in: .whitespacesAndNewlines),
                !rawProject.isEmpty, rawProject.lowercased() != "null" {
-                conv.primaryProject = rawProject
+                target.primaryProject = rawProject
             } else {
-                conv.primaryProject = nil
+                target.primaryProject = nil
             }
             if let topics = parsed.topics, !topics.isEmpty {
                 let cleaned = topics
@@ -553,43 +566,43 @@ final class StructuredGenerator: ObservableObject {
                 // five arrays below: a regeneration that keeps the old topics
                 // next to a new title describes a conversation that never
                 // happened (audit follow-up, 2026-09-08).
-                conv.topicsJSON = cleaned.isEmpty
+                target.topicsJSON = cleaned.isEmpty
                     ? nil
                     : (try? String(data: JSONEncoder().encode(cleaned), encoding: .utf8))
             }
             // ITER-021 — structured meeting summary sections.
             // Encode as JSON `[String]` for SwiftData (flat schema). Empty arrays
             // → store nil so UI can distinguish "not extracted yet" vs "empty".
-            conv.decisionsJSON    = Self.encodeStringArray(parsed.decisions)
-            conv.actionItemsJSON  = Self.encodeStringArray(parsed.actionItems)
-            conv.participantsJSON = Self.encodeStringArray(parsed.participants)
-            conv.keyQuotesJSON    = Self.encodeStringArray(parsed.keyQuotes)
-            conv.nextStepsJSON    = Self.encodeStringArray(parsed.nextSteps)
-            conv.updatedAt = Date()
+            target.decisionsJSON    = Self.encodeStringArray(parsed.decisions)
+            target.actionItemsJSON  = Self.encodeStringArray(parsed.actionItems)
+            target.participantsJSON = Self.encodeStringArray(parsed.participants)
+            target.keyQuotesJSON    = Self.encodeStringArray(parsed.keyQuotes)
+            target.nextStepsJSON    = Self.encodeStringArray(parsed.nextSteps)
+            target.updatedAt = Date()
             // `written` only once the save went through; the embedding and the
             // project alias below follow a saved result, never an unsaved one.
             do {
-                try ctx.save()
+                try out.save()
             } catch {
-                ctx.rollback()
+                out.rollback()
                 NSLog("[StructuredGenerator] ❌ conv %@ result not saved — %@", conversationId.uuidString.prefix(8) as CVarArg, error.localizedDescription)
                 return .failed
             }
-                  NSLog("[StructuredGenerator] ✅ conv %@ — %.1fs, response %d chars, title %d chars, overview %d chars, decisions=%d actions=%d participants=%d quotes=%d next=%d topics=%d project=%d", conversationId.uuidString.prefix(8) as CVarArg, Date().timeIntervalSince(t0), response.count, parsed.title.count, parsed.overview.count, parsed.decisions?.count ?? 0, parsed.actionItems?.count ?? 0, parsed.participants?.count ?? 0, parsed.keyQuotes?.count ?? 0, parsed.nextSteps?.count ?? 0, parsed.topics?.count ?? 0, conv.primaryProject == nil ? 0 : 1)
+                  NSLog("[StructuredGenerator] ✅ conv %@ — %.1fs, response %d chars, title %d chars, overview %d chars, decisions=%d actions=%d participants=%d quotes=%d next=%d topics=%d project=%d", conversationId.uuidString.prefix(8) as CVarArg, Date().timeIntervalSince(t0), response.count, parsed.title.count, parsed.overview.count, parsed.decisions?.count ?? 0, parsed.actionItems?.count ?? 0, parsed.participants?.count ?? 0, parsed.keyQuotes?.count ?? 0, parsed.nextSteps?.count ?? 0, parsed.topics?.count ?? 0, target.primaryProject == nil ? 0 : 1)
 
             // Embed the now-finalized conversation so MetaChat can semantically retrieve
             // it later. Fire-and-forget; nil embedding falls back to recency ordering.
             if let embeddingService {
-                let source = EmbeddingService.buildConversationEmbeddingSource(for: conv, in: ctx)
+                let source = EmbeddingService.buildConversationEmbeddingSource(for: target, in: out)
                 if !source.isEmpty {
-                    embeddingService.embedConversationInBackground(conv, sourceText: source, in: ctx)
+                    embeddingService.embedConversationInBackground(conversationId, sourceText: source, in: container)
                 }
             }
 
             // ITER-014 — eagerly seed the ProjectAlias row so this conversation's
             // project shows up in the Projects view immediately (rather than only
             // after the next listProjects() call would lazily resolve it).
-            if let raw = conv.primaryProject?.trimmingCharacters(in: .whitespacesAndNewlines),
+            if let raw = target.primaryProject?.trimmingCharacters(in: .whitespacesAndNewlines),
                !raw.isEmpty, let projectAggregator {
                 _ = projectAggregator.resolveCanonical(raw)
             }

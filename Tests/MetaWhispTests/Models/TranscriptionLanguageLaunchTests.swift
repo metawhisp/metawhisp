@@ -56,7 +56,8 @@ final class TranscriptionLanguageLaunchTests: XCTestCase {
     func testCompletionWritesTheLanguageBeforeTheFlag() throws {
         let recorded = try XCTUnwrap(RecordingDefaults(suiteName: suite))
         AppSettings.recordOnboardingCompleted(in: recorded)
-        XCTAssertEqual(recorded.keys, ["transcriptionLanguage", "hasCompletedOnboarding"])
+        // ITER-085: the Target window is marked seen after the flag; the language still comes first.
+        XCTAssertEqual(recorded.keys, ["transcriptionLanguage", "hasCompletedOnboarding", "targetIntroSeen"])
         XCTAssertEqual(recorded.string(forKey: "transcriptionLanguage"), "auto")
         XCTAssertTrue(recorded.bool(forKey: "hasCompletedOnboarding"))
     }

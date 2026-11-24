@@ -299,6 +299,47 @@ final class MeetingSettlingTests: XCTestCase {
         XCTAssertNotEqual(first.id, second.id)
     }
 
+    // MARK: - A stuck meeting's rewrite is paid once per launch
+
+    /// A meeting left in progress, its rewrite run and the meeting completed — then reopened by something else.
+    private func reopenedAfterItsRewrite() throws -> UUID {
+        let stuck = Conversation(source: "meeting", startedAt: start)
+        stuck.status = "inProgress"
+        stuck.updatedAt = start.addingTimeInterval(900)
+        let ctx = ModelContext(container)
+        ctx.insert(stuck)
+        try ctx.save()
+        grouper.settleMeetings(now: start.addingTimeInterval(1500))
+        XCTAssertEqual(processed.map(\.id), [stuck.id])
+        grouper.rewriteEnded(stuck.id, result: .done)
+        XCTAssertEqual(try stored(stuck.id).status, "completed")
+        let reopen = ModelContext(container)
+        try XCTUnwrap(reopen.fetch(FetchDescriptor<Conversation>()).first { $0.id == stuck.id }).status = "inProgress"
+        try reopen.save()
+        return stuck.id
+    }
+
+    /// 2026-11-24 on the owner's Mac: the store lost each completion, and the same 65 meetings were rewritten every
+    /// ten minutes — 1,533 paid model calls in 4.5 h. The rewrite is paid once per launch, whatever the store says.
+    func testAStuckMeetingReopenedAfterItsRewriteIsNotRewrittenAgainInTheSameLaunch() throws {
+        let id = try reopenedAfterItsRewrite()
+        grouper.settleMeetings(now: start.addingTimeInterval(7200))
+        grouper.settleMeetings(now: start.addingTimeInterval(14_400))
+        XCTAssertEqual(processed.count, 1, "one rewrite per launch")
+        XCTAssertEqual(try stored(id).status, "completed", "closed again with the summary it has, not left live")
+    }
+
+    /// The ceiling ends with the launch: the next one rewrites it again, once.
+    func testAStuckMeetingReopenedAfterItsRewriteIsRewrittenAgainAfterTheNextLaunch() throws {
+        let id = try reopenedAfterItsRewrite()
+        let nextLaunch = ConversationGrouper()
+        nextLaunch.configure(modelContainer: container)
+        var again: [ConversationGrouper.Processing] = []
+        nextLaunch.process = { again.append($0) }
+        nextLaunch.settleMeetings(now: start.addingTimeInterval(7200))
+        XCTAssertEqual(again.map(\.id), [id])
+    }
+
     // MARK: - Never "in progress"
 
     func testNoMeetingIsLeftInProgress() throws {

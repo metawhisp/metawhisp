@@ -21,7 +21,7 @@ final class OnboardingKeyboardTests: XCTestCase {
             XCTAssertEqual(try code(file).filter { $0.contains(".keyboardShortcut(.defaultAction)") }.count, forward, file)
         }
         let pro = try code("ProScreen.swift")
-        let getPro = try XCTUnwrap(pro.firstIndex { $0.contains("flow.getPro()") })
+        let getPro = try XCTUnwrap(pro.firstIndex { $0.contains("actions.getPro()") })
         XCTAssertTrue(pro[getPro...].prefix(3).contains { $0.contains(".keyboardShortcut(.defaultAction)") },
                       "Return is Get Pro, not Continue with Free")
     }

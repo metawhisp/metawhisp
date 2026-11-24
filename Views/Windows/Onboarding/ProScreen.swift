@@ -4,6 +4,7 @@ import SwiftUI
 /// price as the site shows it, arriving as it counts down to $30 (owner 2026-10-25), the eight things Pro adds from one
 /// list, and Free as the second capsule beside Get Pro, never a grey link. Get Pro opens the site's account page and
 /// the onboarding is done. A Pro user is not offered Pro: "You have Pro", and Continue.
+/// The Target window shows the same screen with its own buttons (`Actions`, ITER-085).
 struct ProScreen: View {
     struct Tile: Equatable {
         let symbol: String
@@ -46,7 +47,7 @@ struct ProScreen: View {
     /// hints and the browser agent are not part of Pro (U1).
     static let tiles = [
         Tile(symbol: "cloud", title: "Cloud dictation", detail: "5,400 minutes a month"),
-        Tile(symbol: "sparkles", title: "AI polish", detail: "Clean, structured text"),
+        Tile(symbol: "sparkles", title: "AI polish", detail: "Clean, Structured and Target"),
         Tile(symbol: "globe", title: "Translation", detail: "Into 11 languages, by voice or selection"),
         Tile(symbol: "bubble.left", title: "MetaChat", detail: "Ask about your notes and meetings"),
         Tile(symbol: "video", title: "Meeting notes", detail: "Summaries, tasks and memories"),
@@ -63,7 +64,20 @@ struct ProScreen: View {
 
     static func offer(isPro: Bool) -> Offer { isPro ? .youHavePro : .plans }
 
-    @ObservedObject var flow: OnboardingFlow
+    /// What the screen's buttons do: the onboarding's flow, or the Target window's.
+    struct Actions {
+        var back: @MainActor () -> Void
+        var free: @MainActor () -> Void
+        var getPro: @MainActor () -> Void
+        var signIn: @MainActor () -> Void
+        /// Continue, on "You have Pro".
+        var continueAsPro: @MainActor () -> Void
+        var freeTitle = ProScreen.free
+    }
+
+    let actions: Actions
+    /// The browser did not open the account page: the link is shown, with Copy.
+    let accountLinkShown: Bool
     @ObservedObject var license: LicenseService
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     /// How much of the header has arrived: the chip, the price, the saving (`Reveal`).
@@ -109,20 +123,20 @@ struct ProScreen: View {
                 }
                 .frame(width: OnboardingStyle.column)
                 .padding(.top, 22)
-                if flow.accountLinkShown {
+                if accountLinkShown {
                     AccountLinkFallback().padding(.top, 8)
                 } else {
-                    AlreadyHaveProButton { flow.signIn() }.padding(.top, 8)
+                    AlreadyHaveProButton { actions.signIn() }.padding(.top, 8)
                 }
             }
         } leading: {
-            Button("Back") { flow.back() }.buttonStyle(OnboardingTextButtonStyle())
+            Button("Back") { actions.back() }.buttonStyle(OnboardingTextButtonStyle())
         } center: {
             HStack(spacing: 12) {
                 // As wide as each other, as the mockup draws the pair.
-                Button(Self.free) { flow.complete(.free) }
+                Button(actions.freeTitle) { actions.free() }
                     .buttonStyle(CapsuleButtonStyle(kind: .glass, minWidth: Self.pairWidth))
-                Button { flow.getPro() } label: { ArrowLabel(text: Self.getPro) }
+                Button { actions.getPro() } label: { ArrowLabel(text: Self.getPro) }
                     .buttonStyle(CapsuleButtonStyle(minWidth: Self.pairWidth))
                     .keyboardShortcut(.defaultAction)
             }
@@ -166,9 +180,9 @@ struct ProScreen: View {
                 OnboardingTitle(text: Self.youHavePro)
             }
         } leading: {
-            Button("Back") { flow.back() }.buttonStyle(OnboardingTextButtonStyle())
+            Button("Back") { actions.back() }.buttonStyle(OnboardingTextButtonStyle())
         } center: {
-            Button { flow.complete(.pro) } label: { ArrowLabel(text: Self.proceed) }
+            Button { actions.continueAsPro() } label: { ArrowLabel(text: Self.proceed) }
                 .buttonStyle(CapsuleButtonStyle())
                 .keyboardShortcut(.defaultAction)
         }
