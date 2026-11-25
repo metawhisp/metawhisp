@@ -27,7 +27,6 @@ struct HistoryView: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(MW.bg)
         .alert("Clear all history?", isPresented: $showClearConfirm) {
             Button("Cancel", role: .cancel) {}
             Button("Clear All", role: .destructive) { clearAll() }
@@ -40,14 +39,13 @@ struct HistoryView: View {
 
     private var headerBar: some View {
         HStack {
-            Text("HISTORY")
+            Text("History")
                 .font(MW.monoLg)
                 .foregroundStyle(MW.textPrimary)
-                .tracking(2)
             Spacer()
             if !items.isEmpty {
                 Text("\(filtered.count) RECORDS").blocksLabel()
-                BlocksButton(label: "CLEAR ALL", icon: "trash") {
+                BlocksButton(label: "Clear all", icon: "trash") {
                     showClearConfirm = true
                 }
             }
@@ -64,7 +62,7 @@ struct HistoryView: View {
                 .font(.system(size: 10))
                 .foregroundStyle(MW.textMuted)
             TextField("", text: $searchText, prompt:
-                Text("SEARCH...")
+                Text("Search…")
                     .font(MW.mono)
                     .foregroundStyle(MW.textMuted)
             )
@@ -103,9 +101,7 @@ struct HistoryView: View {
     @ViewBuilder
     private func columnHeader(_ text: String, width: CGFloat = 0, flex: Bool = false) -> some View {
         let content = Text(text)
-            .font(MW.label)
-            .tracking(1)
-            .foregroundStyle(MW.textMuted)
+            .mwBadge()
             .padding(.horizontal, MW.sp12)
             .padding(.vertical, MW.sp8)
 
@@ -144,11 +140,10 @@ struct HistoryView: View {
 
     private var emptyState: some View {
         VStack(spacing: MW.sp16) {
-            Text("NO TRANSCRIPTIONS")
+            Text("No transcriptions")
                 .font(MW.monoLg)
                 .foregroundStyle(MW.textMuted)
-                .tracking(2)
-            Text("PRESS RIGHT \u{2318} TO START RECORDING")
+            Text("Press Right \u{2318} to start recording")
                 .font(MW.mono)
                 .foregroundStyle(MW.textMuted)
         }
@@ -212,7 +207,7 @@ struct HistoryRowView: View {
             // Model name
             Group {
                 if let model = item.modelName {
-                    Text(model.uppercased())
+                    Text(model)
                         .font(MW.monoSm)
                         .foregroundStyle(MW.textSecondary)
                         .lineLimit(1)
@@ -262,7 +257,7 @@ struct HistoryRowView: View {
         }
         .padding(.vertical, MW.sp8)
         .fixedSize(horizontal: false, vertical: true)
-        .background(isSelected ? Color.white.opacity(0.04) : .clear)
+        .mwSelectable(isSelected, radius: MW.rTiny, resting: .none)
         .overlay(Rectangle().fill(MW.border).frame(height: MW.hairline), alignment: .bottom)
         .contentShape(Rectangle())
         .animation(.easeInOut(duration: 0.2), value: isSelected)

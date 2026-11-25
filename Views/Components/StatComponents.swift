@@ -25,7 +25,7 @@ struct MetricCardView: View {
                 }
                 .foregroundStyle(deltaColor(d))
             }
-            Text(title.uppercased()).font(MW.monoSm).foregroundStyle(MW.textMuted).tracking(0.5)
+            Text(title).mwBadge()
         }
         .frame(maxWidth: .infinity)
         .padding(MW.sp16)
@@ -34,7 +34,7 @@ struct MetricCardView: View {
 
     private func deltaColor(_ d: Double) -> Color {
         let isPositive = invertDelta ? d < 0 : d > 0
-        return isPositive ? Color(red: 0.2, green: 0.8, blue: 0.4) : Color.red
+        return isPositive ? MW.ok : Color.red
     }
 }
 
@@ -96,8 +96,8 @@ enum StatPeriod: Hashable {
     var label: String {
         switch self {
         case .today: "Today"
-        case .week: "This Week"
-        case .allTime: "All Time"
+        case .week: "This week"
+        case .allTime: "All time"
         case .month(let d): { let f = DateFormatter(); f.dateFormat = "MMM yyyy"; return f.string(from: d) }()
         }
     }
@@ -141,6 +141,14 @@ enum StatPeriod: Hashable {
 
 /// Helpers shared across statistics views.
 enum StatFormatters {
+    /// A count that fits a tile: as it is up to 999, thousands with one decimal, millions with two (ITER-087:
+    /// "2352.4k" was cut to "2352…"). 999,950 and up round to millions, never to "1000.0k".
+    static func count(_ n: Int) -> String {
+        if n < 1_000 { return "\(n)" }
+        if n < 999_950 { return String(format: "%.1fk", Double(n) / 1_000) }
+        return String(format: "%.2fM", Double(n) / 1_000_000)
+    }
+
     static func duration(_ seconds: Double) -> String {
         if seconds < 60 { return String(format: "%.0fs", seconds) }
         if seconds < 3600 { return "\(Int(seconds) / 60)m \(Int(seconds) % 60)s" }

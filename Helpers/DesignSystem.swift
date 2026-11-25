@@ -1,10 +1,11 @@
+import Observation
 import SwiftUI
 
 /// MetaWhisp Design System — **Liquid Glass** (replaces the prior BLOCKS style).
 ///
 /// Philosophy:
-/// - Monochrome translucent panels — depth via material weight + continuous corners
-///   + subtle rim, NOT via colored fills. One brand accent only.
+/// - Two looks from one palette (`MW.Palette`, ITER-087): dark — a near-black wall, panels drawn by a thin edge;
+///   light — white frosted panels with a soft shadow. No blue. One accent, the user's own choice.
 /// - Apple type scale: SF Pro for prose; SF Mono **only** for tabular data
 ///   (numbers, timestamps, percentages). The legacy `MW.mono*` tokens are now
 ///   sans-serif so existing call sites get readable text without rewrites.
@@ -18,9 +19,10 @@ enum MW {
 
     // MARK: - Appearance
 
-    /// Returns true if current appearance is dark.
+    /// Returns true if current appearance is dark. Reading it registers the look as a dependency (`LookState`).
     static var isDark: Bool {
-        NSApp.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+        _ = LookState.shared.revision
+        return NSApp.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
     }
 
     // MARK: - Color tokens
@@ -28,12 +30,12 @@ enum MW {
     // Kept as `Color` so direct `.background(MW.surface)` call sites still work.
     // Where possible new code uses material-based modifiers (`mwCard`, `glassChip`).
 
-    /// Page background — soft monochrome wash. Supports the translucent panels above.
+    /// Onboarding's own ground. The window, the popover and the sheets stand on `PageWash` instead (ITER-087).
     static var bg: Color { isDark ? Color(w: 0.07) : Color(w: 0.95) }
-    /// Surface — used directly when material isn't applicable (e.g. solid pickers).
-    static var surface: Color { isDark ? Color(w: 0.13) : Color(w: 0.99) }
-    /// Slightly raised surface — selected rows, highlighted chips.
-    static var elevated: Color { isDark ? Color(w: 0.18) : Color(w: 1.0) }
+    /// Surface — a fill inside a panel (a field, a row). See-through white in the dark look (ITER-087).
+    static var surface: Color { palette.surface.color }
+    /// Slightly raised surface — selected rows, highlighted chips. See-through white in the dark look (ITER-087).
+    static var elevated: Color { palette.elevated.color }
     /// Hairline border — adaptive low-opacity primary.
     static var border: Color { Color.primary.opacity(0.10) }
     /// Stronger border — selected / focused.
@@ -55,14 +57,6 @@ enum MW {
     /// row separators. Mirrors `--hairline` in tokens.css.
     static var hairlineColor: Color { Color.primary.opacity(0.06) }
 
-    /// Sidebar / segmented-control SELECTED-row fill. Distinct from `subtle`:
-    /// `subtle` is a generic in-panel highlight, `selectFill` is the canonical
-    /// "this row is active" treatment. Mirrors `--select-fill`.
-    static var selectFill: Color { Color.primary.opacity(0.10) }
-
-    /// Border for the selected row. Mirrors `--select-rim`.
-    static var selectRim: Color { Color.primary.opacity(0.16) }
-
     /// Inner specular highlight color (top-down white gradient on glass cards).
     /// Slightly stronger in light mode to read against bright wash. Mirrors
     /// `--rim-inner` in tokens.css.
@@ -71,11 +65,11 @@ enum MW {
     // MARK: - Accent (5 presets, runtime-switchable)
 
     /// Brand accent. Reads from `AppSettings.shared.accentColor` so the user can
-    /// pick from 5 presets in Settings → Appearance. Default preset `mono` keeps
-    /// the existing monochrome look (textPrimary) for back-compat — switching to
-    /// `warmOrange` / `electric` / `mint` / `violet` colors every accent-using surface.
+    /// pick from 5 presets in Settings. New users get `mint` (ITER-087); `mono`
+    /// is the primary text colour.
     static var accent: Color {
-        accentPresetColor(AppSettings.shared.accentColor)
+        _ = LookState.shared.revision
+        return accentPresetColor(AppSettings.shared.accentColor)
     }
 
     /// 16% alpha tint of `accent` — soft fill for chips marked active /
@@ -84,6 +78,33 @@ enum MW {
 
     /// 45% alpha tint of `accent` — rim for accent-soft backgrounds. Mirrors `--accent-rim`.
     static var accentRim: Color { accent.opacity(0.45) }
+
+    /// The window's and the popover's "on / ready / active / pro" colour: the user's accent (owner, 2026-11-25:
+    /// "in Violet there must be no green; green only in Green"). The recording indicator and onboarding keep
+    /// their fixed green, `idle` (decision 4).
+    static var ok: Color { accent }
+
+    /// Text or a glyph drawn on an accent fill (the Get Pro button, an Active badge).
+    static var onAccent: Color { accentTextIsDark(AppSettings.shared.accentColor, dark: isDark) ? .black : .white }
+
+    /// Whether text on a fill of this accent is dark: on Mint and Orange (light accents) and on Mono in the dark look
+    /// (white there); white on Electric, Violet and Mono in the light look (black there).
+    static func accentTextIsDark(_ preset: String, dark: Bool) -> Bool {
+        if accentIsMono(preset) { return dark }
+        return preset == "mint" || preset == "warmOrange"
+    }
+
+    /// Whether a preset id is Mono — "mono" or an unknown id, which falls back to it.
+    static func accentIsMono(_ preset: String) -> Bool {
+        !["warmOrange", "electric", "mint", "violet"].contains(preset)
+    }
+
+    /// The tint of system controls (switches, progress) and of the app's own switch: the accent, except for Mono,
+    /// whose accent is the primary text colour — white in the dark look, so an "on" switch would be a white track
+    /// under a white knob. Mono controls take a mid grey (ITER-087 re-review).
+    static var controlTint: Color {
+        accentIsMono(AppSettings.shared.accentColor) ? Color.primary.opacity(0.55) : accent
+    }
 
     /// Resolves a preset id to its `Color`. Public so a future Settings picker
     /// can show the swatches. Unknown id falls back to `mono`.
@@ -142,6 +163,8 @@ enum MW {
     static let monoTitle = Font.system(size: 28, weight: .bold)
     /// Tiny caps label — tracked, ≤2 words. Uppercase pills.
     static let label = Font.system(size: 10, weight: .semibold)
+    /// Micro-label — a section header or a tile caption, in SF Mono caps (`mwBadge`, ITER-087).
+    static let microLabel = Font.system(size: 9.5, weight: .semibold, design: .monospaced)
     /// Medium caps label — slightly larger pill / chip.
     static let labelMd = Font.system(size: 12, weight: .medium)
 
@@ -152,8 +175,9 @@ enum MW {
     static let caption = monoSm
     static let micro = Font.system(size: 10, weight: .regular)
 
-    // Data — monospace, ONLY for numbers / timestamps / percentages.
-    static let dataLarge = Font.system(size: 26, weight: .semibold, design: .monospaced)
+    // Data — numbers / timestamps / percentages. The big number is SF Pro bold with digits of one width
+    // (ITER-087); the small ones stay monospace.
+    static let dataLarge = Font.system(size: 26, weight: .bold).monospacedDigit()
     static let dataMedium = Font.system(size: 14, weight: .medium, design: .monospaced)
     static let dataSmall = Font.system(size: 11, weight: .regular, design: .monospaced)
 
@@ -223,6 +247,188 @@ enum MW {
     }
 }
 
+// MARK: - Look state (ITER-087)
+
+/// What every colour token depends on — the accent the user chose and the app's appearance — as one observable
+/// revision. `MW.accent` and `MW.isDark` (and so every token built on them: `MW.ok`, `MW.palette`, `MW.surface` …)
+/// read `revision`, so SwiftUI draws again any view that drew with a token when either changes. Read as plain statics,
+/// the tokens were invisible to SwiftUI: after the owner chose Orange the meeting-minutes bar stayed violet
+/// (2026-11-25), and only the views that happened to observe the settings followed.
+@Observable
+final class LookState {
+    static let shared = LookState()
+
+    /// Bumped whenever the accent or the appearance changes.
+    private(set) var revision = 0
+
+    @ObservationIgnored private var appearance: NSKeyValueObservation?
+    @ObservationIgnored private var accent: DefaultsKeyObserver?
+
+    private init() {
+        appearance = NSApplication.shared.observe(\.effectiveAppearance, options: [.new]) { [weak self] _, _ in
+            self?.changed()
+        }
+        accent = DefaultsKeyObserver(key: "accentColor") { [weak self] in self?.changed() }
+    }
+
+    private func changed() {
+        if Thread.isMainThread { revision += 1 } else { DispatchQueue.main.async { [weak self] in self?.revision += 1 } }
+    }
+}
+
+/// Calls back when one UserDefaults key changes (an `@AppStorage` write included).
+private final class DefaultsKeyObserver: NSObject {
+    private let key: String
+    private let onChange: () -> Void
+
+    init(key: String, onChange: @escaping () -> Void) {
+        self.key = key
+        self.onChange = onChange
+        super.init()
+        UserDefaults.standard.addObserver(self, forKeyPath: key, options: [.new], context: nil)
+    }
+
+    deinit { UserDefaults.standard.removeObserver(self, forKeyPath: key) }
+
+    override func observeValue(forKeyPath keyPath: String?, of object: Any?,
+                               change: [NSKeyValueChangeKey: Any]?, context: UnsafeMutableRawPointer?) {
+        onChange()
+    }
+}
+
+// MARK: - Palette (ITER-087)
+//
+// The window's two looks as plain numbers, so a test can read what the screen will draw.
+// Dark ("depth"): a near-black wall, panels drawn by a faint white gradient and a thin edge, no shadow.
+// Light: a light wall, white frosted panels with a soft shadow.
+// Only neutrals live here — no blue (owner, 2026-11-25). The accent is the user's own choice in Settings and is
+// applied on top through `MW.accent`; the palette says only how strongly.
+
+/// A colour as sRGB numbers, 0…1.
+struct RGBA: Equatable {
+    let r: Double
+    let g: Double
+    let b: Double
+    let a: Double
+
+    init(_ r: Double, _ g: Double, _ b: Double, _ a: Double = 1) {
+        self.r = r
+        self.g = g
+        self.b = b
+        self.a = a
+    }
+
+    static func white(_ a: Double) -> RGBA { RGBA(1, 1, 1, a) }
+    static func black(_ a: Double) -> RGBA { RGBA(0, 0, 0, a) }
+    static let clear = RGBA(0, 0, 0, 0)
+
+    var color: Color { Color(.sRGB, red: r, green: g, blue: b, opacity: a) }
+}
+
+extension MW {
+    /// How a selected row, tab or tile is marked.
+    enum Selection: Equatable {
+        /// A tint of the user's accent with a ring of it, and a faint glow (dark).
+        case accent(fill: Double, ring: Double, glow: Double)
+        /// A raised white pill with a hairline ring and a soft shadow (light).
+        case raised(fill: RGBA, ring: RGBA, shadow: RGBA)
+    }
+
+    struct Palette: Equatable {
+        /// The window's ground, top to bottom; opaque.
+        let wallTop: RGBA
+        let wallBottom: RGBA
+        /// Accent opacity of the glow at the wall's top right.
+        let glow: Double
+        /// Accent opacity of the second, fainter glow at the bottom left.
+        let lowGlow: Double
+        /// A neutral shade at the bottom left.
+        let shade: RGBA
+        /// A panel's fill, top to bottom.
+        let panelTop: RGBA
+        let panelBottom: RGBA
+        /// A panel's outline and its top inner highlight.
+        let edge: RGBA
+        let highlight: RGBA
+        /// The sidebar's fill.
+        let sidebar: RGBA
+        /// A panel's drop shadow (clear in the dark look).
+        let shadow: RGBA
+        /// The groove a segmented control's segments sit in.
+        let track: RGBA
+        /// Fills inside a panel: `MW.surface` (a field, a row) and `MW.elevated` (a raised row or chip).
+        let surface: RGBA
+        let elevated: RGBA
+        /// A selectable chip or button at rest: the inner fill in the dark look, a grey groove in the light look, so
+        /// the raised white pill of a selection stands out from it.
+        let rest: RGBA
+        /// A standalone chip at rest: clear in the dark look (its edge draws it), the groove in the light look.
+        let outlineRest: RGBA
+        let selection: Selection
+
+        /// Every neutral this look draws.
+        var neutrals: [RGBA] {
+            var all = [wallTop, wallBottom, shade, panelTop, panelBottom, edge, highlight, sidebar, shadow, track,
+                       surface, elevated, rest, outlineRest]
+            if case let .raised(fill, ring, shadow) = selection { all += [fill, ring, shadow] }
+            return all
+        }
+
+        static let dark = Palette(
+            wallTop: RGBA(0.027, 0.031, 0.039),
+            wallBottom: RGBA(0.027, 0.031, 0.039),
+            glow: 0.14,
+            lowGlow: 0,
+            shade: .clear,
+            panelTop: .white(0.055),
+            panelBottom: .white(0.018),
+            edge: .white(0.08),
+            highlight: .white(0.07),
+            sidebar: .white(0.035),
+            shadow: .clear,
+            track: .white(0.04),
+            surface: .white(0.06),
+            elevated: .white(0.10),
+            rest: .white(0.06),
+            outlineRest: .clear,
+            selection: .accent(fill: 0.16, ring: 0.50, glow: 0.22)
+        )
+
+        static let light = Palette(
+            wallTop: RGBA(0.973, 0.976, 0.973),
+            wallBottom: RGBA(0.925, 0.933, 0.929),
+            glow: 0.08,
+            lowGlow: 0,
+            shade: .black(0.05),
+            panelTop: .white(0.74),
+            panelBottom: .white(0.74),
+            edge: .black(0.06),
+            highlight: .white(1),
+            sidebar: .white(0.60),
+            shadow: .black(0.05),
+            track: .black(0.05),
+            surface: RGBA(0.99, 0.99, 0.99),
+            elevated: .white(1),
+            rest: .black(0.045),
+            outlineRest: .black(0.045),
+            selection: .raised(fill: .white(1), ring: .black(0.06), shadow: .black(0.10))
+        )
+
+        static func of(dark: Bool) -> Palette { dark ? .dark : .light }
+    }
+
+    /// The look for the app's current appearance.
+    static var palette: Palette { .of(dark: isDark) }
+}
+
+// MARK: - Sentence case (ITER-087)
+
+extension String {
+    /// "THIS WEEK" or "this week" → "This week": chips and tabs read in sentence case. For labels that come from an
+    /// enum's raw value or from data; the value itself stays as it is.
+    var sentenceCased: String { prefix(1).uppercased() + dropFirst().lowercased() }
+}
+
 // MARK: - Color convenience
 
 extension Color {
@@ -231,95 +437,75 @@ extension Color {
     }
 }
 
-// MARK: - Glass panel modifier
+// MARK: - Panel modifier (ITER-087)
 //
-// `mwCard` was the BLOCKS card (solid `MW.surface` fill + Rectangle border).
-// It now renders a Liquid Glass panel: thin material + continuous corner +
-// subtle specular rim + soft shadow. Three elevations.
+// `mwCard` draws a panel from the palette: in the dark look a faint white
+// gradient, a thin edge and a top highlight, no shadow; in the light look
+// white frosted glass with a soft shadow. `.hero` is the sidebar.
 
 enum GlassElevation { case flat, raised, hero }
-
-private extension GlassElevation {
-    var material: Material {
-        switch self {
-        case .flat:   return .ultraThinMaterial
-        case .raised: return .thinMaterial
-        case .hero:   return .regularMaterial
-        }
-    }
-}
 
 struct MWCardModifier: ViewModifier {
     var radius: CGFloat = MW.rMedium
     var elevation: GlassElevation = .raised
+    /// The look is read from the environment, so a theme change draws the panel again.
+    @Environment(\.colorScheme) private var colorScheme
 
     func body(content: Content) -> some View {
-        content
+        let look = MW.Palette.of(dark: colorScheme == .dark)
+        let shape = RoundedRectangle(cornerRadius: radius, style: .continuous)
+        return content
+            .clipShape(shape)
             .background {
-                ZStack {
-                    RoundedRectangle(cornerRadius: radius, style: .continuous)
-                        .fill(elevation.material)
-                    // Specular top highlight — what makes glass read as glass.
-                    RoundedRectangle(cornerRadius: radius, style: .continuous)
-                        .strokeBorder(
-                            LinearGradient(
-                                colors: [Color.white.opacity(0.30),
-                                         Color.white.opacity(0.04),
-                                         Color.white.opacity(0)],
-                                startPoint: .top, endPoint: .center
-                            ),
-                            lineWidth: 1
-                        )
-                        .blendMode(.overlay)
-                    RoundedRectangle(cornerRadius: radius, style: .continuous)
-                        .strokeBorder(MW.border, lineWidth: 0.5)
-                }
+                shape
+                    .fill(elevation == .hero
+                          ? AnyShapeStyle(look.sidebar.color)
+                          : AnyShapeStyle(LinearGradient(colors: [look.panelTop.color, look.panelBottom.color],
+                                                         startPoint: .top, endPoint: .bottom)))
+                    .modifier(PanelShadowModifier(elevation: elevation, shadow: look.shadow))
             }
-            .clipShape(RoundedRectangle(cornerRadius: radius, style: .continuous))
-            .modifier(GlassShadowsModifier(elevation: elevation))
+            .overlay {
+                ZStack {
+                    // The top highlight: an inner line that fades out down the sides.
+                    shape.strokeBorder(
+                        LinearGradient(colors: [look.highlight.color, look.highlight.color.opacity(0)],
+                                       startPoint: .top, endPoint: UnitPoint(x: 0.5, y: 0.35)),
+                        lineWidth: 1)
+                    shape.strokeBorder(look.edge.color, lineWidth: 1)
+                }
+                .allowsHitTesting(false)
+            }
     }
 }
 
-/// Per-elevation shadow stack lifted from `tokens.css`. Spec requires two
-/// shadow layers for `.raised` and `.hero` (a wide soft halo + a tight close
-/// one) to read as glass against any wash. Dark theme uses heavier shadows
-/// because the wash itself is dark and would otherwise eat the elevation.
-///
-/// Values mirror tokens.css `--shadow-flat / --shadow-raised / --shadow-hero`.
-/// SwiftUI `.shadow()` modifiers chain — each adds a layer behind the previous.
-private struct GlassShadowsModifier: ViewModifier {
+/// The panel's drop shadow, on its shape only: none in the dark look (the edge carries the panel), a close one and
+/// a wide soft one in the light look, where a white panel on a light wall needs it to stand out.
+private struct PanelShadowModifier: ViewModifier {
     let elevation: GlassElevation
+    let shadow: RGBA
 
-    @ViewBuilder
     func body(content: Content) -> some View {
-        let dark = MW.isDark
-        switch elevation {
-        case .flat:
-            content
-                .shadow(color: .black.opacity(dark ? 0.20 : 0.04), radius: 2, x: 0, y: 1)
-        case .raised:
-            content
-                .shadow(color: .black.opacity(dark ? 0.36 : 0.10), radius: 24, x: 0, y: 8)
-                .shadow(color: .black.opacity(dark ? 0.24 : 0.06), radius: 6,  x: 0, y: 2)
-        case .hero:
-            content
-                .shadow(color: .black.opacity(dark ? 0.55 : 0.16), radius: 60, x: 0, y: 24)
-                .shadow(color: .black.opacity(dark ? 0.35 : 0.08), radius: 16, x: 0, y: 6)
-        }
+        let lit = shadow.a > 0
+        let wide: CGFloat = elevation == .hero ? 30 : 22
+        return content
+            .shadow(color: lit ? Color.black.opacity(0.04) : .clear, radius: 2, x: 0, y: 1)
+            .shadow(color: lit && elevation != .flat ? shadow.color : .clear, radius: wide, x: 0, y: wide / 3)
     }
 }
 
-/// Small uppercase tracked label.
+/// Micro-label — a section header or a tile caption: SF Mono caps, tracked (ITER-087). It wins the room it needs
+/// beside other text, and in a box too narrow for it it shrinks a little before it would be cut ("TRANSC…").
 struct MWBadgeModifier: ViewModifier {
     var color: Color = MW.textMuted
     func body(content: Content) -> some View {
         content
-            .font(MW.label)
+            .font(MW.microLabel)
             .foregroundStyle(color)
             .textCase(.uppercase)
-            .tracking(1.2)
+            .tracking(0.6)
             .lineLimit(1)
-            .fixedSize(horizontal: true, vertical: false)
+            .minimumScaleFactor(0.7)
+            .layoutPriority(1)
     }
 }
 
@@ -331,18 +517,84 @@ struct MWChipModifier: ViewModifier {
         content
             .padding(.horizontal, MW.sp10)
             .padding(.vertical, 5)
-            .background {
-                ZStack {
-                    RoundedRectangle(cornerRadius: radius, style: .continuous)
-                        .fill(.ultraThinMaterial)
-                    if selected {
-                        RoundedRectangle(cornerRadius: radius, style: .continuous)
-                            .fill(Color.primary.opacity(0.10))
-                    }
-                    RoundedRectangle(cornerRadius: radius, style: .continuous)
-                        .strokeBorder(Color.primary.opacity(selected ? 0.22 : 0.10), lineWidth: 0.5)
+            .mwSelectable(selected, radius: radius, resting: .surface)
+    }
+}
+
+/// The capsule a segmented group sits in; its look follows the theme (see `mwSegmentTrack()`).
+struct MWSegmentTrackModifier: ViewModifier {
+    @Environment(\.colorScheme) private var colorScheme
+
+    func body(content: Content) -> some View {
+        let look = MW.Palette.of(dark: colorScheme == .dark)
+        return content
+            .padding(3)
+            .background(Capsule(style: .continuous).fill(look.track.color))
+            .overlay(Capsule(style: .continuous).strokeBorder(look.edge.color, lineWidth: 1))
+    }
+}
+
+// MARK: - Selection (ITER-087)
+//
+// One owner for "this tab / chip / tile / row is the chosen one" (SelectionLookGuardTests): in the dark look the
+// user's accent tinted with a ring of it and a faint glow; in the light look a raised white pill. Unselected, a
+// surface shows its resting look.
+
+/// What an unselected selectable surface shows.
+enum MWResting {
+    /// Nothing: a row in a list.
+    case none
+    /// A thin edge: a standalone chip.
+    case outline
+    /// The inner fill with an edge: a button or a chip on a panel.
+    case surface
+    /// A panel: a tile.
+    case panel
+}
+
+struct MWSelectableModifier: ViewModifier {
+    let selected: Bool
+    var radius: CGFloat = MW.rTiny
+    var resting: MWResting = .outline
+    /// The accent and the look are read here as dependencies, so changing either draws the selection again. Read
+    /// from the static tokens, a selection kept the old accent after the user picked another (owner, 2026-11-25).
+    @ObservedObject private var settings = AppSettings.shared
+    @Environment(\.colorScheme) private var colorScheme
+
+    func body(content: Content) -> some View {
+        let look = MW.Palette.of(dark: colorScheme == .dark)
+        let accent = MW.accentPresetColor(settings.accentColor)
+        let shape = RoundedRectangle(cornerRadius: radius, style: .continuous)
+        return content.background {
+            if selected {
+                switch look.selection {
+                case let .accent(fill, ring, glow):
+                    shape.fill(accent.opacity(fill))
+                        .overlay(shape.strokeBorder(accent.opacity(ring), lineWidth: 1))
+                        .shadow(color: accent.opacity(glow), radius: 8)
+                case let .raised(fill, ring, shadow):
+                    // A tile (resting as a panel) is as white as the pill, so it is marked by a ring of the accent.
+                    shape.fill(fill.color)
+                        .overlay(resting == .panel
+                                 ? shape.strokeBorder(accent.opacity(0.55), lineWidth: 1.5)
+                                 : shape.strokeBorder(ring.color, lineWidth: 0.5))
+                        .shadow(color: shadow.color, radius: 3, x: 0, y: 1)
+                }
+            } else {
+                switch resting {
+                case .none:
+                    Color.clear
+                case .outline:
+                    shape.fill(look.outlineRest.color).overlay(shape.strokeBorder(look.edge.color, lineWidth: 1))
+                case .surface:
+                    shape.fill(look.rest.color).overlay(shape.strokeBorder(look.edge.color, lineWidth: 1))
+                case .panel:
+                    shape.fill(LinearGradient(colors: [look.panelTop.color, look.panelBottom.color],
+                                              startPoint: .top, endPoint: .bottom))
+                        .overlay(shape.strokeBorder(look.edge.color, lineWidth: 1))
                 }
             }
+        }
     }
 }
 
@@ -369,6 +621,15 @@ extension View {
     func glassChip(selected: Bool = false, radius: CGFloat = MW.rTiny) -> some View {
         modifier(MWChipModifier(selected: selected, radius: radius))
     }
+    /// A segmented group (board 10): the options of one choice sit in one capsule on the palette's groove; the chosen
+    /// one is drawn by `mwSelectable(…, radius: 999, resting: .none)`, the others have no box of their own.
+    func mwSegmentTrack() -> some View {
+        modifier(MWSegmentTrackModifier())
+    }
+    /// A selectable surface: the palette's selection when `selected`, else its resting look (ITER-087).
+    func mwSelectable(_ selected: Bool, radius: CGFloat = MW.rTiny, resting: MWResting = .outline) -> some View {
+        modifier(MWSelectableModifier(selected: selected, radius: radius, resting: resting))
+    }
 }
 
 /// Hairline horizontal divider — for use inside glass panels (between rows).
@@ -384,7 +645,10 @@ struct GlassDivider: View {
 
 struct Keycap: View {
     let text: String
+    @Environment(\.colorScheme) private var colorScheme
     var body: some View {
+        let look = MW.Palette.of(dark: colorScheme == .dark)
+        return
         Text(text)
             .font(.system(size: 10, weight: .medium, design: .monospaced))
             .foregroundStyle(MW.textPrimary)
@@ -393,9 +657,9 @@ struct Keycap: View {
             .padding(.vertical, 2)
             .background {
                 RoundedRectangle(cornerRadius: 5, style: .continuous)
-                    .fill(.thinMaterial)
+                    .fill(look.elevated.color)
                 RoundedRectangle(cornerRadius: 5, style: .continuous)
-                    .strokeBorder(MW.border, lineWidth: 0.5)
+                    .strokeBorder(look.edge.color, lineWidth: 1)
             }
     }
 }
@@ -412,23 +676,12 @@ struct BlocksButton: View {
         Button(action: action) {
             HStack(spacing: MW.sp4) {
                 if let icon { Image(systemName: icon).font(.system(size: 10)) }
-                Text(label).font(MW.label).tracking(1.0).textCase(.uppercase)
+                Text(label).font(.system(size: 11.5, weight: .medium))
             }
             .foregroundStyle(isActive ? Color.primary : MW.textSecondary)
             .padding(.horizontal, MW.sp12)
             .padding(.vertical, MW.sp6)
-            .background {
-                ZStack {
-                    RoundedRectangle(cornerRadius: MW.rTiny, style: .continuous)
-                        .fill(.ultraThinMaterial)
-                    if isActive {
-                        RoundedRectangle(cornerRadius: MW.rTiny, style: .continuous)
-                            .fill(Color.primary.opacity(0.12))
-                    }
-                    RoundedRectangle(cornerRadius: MW.rTiny, style: .continuous)
-                        .strokeBorder(Color.primary.opacity(isActive ? 0.24 : 0.10), lineWidth: 0.5)
-                }
-            }
+            .mwSelectable(isActive, radius: MW.rTiny, resting: .surface)
         }
         .buttonStyle(.plain)
     }

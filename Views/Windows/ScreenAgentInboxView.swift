@@ -28,20 +28,20 @@ struct ScreenAgentInboxView: View {
             // paints itself with the OS accent, which is blue on a Mac and has
             // nothing to do with this app's monochrome palette.
             HStack(spacing: 8) {
-                ForEach(Filter.allCases) { option in
-                    let isActive = filter == option
-                    Text(option.rawValue.uppercased())
-                        .font(MW.label)
-                        .tracking(0.8)
-                        .foregroundStyle(isActive ? MW.textPrimary : MW.textMuted)
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 4)
-                        .background(isActive ? MW.elevated : .clear)
-                        .overlay(Rectangle().stroke(isActive ? MW.borderLight : MW.border,
-                                                    lineWidth: MW.hairline))
-                        .contentShape(Rectangle())
-                        .onTapGesture { filter = option }
+                HStack(spacing: 2) {
+                    ForEach(Filter.allCases) { option in
+                        let isActive = filter == option
+                        Text(option.rawValue.sentenceCased)
+                            .font(.system(size: 11.5, weight: .medium))
+                            .foregroundStyle(isActive ? MW.textPrimary : MW.textMuted)
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 4)
+                            .mwSelectable(isActive, radius: 999, resting: .none)
+                            .contentShape(Rectangle())
+                            .onTapGesture { filter = option }
+                    }
                 }
+                .mwSegmentTrack()
                 Spacer(minLength: 0)
             }
             .padding(.horizontal, 16)
@@ -109,9 +109,8 @@ struct ScreenAgentInboxView: View {
     private func row(_ item: ScreenAgentItem) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 8) {
-                Text(item.sourceApp.uppercased())
-                    .font(.system(size: 9, weight: .semibold, design: .monospaced))
-                    .foregroundStyle(.secondary)
+                Text(item.sourceApp)
+                    .mwBadge(color: MW.textSecondary)
                 Text(relativeAge(item.capturedAt))
                     .font(.system(size: 9, design: .monospaced))
                     .foregroundStyle(.tertiary)
@@ -172,6 +171,7 @@ struct ScreenAgentInboxView: View {
         .padding(.vertical, 12)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(highlight(item))
+        .mwSelectable(focusedID == item.id, radius: MW.rTiny, resting: .none)
         .overlay(alignment: .leading) {
             // A visible focus ring, not just a tint: keyboard users need to see
             // where they are.
@@ -216,9 +216,9 @@ struct ScreenAgentInboxView: View {
             .foregroundStyle(.tertiary)
     }
 
+    /// The chosen row's faint tint; the focused row is drawn by `mwSelectable` (ITER-087).
     private func highlight(_ item: ScreenAgentItem) -> Color {
-        if focusedID == item.id { return MW.selectFill }
-        if item.id == selectedID { return MW.subtle }
+        if focusedID != item.id && item.id == selectedID { return MW.subtle }
         return .clear
     }
 

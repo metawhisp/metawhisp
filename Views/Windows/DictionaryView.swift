@@ -48,7 +48,6 @@ struct DictionaryView: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(MW.bg)
     }
 
     // MARK: - Current Data
@@ -68,9 +67,9 @@ struct DictionaryView: View {
 
     private var tabTitle: String {
         switch selectedTab {
-        case 0: return "CORRECTIONS"
-        case 1: return "BRANDS"
-        default: return "SNIPPETS"
+        case 0: return "Corrections"
+        case 1: return "Brands"
+        default: return "Snippets"
         }
     }
 
@@ -84,10 +83,10 @@ struct DictionaryView: View {
         HStack {
             Text("Dictionary").font(MW.monoTitle).foregroundStyle(MW.textPrimary)
             Spacer()
-            Text("\(totalCount) TOTAL")
+            Text("\(totalCount) total")
                 .font(MW.monoSm).foregroundStyle(MW.textMuted)
-            BlocksButton(label: "EXPORT", icon: "square.and.arrow.up") { exportCurrent() }
-            BlocksButton(label: "IMPORT", icon: "square.and.arrow.down") { importCurrent() }
+            BlocksButton(label: "Export", icon: "square.and.arrow.up") { exportCurrent() }
+            BlocksButton(label: "Import", icon: "square.and.arrow.down") { importCurrent() }
         }
         .padding(MW.sp16)
     }
@@ -96,17 +95,19 @@ struct DictionaryView: View {
 
     private var tabBar: some View {
         HStack(spacing: 0) {
-            tabButton("CORRECTIONS", count: dictionary.corrections.count, index: 0)
-            tabButton("BRANDS", count: dictionary.brands.count, index: 1)
-            tabButton("SNIPPETS", count: dictionary.snippets.count, index: 2)
+            HStack(spacing: 2) {
+                tabButton("Corrections", count: dictionary.corrections.count, index: 0)
+                tabButton("Brands", count: dictionary.brands.count, index: 1)
+                tabButton("Snippets", count: dictionary.snippets.count, index: 2)
+            }
+            .mwSegmentTrack()
             Spacer()
         }
         .padding(.horizontal, MW.sp16)
         .padding(.vertical, MW.sp8)
     }
 
-    /// Liquid Glass spec § 7: tab pills, active = glass-flat selectFill,
-    /// inactive = ultraThin. No more black-on-white inverted look.
+    /// Tab pills drawn by `mwSelectable` (ITER-087).
     private func tabButton(_ label: String, count: Int, index: Int) -> some View {
         let isActive = selectedTab == index
         return Button {
@@ -118,20 +119,13 @@ struct DictionaryView: View {
             }
         } label: {
             HStack(spacing: 6) {
-                Text(label).font(.system(size: 11, weight: .semibold)).tracking(0.8)
+                Text(label).font(.system(size: 11.5, weight: .medium))
                 Text("\(count)").font(MW.monoSm)
             }
             .foregroundStyle(isActive ? MW.textPrimary : MW.textMuted)
             .padding(.horizontal, 14)
             .padding(.vertical, 6)
-            .background {
-                Capsule(style: .continuous)
-                    .fill(isActive ? AnyShapeStyle(MW.selectFill) : AnyShapeStyle(.ultraThinMaterial))
-            }
-            .overlay(
-                Capsule(style: .continuous)
-                    .strokeBorder(isActive ? MW.selectRim : MW.border, lineWidth: 0.5)
-            )
+            .mwSelectable(isActive, radius: 999, resting: .none)
         }
         .buttonStyle(.plain)
     }
@@ -155,12 +149,12 @@ struct DictionaryView: View {
             Button { addItem() } label: {
                 HStack(spacing: MW.sp4) {
                     Image(systemName: "plus").font(.system(size: 9, weight: .medium))
-                    Text("ADD").font(MW.label).tracking(1.2)
+                    Text("Add").font(.system(size: 11.5, weight: .medium))
                 }
-                .foregroundStyle(canAdd ? Color.black : MW.textMuted)
+                .foregroundStyle(canAdd ? MW.onAccent : MW.textMuted)
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, MW.sp8)
-                .background(canAdd ? Color.white : MW.surface)
+                .background(canAdd ? MW.accent : MW.surface)
                 .overlay(RoundedRectangle(cornerRadius: MW.rSmall, style: .continuous).stroke(MW.border, lineWidth: 0.5))
             }
             .buttonStyle(.plain)
@@ -181,7 +175,7 @@ struct DictionaryView: View {
                 } label: {
                     HStack(spacing: MW.sp4) {
                         Image(systemName: "arrow.clockwise").font(.system(size: 9, weight: .medium))
-                        Text("LOAD DEFAULTS").font(MW.label).tracking(1)
+                        Text("Load defaults").font(.system(size: 11.5, weight: .medium))
                     }
                     .foregroundStyle(MW.textSecondary)
                     .frame(maxWidth: .infinity)
@@ -220,8 +214,8 @@ struct DictionaryView: View {
 
     private var arrowLabel: String {
         switch selectedTab {
-        case 2: return "EXPANDS TO"
-        default: return "REPLACES WITH"
+        case 2: return "expands to"
+        default: return "replaces with"
         }
     }
 
@@ -272,7 +266,7 @@ struct DictionaryView: View {
 
     private func statRow(_ label: String, _ value: String) -> some View {
         HStack {
-            Text(label.uppercased()).font(MW.monoSm).foregroundStyle(MW.textMuted)
+            Text(label).font(MW.monoSm).foregroundStyle(MW.textMuted)
             Spacer()
             Text(value).font(MW.monoSm).foregroundStyle(MW.textPrimary)
         }
@@ -285,8 +279,8 @@ struct DictionaryView: View {
             Spacer()
             Image(systemName: emptyIcon)
                 .font(.system(size: 32, weight: .thin)).foregroundStyle(MW.textMuted)
-            Text("NO \(tabTitle) YET")
-                .font(MW.mono).foregroundStyle(MW.textSecondary).tracking(1.5)
+            Text("No \(tabTitle.lowercased()) yet")
+                .font(MW.mono).foregroundStyle(MW.textSecondary)
             Text(emptyHint)
                 .font(MW.monoSm).foregroundStyle(MW.textMuted).multilineTextAlignment(.center)
             Spacer()
@@ -320,7 +314,7 @@ struct DictionaryView: View {
                     Text("(\(currentItems.count))").font(MW.monoSm).foregroundStyle(MW.textMuted)
                     Spacer()
                     if !currentItems.isEmpty {
-                        BlocksButton(label: "CLEAR ALL", icon: "trash") { clearCurrent() }
+                        BlocksButton(label: "Clear all", icon: "trash") { clearCurrent() }
                     }
                 }
 
@@ -376,7 +370,7 @@ struct DictionaryView: View {
                                 .font(.system(size: 8, weight: .bold))
                             Text("copied").font(MW.monoSm)
                         }
-                        .foregroundStyle(MW.idle)
+                        .foregroundStyle(MW.ok)
                     } else if isPresetPlaceholder {
                         Text("tap to fill in").font(MW.mono).italic()
                             .foregroundStyle(MW.textMuted)
@@ -475,7 +469,6 @@ struct DictionaryView: View {
         )
         .font(MW.mono).foregroundStyle(MW.textPrimary)
         .textFieldStyle(.roundedBorder)
-        .colorScheme(.dark)
         .padding(.horizontal, MW.sp4).padding(.vertical, MW.sp4)
     }
 

@@ -48,7 +48,8 @@ struct StoreRecoveryOverlay: View {
             }
             .padding(28)
             .frame(maxWidth: 500)
-            .background(MW.elevated)
+            // Opaque: the card sits over the dimmed window and its text must not show what is behind (ITER-087).
+            .background(PageWash())
             .clipShape(RoundedRectangle(cornerRadius: MW.rMedium, style: .continuous))
             .overlay(
                 RoundedRectangle(cornerRadius: MW.rMedium, style: .continuous)

@@ -41,10 +41,9 @@ struct WeeklyInsightsView: View {
 
     private var header: some View {
         HStack {
-            Text("WEEKLY INSIGHTS")
+            Text("Weekly insights")
                 .font(MW.monoLg)
                 .foregroundStyle(MW.textPrimary)
-                .tracking(2)
             Spacer()
             if !digests.isEmpty {
                 Text("\(digests.count) \(digests.count == 1 ? "week" : "weeks")")
@@ -84,8 +83,8 @@ struct WeeklyInsightsView: View {
                                 .font(.system(size: 10, weight: .semibold))
                                 .foregroundStyle(MW.textMuted)
                         } else {
-                            Text("QUIET")
-                                .font(MW.label).tracking(0.6)
+                            Text("Quiet")
+                                .font(.system(size: 10.5, weight: .medium))
                                 .foregroundStyle(MW.textDim)
                         }
                     }
@@ -133,7 +132,7 @@ struct WeeklyInsightsView: View {
                 bulletSection("STUCK LOOPS", digest.stuckLoops, marker: "•", markerColor: MW.processing)
             }
             if !digest.insights.isEmpty {
-                bulletSection("CROSS-CONTEXT INSIGHTS", digest.insights, marker: "→", markerColor: MW.idle)
+                bulletSection("CROSS-CONTEXT INSIGHTS", digest.insights, marker: "→", markerColor: MW.ok)
             }
 
             Text("Based on \(digest.conversationsAnalyzed) conversation\(digest.conversationsAnalyzed == 1 ? "" : "s")")
@@ -144,8 +143,7 @@ struct WeeklyInsightsView: View {
 
     private func sectionLabel(_ text: String) -> some View {
         Text(text)
-            .font(MW.label).tracking(1.2)
-            .foregroundStyle(MW.textDim)
+            .mwBadge(color: MW.textDim)
     }
 
     private func bulletSection(_ label: String, _ items: [String], marker: String, markerColor: Color) -> some View {

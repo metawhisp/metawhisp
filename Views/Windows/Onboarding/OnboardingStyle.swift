@@ -7,6 +7,9 @@ enum OnboardingStyle {
     static let title = Font.system(size: 34, weight: .semibold)
     static let body = Font.system(size: 16)
     static let step = Font.system(size: 12, weight: .medium)
+    /// The onboarding's boxes keep their opaque grey: the window's `MW.surface` became see-through in the
+    /// new look (ITER-087), and the onboarding keeps its own look (owner, 2026-11-25).
+    static var box: Color { MW.isDark ? Color(w: 0.13) : Color(w: 0.99) }
 }
 
 /// How Right ⌘ dictates on this Mac, for the words that name it: not at all without Accessibility (the shortcut

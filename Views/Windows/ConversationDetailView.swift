@@ -111,10 +111,10 @@ struct ConversationDetailView: View {
                         .lineLimit(2)
                     HStack(spacing: 6) {
                         if let cat = conv.category, !cat.isEmpty, cat != "other" {
-                            chip(cat.uppercased())
+                            chip(cat.sentenceCased)
                         }
                         projectMenu(conv)
-                        chip(conv.source.uppercased())
+                        chip(conv.source.sentenceCased)
                         Text(conv.startedAt.formatted(date: .abbreviated, time: .shortened))
                             .font(MW.monoSm)
                             .foregroundStyle(MW.textMuted)
@@ -149,8 +149,8 @@ struct ConversationDetailView: View {
             } label: {
                 HStack(spacing: 4) {
                     Image(systemName: copiedFlash ? "checkmark" : "doc.on.doc").font(.system(size: 10))
-                    Text(copiedFlash ? "COPIED" : "COPY")
-                        .font(MW.label).tracking(0.6)
+                    Text(copiedFlash ? "Copied" : "Copy")
+                        .font(.system(size: 11.5, weight: .medium))
                 }
                 .foregroundStyle(MW.textSecondary)
                 .padding(.horizontal, 8).padding(.vertical, 4)
@@ -170,8 +170,8 @@ struct ConversationDetailView: View {
                     } else {
                         Image(systemName: "checklist").font(.system(size: 10))
                     }
-                    Text(isGeneratingPlan ? "WRITING…" : "PLAN")
-                        .font(MW.label).tracking(0.6)
+                    Text(isGeneratingPlan ? "Writing…" : "Plan")
+                        .font(.system(size: 11.5, weight: .medium))
                 }
                 .foregroundStyle(MW.textSecondary)
                 .padding(.horizontal, 8).padding(.vertical, 4)
@@ -190,8 +190,8 @@ struct ConversationDetailView: View {
                     } else {
                         Image(systemName: "arrow.clockwise").font(.system(size: 10))
                     }
-                    Text(isRegenerating ? "REGENERATING…" : "REGENERATE")
-                        .font(MW.label).tracking(0.6)
+                    Text(isRegenerating ? "Regenerating…" : "Regenerate")
+                        .font(.system(size: 11.5, weight: .medium))
                 }
                 .foregroundStyle(MW.textSecondary)
                 .padding(.horizontal, 8).padding(.vertical, 4)
@@ -223,7 +223,7 @@ struct ConversationDetailView: View {
                 Button {
                     withAnimation(.easeInOut(duration: 0.12)) { selectedTab = t }
                 } label: {
-                    Text(t.rawValue)
+                    Text(t.rawValue.sentenceCased)
                         .font(MW.label).tracking(0.6)
                         .foregroundStyle(selectedTab == t ? MW.textPrimary : MW.textMuted)
                         .padding(.vertical, 10)
@@ -251,11 +251,11 @@ struct ConversationDetailView: View {
             if let plan = actionPlan {
                 actionPlanCard(plan)
             }
-            section(label: "DECISIONS", icon: "checkmark.circle", items: conv.decisions)
-            section(label: "ACTION ITEMS", icon: "arrow.forward.circle", items: conv.actionItems)
+            section(label: "Decisions", icon: "checkmark.circle", items: conv.decisions)
+            section(label: "Action items", icon: "arrow.forward.circle", items: conv.actionItems)
             participantsSection(conv.participants)
             quotesSection(conv.keyQuotes)
-            section(label: "NEXT STEPS", icon: "arrow.uturn.right", items: conv.nextSteps)
+            section(label: "Next steps", icon: "arrow.uturn.right", items: conv.nextSteps)
             if conv.decisions.isEmpty && conv.actionItems.isEmpty
                 && conv.participants.isEmpty && conv.keyQuotes.isEmpty
                 && conv.nextSteps.isEmpty {
@@ -270,7 +270,7 @@ struct ConversationDetailView: View {
                 VStack(alignment: .leading, spacing: 6) {
                     HStack(spacing: 6) {
                         Image(systemName: icon).font(.system(size: 11)).foregroundStyle(MW.textMuted)
-                        Text(label).font(MW.label).tracking(0.6).foregroundStyle(MW.textMuted)
+                        Text(label).mwBadge()
                     }
                     ForEach(items, id: \.self) { item in
                         HStack(alignment: .top, spacing: 8) {
@@ -294,7 +294,7 @@ struct ConversationDetailView: View {
                 VStack(alignment: .leading, spacing: 6) {
                     HStack(spacing: 6) {
                         Image(systemName: "person.2").font(.system(size: 11)).foregroundStyle(MW.textMuted)
-                        Text("PARTICIPANTS").font(MW.label).tracking(0.6).foregroundStyle(MW.textMuted)
+                        Text("Participants").mwBadge()
                     }
                     HStack(spacing: 6) {
                         ForEach(items, id: \.self) { name in
@@ -320,7 +320,7 @@ struct ConversationDetailView: View {
                 VStack(alignment: .leading, spacing: 8) {
                     HStack(spacing: 6) {
                         Image(systemName: "quote.opening").font(.system(size: 11)).foregroundStyle(MW.textMuted)
-                        Text("KEY QUOTES").font(MW.label).tracking(0.6).foregroundStyle(MW.textMuted)
+                        Text("Key quotes").mwBadge()
                     }
                     ForEach(items, id: \.self) { quote in
                         Text("\u{201C}\(quote)\u{201D}")
@@ -351,7 +351,7 @@ struct ConversationDetailView: View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 6) {
                 Image(systemName: "checklist").font(.system(size: 11)).foregroundStyle(MW.textSecondary)
-                Text("MEETING + ACTION PLAN").font(MW.label).tracking(0.6).foregroundStyle(MW.textSecondary)
+                Text("Meeting + action plan").mwBadge(color: MW.textSecondary)
                 Spacer()
                 Button {
                     copyToClipboard(plan)
@@ -360,7 +360,7 @@ struct ConversationDetailView: View {
                 } label: {
                     HStack(spacing: 4) {
                         Image(systemName: planCopiedFlash ? "checkmark" : "doc.on.doc").font(.system(size: 10))
-                        Text(planCopiedFlash ? "COPIED" : "COPY").font(MW.label).tracking(0.6)
+                        Text(planCopiedFlash ? "Copied" : "Copy").font(.system(size: 11.5, weight: .medium))
                     }
                     .foregroundStyle(MW.textSecondary)
                     .padding(.horizontal, 6).padding(.vertical, 2)
@@ -394,8 +394,8 @@ struct ConversationDetailView: View {
             Text("No structured summary yet")
                 .font(MW.mono).foregroundStyle(MW.textSecondary)
             Text(conv.title == "Quick note"
-                 ? "This conversation needs to be regenerated. Click REGENERATE in the header."
-                 : "Sections appear here once the LLM extracts decisions, action items, quotes, etc. Try REGENERATE if it's been a while.")
+                 ? "This conversation needs to be regenerated. Click Regenerate in the header."
+                 : "Sections appear here once the LLM extracts decisions, action items, quotes, etc. Try Regenerate if it's been a while.")
                 .font(MW.monoSm).foregroundStyle(MW.textMuted)
                 .multilineTextAlignment(.center)
                 .frame(maxWidth: 420)
@@ -458,11 +458,11 @@ struct ConversationDetailView: View {
                 ($0.assignee ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
             }
             if !myTasks.isEmpty {
-                taskSection(label: "MY TASKS", tasks: myTasks)
+                taskSection(label: "My tasks", tasks: myTasks)
             }
             ForEach(waitingMap.keys.sorted(), id: \.self) { name in
                 if let group = waitingMap[name], !name.isEmpty {
-                    taskSection(label: "WAITING ON \(name.uppercased())", tasks: group)
+                    taskSection(label: "Waiting on \(name)", tasks: group)
                 }
             }
             if !linkedMemories.isEmpty {
@@ -477,7 +477,7 @@ struct ConversationDetailView: View {
 
     private func taskSection(label: String, tasks: [TaskItem]) -> some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text(label).font(MW.label).tracking(0.6).foregroundStyle(MW.textMuted)
+            Text(label).mwBadge()
             ForEach(tasks) { t in
                 HStack(alignment: .top, spacing: 8) {
                     Image(systemName: "circle").font(.system(size: 11)).foregroundStyle(MW.textMuted)
@@ -494,7 +494,7 @@ struct ConversationDetailView: View {
 
     private var memoriesSection: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text("MEMORIES").font(MW.label).tracking(0.6).foregroundStyle(MW.textMuted)
+            Text("Memories").mwBadge()
             ForEach(linkedMemories) { m in
                 VStack(alignment: .leading, spacing: 2) {
                     if let h = m.headline, !h.isEmpty {
@@ -514,10 +514,10 @@ struct ConversationDetailView: View {
 
     private func chip(_ text: String) -> some View {
         Text(text)
-            .font(MW.label).tracking(0.6)
+            .font(.system(size: 10.5, weight: .medium))
             .foregroundStyle(MW.textMuted)
-            .padding(.horizontal, 6).padding(.vertical, 2)
-            .overlay(RoundedRectangle(cornerRadius: 3, style: .continuous).stroke(MW.border, lineWidth: 0.5))
+            .padding(.horizontal, 7).padding(.vertical, 2)
+            .overlay(Capsule(style: .continuous).strokeBorder(MW.palette.edge.color, lineWidth: 1))
     }
 
     // MARK: - Project picker (ITER-037-followup)

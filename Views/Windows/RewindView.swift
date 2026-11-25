@@ -49,10 +49,9 @@ struct RewindView: View {
 
     private var header: some View {
         HStack {
-            Text("SCREEN")
+            Text("Screen")
                 .font(MW.monoLg)
                 .foregroundStyle(MW.textPrimary)
-                .tracking(2)
             Spacer()
             Text("\(observations.count) observations")
                 .font(MW.monoSm)
@@ -92,18 +91,19 @@ struct RewindView: View {
 
     private var filterBar: some View {
         HStack(spacing: 8) {
-            ForEach(DateRange.allCases, id: \.self) { r in
-                let isActive = selectedRange == r
-                Text(r.rawValue)
-                    .font(MW.label)
-                    .tracking(0.8)
-                    .foregroundStyle(isActive ? MW.textPrimary : MW.textMuted)
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 4)
-                    .background(isActive ? MW.elevated : .clear)
-                    .overlay(Rectangle().stroke(isActive ? MW.borderLight : MW.border, lineWidth: MW.hairline))
-                    .onTapGesture { selectedRange = r }
+            HStack(spacing: 2) {
+                ForEach(DateRange.allCases, id: \.self) { r in
+                    let isActive = selectedRange == r
+                    Text(r.rawValue.sentenceCased)
+                        .font(.system(size: 11.5, weight: .medium))
+                        .foregroundStyle(isActive ? MW.textPrimary : MW.textMuted)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 4)
+                        .mwSelectable(isActive, radius: 999, resting: .none)
+                        .onTapGesture { selectedRange = r }
+                }
             }
+            .mwSegmentTrack()
             Spacer()
             Text("\(filtered.count) shown")
                 .font(MW.monoSm)
@@ -187,8 +187,7 @@ struct RewindView: View {
 
     private func sectionHeader(_ label: String) -> some View {
         Text(label)
-            .font(MW.label).tracking(1.0)
-            .foregroundStyle(MW.textMuted)
+            .mwBadge()
             .padding(.top, 12).padding(.bottom, 6)
     }
 
@@ -253,7 +252,7 @@ struct RewindView: View {
                 HStack(alignment: .top, spacing: 6) {
                     Image(systemName: "flag").font(.system(size: 10)).foregroundStyle(MW.textMuted)
                     VStack(alignment: .leading, spacing: 2) {
-                        Text("DETECTED TASK").font(MW.label).tracking(0.6).foregroundStyle(MW.textMuted)
+                        Text("Detected task").mwBadge()
                         Text(taskTitle).font(MW.monoSm).foregroundStyle(MW.textSecondary)
                     }
                 }
@@ -269,8 +268,8 @@ struct RewindView: View {
         let tasks = fetchTasks(screenContextId: obs.screenContextId)
         if !tasks.isEmpty {
             VStack(alignment: .leading, spacing: 4) {
-                Text("EXTRACTED TASKS · \(tasks.count)")
-                    .font(MW.label).tracking(0.6).foregroundStyle(MW.textMuted)
+                Text("Extracted tasks · \(tasks.count)")
+                    .mwBadge()
                 ForEach(tasks) { task in
                     HStack(spacing: 6) {
                         Image(systemName: task.completed ? "checkmark.square.fill" : "square")
@@ -289,8 +288,8 @@ struct RewindView: View {
         let mems = fetchMemories(screenContextId: obs.screenContextId)
         if !mems.isEmpty {
             VStack(alignment: .leading, spacing: 4) {
-                Text("EXTRACTED MEMORIES · \(mems.count)")
-                    .font(MW.label).tracking(0.6).foregroundStyle(MW.textMuted)
+                Text("Extracted memories · \(mems.count)")
+                    .mwBadge()
                 ForEach(mems) { mem in
                     HStack(alignment: .top, spacing: 6) {
                         Image(systemName: "brain").font(.system(size: 9)).foregroundStyle(MW.textMuted)
@@ -305,7 +304,7 @@ struct RewindView: View {
     private func linkedOCR(_ obs: ScreenObservation) -> some View {
         if let ctx = fetchScreenContext(id: obs.screenContextId), !ctx.ocrText.isEmpty {
             VStack(alignment: .leading, spacing: 4) {
-                Text("OCR SNAPSHOT").font(MW.label).tracking(0.6).foregroundStyle(MW.textMuted)
+                Text("OCR snapshot").mwBadge()
                 Text(String(ctx.ocrText.prefix(600)))
                     .font(MW.monoSm).foregroundStyle(MW.textMuted.opacity(0.85))
                     .lineLimit(8)
@@ -346,16 +345,16 @@ struct RewindView: View {
     // MARK: - Chips + icon helpers
 
     private func focusChip(_ focus: String) -> some View {
-        Text(focus.uppercased())
-            .font(MW.label).tracking(0.5)
+        Text(focus.sentenceCased)
+            .font(.system(size: 10.5, weight: .medium))
             .foregroundStyle(focus == "focused" ? MW.textSecondary : MW.textMuted)
             .padding(.horizontal, 5).padding(.vertical, 1)
             .overlay(RoundedRectangle(cornerRadius: MW.rSmall, style: .continuous).stroke(MW.border, lineWidth: 0.5))
     }
 
     private func categoryChip(_ category: String) -> some View {
-        Text(category.uppercased())
-            .font(MW.label).tracking(0.5)
+        Text(category.sentenceCased)
+            .font(.system(size: 10.5, weight: .medium))
             .foregroundStyle(MW.textMuted)
             .padding(.horizontal, 5).padding(.vertical, 1)
             .background(MW.elevated)

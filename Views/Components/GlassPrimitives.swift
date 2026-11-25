@@ -24,7 +24,7 @@ struct SidebarItem: View {
                 Image(systemName: icon)
                     .font(.system(size: 13, weight: .medium))
                     .frame(width: 14)
-                    .foregroundStyle(isActive ? MW.textPrimary : MW.textSecondary)
+                    .foregroundStyle(isActive ? MW.accent : MW.textSecondary)
                 Text(title)
                     .font(.system(size: 13, weight: .medium))
                     .foregroundStyle(isActive ? MW.textPrimary : MW.textSecondary)
@@ -33,16 +33,7 @@ struct SidebarItem: View {
             .padding(.horizontal, 12)
             .padding(.vertical, 9)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background {
-                if isActive {
-                    RoundedRectangle(cornerRadius: MW.rSmall, style: .continuous)
-                        .fill(MW.selectFill)
-                        .overlay(
-                            RoundedRectangle(cornerRadius: MW.rSmall, style: .continuous)
-                                .strokeBorder(MW.selectRim, lineWidth: 0.5)
-                        )
-                }
-            }
+            .mwSelectable(isActive, radius: MW.rSmall, resting: .none)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -61,6 +52,8 @@ struct GlassChipButton: View {
     var isActive: Bool = false
     var accent: Bool = false
     var radius: CGFloat = 999
+    /// One option of a segmented group inside `mwSegmentTrack()`: no box of its own at rest.
+    var grouped: Bool = false
     var action: () -> Void = {}
 
     var body: some View {
@@ -77,13 +70,13 @@ struct GlassChipButton: View {
             .padding(.vertical, 6)
             .foregroundStyle(foreground)
             .background {
-                RoundedRectangle(cornerRadius: radius, style: .continuous)
-                    .fill(fill)
+                if accent {
+                    RoundedRectangle(cornerRadius: radius, style: .continuous).fill(MW.accentSoft)
+                    RoundedRectangle(cornerRadius: radius, style: .continuous)
+                        .strokeBorder(MW.accentRim, lineWidth: 0.5)
+                }
             }
-            .overlay {
-                RoundedRectangle(cornerRadius: radius, style: .continuous)
-                    .strokeBorder(stroke, lineWidth: 0.5)
-            }
+            .mwSelectable(isActive && !accent, radius: radius, resting: accent || grouped ? .none : .surface)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -92,16 +85,6 @@ struct GlassChipButton: View {
     private var foreground: Color {
         if accent { return MW.accent }
         return isActive ? MW.textPrimary : MW.textSecondary
-    }
-    private var fill: AnyShapeStyle {
-        if accent { return AnyShapeStyle(MW.accentSoft) }
-        if isActive { return AnyShapeStyle(MW.selectFill) }
-        return AnyShapeStyle(.ultraThinMaterial)
-    }
-    private var stroke: Color {
-        if accent { return MW.accentRim }
-        if isActive { return MW.selectRim }
-        return MW.border
     }
 }
 
@@ -124,19 +107,19 @@ enum StatusPillState: String {
 
     var dotColor: Color {
         switch self {
-        case .ready: return MW.idle
+        case .ready: return MW.ok
         case .recording: return MW.live
         case .processing: return MW.processing
-        case .postProcessing: return MW.postProcess
+        case .postProcessing: return MW.ok
         }
     }
 
     /// Recording state gets a red-tinted capsule fill so it screams.
-    /// Other states use ultraThinMaterial — the dot does the signaling.
+    /// Other states use the inner fill — the dot does the signaling.
     var fillColor: AnyShapeStyle {
         switch self {
         case .recording: return AnyShapeStyle(MW.live.opacity(0.14))
-        default: return AnyShapeStyle(.ultraThinMaterial)
+        default: return AnyShapeStyle(MW.surface)
         }
     }
 
@@ -210,8 +193,8 @@ extension PageHeader where Right == EmptyView {
 
 // ─────────────────────────────────────────────────────────────────────────
 // SegmentedGlass — pill-shaped segmented control (Settings tab bar).
-// All segments inside a single ultraThin capsule. Active segment has
-// raised material + selectRim border + primary text.
+// All segments inside one capsule on the palette's track; the active
+// segment is drawn by mwSelectable (ITER-087), primary text.
 // ─────────────────────────────────────────────────────────────────────────
 
 struct SegmentedGlass<T: Hashable>: View {
@@ -232,24 +215,15 @@ struct SegmentedGlass<T: Hashable>: View {
                         .foregroundStyle(isActive ? MW.textPrimary : MW.textSecondary)
                         .padding(.horizontal, 14)
                         .padding(.vertical, 7)
-                        .background {
-                            if isActive {
-                                Capsule(style: .continuous)
-                                    .fill(.thinMaterial)
-                                    .overlay(
-                                        Capsule(style: .continuous)
-                                            .strokeBorder(MW.selectRim, lineWidth: 0.5)
-                                    )
-                            }
-                        }
+                        .mwSelectable(isActive, radius: 999, resting: .none)
                         .contentShape(Capsule())
                 }
                 .buttonStyle(.plain)
             }
         }
         .padding(4)
-        .background(Capsule(style: .continuous).fill(.ultraThinMaterial))
-        .overlay(Capsule(style: .continuous).strokeBorder(MW.border, lineWidth: 0.5))
+        .background(Capsule(style: .continuous).fill(MW.palette.track.color))
+        .overlay(Capsule(style: .continuous).strokeBorder(MW.palette.edge.color, lineWidth: 1))
     }
 }
 
@@ -292,28 +266,49 @@ struct AccentSwatch: View {
 }
 
 // ─────────────────────────────────────────────────────────────────────────
-// PageWash — the radial+linear gradient background for the main window.
-// Use as the BACKGROUND-LAYER inside MainWindowView's outer ZStack.
-// Reads `MW.accent` so the warm-side wash picks up the user's accent preset.
+// PageWash — the wall: the one ground of the main window, the popover and
+// the sheets (ITER-087). The palette's opaque wall with a glow of the user's
+// accent at the top right; in the dark look a fainter accent glow at the
+// bottom left, in the light look a neutral shade there. No screen paints
+// its own ground over it (WindowWallGuardTests).
 // ─────────────────────────────────────────────────────────────────────────
 
 struct PageWash: View {
+    /// The accent and the look are dependencies of the wall, so changing either draws it again (owner, 2026-11-25:
+    /// the glow stayed mint after the accent became violet).
+    @ObservedObject private var settings = AppSettings.shared
+    @Environment(\.colorScheme) private var colorScheme
+
+    /// How far the glow reaches: a corner of the surface, never the whole of it. A fixed 520 pt glow flooded the
+    /// 320 pt popover green (owner, 2026-11-25: "more black, less green").
+    static func glowRadius(for size: CGSize) -> CGFloat { max(size.width, size.height) * 0.45 }
+
     var body: some View {
-        ZStack {
-            LinearGradient(
-                colors: [MW.bg, MW.bg.opacity(0.85)],
-                startPoint: .top, endPoint: .bottom
-            )
-            RadialGradient(
-                colors: [Color(red: 0.34, green: 0.47, blue: 0.61).opacity(MW.isDark ? 0.18 : 0.22), .clear],
-                center: UnitPoint(x: 0.18, y: -0.10),
-                startRadius: 100, endRadius: 700
-            )
-            RadialGradient(
-                colors: [MW.accent.opacity(0.10), .clear],
-                center: UnitPoint(x: 1.00, y: 1.10),
-                startRadius: 80, endRadius: 600
-            )
+        GeometryReader { geometry in
+            let look = MW.Palette.of(dark: colorScheme == .dark)
+            let accent = MW.accentPresetColor(settings.accentColor)
+            let reach = Self.glowRadius(for: geometry.size)
+            ZStack {
+                LinearGradient(
+                    colors: [look.wallTop.color, look.wallBottom.color],
+                    startPoint: .top, endPoint: .bottom
+                )
+                RadialGradient(
+                    colors: [accent.opacity(look.glow), .clear],
+                    center: UnitPoint(x: 0.96, y: 0),
+                    startRadius: 0, endRadius: reach
+                )
+                RadialGradient(
+                    colors: [accent.opacity(look.lowGlow), .clear],
+                    center: UnitPoint(x: 0, y: 1),
+                    startRadius: 0, endRadius: reach
+                )
+                RadialGradient(
+                    colors: [look.shade.color, .clear],
+                    center: UnitPoint(x: 0, y: 1),
+                    startRadius: 0, endRadius: reach
+                )
+            }
         }
         .ignoresSafeArea()
     }

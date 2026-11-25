@@ -94,8 +94,8 @@ struct TasksView: View {
                             } else {
                                 Image(systemName: "sparkles").font(.system(size: 10))
                             }
-                            Text(isExtracting ? "EXTRACTING…" : "EXTRACT NOW")
-                                .font(MW.label).tracking(0.6)
+                            Text(isExtracting ? "Extracting…" : "Extract now")
+                                .font(.system(size: 11.5, weight: .medium))
                         }
                         .foregroundStyle(MW.textSecondary)
                         .padding(.horizontal, 8).padding(.vertical, 4)
@@ -137,13 +137,13 @@ struct TasksView: View {
                     // ITER-013 — committed tasks split into MY / WAITING-ON sections.
                     // Order: MY first (action surface), WAITING-ON below grouped by person.
                     if !myTasks.isEmpty {
-                        ownershipSectionHeader(label: "MY TASKS", count: myTasks.count)
+                        ownershipSectionHeader(label: "My tasks", count: myTasks.count)
                         ForEach(myTasks) { item in
                             taskCard(item)
                         }
                     }
                     ForEach(waitingOnGroups, id: \.name) { group in
-                        ownershipSectionHeader(label: "WAITING ON \(group.name.uppercased())",
+                        ownershipSectionHeader(label: "Waiting on \(group.name)",
                                                count: group.items.count)
                         ForEach(group.items) { item in
                             taskCard(item)
@@ -161,8 +161,7 @@ struct TasksView: View {
     private func ownershipSectionHeader(label: String, count: Int) -> some View {
         HStack(spacing: 6) {
             Text(label)
-                .font(MW.label).tracking(0.6)
-                .foregroundStyle(MW.textMuted)
+                .mwBadge()
             Text("\(count)")
                 .font(MW.label).tracking(0.6)
                 .foregroundStyle(MW.textMuted)
@@ -188,9 +187,8 @@ struct TasksView: View {
                     Image(systemName: candidatesExpanded ? "chevron.down" : "chevron.right")
                         .font(.system(size: 9))
                         .foregroundStyle(MW.textMuted)
-                    Text("REVIEW CANDIDATES")
-                        .font(MW.label).tracking(0.8)
-                        .foregroundStyle(MW.textSecondary)
+                    Text("Review candidates")
+                        .mwBadge(color: MW.textSecondary)
                     Text("\(stagedTasks.count)")
                         .font(MW.monoSm)
                         .foregroundStyle(MW.textMuted)
@@ -305,7 +303,7 @@ struct TasksView: View {
                     }
                     if let due = item.dueAt {
                         Text(dueLabel(due))
-                            .font(MW.label).tracking(0.5)
+                            .font(.system(size: 10.5, weight: .semibold))
                             .foregroundStyle(dueColor(due))
                     }
                     Spacer()
@@ -317,8 +315,7 @@ struct TasksView: View {
             .frame(maxWidth: .infinity, alignment: .leading)
         }
         .padding(10)
-        .background(MW.bg)
-        .overlay(Rectangle().stroke(MW.border.opacity(0.5), lineWidth: MW.hairline))
+        .mwCard(radius: MW.rSmall, elevation: .flat)
     }
 
     // MARK: - Task card
@@ -338,8 +335,10 @@ struct TasksView: View {
                     }
                 } label: {
                     Image(systemName: item.completed ? "checkmark.square.fill" : "square")
-                        .font(.system(size: 14))
-                        .foregroundStyle(item.completed ? MW.textSecondary : MW.textMuted)
+                        .font(.system(size: 16))
+                        .foregroundStyle(item.completed ? MW.accent : MW.textMuted)
+                        .frame(width: 22, height: 22)
+                        .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
 
@@ -351,10 +350,11 @@ struct TasksView: View {
 
                 if let due = item.dueAt {
                     Text(dueLabel(due))
-                        .font(MW.label).tracking(0.5)
+                        .font(.system(size: 10.5, weight: .semibold))
                         .foregroundStyle(dueColor(due))
-                        .padding(.horizontal, 6).padding(.vertical, 2)
-                        .overlay(Rectangle().stroke(dueColor(due).opacity(0.4), lineWidth: MW.hairline))
+                        .padding(.horizontal, 7).padding(.vertical, 2)
+                        .background(Capsule(style: .continuous).fill(dueColor(due).opacity(0.12)))
+                        .overlay(Capsule(style: .continuous).strokeBorder(dueColor(due).opacity(0.4), lineWidth: 1))
                 }
 
                 Button {
@@ -368,8 +368,10 @@ struct TasksView: View {
                     }
                 } label: {
                     Image(systemName: "xmark")
-                        .font(.system(size: 10))
+                        .font(.system(size: 11, weight: .medium))
                         .foregroundStyle(MW.textMuted)
+                        .frame(width: 20, height: 20)
+                        .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
             }
@@ -390,9 +392,9 @@ struct TasksView: View {
 
     private func dueLabel(_ date: Date) -> String {
         let cal = Calendar.current
-        if date < Date() { return "OVERDUE" }
-        if cal.isDateInToday(date) { return "TODAY" }
-        if cal.isDateInTomorrow(date) { return "TOMORROW" }
+        if date < Date() { return "Overdue" }
+        if cal.isDateInToday(date) { return "Today" }
+        if cal.isDateInTomorrow(date) { return "Tomorrow" }
         return date.formatted(.dateTime.month(.abbreviated).day())
     }
 

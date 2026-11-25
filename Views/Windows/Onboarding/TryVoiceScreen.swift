@@ -209,7 +209,7 @@ struct TryVoiceScreen: View {
         var body: some View {
             content
                 .frame(width: TryVoiceScreen.boxSize.width, height: TryVoiceScreen.boxSize.height)
-                .background(RoundedRectangle(cornerRadius: 22, style: .continuous).fill(MW.surface))
+                .background(RoundedRectangle(cornerRadius: 22, style: .continuous).fill(OnboardingStyle.box))
                 .overlay(RoundedRectangle(cornerRadius: 22, style: .continuous).strokeBorder(MW.border, lineWidth: 0.5))
                 .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
         }

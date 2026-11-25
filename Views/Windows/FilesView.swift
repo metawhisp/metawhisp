@@ -65,8 +65,8 @@ struct FilesView: View {
     private var header: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack {
-                Text("FILES")
-                    .font(MW.monoLg).foregroundStyle(MW.textPrimary).tracking(2)
+                Text("Files")
+                    .font(MW.monoLg).foregroundStyle(MW.textPrimary)
                 Spacer()
                 if settings.fileIndexingEnabled {
                     Button(action: scanNow) {
@@ -76,8 +76,8 @@ struct FilesView: View {
                             } else {
                                 Image(systemName: "arrow.clockwise").font(.system(size: 10))
                             }
-                            Text(isWorking ? "SCANNING…" : "SCAN NOW")
-                                .font(MW.label).tracking(0.6)
+                            Text(isWorking ? "Scanning…" : "Scan now")
+                                .font(.system(size: 11.5, weight: .medium))
                         }
                         .foregroundStyle(MW.textSecondary)
                         .padding(.horizontal, 8).padding(.vertical, 4)
@@ -254,7 +254,7 @@ struct FilesView: View {
             Image(systemName: "folder").font(.system(size: 32)).foregroundStyle(MW.textMuted)
             Text("Nothing indexed yet")
                 .font(MW.monoLg).foregroundStyle(MW.textSecondary)
-            Text("Click SCAN NOW above to index \(settings.indexedFolders.count) folder(s) — up to 8 levels deep, skipping .git / node_modules / etc.")
+            Text("Click Scan now above to index \(settings.indexedFolders.count) folder(s) — up to 8 levels deep, skipping .git / node_modules / etc.")
                 .font(MW.mono).foregroundStyle(MW.textMuted)
                 .multilineTextAlignment(.center).frame(maxWidth: 380)
             Spacer()

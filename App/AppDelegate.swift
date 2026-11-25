@@ -418,6 +418,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
 
         // Apply saved theme
         MW.applyTheme(AppSettings.shared.appTheme)
+        // ITER-087 — an existing user who never chose an accent keeps the Mono they were on; a new one gets Mint.
+        AppSettings.keepExistingUsersAccent()
 
         // Re-read launch-at-login status. The user could have flipped the
         // registration from System Settings → General → Login Items while the

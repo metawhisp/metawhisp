@@ -228,7 +228,7 @@ private struct ProTileView: View {
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 8)
-        .background(RoundedRectangle(cornerRadius: 16, style: .continuous).fill(MW.surface))
+        .background(RoundedRectangle(cornerRadius: 16, style: .continuous).fill(OnboardingStyle.box))
         .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).strokeBorder(MW.border, lineWidth: 0.5))
         .accessibilityElement(children: .combine)
     }

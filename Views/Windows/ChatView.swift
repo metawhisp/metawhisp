@@ -78,8 +78,8 @@ struct ChatView: View {
             Spacer()
             if !messages.isEmpty {
                 Button(action: clearHistory) {
-                    Text("CLEAR")
-                        .font(MW.label).tracking(0.6)
+                    Text("Clear")
+                        .font(.system(size: 11.5, weight: .medium))
                         .foregroundStyle(MW.textMuted)
                         .padding(.horizontal, 8).padding(.vertical, 4)
                         .overlay(RoundedRectangle(cornerRadius: MW.rSmall, style: .continuous).stroke(MW.border, lineWidth: 0.5))
@@ -220,8 +220,8 @@ struct ChatView: View {
                                 Button {
                                     AppDelegate.shared?.chatService.confirmTool(messageId: msg.id)
                                 } label: {
-                                    Text("YES, DO IT")
-                                        .font(MW.label).tracking(0.6)
+                                    Text("Yes, do it")
+                                        .font(.system(size: 11.5, weight: .medium))
                                         .foregroundStyle(MW.textPrimary)
                                         .padding(.horizontal, 8).padding(.vertical, 4)
                                         .overlay(RoundedRectangle(cornerRadius: MW.rSmall, style: .continuous).stroke(MW.border, lineWidth: 0.5))
@@ -230,8 +230,8 @@ struct ChatView: View {
                                 Button {
                                     AppDelegate.shared?.chatService.cancelTool(messageId: msg.id)
                                 } label: {
-                                    Text("CANCEL")
-                                        .font(MW.label).tracking(0.6)
+                                    Text("Cancel")
+                                        .font(.system(size: 11.5, weight: .medium))
                                         .foregroundStyle(MW.textMuted)
                                         .padding(.horizontal, 8).padding(.vertical, 4)
                                         .overlay(RoundedRectangle(cornerRadius: MW.rSmall, style: .continuous).stroke(MW.border, lineWidth: 0.5))
@@ -258,8 +258,8 @@ struct ChatView: View {
                                         Button {
                                             AppDelegate.shared?.chatService.undoTool(messageId: msg.id)
                                         } label: {
-                                            Text("UNDO")
-                                                .font(MW.label).tracking(0.6)
+                                            Text("Undo")
+                                                .font(.system(size: 11.5, weight: .medium))
                                                 .foregroundStyle(MW.textSecondary)
                                                 .padding(.horizontal, 6).padding(.vertical, 2)
                                                 .overlay(RoundedRectangle(cornerRadius: 3, style: .continuous).stroke(MW.border, lineWidth: 0.5))
@@ -271,11 +271,11 @@ struct ChatView: View {
                         }
                     }
                     .padding(10)
-                    // Liquid Glass spec § 7: user bubble = accent-soft fill,
-                    // AI bubble = ultraThin glass. 14 px radius for both.
+                    // User bubble = accent-soft fill, AI bubble = the panel's
+                    // fill (ITER-087). 14 px radius for both.
                     .background {
                         RoundedRectangle(cornerRadius: 14, style: .continuous)
-                            .fill(isUser ? AnyShapeStyle(MW.accentSoft) : AnyShapeStyle(.ultraThinMaterial))
+                            .fill(isUser ? MW.accentSoft : MW.palette.panelTop.color)
                     }
                     .overlay(
                         RoundedRectangle(cornerRadius: 14, style: .continuous)
@@ -350,7 +350,7 @@ struct ChatView: View {
                 }
                 .padding(.horizontal, 16)
                 .padding(.vertical, 8)
-                .background(Color.accentColor.opacity(0.07))
+                .background(MW.accent.opacity(0.07))
             }
             if let err = errorMsg {
                 Text(err)
@@ -375,8 +375,8 @@ struct ChatView: View {
                     if isSending {
                         ProgressView().controlSize(.small)
                     } else {
-                        Text("SEND")
-                            .font(MW.label).tracking(0.6)
+                        Text("Send")
+                            .font(.system(size: 11.5, weight: .medium))
                             .foregroundStyle(MW.textPrimary)
                     }
                 }

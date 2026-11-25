@@ -243,7 +243,7 @@ struct MeetingRecapView: View {
                     .padding(.horizontal, 12).padding(.vertical, 6)
                     .background(
                         RoundedRectangle(cornerRadius: MW.rTiny, style: .continuous)
-                            .fill(Color.accentColor.opacity(0.85))
+                            .fill(MW.accent.opacity(0.85))
                     )
             }
             .buttonStyle(.plain)

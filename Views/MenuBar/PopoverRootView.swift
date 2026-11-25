@@ -22,5 +22,7 @@ struct PopoverRootView: View {
             openMainWindow: openMainWindow,
             onMeetingToggle: onMeetingToggle
         )
+        // System controls (switches, progress) take the user's accent, not macOS's (ITER-087).
+        .tint(MW.controlTint)
     }
 }

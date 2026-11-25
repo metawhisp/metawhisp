@@ -34,14 +34,18 @@ struct WorkspaceView: View {
     /// Pill-shaped chips, same primitive + layout as `LibraryView.picker`.
     private var picker: some View {
         HStack(spacing: 8) {
-            ForEach(Section.allCases, id: \.self) { s in
-                GlassChipButton(
-                    label: s.rawValue,
-                    isActive: section == s,
-                    radius: 999,
-                    action: { section = s }
-                )
+            HStack(spacing: 2) {
+                ForEach(Section.allCases, id: \.self) { s in
+                    GlassChipButton(
+                        label: s.rawValue,
+                        isActive: section == s,
+                        radius: 999,
+                        grouped: true,
+                        action: { section = s }
+                    )
+                }
             }
+            .mwSegmentTrack()
             Spacer()
         }
         .padding(.horizontal, 20)

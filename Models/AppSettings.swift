@@ -107,13 +107,10 @@ final class AppSettings: ObservableObject {
     @AppStorage("weekStartsOn") var weekStartsOn: Int = 2 // 1=Sunday, 2=Monday
     @AppStorage("appTheme") var appTheme: String = "dark" // dark, light, auto
 
-    /// Liquid Glass design — accent color preset.
-    /// Read by `MW.accent` (Helpers/DesignSystem.swift). Default `mono` keeps the
-    /// existing monochrome look so adopting the new design system doesn't tint
-    /// any existing UI element. User can switch to a colored preset in
-    /// Settings → Appearance once that surface ships.
+    /// The accent preset (Settings → Accent), read by `MW.accent` (Helpers/DesignSystem.swift). New users get Mint,
+    /// the colour the new look is drawn around (ITER-087, owner 2026-11-25); a stored choice is kept.
     /// Allowed values: "mono" | "warmOrange" | "electric" | "mint" | "violet".
-    @AppStorage("accentColor") var accentColor: String = "mono"
+    @AppStorage("accentColor") var accentColor: String = "mint"
 
     // Text style (Pro only)
     @AppStorage("textStyle_lowercaseStart") var textStyleLowercaseStart: Bool = false
@@ -465,6 +462,19 @@ final class AppSettings: ObservableObject {
         self.groqKey = KeychainHelper.load(key: "com.metawhisp.groqKey") ?? ""
         self.deepgramKey = KeychainHelper.load(key: "com.metawhisp.deepgramKey") ?? ""
         self.geminiKey = KeychainHelper.load(key: "com.metawhisp.geminiKey") ?? ""
+    }
+
+    /// ITER-087 — the default accent became Mint for new users (owner, 2026-11-25). `@AppStorage` never writes its
+    /// default, so a user who finished onboarding before this build and never chose an accent has no key and was on
+    /// Mono; at the first launch of this build that key is written as Mono, so they keep what they had. A fresh install
+    /// (onboarding not finished) is left unset and reads Mint. Runs once: a flag records the first launch's decision.
+    static func keepExistingUsersAccent(in defaults: UserDefaults = .standard) {
+        let flag = "didKeepExistingAccent_iter087"
+        guard !defaults.bool(forKey: flag) else { return }
+        defaults.set(true, forKey: flag)
+        if defaults.bool(forKey: "hasCompletedOnboarding"), defaults.object(forKey: "accentColor") == nil {
+            defaults.set("mono", forKey: "accentColor")
+        }
     }
 
     /// Onboarding's last step. The language the user runs on is written down

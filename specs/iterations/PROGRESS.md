@@ -2,6 +2,34 @@
 
 ## Active specification
 
+## ITER-087 — the new look on the 1.4.7 layout (2026-11-25)
+
+`ITER-087-ui-look.md`. Approved by the owner on 2026-11-25 («давай только аккуратно и по итерациям двигай и
+перепроверяй себя»). Branch `feat/ui-look` (lane `lane-look`) from `d9b6d2b` (= shipped 1.4.7).
+- [x] 1 Palette as a value — tests first: `DesignPaletteTests` 8/8 (red on the missing type first; a blue neutral mutated in fails it)
+- [x] 2 Wall: `PageWash` on the palette, no blue radial; 3 screens + Dashboard empty state stop covering it; popover, About Me, app picker stand on it; Tasks candidate card is a panel. `WindowWallGuardTests` red→green; 129 tests of the touched suites green; renders `LookRenderTests` (opt-in) checked by eye, dark and light
+- [x] 3 Panels: `mwCard` from the palette (dark: faint gradient, edge, top highlight, no shadow; light: white frosted, soft shadow on the shape only); `MW.surface`/`MW.elevated` see-through white in the dark look; onboarding keeps its opaque box (`OnboardingStyle.box` — `OnboardingRenderTests` caught the change, the cause fixed, not the test); the recovery card stays opaque. 270 tests of the touched suites green; renders checked, dark and light
+- [x] 4 Selection and controls: one `mwSelectable` (dark: accent tint + ring + faint glow; light: raised white pill) for the sidebar, segmented, chips, buttons, tiles, pickers, the inbox focus; ON/OFF box → accent switch (knob ringed for Mono); chip/keycap/button/status off system materials; task checkbox 22 pt and × 20 pt hit areas, due badge rounded; chart bars in the accent; `selectFill`/`selectRim` removed (orphaned). `SelectionLookGuardTests` red→green (twice: inverted white and green-square selections found on the renders, added to the guard first); 163 tests of the touched suites green; renders checked dark, light, dark Mono
+- [x] 5 Type: `mwBadge` = SF Mono caps micro-label that shrinks before it is cut; big numbers SF bold tabular; `StatFormatters.count` with a million tier ("2.35M", red first); sentence case for buttons/tabs/chips/rows across the window and popover (`sentenceCased`, tested); hotkey names and descriptions wrap; Dictionary fields no longer forced dark. `TypeLookGuardTests` (caught a reverted Dictionary). Renders of every window tab, dark and light
+- [x] 6 Accent default Mint: `AccentDefaultTests` red→green; a stored choice kept; Mono chosen on purpose stays Mono
+- [ ] 7 Check:
+  - [x] renders of every window tab, dark, light, dark Mono (`LookRenderTests`, opt-in), checked by eye after each step
+  - [x] review: Codex out of quota until 2026-11-27, Kimi out of its weekly quota → an independent read-only Claude
+    agent: 1 P1 (existing users without a stored accent would move to Mint), 4 P2, 4 P3; all fixed in `1f3df53`
+    except P3 "mwBadge shrinks to 70%" (left). Re-review of the fix diff: 0 P1, 1 new P2 (Mono tints switches white in
+    the dark look → `MW.controlTint`, grey for Mono, tested and rendered) and the partly closed ones (light `.outline`
+    chips rest on the groove; "Description (optional)"; "Try Regenerate", "Turn on") fixed. Left as P3: full-width
+    selections (History row, popover cell) run edge to edge; the guards miss literals returned from functions,
+    `.uppercased()`, `if isSelected { fill }` blocks and other colours — they catch the patterns this iteration
+    removed. No third review (no P1).
+  - [ ] the full gate (`bash scripts/regression.sh`) — on the owner's word: it shows windows and types on screen
+  - [ ] test build over /Applications/MetaWhisp.app (`bash hot-swap.sh`), owner looks at both themes
+  - [ ] release 1.4.8 on the owner's word
+- The popover is not drawn by `LookRenderTests` (its screen-context service may ask for screen access); it is
+  checked on the test build.
+- Per step, while the owner is at the Mac: the step's own tests and the suites it touches; the full gate once, at
+  the end, on his word.
+
 ## ITER-083 — a meeting knows which call it is (2026-11-08)
 
 `ITER-083-meeting-identity.md`. Approved by the owner on 2026-11-07 («начни делать по итерациям по очереди давая на

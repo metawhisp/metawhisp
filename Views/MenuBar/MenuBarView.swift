@@ -22,7 +22,7 @@ struct MenuBarView: View {
             controls
             footer
         }
-        .background(MW.bg)
+        .background(PageWash())
         // Specular rim — top-down white gradient, fades by 30% mark.
         // Mirror of the design's `.popover::before` pseudo-element.
         .overlay(alignment: .top) {
@@ -50,9 +50,8 @@ struct MenuBarView: View {
             // Status dot — green-pulse idle, red-pulse recording, blue processing, accent translating.
             // Replaces the old conditional stageIcon — single primitive, color-driven by state.
             statusDot
-            Text(statusLabel.uppercased())
-                .font(MW.label).tracking(1.8).lineLimit(1)
-                .foregroundStyle(coordinator.stage == .idle ? MW.textSecondary : .white)
+            Text(statusLabel)
+                .mwBadge(color: coordinator.stage == .idle ? MW.textSecondary : MW.textPrimary)
 
             if coordinator.stage == .processing || coordinator.stage == .postProcessing {
                 BounceDots()
@@ -63,7 +62,7 @@ struct MenuBarView: View {
         }
         .padding(.horizontal, MW.sp16)
         .padding(.vertical, MW.sp8)
-        .background(coordinator.stage == .idle ? .clear : Color.white.opacity(0.04))
+        .background(coordinator.stage == .idle ? .clear : MW.subtle)
         .overlay(Rectangle().fill(MW.border).frame(height: MW.hairline), alignment: .bottom)
         .overlay(alignment: .bottom) {
             if coordinator.stage == .processing || coordinator.stage == .postProcessing {
@@ -79,7 +78,7 @@ struct MenuBarView: View {
     private var statusDot: some View {
         switch coordinator.stage {
         case .idle:
-            PulsingDot(color: MW.idle, size: 7, period: 1.6)
+            PulsingDot(color: MW.ok, size: 7, period: 1.6)
         case .recording:
             PulsingDot(color: MW.live, size: 7, period: 1.0)
         case .processing:
@@ -100,7 +99,7 @@ struct MenuBarView: View {
             RecordingTimer()
         case .processing:
             if let result = coordinator.lastResult {
-                Text(String(format: "%.1fs AUDIO", result.duration))
+                Text(String(format: "%.1fs audio", result.duration))
                     .font(MW.monoSm).foregroundStyle(MW.textMuted)
             }
         case .postProcessing:
@@ -123,15 +122,15 @@ struct MenuBarView: View {
                     if meetingRecorder.isRecording {
                         Circle().fill(MW.live).frame(width: 5, height: 5)
                             .shadow(color: .red.opacity(0.5), radius: 3)
-                        Text("MEETING RECORDING").font(MW.label).tracking(1).foregroundStyle(.white)
+                        Text("Meeting recording").mwBadge(color: MW.textPrimary)
                         Spacer()
                         MeetingTimer(startDate: meetingRecorder.recordingStartedAt)
                         Button {
                             onMeetingToggle()
                         } label: {
-                            Text("STOP")
-                                .font(MW.label).tracking(0.8)
-                                .foregroundStyle(.white)
+                            Text("Stop")
+                                .font(.system(size: 11.5, weight: .medium))
+                                .foregroundStyle(MW.live)
                                 .padding(.horizontal, 9).padding(.vertical, 3)
                                 .background(
                                     Capsule().fill(MW.live.opacity(0.20))
@@ -141,26 +140,26 @@ struct MenuBarView: View {
                         .buttonStyle(.plain)
                     } else if meetingRecorder.isStarting {
                         ProgressView().controlSize(.mini)
-                        Text("STARTING...").font(MW.label).tracking(1).foregroundStyle(MW.textSecondary)
+                        Text("Starting…").mwBadge(color: MW.textSecondary)
                         Spacer()
                     } else {
                         Image(systemName: "video").font(.system(size: 9)).foregroundStyle(MW.textMuted)
                         if let app = SystemAudioCaptureService.detectActiveMeetingApp() {
-                            Text("\(app.uppercased()) DETECTED").font(MW.label).tracking(1).foregroundStyle(MW.textSecondary)
+                            Text("\(app) detected").mwBadge(color: MW.textSecondary)
                         } else {
-                            Text("NO MEETING").font(MW.label).tracking(1).foregroundStyle(MW.textMuted)
+                            Text("No meeting").mwBadge()
                         }
                         Spacer()
                         Button {
                             onMeetingToggle()
                         } label: {
-                            Text("RECORD")
-                                .font(MW.label).tracking(0.8)
+                            Text("Record")
+                                .font(.system(size: 11.5, weight: .medium))
                                 .foregroundStyle(MW.textPrimary)
                                 .padding(.horizontal, 9).padding(.vertical, 3)
                                 .background(
-                                    Capsule().fill(Color.white.opacity(0.08))
-                                        .overlay(Capsule().stroke(Color.white.opacity(0.14), lineWidth: 0.5))
+                                    Capsule().fill(MW.surface)
+                                        .overlay(Capsule().stroke(MW.border, lineWidth: 0.5))
                                 )
                         }
                         .buttonStyle(.plain)
@@ -249,20 +248,19 @@ struct MenuBarView: View {
                 Image(systemName: "eye")
                     .font(.system(size: 9))
                     .foregroundStyle(MW.textMuted)
-                Text("SCREEN CONTEXT")
-                    .font(MW.label).tracking(1)
-                    .foregroundStyle(MW.textMuted)
+                Text("Screen context")
+                    .mwBadge()
                 Spacer()
                 if let ctx = screenContext.lastContext {
-                    Text(ctx.appName.uppercased())
+                    Text(ctx.appName)
                         .font(MW.monoSm).foregroundStyle(MW.textSecondary)
                         .lineLimit(1)
                 } else {
-                    Text("WATCHING...")
+                    Text("Watching…")
                         .font(MW.monoSm).foregroundStyle(MW.textMuted)
                 }
                 // Small pulsing indicator so user sees "alive"
-                Circle().fill(MW.idle).frame(width: 5, height: 5)
+                Circle().fill(MW.ok).frame(width: 5, height: 5)
             }
             .padding(.horizontal, MW.sp16)
             .padding(.vertical, 5)
@@ -350,9 +348,8 @@ struct MenuBarView: View {
                 } label: {
                     VStack(alignment: .leading, spacing: MW.sp4) {
                         HStack {
-                            Text(showCopied ? "COPIED" : "LAST OUTPUT")
-                                .font(MW.label).tracking(1.5)
-                                .foregroundStyle(showCopied ? .white : MW.textMuted)
+                            Text(showCopied ? "Copied" : "Last output")
+                                .mwBadge(color: showCopied ? MW.ok : MW.textMuted)
                                 .animation(.easeInOut(duration: 0.2), value: showCopied)
                             Spacer()
                             if let lang = result.language {
@@ -398,7 +395,7 @@ struct MenuBarView: View {
             } label: {
                 controlBtn(
                     icon: coordinator.stage == .recording ? "stop.fill" : "mic.fill",
-                    label: coordinator.stage == .recording ? "STOP" : "RECORD",
+                    label: coordinator.stage == .recording ? "Stop" : "Record",
                     hint: "R\u{2318}",
                     hotkeyOn: settings.transcribeHotkeyEnabled,
                     active: coordinator.stage == .recording
@@ -415,7 +412,7 @@ struct MenuBarView: View {
             } label: {
                 controlBtn(
                     icon: "globe",
-                    label: "TRANSLATE",
+                    label: "Translate",
                     hint: "R\u{2325}",
                     hotkeyOn: settings.translateHotkeyEnabled,
                     active: coordinator.translateNext
@@ -439,11 +436,11 @@ struct MenuBarView: View {
         HStack(spacing: 6) {
             Image(systemName: icon)
                 .font(.system(size: 11, weight: .medium))
-                .foregroundStyle(active ? .white : MW.accent)
+                .foregroundStyle(MW.accent)
                 .frame(width: 14, height: 14)
             Text(label)
-                .font(MW.label).tracking(0.6).lineLimit(1).fixedSize()
-                .foregroundStyle(active ? .white : MW.textPrimary)
+                .font(.system(size: 11.5, weight: .medium)).lineLimit(1).fixedSize()
+                .foregroundStyle(MW.textPrimary)
             Spacer(minLength: 4)
             if hotkeyOn {
                 Keycap(text: hint).layoutPriority(1)
@@ -452,7 +449,7 @@ struct MenuBarView: View {
         .padding(.horizontal, 10)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
         .contentShape(Rectangle())
-        .background(active ? Color.white.opacity(0.06) : .clear)
+        .mwSelectable(active, radius: MW.rTiny, resting: .none)
     }
 
     // MARK: - Footer
@@ -469,7 +466,7 @@ struct MenuBarView: View {
             Button { openMainWindow() } label: {
                 HStack(spacing: 5) {
                     Image(systemName: "gearshape").font(.system(size: 10, weight: .regular))
-                    Text("SETTINGS").font(MW.label).tracking(1.0)
+                    Text("Settings").font(.system(size: 11.5, weight: .medium))
                 }
                 .frame(maxWidth: .infinity)
                 .foregroundStyle(MW.textMuted)
@@ -481,7 +478,7 @@ struct MenuBarView: View {
             Button { NSApplication.shared.terminate(nil) } label: {
                 HStack(spacing: 5) {
                     Image(systemName: "xmark").font(.system(size: 9, weight: .regular))
-                    Text("QUIT").font(MW.label).tracking(1.0)
+                    Text("Quit").font(.system(size: 11.5, weight: .medium))
                 }
                 .frame(maxWidth: .infinity)
                 .foregroundStyle(MW.textMuted)
@@ -552,7 +549,7 @@ private struct AudioLevelWave: View {
             var centerLine = Path()
             centerLine.move(to: CGPoint(x: 0, y: midY))
             centerLine.addLine(to: CGPoint(x: w, y: midY))
-            context.stroke(centerLine, with: .color(Color.white.opacity(0.06)),
+            context.stroke(centerLine, with: .color(MW.textPrimary.opacity(0.06)),
                            style: StrokeStyle(lineWidth: 0.5))
 
             let gap: CGFloat = 2
@@ -568,13 +565,13 @@ private struct AudioLevelWave: View {
                 let upRect = CGRect(x: x, y: midY - barH, width: barW, height: barH)
                 let upPath = Path(roundedRect: upRect, cornerRadius: barW / 2)
                 let alpha = 0.3 + val * 0.7
-                context.fill(upPath, with: .color(Color.white.opacity(alpha)))
+                context.fill(upPath, with: .color(MW.textPrimary.opacity(alpha)))
 
                 // Mirror going DOWN (dimmer, shorter)
                 let downH = barH * 0.55
                 let downRect = CGRect(x: x, y: midY, width: barW, height: downH)
                 let downPath = Path(roundedRect: downRect, cornerRadius: barW / 2)
-                context.fill(downPath, with: .color(Color.white.opacity(alpha * 0.3)))
+                context.fill(downPath, with: .color(MW.textPrimary.opacity(alpha * 0.3)))
             }
         }
         .animation(.easeOut(duration: 0.06), value: bars)
@@ -594,7 +591,7 @@ struct BlinkingCursor: View {
 
     var body: some View {
         Rectangle()
-            .fill(Color.white)
+            .fill(MW.textPrimary)
             .frame(width: 1.5, height: 14)
             .opacity(visible ? 1 : 0)
             .onAppear {
@@ -614,7 +611,7 @@ private struct BounceDots: View {
     var body: some View {
         HStack(spacing: 2) {
             ForEach(0..<3, id: \.self) { i in
-                Circle().fill(Color.white)
+                Circle().fill(MW.textPrimary)
                     .frame(width: 2, height: 2)
                     .opacity(i <= step ? 0.9 : 0.15)
             }
@@ -632,7 +629,7 @@ private struct ScanLine: View {
         GeometryReader { geo in
             let w = geo.size.width
             Rectangle()
-                .fill(LinearGradient(colors: [.clear, Color.white.opacity(0.35), .clear],
+                .fill(LinearGradient(colors: [.clear, MW.textPrimary.opacity(0.35), .clear],
                                      startPoint: .leading, endPoint: .trailing))
                 .frame(width: 80, height: MW.hairline)
                 .offset(x: pos * (w + 80) - 80)
@@ -768,7 +765,7 @@ private struct HoverButtonStyle: ButtonStyle {
                     Group {
                         if hovering || isPressed {
                             RoundedRectangle(cornerRadius: radius, style: .continuous)
-                                .fill(Color.white.opacity(isPressed ? 0.10 : 0.06))
+                                .fill(Color.primary.opacity(isPressed ? 0.10 : 0.06))
                         } else {
                             Color.clear
                         }
@@ -791,7 +788,7 @@ struct AudioLevelBar: View {
                 .frame(width: geometry.size.width * CGFloat(min(level * 10, 1.0)))
                 .animation(.linear(duration: 0.1), value: level)
         }
-        .background(Color.white.opacity(0.1))
+        .background(Color.primary.opacity(0.1))
         .cornerRadius(MW.spaceXs)
     }
 

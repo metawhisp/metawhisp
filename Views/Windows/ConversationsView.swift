@@ -80,7 +80,7 @@ struct ConversationsView: View {
             } label: {
                 HStack(spacing: 4) {
                     Image(systemName: "chevron.left").font(.system(size: 11))
-                    Text("CONVERSATIONS").font(MW.label).tracking(0.6)
+                    Text("Conversations").font(.system(size: 11.5, weight: .medium))
                 }
                 .foregroundStyle(MW.textSecondary)
                 .padding(.horizontal, 8).padding(.vertical, 4)
@@ -131,18 +131,22 @@ struct ConversationsView: View {
     // MARK: - Filter chips
 
     /// Pill chips per mockup §02: All / Starred / Meetings / Dictations.
-    /// TitleCase, ultraThin material inactive, selectFill active.
+    /// TitleCase, drawn by `mwSelectable` (ITER-087).
     /// "N shown" counter stays right-aligned.
     private var filterBar: some View {
         HStack(spacing: 8) {
-            ForEach(Filter.allCases, id: \.self) { f in
-                GlassChipButton(
-                    label: f.rawValue,
-                    isActive: selectedFilter == f,
-                    radius: 999,
-                    action: { selectedFilter = f }
-                )
+            HStack(spacing: 2) {
+                ForEach(Filter.allCases, id: \.self) { f in
+                    GlassChipButton(
+                        label: f.rawValue,
+                        isActive: selectedFilter == f,
+                        radius: 999,
+                        grouped: true,
+                        action: { selectedFilter = f }
+                    )
+                }
             }
+            .mwSegmentTrack()
             Spacer()
             Text("\(filtered.count) shown")
                 .font(MW.dataSmall)
@@ -212,14 +216,7 @@ struct ConversationsView: View {
                                 }
                             }
                         }
-                        .background {
-                            RoundedRectangle(cornerRadius: MW.rMedium, style: .continuous)
-                                .fill(.ultraThinMaterial)
-                        }
-                        .overlay(
-                            RoundedRectangle(cornerRadius: MW.rMedium, style: .continuous)
-                                .strokeBorder(MW.border, lineWidth: 0.5)
-                        )
+                        .mwCard(radius: MW.rMedium, elevation: .flat)
                     }
                 }
             }
@@ -229,9 +226,7 @@ struct ConversationsView: View {
 
     private func sectionHeader(_ label: String) -> some View {
         Text(label)
-            .font(MW.label)
-            .tracking(1.2)
-            .foregroundStyle(MW.textMuted)
+            .mwBadge()
             .padding(.horizontal, 4)
     }
 
@@ -258,9 +253,8 @@ struct ConversationsView: View {
                         .fill(MW.live)
                         .frame(width: 5, height: 5)
                         .shadow(color: MW.live.opacity(0.6), radius: 4)
-                    Text("LIVE")
-                        .font(.system(size: 9, weight: .bold))
-                        .tracking(0.6)
+                    Text("Live")
+                        .font(.system(size: 9.5, weight: .bold))
                         .foregroundStyle(MW.live)
                 }
             }
@@ -323,9 +317,8 @@ struct ConversationsView: View {
     }
 
     private func categoryChip(_ category: String) -> some View {
-        Text(category.uppercased())
-            .font(MW.label)
-            .tracking(0.5)
+        Text(category.sentenceCased)
+            .font(.system(size: 10.5, weight: .medium))
             .foregroundStyle(MW.textMuted)
             .padding(.horizontal, 5)
             .padding(.vertical, 1)
@@ -343,18 +336,18 @@ struct ConversationsView: View {
             linkedMemories(conversationId: conv.id)
             HStack {
                 if conv.source == "meeting" {
-                    labelChip("MEETING")
+                    labelChip("Meeting")
                 } else {
-                    labelChip("DICTATION")
+                    labelChip("Dictation")
                 }
-                labelChip(conv.status.uppercased())
+                labelChip(conv.status.sentenceCased)
                 Spacer()
                 Button {
                     conv.discarded = true
                     conv.updatedAt = Date()
                     try? modelContext.save()
                 } label: {
-                    Text("DISCARD").font(MW.label).tracking(0.5).foregroundStyle(MW.textMuted)
+                    Text("Discard").font(.system(size: 11.5, weight: .medium)).foregroundStyle(MW.textMuted)
                 }
                 .buttonStyle(.plain)
             }
@@ -363,12 +356,11 @@ struct ConversationsView: View {
 
     private func labelChip(_ text: String) -> some View {
         Text(text)
-            .font(MW.label)
-            .tracking(0.6)
+            .font(.system(size: 10.5, weight: .medium))
             .foregroundStyle(MW.textMuted)
-            .padding(.horizontal, 5)
+            .padding(.horizontal, 6)
             .padding(.vertical, 1)
-            .overlay(RoundedRectangle(cornerRadius: MW.rSmall, style: .continuous).stroke(MW.border, lineWidth: 0.5))
+            .overlay(Capsule(style: .continuous).strokeBorder(MW.palette.edge.color, lineWidth: 1))
     }
 
     @ViewBuilder
@@ -376,8 +368,8 @@ struct ConversationsView: View {
         let items = fetchHistory(conversationId: conversationId)
         if !items.isEmpty {
             VStack(alignment: .leading, spacing: 4) {
-                Text("TRANSCRIPTS · \(items.count)")
-                    .font(MW.label).tracking(0.6).foregroundStyle(MW.textMuted)
+                Text("Transcripts · \(items.count)")
+                    .mwBadge()
                 ForEach(items) { item in
                     HStack(alignment: .top, spacing: 6) {
                         Image(systemName: "waveform").font(.system(size: 9)).foregroundStyle(MW.textMuted)
@@ -396,8 +388,8 @@ struct ConversationsView: View {
         let items = fetchTasks(conversationId: conversationId)
         if !items.isEmpty {
             VStack(alignment: .leading, spacing: 4) {
-                Text("TASKS · \(items.count)")
-                    .font(MW.label).tracking(0.6).foregroundStyle(MW.textMuted)
+                Text("Tasks · \(items.count)")
+                    .mwBadge()
                 ForEach(items) { item in
                     HStack(spacing: 6) {
                         Image(systemName: item.completed ? "checkmark.square.fill" : "square")
@@ -416,8 +408,8 @@ struct ConversationsView: View {
         let items = fetchMemories(conversationId: conversationId)
         if !items.isEmpty {
             VStack(alignment: .leading, spacing: 4) {
-                Text("MEMORIES · \(items.count)")
-                    .font(MW.label).tracking(0.6).foregroundStyle(MW.textMuted)
+                Text("Memories · \(items.count)")
+                    .mwBadge()
                 ForEach(items) { item in
                     HStack(alignment: .top, spacing: 6) {
                         Image(systemName: "brain").font(.system(size: 9)).foregroundStyle(MW.textMuted)

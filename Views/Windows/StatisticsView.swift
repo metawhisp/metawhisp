@@ -176,24 +176,24 @@ struct StatisticsView: View {
                         VStack(spacing: gap) {
                             HStack(spacing: gap) {
                                 BigMetricTile(
-                                    label: "STREAK", value: "\(streakDays)",
+                                    label: "Streak", value: "\(streakDays)",
                                     unit: "days"
                                 )
 
                                 BigMetricTile(
-                                    label: "WORDS", value: fmtNum(stats.words),
+                                    label: "Words", value: fmtNum(stats.words),
                                     unit: "total", isSelected: selectedMetric == "WORDS"
                                 )
                                 .onTapGesture { withAnimation(.easeInOut(duration: 0.15)) { selectedMetric = "WORDS" } }
 
                                 BigMetricTile(
-                                    label: "TRANSCRIPTIONS", value: fmtNum(current.count),
+                                    label: "Transcriptions", value: fmtNum(current.count),
                                     unit: "total", isSelected: selectedMetric == "TRANSCRIPTIONS"
                                 )
                                 .onTapGesture { withAnimation(.easeInOut(duration: 0.15)) { selectedMetric = "TRANSCRIPTIONS" } }
 
                                 BigMetricTile(
-                                    label: "TRANSLATIONS", value: fmtNum(translationsCount),
+                                    label: "Translations", value: fmtNum(translationsCount),
                                     unit: "total", isSelected: selectedMetric == "TRANSLATIONS"
                                 )
                                 .onTapGesture { withAnimation(.easeInOut(duration: 0.15)) { selectedMetric = "TRANSLATIONS" } }
@@ -202,19 +202,19 @@ struct StatisticsView: View {
                             // Row 2: WPM | SAVED TIME | RECORDED
                             HStack(spacing: gap) {
                                 BigMetricTile(
-                                    label: "WORDS PER MINUTE", value: "\(wpm)",
+                                    label: "Words per minute", value: "\(wpm)",
                                     unit: "avg", isSelected: selectedMetric == "WPM"
                                 )
                                 .onTapGesture { withAnimation(.easeInOut(duration: 0.15)) { selectedMetric = "WPM" } }
 
                                 BigMetricTile(
-                                    label: "SAVED TIME", value: fmtDuration(stats.saved),
+                                    label: "Saved time", value: fmtDuration(stats.saved),
                                     isSelected: selectedMetric == "SAVED TIME"
                                 )
                                 .onTapGesture { withAnimation(.easeInOut(duration: 0.15)) { selectedMetric = "SAVED TIME" } }
 
                                 BigMetricTile(
-                                    label: "RECORDED", value: fmtDuration(stats.audio),
+                                    label: "Recorded", value: fmtDuration(stats.audio),
                                     unit: "audio", isSelected: selectedMetric == "RECORDED"
                                 )
                                 .onTapGesture { withAnimation(.easeInOut(duration: 0.15)) { selectedMetric = "RECORDED" } }
@@ -267,34 +267,26 @@ struct StatisticsView: View {
     // MARK: - Period Switcher
 
     private var periodSwitcher: some View {
-        HStack(spacing: 0) {
-            periodTab("ALL TIME", period: .allTime)
-            periodTab("TODAY", period: .today)
-            periodTab("THIS WEEK", period: .week)
+        HStack(spacing: 2) {
+            periodTab("All time", period: .allTime)
+            periodTab("Today", period: .today)
+            periodTab("This week", period: .week)
             ForEach(availableMonths, id: \.self) { period in
-                periodTab(period.label.uppercased(), period: period)
+                periodTab(period.label, period: period)
             }
         }
+        .mwSegmentTrack()
     }
 
     private func periodTab(_ label: String, period: StatPeriod) -> some View {
         Text(label)
-            .font(MW.label).tracking(1.0)
+            .font(.system(size: 11, weight: .medium))
+            .lineLimit(1)
+            .minimumScaleFactor(0.8)
             .foregroundStyle(selectedPeriod == period ? MW.textPrimary : MW.textSecondary)
             .frame(maxWidth: .infinity)
             .padding(.vertical, MW.sp8)
-            .background {
-                ZStack {
-                    RoundedRectangle(cornerRadius: MW.rTiny, style: .continuous)
-                        .fill(.ultraThinMaterial)
-                    if selectedPeriod == period {
-                        RoundedRectangle(cornerRadius: MW.rTiny, style: .continuous)
-                            .fill(Color.primary.opacity(0.10))
-                    }
-                    RoundedRectangle(cornerRadius: MW.rTiny, style: .continuous)
-                        .strokeBorder(Color.primary.opacity(selectedPeriod == period ? 0.20 : 0.08), lineWidth: 0.5)
-                }
-            }
+            .mwSelectable(selectedPeriod == period, radius: 999, resting: .none)
             .contentShape(Rectangle())
             .onTapGesture {
                 withAnimation(.easeInOut(duration: 0.15)) { selectedPeriod = period }
@@ -314,17 +306,19 @@ struct StatisticsView: View {
             HStack(spacing: MW.sp8) {
                 Text(selectedMetric).mwBadge()
                 Spacer()
-                ForEach(["DAYS", "WEEKS", "MONTHS"], id: \.self) { s in
-                    Text(s)
-                        .font(MW.label).tracking(1.0)
-                        .foregroundStyle(chartScale == s ? .black : MW.textSecondary)
-                        .padding(.horizontal, MW.sp8).padding(.vertical, 3)
-                        .background(chartScale == s ? Color.white : .clear)
-                        .overlay(RoundedRectangle(cornerRadius: MW.rSmall, style: .continuous).stroke(MW.border, lineWidth: 0.5))
-                        .onTapGesture {
-                            withAnimation(.easeInOut(duration: 0.15)) { chartScale = s }
-                        }
+                HStack(spacing: 2) {
+                    ForEach(["DAYS", "WEEKS", "MONTHS"], id: \.self) { s in
+                        Text(s.capitalized)
+                            .font(.system(size: 11, weight: .medium))
+                            .foregroundStyle(chartScale == s ? MW.textPrimary : MW.textSecondary)
+                            .padding(.horizontal, MW.sp8).padding(.vertical, 3)
+                            .mwSelectable(chartScale == s, radius: 999, resting: .none)
+                            .onTapGesture {
+                                withAnimation(.easeInOut(duration: 0.15)) { chartScale = s }
+                            }
+                    }
                 }
+                .mwSegmentTrack()
             }
 
             ActivityChartView(items: allItems, scale: chartScale, metric: selectedMetric)
@@ -348,11 +342,8 @@ struct StatisticsView: View {
                     x: .value("Hour", "\(item.hour)"),
                     y: .value("Count", item.count)
                 )
-                .foregroundStyle(
-                    item.hour == popularHour
-                        ? MW.textPrimary.opacity(0.9) : MW.textPrimary.opacity(0.35)
-                )
-                .cornerRadius(0)
+                .foregroundStyle(item.hour == popularHour ? MW.accent : MW.accent.opacity(0.35))
+                .cornerRadius(2)
             }
             .chartYAxis {
                 AxisMarks(position: .leading) { _ in
@@ -545,7 +536,7 @@ struct StatisticsView: View {
     private func recordItem(_ label: String, _ value: String) -> some View {
         VStack(alignment: .leading, spacing: 2) {
             Text(value).font(MW.monoLg).foregroundStyle(MW.textPrimary)
-            Text(label.uppercased()).font(MW.monoSm).foregroundStyle(MW.textMuted).tracking(0.5)
+            Text(label).mwBadge()
         }
     }
 
@@ -556,20 +547,18 @@ struct StatisticsView: View {
             Image(systemName: "chart.bar")
                 .font(.system(size: 32, weight: .thin))
                 .foregroundStyle(MW.textMuted)
-            Text("NO DATA YET")
-                .font(MW.label).tracking(2).foregroundStyle(MW.textMuted)
+            Text("No data yet")
+                .font(MW.mono).foregroundStyle(MW.textMuted)
             Text("Press Right \u{2318} to start recording")
                 .font(MW.monoSm).foregroundStyle(MW.textMuted)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(MW.bg)
     }
 
     // MARK: - Helpers
 
     private func fmtNum(_ n: Int) -> String {
-        if n >= 1000 { return String(format: "%.1fk", Double(n) / 1000.0) }
-        return "\(n)"
+        StatFormatters.count(n)
     }
 
     private func fmtDuration(_ seconds: Double) -> String {
@@ -578,7 +567,7 @@ struct StatisticsView: View {
 
     private func sharePeriodStats() {
         let s = PeriodStats(current)
-        let period = selectedPeriod == .allTime ? "All Time" : selectedPeriod.label
+        let period = selectedPeriod == .allTime ? "All time" : selectedPeriod.label
         // Filler % computed on-demand from the async-cached fillersCache so we
         // don't trigger a fresh O(N) text scan on the share path either.
         let fillerCount = fillersCache.reduce(0) { $0 + $1.count }
@@ -606,11 +595,8 @@ private struct BigMetricTile: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: MW.sp6) {
-            Text(label.uppercased())
-                .font(MW.label).tracking(1.0)
-                .foregroundStyle(MW.textMuted)
-                .lineLimit(1)
-            // Numbers — monospace for tabular alignment across a row of stats.
+            Text(label).mwBadge()
+            // Numbers — digits of one width for alignment across a row of stats.
             Text(value)
                 .font(MW.dataLarge)
                 .foregroundStyle(MW.textPrimary)
@@ -623,30 +609,9 @@ private struct BigMetricTile: View {
                     .lineLimit(1)
             }
         }
-        .padding(MW.sp16)
+        .padding(MW.sp12)
         .frame(maxWidth: .infinity, minHeight: 96, alignment: .leading)
         .contentShape(Rectangle())
-        .background {
-            ZStack {
-                RoundedRectangle(cornerRadius: MW.rSmall, style: .continuous)
-                    .fill(.thinMaterial)
-                if isSelected {
-                    RoundedRectangle(cornerRadius: MW.rSmall, style: .continuous)
-                        .fill(Color.primary.opacity(0.10))
-                }
-                RoundedRectangle(cornerRadius: MW.rSmall, style: .continuous)
-                    .strokeBorder(
-                        LinearGradient(colors: [Color.white.opacity(0.30),
-                                                Color.white.opacity(0.04),
-                                                Color.white.opacity(0)],
-                                       startPoint: .top, endPoint: .center),
-                        lineWidth: 1
-                    )
-                    .blendMode(.overlay)
-                RoundedRectangle(cornerRadius: MW.rSmall, style: .continuous)
-                    .strokeBorder(Color.primary.opacity(isSelected ? 0.20 : 0.08), lineWidth: 0.5)
-            }
-        }
-        .clipShape(RoundedRectangle(cornerRadius: MW.rSmall, style: .continuous))
+        .mwSelectable(isSelected, radius: MW.rSmall, resting: .panel)
     }
 }

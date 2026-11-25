@@ -217,6 +217,12 @@ final class MainWindowController: NSObject, NSWindowDelegate {
             defer: false
         )
         window.title = "MetaWhisp"
+        // ITER-087 — the app's name once, in the sidebar's header (owner, 2026-11-25): no title text; the title bar is
+        // transparent and the wall runs under it, so the window buttons sit on the wall above the sidebar. The title
+        // stays set for Mission Control, the Window menu and VoiceOver.
+        window.styleMask.insert(.fullSizeContentView)
+        window.titleVisibility = .hidden
+        window.titlebarAppearsTransparent = true
         window.minSize = NSSize(width: 900, height: 600)
         window.contentView = content
         window.center()

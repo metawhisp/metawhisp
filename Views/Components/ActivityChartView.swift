@@ -18,8 +18,10 @@ struct ActivityChartView: View {
                     x: .value("Time", point.label),
                     y: .value("Value", point.value)
                 )
-                .foregroundStyle(MW.isDark ? Color.white.opacity(0.7) : Color.black.opacity(0.55))
-                .cornerRadius(0)
+                // The user's accent, fading downward (ITER-087).
+                .foregroundStyle(LinearGradient(colors: [MW.accent, MW.accent.opacity(0.35)],
+                                                startPoint: .top, endPoint: .bottom))
+                .cornerRadius(3)
             }
             .chartYAxis {
                 AxisMarks(position: .leading) { _ in

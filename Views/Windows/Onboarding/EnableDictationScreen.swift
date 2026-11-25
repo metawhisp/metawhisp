@@ -78,7 +78,7 @@ struct EnableDictationScreen: View {
                     }
                 }
                 .frame(width: OnboardingStyle.column)
-                .background(RoundedRectangle(cornerRadius: 22, style: .continuous).fill(MW.surface))
+                .background(RoundedRectangle(cornerRadius: 22, style: .continuous).fill(OnboardingStyle.box))
                 .overlay(RoundedRectangle(cornerRadius: 22, style: .continuous).strokeBorder(MW.border, lineWidth: 0.5))
             }
         } leading: {

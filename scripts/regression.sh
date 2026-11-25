@@ -331,6 +331,8 @@ CRITICAL_SUITES=(
 DESIGN_SKIPS=(
     # Offscreen card PNGs are opt-in through METAWHISP_RENDER_DIR.
     MeetingCoachRenderTests.testRenderMeetingCardStates
+    # the window screens in both looks, drawn to PNG, opt-in through METAWHISP_RENDER_DIR (ITER-087)
+    LookRenderTests.testRenderTheWindowScreens
     # the live bench: real errands on real sites, only with METAWHISP_BENCH=1 (ITER-076 stage 3C)
     AgentLiveBenchTests.testTheTrialErrandsOnTheTestChrome
     # how MetaChat's model calls an errand, live, only with METAWHISP_CHAT_PROBE=1 (2026-10-06)

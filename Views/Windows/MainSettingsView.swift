@@ -80,7 +80,6 @@ struct MainSettingsView: View {
         }
         // Sane minimum — below this tab labels / section headers start to clip.
         .frame(minWidth: 520, maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .background(MW.bg)
     }
 
     // MARK: - Tab picker
@@ -88,11 +87,12 @@ struct MainSettingsView: View {
     private var tabPicker: some View {
         HStack(spacing: 0) {
             Spacer(minLength: 0)
-            HStack(spacing: 6) {
+            HStack(spacing: 2) {
                 ForEach(SettingsTab.shown(ultra: UltraFeatures.isOn())) { tab in
                     tabButton(tab)
                 }
             }
+            .mwSegmentTrack()
             .frame(maxWidth: contentMaxWidth, alignment: .leading)
             Spacer(minLength: 0)
         }
@@ -107,7 +107,9 @@ struct MainSettingsView: View {
             .lineLimit(1)
             .fixedSize(horizontal: true, vertical: false)
             .foregroundStyle(isSelected ? MW.textPrimary : MW.textSecondary)
-            .glassChip(selected: isSelected, radius: MW.rTiny)
+            .padding(.horizontal, MW.sp12)
+            .padding(.vertical, 5)
+            .mwSelectable(isSelected, radius: 999, resting: .none)
             .contentShape(Rectangle())
             .onTapGesture {
                 withAnimation(.easeInOut(duration: 0.12)) { selectedTab = tab }
@@ -221,7 +223,7 @@ struct MainSettingsView: View {
             }
 
             if settings.transcriptionEngine == "ondevice" {
-                Text("MODEL").font(MW.monoSm).foregroundStyle(MW.textMuted).padding(.top, MW.sp4)
+                Text("Model").mwBadge().padding(.top, MW.sp4)
                 ForEach(ModelManagerService.models) { info in
                     modelRow(info)
                 }
@@ -233,7 +235,7 @@ struct MainSettingsView: View {
             } else {
                 if license.isPro {
                     HStack(spacing: MW.sp4) {
-                        Circle().fill(MW.idle).frame(width: 6, height: 6)
+                        Circle().fill(MW.ok).frame(width: 6, height: 6)
                         Text("Included with Pro")
                             .font(MW.monoSm).foregroundStyle(MW.textMuted)
                     }
@@ -266,14 +268,14 @@ struct MainSettingsView: View {
         .padding(.horizontal, MW.sp8)
         .padding(.vertical, MW.sp4)
         .frame(maxWidth: .infinity)
+        .mwSelectable(isActive, radius: MW.rSmall, resting: .surface)
         .contentShape(Rectangle())
-        .overlay(Rectangle().stroke(isActive ? MW.idle : MW.border, lineWidth: isActive ? 1.5 : MW.hairline))
         .onTapGesture { settings.transcriptionEngine = value }
     }
 
     private var cloudTranscriptionSection: some View {
         VStack(alignment: .leading, spacing: MW.sp8) {
-            Text("PROVIDER").font(MW.monoSm).foregroundStyle(MW.textMuted).padding(.top, MW.sp4)
+            Text("Provider").mwBadge().padding(.top, MW.sp4)
 
             HStack(spacing: MW.sp4) {
                 ForEach(CloudTranscriptionProvider.allCases) { prov in
@@ -292,7 +294,7 @@ struct MainSettingsView: View {
                         .font(MW.monoSm).foregroundStyle(MW.textMuted)
                 } else {
                     HStack(spacing: MW.sp4) {
-                        Circle().fill(MW.idle).frame(width: 6, height: 6)
+                        Circle().fill(MW.ok).frame(width: 6, height: 6)
                         Text("Using OpenAI key from LLM settings")
                             .font(MW.monoSm).foregroundStyle(MW.textMuted)
                     }
@@ -316,8 +318,8 @@ struct MainSettingsView: View {
         .padding(.horizontal, MW.sp8)
         .padding(.vertical, MW.sp4)
         .frame(maxWidth: .infinity)
+        .mwSelectable(isActive, radius: MW.rSmall, resting: .surface)
         .contentShape(Rectangle())
-        .overlay(Rectangle().stroke(isActive ? MW.idle : MW.border, lineWidth: isActive ? 1.5 : MW.hairline))
         .onTapGesture { settings.cloudTranscriptionProvider = prov.rawValue }
     }
 
@@ -343,7 +345,7 @@ struct MainSettingsView: View {
                         .font(MW.mono)
                         .foregroundStyle(MW.textSecondary)
                     Spacer()
-                    Circle().fill(MW.idle).frame(width: 6, height: 6)
+                    Circle().fill(MW.ok).frame(width: 6, height: 6)
                     Button { settings.groqKey = "" } label: {
                         Image(systemName: "xmark.circle.fill")
                             .foregroundStyle(MW.textMuted)
@@ -387,10 +389,10 @@ struct MainSettingsView: View {
                     Button("Save") { commitDeepgramKeyDraft() }
                         .buttonStyle(.plain)
                         .font(MW.label).tracking(0.6)
-                        .foregroundStyle(MW.idle)
+                        .foregroundStyle(MW.ok)
                         .padding(.horizontal, 8).padding(.vertical, 3)
                         .overlay(RoundedRectangle(cornerRadius: MW.rSmall, style: .continuous)
-                                    .stroke(MW.idle.opacity(0.4), lineWidth: 0.5))
+                                    .stroke(MW.ok.opacity(0.4), lineWidth: 0.5))
                 }
             } else {
                 HStack(spacing: MW.sp8) {
@@ -399,7 +401,7 @@ struct MainSettingsView: View {
                         .font(MW.mono)
                         .foregroundStyle(MW.textSecondary)
                     Spacer()
-                    Circle().fill(MW.idle).frame(width: 6, height: 6)
+                    Circle().fill(MW.ok).frame(width: 6, height: 6)
                     Button { settings.deepgramKey = "" } label: {
                         Image(systemName: "xmark.circle.fill")
                             .foregroundStyle(MW.textMuted)
@@ -437,10 +439,10 @@ struct MainSettingsView: View {
                     Button("Save") { commitGeminiKeyDraft() }
                         .buttonStyle(.plain)
                         .font(MW.label).tracking(0.6)
-                        .foregroundStyle(MW.idle)
+                        .foregroundStyle(MW.ok)
                         .padding(.horizontal, 8).padding(.vertical, 3)
                         .overlay(RoundedRectangle(cornerRadius: MW.rSmall, style: .continuous)
-                                    .stroke(MW.idle.opacity(0.4), lineWidth: 0.5))
+                                    .stroke(MW.ok.opacity(0.4), lineWidth: 0.5))
                 }
             } else {
                 HStack(spacing: MW.sp8) {
@@ -449,7 +451,7 @@ struct MainSettingsView: View {
                         .font(MW.mono)
                         .foregroundStyle(MW.textSecondary)
                     Spacer()
-                    Circle().fill(MW.idle).frame(width: 6, height: 6)
+                    Circle().fill(MW.ok).frame(width: 6, height: 6)
                     Button { settings.geminiKey = "" } label: {
                         Image(systemName: "xmark.circle.fill")
                             .foregroundStyle(MW.textMuted)
@@ -484,7 +486,7 @@ struct MainSettingsView: View {
     private func modelRow(_ info: ModelInfo) -> some View {
         HStack {
             VStack(alignment: .leading, spacing: MW.spaceXs) {
-                Text(info.displayName.uppercased())
+                Text(info.displayName)
                     .font(MW.mono)
                     .foregroundStyle(settings.selectedModel == info.id ? MW.textPrimary : MW.textSecondary)
                 Text("\(info.description) (\(info.size))")
@@ -495,11 +497,7 @@ struct MainSettingsView: View {
         }
         .padding(.vertical, MW.sp4)
         .padding(.horizontal, MW.sp8)
-        .background(settings.selectedModel == info.id ? MW.elevated : .clear)
-        .overlay(Rectangle().stroke(
-            settings.selectedModel == info.id ? MW.borderLight : .clear,
-            lineWidth: MW.hairline
-        ))
+        .mwSelectable(settings.selectedModel == info.id, radius: MW.rTiny, resting: .none)
     }
 
     /// True when THIS model is on disk but its load into the engine failed
@@ -518,16 +516,16 @@ struct MainSettingsView: View {
                 // no retry in Settings (only onboarding did). Re-running the
                 // download fast-paths cached files and re-triggers the load.
                 if isLoadFailure(info.id) {
-                    BlocksButton(label: "RETRY") {
+                    BlocksButton(label: "Retry") {
                         modelManager.startDownload(info.id)
                     }
                 } else {
-                    Text("ACTIVE")
+                    Text("Active")
                         .font(MW.monoSm)
-                        .foregroundStyle(MW.idle)
+                        .foregroundStyle(MW.ok)
                 }
             } else {
-                BlocksButton(label: "USE") {
+                BlocksButton(label: "Use") {
                     // ITER-058.3 — an explicit pick anywhere cancels the
                     // quick-start background upgrade: the user chose, we obey.
                     settings.pendingBestModelUpgrade = false
@@ -540,7 +538,7 @@ struct MainSettingsView: View {
             // row used to freeze on stale progress with no way to retry (Codex).
             downloadProgress
         } else {
-            BlocksButton(label: "DOWNLOAD") {
+            BlocksButton(label: "Download") {
                 // ITER-058.3 — same explicit-pick rule as USE (a Settings
                 // download must not later trigger a surprise 950 MB upgrade).
                 settings.pendingBestModelUpgrade = false
@@ -555,7 +553,7 @@ struct MainSettingsView: View {
         VStack(spacing: MW.spaceXs) {
             if modelManager.phase == .verifying {
                 ProgressView().controlSize(.small)
-                Text("VERIFYING").font(MW.monoSm).foregroundStyle(MW.textMuted)
+                Text("Verifying…").font(MW.monoSm).foregroundStyle(MW.textMuted)
             } else {
                 ProgressView(value: modelManager.downloadProgress)
                     .frame(width: 80)
@@ -658,8 +656,7 @@ struct MainSettingsView: View {
                     .foregroundStyle(settings.transcriptionLanguage == lang.1 ? MW.textPrimary : MW.textSecondary)
                     .padding(.horizontal, MW.sp8)
                     .padding(.vertical, MW.sp4)
-                    .background(settings.transcriptionLanguage == lang.1 ? MW.elevated : .clear)
-                    .overlay(RoundedRectangle(cornerRadius: MW.rSmall, style: .continuous).stroke(MW.border, lineWidth: 0.5))
+                    .mwSelectable(settings.transcriptionLanguage == lang.1, radius: MW.rTiny)
                     .onTapGesture { settings.transcriptionLanguage = lang.1 }
             }
         }
@@ -676,14 +673,14 @@ struct MainSettingsView: View {
 
             ForEach(ProcessingMode.allCases) { mode in
                 HStack {
-                    Text(mode.displayName.uppercased())
+                    Text(mode.displayName)
                         .font(MW.mono)
                         .foregroundStyle(settings.processingMode == mode.rawValue ? MW.textPrimary : MW.textSecondary)
                     if mode.needsPro && !license.isPro {
                         Text("PRO").font(.system(size: 8, weight: .bold, design: .monospaced))
-                            .foregroundStyle(Color(red: 0.78, green: 0.71, blue: 0.55))
+                            .foregroundStyle(MW.accent)
                             .padding(.horizontal, 5).padding(.vertical, 2)
-                            .background(Color(red: 0.78, green: 0.71, blue: 0.55).opacity(0.1))
+                            .background(MW.accent.opacity(0.12))
                     }
                     Spacer()
                     if settings.processingMode == mode.rawValue {
@@ -694,11 +691,7 @@ struct MainSettingsView: View {
                 }
                 .padding(.vertical, MW.sp8)
                 .padding(.horizontal, MW.sp8)
-                .background(settings.processingMode == mode.rawValue ? MW.elevated : .clear)
-                .overlay(Rectangle().stroke(
-                    settings.processingMode == mode.rawValue ? MW.borderLight : .clear,
-                    lineWidth: MW.hairline
-                ))
+                .mwSelectable(settings.processingMode == mode.rawValue, radius: MW.rTiny, resting: .none)
                 .contentShape(Rectangle())
                 .onTapGesture { pickProcessingMode(mode) }
             }
@@ -733,8 +726,7 @@ struct MainSettingsView: View {
                     .foregroundStyle(settings.translateTo == lang.1 ? MW.textPrimary : MW.textSecondary)
                     .padding(.horizontal, MW.sp8)
                     .padding(.vertical, MW.sp4)
-                    .background(settings.translateTo == lang.1 ? MW.elevated : .clear)
-                    .overlay(RoundedRectangle(cornerRadius: MW.rSmall, style: .continuous).stroke(MW.border, lineWidth: 0.5))
+                    .mwSelectable(settings.translateTo == lang.1, radius: MW.rTiny)
                     .onTapGesture { settings.translateTo = lang.1 }
             }
 
@@ -753,9 +745,9 @@ struct MainSettingsView: View {
             HStack {
                 Text("TEXT STYLE").blocksLabel()
                 Text("PRO").font(.system(size: 8, weight: .bold, design: .monospaced))
-                    .foregroundStyle(Color(red: 0.78, green: 0.71, blue: 0.55))
+                    .foregroundStyle(MW.accent)
                     .padding(.horizontal, 5).padding(.vertical, 2)
-                    .background(Color(red: 0.78, green: 0.71, blue: 0.55).opacity(0.1))
+                    .background(MW.accent.opacity(0.12))
             }
 
             Toggle(isOn: $settings.textStyleLowercaseStart) {
@@ -795,12 +787,12 @@ struct MainSettingsView: View {
             Button {
                 accountLinkShown = !AccountPage.open()
             } label: {
-                Text("GET PRO")
+                Text("Get Pro")
                     .font(MW.mono)
-                    .foregroundStyle(.black)
+                    .foregroundStyle(MW.onAccent)
                     .padding(.horizontal, MW.sp16)
                     .padding(.vertical, MW.sp4)
-                    .background(MW.idle)
+                    .background(Capsule(style: .continuous).fill(MW.ok))
             }
             .buttonStyle(.plain)
             Text("$30 a year").font(MW.monoSm).foregroundStyle(MW.textMuted)
@@ -822,10 +814,10 @@ struct MainSettingsView: View {
                                 .lineLimit(1)
                             Text("PRO")
                                 .font(.system(size: 8, weight: .bold, design: .monospaced))
-                                .foregroundStyle(.black)
+                                .foregroundStyle(MW.onAccent)
                                 .padding(.horizontal, 6)
                                 .padding(.vertical, 2)
-                                .background(MW.idle)
+                                .background(MW.ok)
                         }
                         // A2 — the billing period from the session answer; none known, no line.
                         if let plan = LicenseService.planLabel(interval: license.billingInterval) {
@@ -913,7 +905,7 @@ struct MainSettingsView: View {
                     ZStack(alignment: .leading) {
                         RoundedRectangle(cornerRadius: 4).fill(MW.border)
                         RoundedRectangle(cornerRadius: 4)
-                            .fill(u.balance / max(u.limit, 1) < 0.1 ? MW.processing : MW.idle)
+                            .fill(u.balance / max(u.limit, 1) < 0.1 ? MW.processing : MW.ok)
                             .frame(width: geo.size.width * min(1, max(0, u.balance / max(u.limit, 1))))
                     }
                 }
@@ -996,23 +988,23 @@ struct MainSettingsView: View {
             Text("HOTKEYS").blocksLabel()
 
             hotkeyRow(
-                "TRANSCRIBE", desc: "Right ⌘ — short tap. Result auto-pasted to active app.",
-                badge: "TAP", keys: ["RIGHT", "\u{2318}"],
+                "Transcribe", desc: "Right ⌘ — short tap. Result auto-pasted to active app.",
+                badge: "Tap", keys: ["right", "\u{2318}"],
                 isOn: transcribe
             )
             hotkeyRow(
-                "TRANSLATE", desc: "Right ⌥ — short tap. Translates to your preferred target language.",
-                badge: "TAP", keys: ["RIGHT", "\u{2325}"],
+                "Translate", desc: "Right ⌥ — short tap. Translates to your preferred target language.",
+                badge: "Tap", keys: ["right", "\u{2325}"],
                 isOn: translate
             )
             hotkeyRow(
-                "VOICE QUESTION", desc: "Hold Right ⌘ ≥ 0.5s — speak, release. Reply spoken aloud.",
-                badge: "HOLD", keys: ["RIGHT", "\u{2318}"],
+                "Voice question", desc: "Hold Right ⌘ ≥ 0.5s — speak, release. Reply spoken aloud.",
+                badge: "Hold", keys: ["right", "\u{2318}"],
                 isOn: voiceQuestion
             )
             hotkeyRow(
-                "AUTO-TRANSLATE (INPUT)", desc: "Hold Right ⌥ ≥ 1.5s — translates live mic input as you speak.",
-                badge: "HOLD", keys: ["RIGHT", "\u{2325}"],
+                "Auto-translate (input)", desc: "Hold Right ⌥ ≥ 1.5s — translates live mic input as you speak.",
+                badge: "Hold", keys: ["right", "\u{2325}"],
                 isOn: autoTranslate
             )
 
@@ -1021,9 +1013,9 @@ struct MainSettingsView: View {
             Text("MODE").blocksLabel()
 
             HStack(spacing: MW.sp4) {
-                modeButton("TOGGLE", value: "toggle",
+                modeButton("Toggle", value: "toggle",
                            desc: "press to start/stop", selection: mode)
-                modeButton("PUSH-TO-TALK", value: "pushToTalk",
+                modeButton("Push-to-talk", value: "pushToTalk",
                            desc: "hold to record", selection: mode)
             }
 
@@ -1042,9 +1034,10 @@ struct MainSettingsView: View {
                            isOn: Binding<Bool>) -> some View {
         HStack(alignment: .center, spacing: MW.sp12) {
             VStack(alignment: .leading, spacing: 2) {
-                Text(action).font(MW.mono).foregroundStyle(MW.textPrimary)
+                Text(action).font(.system(size: 12.5, weight: .semibold)).foregroundStyle(MW.textPrimary)
+                    .fixedSize(horizontal: false, vertical: true)
                 Text(desc).font(MW.monoSm).foregroundStyle(MW.textMuted)
-                    .lineLimit(2).fixedSize(horizontal: false, vertical: true)
+                    .fixedSize(horizontal: false, vertical: true)
             }
             Spacer(minLength: 8)
             HStack(spacing: 4) {
@@ -1060,20 +1053,17 @@ struct MainSettingsView: View {
         }
     }
 
-    /// Small uppercase badge — TAP / HOLD — distinguishes press-and-release
+    /// Small badge — Tap / Hold — distinguishes press-and-release
     /// from press-and-hold actions in the hotkey panel.
     private static func hotkeyBadge(_ text: String) -> some View {
-        Text(text)
-            .font(.system(size: 9, weight: .semibold, design: .default))
-            .tracking(0.6)
+        let hold = text == "Hold"
+        return Text(text)
+            .font(.system(size: 9.5, weight: .semibold))
             .lineLimit(1)
             .fixedSize()
-            .foregroundStyle(text == "HOLD" ? MW.accent : MW.textMuted)
+            .foregroundStyle(hold ? MW.accent : MW.textSecondary)
             .padding(.horizontal, 6).padding(.vertical, 3)
-            .background {
-                RoundedRectangle(cornerRadius: 5, style: .continuous)
-                    .stroke(text == "HOLD" ? MW.accent.opacity(0.45) : MW.border, lineWidth: 0.5)
-            }
+            .background(Capsule(style: .continuous).fill(hold ? MW.accent.opacity(0.14) : MW.palette.rest.color))
     }
 
     private static func modeButton(_ label: String, value: String, desc: String,
@@ -1090,19 +1080,7 @@ struct MainSettingsView: View {
         .padding(.horizontal, MW.sp12)
         .padding(.vertical, MW.sp10)
         .frame(maxWidth: .infinity)
-        .background {
-            ZStack {
-                RoundedRectangle(cornerRadius: MW.rSmall, style: .continuous)
-                    .fill(.ultraThinMaterial)
-                if isSelected {
-                    RoundedRectangle(cornerRadius: MW.rSmall, style: .continuous)
-                        .fill(Color.primary.opacity(0.10))
-                }
-                RoundedRectangle(cornerRadius: MW.rSmall, style: .continuous)
-                    .strokeBorder(Color.primary.opacity(isSelected ? 0.20 : 0.08), lineWidth: 0.5)
-            }
-        }
-        .clipShape(RoundedRectangle(cornerRadius: MW.rSmall, style: .continuous))
+        .mwSelectable(isSelected, radius: MW.rSmall, resting: .surface)
         .contentShape(Rectangle())
         .onTapGesture {
             withAnimation(.easeInOut(duration: 0.12)) { selection.wrappedValue = value }
@@ -1117,13 +1095,14 @@ struct MainSettingsView: View {
 
             // Theme
             HStack {
-                Text("THEME").font(MW.mono).foregroundStyle(MW.textSecondary)
+                Text("Theme").font(MW.mono).foregroundStyle(MW.textSecondary)
                 Spacer()
-                HStack(spacing: 0) {
-                    themeButton("DARK", value: "dark")
-                    themeButton("LIGHT", value: "light")
-                    themeButton("AUTO", value: "auto")
+                HStack(spacing: 2) {
+                    themeButton("Dark", value: "dark")
+                    themeButton("Light", value: "light")
+                    themeButton("Auto", value: "auto")
                 }
+                .mwSegmentTrack()
             }
 
             // Accent — 5 swatches per Liquid Glass design spec § 10 Step 1.
@@ -1133,7 +1112,7 @@ struct MainSettingsView: View {
             // different lengths ("Mono" vs "Electric" vs "Warm Orange") stay
             // visually equidistant.
             HStack(alignment: .center) {
-                Text("ACCENT").font(MW.mono).foregroundStyle(MW.textSecondary)
+                Text("Accent").font(MW.mono).foregroundStyle(MW.textSecondary)
                 Spacer()
                 HStack(spacing: 0) {
                     ForEach(MW.accentPresets, id: \.id) { preset in
@@ -1148,15 +1127,15 @@ struct MainSettingsView: View {
                 }
             }
 
-            toggleRow("SOUND EFFECTS", isOn: $settings.soundEnabled)
-            toggleRow("AUTO-PASTE", isOn: $settings.autoSubmit)
+            toggleRow("Sound effects", isOn: $settings.soundEnabled)
+            toggleRow("Auto-paste", isOn: $settings.autoSubmit)
 
             // Launch-at-login. Source of truth = SMAppService.mainApp registration,
             // NOT @AppStorage — system can flip it from System Settings → Login
             // Items, and a local mirror would silently drift. We bind the toggle
             // through LaunchAtLoginManager.shared, which round-trips register/
             // unregister + re-reads status so UI stays consistent with the OS.
-            toggleRow("LAUNCH AT LOGIN", isOn: Binding(
+            toggleRow("Launch at login", isOn: Binding(
                 get: { launchAtLogin.isEnabled },
                 set: { _ = launchAtLogin.setEnabled($0) }
             ))
@@ -1165,24 +1144,26 @@ struct MainSettingsView: View {
                 .foregroundStyle(MW.textMuted)
 
             HStack {
-                Text("WEEK STARTS").font(MW.mono).foregroundStyle(MW.textSecondary)
+                Text("Week starts").font(MW.mono).foregroundStyle(MW.textSecondary)
                 Spacer()
-                HStack(spacing: 0) {
-                    weekDayButton("MON", value: 2)
-                    weekDayButton("SUN", value: 1)
+                HStack(spacing: 2) {
+                    weekDayButton("Mon", value: 2)
+                    weekDayButton("Sun", value: 1)
                 }
+                .mwSegmentTrack()
             }
 
             if settings.soundEnabled {
                 HStack {
-                    Text("SOUND STYLE").font(MW.mono).foregroundStyle(MW.textSecondary)
+                    Text("Sound style").font(MW.mono).foregroundStyle(MW.textSecondary)
                     Spacer()
-                    HStack(spacing: 0) {
-                        soundPresetButton("DEFAULT", value: "default")
-                        soundPresetButton("BASS", value: "bass")
-                        soundPresetButton("SIGNATURE", value: "signature")
-                        soundPresetButton("CUSTOM", value: "custom")
+                    HStack(spacing: 2) {
+                        soundPresetButton("Default", value: "default")
+                        soundPresetButton("Bass", value: "bass")
+                        soundPresetButton("Signature", value: "signature")
+                        soundPresetButton("Custom", value: "custom")
                     }
+                    .mwSegmentTrack()
                 }
 
                 if settings.soundPreset == "custom" {
@@ -1203,8 +1184,7 @@ struct MainSettingsView: View {
             .foregroundStyle(isSelected ? MW.textPrimary : MW.textMuted)
             .padding(.horizontal, MW.sp8)
             .padding(.vertical, 2)
-            .background(isSelected ? MW.elevated : .clear)
-            .overlay(RoundedRectangle(cornerRadius: MW.rSmall, style: .continuous).stroke(MW.border, lineWidth: 0.5))
+            .mwSelectable(isSelected, radius: 999, resting: .none)
             .onTapGesture {
                 settings.soundPreset = value
                 NotificationCenter.default.post(name: .init("ReloadSounds"), object: nil)
@@ -1218,8 +1198,7 @@ struct MainSettingsView: View {
             .foregroundStyle(isSelected ? MW.textPrimary : MW.textMuted)
             .padding(.horizontal, MW.sp8)
             .padding(.vertical, 2)
-            .background(isSelected ? MW.elevated : .clear)
-            .overlay(RoundedRectangle(cornerRadius: MW.rSmall, style: .continuous).stroke(MW.border, lineWidth: 0.5))
+            .mwSelectable(isSelected, radius: 999, resting: .none)
             .onTapGesture {
                 settings.appTheme = value
                 MW.applyTheme(value)
@@ -1228,7 +1207,7 @@ struct MainSettingsView: View {
 
     private func soundPickerRow(_ label: String, role: String) -> some View {
         HStack {
-            Text(label.uppercased()).font(MW.monoSm).foregroundStyle(MW.textSecondary)
+            Text(label).font(MW.monoSm).foregroundStyle(MW.textSecondary)
             Spacer()
             if let path = settings.customSound(for: role) {
                 Text(URL(fileURLWithPath: path).lastPathComponent)
@@ -1242,12 +1221,12 @@ struct MainSettingsView: View {
                 }
                 .buttonStyle(.plain)
             } else {
-                Text("DEFAULT").font(MW.monoSm).foregroundStyle(MW.textMuted)
+                Text("Default").font(MW.monoSm).foregroundStyle(MW.textMuted)
             }
             Button {
                 pickSoundFile(for: role)
             } label: {
-                Text("CHOOSE").font(MW.label).tracking(0.8)
+                Text("Choose").font(.system(size: 11.5, weight: .medium))
                     .foregroundStyle(MW.textSecondary)
                     .padding(.horizontal, MW.sp8).padding(.vertical, 2)
                     .overlay(RoundedRectangle(cornerRadius: MW.rSmall, style: .continuous).stroke(MW.border, lineWidth: 0.5))
@@ -1292,8 +1271,7 @@ struct MainSettingsView: View {
             .foregroundStyle(isSelected ? MW.textPrimary : MW.textMuted)
             .padding(.horizontal, MW.sp8)
             .padding(.vertical, 2)
-            .background(isSelected ? MW.elevated : .clear)
-            .overlay(Rectangle().stroke(isSelected ? MW.textMuted : MW.border, lineWidth: MW.hairline))
+            .mwSelectable(isSelected, radius: 999, resting: .none)
             .onTapGesture { settings.weekStartsOn = value }
     }
 
@@ -1305,23 +1283,24 @@ struct MainSettingsView: View {
         }
     }
 
-    /// The panel's ON/OFF chip, drawn the same everywhere it appears.
-    ///
-    /// `fixedSize` keeps the label whole when the row runs out of width —
-    /// the text never wraps or truncates inside the chip.
+    /// The panel's on/off switch, drawn the same everywhere it appears (ITER-087: a switch in the user's accent,
+    /// no longer an "ON"/"OFF" text box). The knob has a hairline ring so it shows on any accent, Mono included.
     static func onOffChip(_ label: String, isOn: Binding<Bool>) -> some View {
         Button {
             isOn.wrappedValue.toggle()
         } label: {
-            Text(isOn.wrappedValue ? "ON" : "OFF")
-                .font(MW.monoSm)
-                .lineLimit(1)
-                .fixedSize()
-                .foregroundStyle(isOn.wrappedValue ? MW.textPrimary : MW.textMuted)
-                .padding(.horizontal, MW.sp8)
-                .padding(.vertical, 2)
-                .background(isOn.wrappedValue ? MW.elevated : .clear)
-                .overlay(Rectangle().stroke(isOn.wrappedValue ? MW.textMuted : MW.border, lineWidth: MW.hairline))
+            ZStack(alignment: isOn.wrappedValue ? .trailing : .leading) {
+                Capsule(style: .continuous)
+                    .fill(isOn.wrappedValue ? MW.controlTint : Color.primary.opacity(0.16))
+                Circle()
+                    .fill(Color.white)
+                    .overlay(Circle().strokeBorder(Color.black.opacity(0.3), lineWidth: 0.5))
+                    .shadow(color: .black.opacity(0.3), radius: 1.5, x: 0, y: 1)
+                    .frame(width: 14, height: 14)
+                    .padding(2)
+            }
+            .frame(width: 30, height: 18)
+            .contentShape(Capsule())
         }
         .buttonStyle(.plain)
         .accessibilityLabel(label)
@@ -1331,11 +1310,11 @@ struct MainSettingsView: View {
     // MARK: - Recording Overlay
 
     private let pillStyles: [(label: String, value: String, desc: String)] = [
-        ("CAPSULE", "capsule", "Floating pill indicator"),
-        ("ISLAND AURA", "dotglow", "Notch aura glow"),
-        ("ISLAND EXPAND", "island", "Expanding notch"),
-        ("EDGE GLOW", "glow", "Top edge light strip"),
-        ("SHREK", "shrek", "Dancing avatar — tints red while transcribing"),
+        ("Capsule", "capsule", "Floating pill indicator"),
+        ("Island Aura", "dotglow", "Notch aura glow"),
+        ("Island Expand", "island", "Expanding notch"),
+        ("Edge Glow", "glow", "Top edge light strip"),
+        ("Shrek", "shrek", "Dancing avatar — tints red while transcribing"),
     ]
 
     private var overlaySection: some View {
@@ -1384,11 +1363,7 @@ struct MainSettingsView: View {
         }
         .padding(.vertical, MW.sp8)
         .padding(.horizontal, MW.sp8)
-        .background(isSelected ? MW.elevated : .clear)
-        .overlay(Rectangle().stroke(
-            isSelected ? MW.borderLight : .clear,
-            lineWidth: MW.hairline
-        ))
+        .mwSelectable(isSelected, radius: MW.rTiny, resting: .none)
         .contentShape(Rectangle())
         .onTapGesture {
             settings.pillStyle = style.value
@@ -1404,7 +1379,7 @@ struct MainSettingsView: View {
 
             if license.isPro {
                 HStack(spacing: MW.sp4) {
-                    Circle().fill(MW.idle).frame(width: 6, height: 6)
+                    Circle().fill(MW.ok).frame(width: 6, height: 6)
                     Text("Included with Pro (Cerebras Qwen 3 235B)")
                         .font(MW.monoSm).foregroundStyle(MW.textMuted)
                 }
@@ -1442,8 +1417,8 @@ struct MainSettingsView: View {
         .padding(.horizontal, MW.sp8)
         .padding(.vertical, MW.sp4)
         .frame(maxWidth: .infinity)
+        .mwSelectable(isActive, radius: MW.rSmall, resting: .surface)
         .contentShape(Rectangle())
-        .overlay(Rectangle().stroke(isActive ? MW.idle : MW.border, lineWidth: isActive ? 1.5 : MW.hairline))
         .onTapGesture { settings.llmProvider = prov.rawValue }
     }
 
@@ -1502,7 +1477,7 @@ struct MainSettingsView: View {
             }
 
             if !activeKey.isEmpty {
-                Text("●").font(.system(size: 8)).foregroundStyle(MW.idle)
+                Text("●").font(.system(size: 8)).foregroundStyle(MW.ok)
             }
         }
     }
@@ -1622,7 +1597,7 @@ struct MainSettingsView: View {
                 Text("Help shortcut").font(MW.mono).foregroundStyle(MW.textSecondary)
                 Spacer()
                 if helpShortcutRecorder.isRecording {
-                    Text("PRESS A SHORTCUT…").font(MW.monoSm).foregroundStyle(MW.textMuted)
+                    Text("Press a shortcut…").font(MW.monoSm).foregroundStyle(MW.textMuted)
                 } else {
                     HStack(spacing: 4) {
                         ForEach(Array(MeetingHelpLabel.parts(keyCode: settings.meetingHelpKeyCode,
@@ -1760,10 +1735,11 @@ struct MainSettingsView: View {
                 HStack {
                     Text("Mode").font(MW.mono).foregroundStyle(MW.textSecondary)
                     Spacer()
-                    HStack(spacing: 0) {
-                        contextModeButton("BLACKLIST", value: "blacklist")
-                        contextModeButton("WHITELIST", value: "whitelist")
+                    HStack(spacing: 2) {
+                        contextModeButton("Blacklist", value: "blacklist")
+                        contextModeButton("Whitelist", value: "whitelist")
                     }
+                    .mwSegmentTrack()
                 }
                 // App list with picker — implements spec://intelligence/FEAT-0002#app-picker
                 screenContextAppList
@@ -1823,7 +1799,7 @@ struct MainSettingsView: View {
             }
             if let result = screenHistoryDeleteResult {
                 Text(result)
-                    .font(MW.monoSm).foregroundStyle(MW.idle)
+                    .font(MW.monoSm).foregroundStyle(MW.ok)
             }
         }
         .padding(MW.sp16)
@@ -1967,9 +1943,8 @@ struct MainSettingsView: View {
                 // ChatGPT to read the vault as «second memory». No custom code —
                 // just MCP filesystem server pointed at the vault path.
                 Divider().padding(.vertical, 4)
-                Text("EXTERNAL LLM ACCESS")
-                    .font(MW.label).tracking(1.0)
-                    .foregroundStyle(MW.textMuted)
+                Text("External LLM access")
+                    .mwBadge()
                 Text("Once vault is filled, point Claude Desktop / Cursor / ChatGPT at it. They'll read your voices, meetings, tasks and memories as «second memory».")
                     .font(MW.monoSm).foregroundStyle(MW.textMuted)
                     .fixedSize(horizontal: false, vertical: true)
@@ -2132,12 +2107,11 @@ struct MainSettingsView: View {
                         .font(MW.mono).fontWeight(.semibold)
                         .foregroundStyle(MW.textPrimary)
                     if isActive {
-                        Text("ACTIVE")
-                            .font(.system(size: 8, weight: .bold))
-                            .tracking(1)
-                            .foregroundStyle(.black)
+                        Text("Active")
+                            .font(.system(size: 9, weight: .bold))
+                            .foregroundStyle(MW.onAccent)
                             .padding(.horizontal, 5).padding(.vertical, 1.5)
-                            .background(MW.idle)
+                            .background(MW.ok)
                             .cornerRadius(2)
                     }
                 }
@@ -2185,14 +2159,7 @@ struct MainSettingsView: View {
         // section's padding container naturally.
         .frame(maxWidth: .infinity)
         .fixedSize(horizontal: false, vertical: true)
-        .background(
-            RoundedRectangle(cornerRadius: MW.rSmall, style: .continuous)
-                .fill(isActive ? MW.idle.opacity(0.08) : Color.clear)
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: MW.rSmall, style: .continuous)
-                .stroke(isActive ? MW.idle.opacity(0.4) : MW.border, lineWidth: 0.5)
-        )
+        .mwSelectable(isActive, radius: MW.rSmall, resting: .outline)
     }
 
     /// Tiny always-visible status row that tells the user where their AI
@@ -2250,9 +2217,9 @@ struct MainSettingsView: View {
             let chipBit = SystemSpecs.chipName  // e.g. "M4 Max"
             if spec.isFoundationModels {
                 return (
-                    "LOCAL",
+                    "Local",
                     "\(spec.displayName) (\(chipBit) Neural Engine)",
-                    MW.idle
+                    MW.ok
                 )
             }
             // MLX model. `isReady` reflects whether weights are loaded
@@ -2260,13 +2227,13 @@ struct MainSettingsView: View {
             // cloud for this tick (Phase 4 will flip isReady to true).
             if LocalLLMService.shared.isReady {
                 return (
-                    "LOCAL",
+                    "Local",
                     "\(spec.displayName) on \(chipBit)",
-                    MW.idle
+                    MW.ok
                 )
             } else {
                 return (
-                    "LOADING",
+                    "Loading",
                     "\(spec.displayName) — warming up…",
                     MW.processing
                 )
@@ -2279,9 +2246,9 @@ struct MainSettingsView: View {
                 ? "Cerebras Qwen 3 235B"
                 : "OpenAI GPT-4o-mini"
             return (
-                "CLOUD",
+                "Cloud",
                 "\(providerLabel) via Pro proxy",
-                MW.postProcess
+                MW.ok
             )
         }
 
@@ -2290,12 +2257,12 @@ struct MainSettingsView: View {
             let providerLabel = settings.llmProvider == "cerebras"
                 ? "Cerebras (your key)"
                 : "OpenAI (your key)"
-            return ("CLOUD", providerLabel, MW.postProcess)
+            return ("Cloud", providerLabel, MW.ok)
         }
 
         // Nothing wired — AI features no-op for this user.
         return (
-            "INACTIVE",
+            "Inactive",
             "No API key, no Pro, no local model — AI features silently disabled",
             MW.textDim
         )
@@ -2307,9 +2274,9 @@ struct MainSettingsView: View {
             switch verdict {
             case .recommended:
                 Image(systemName: "checkmark.circle.fill").font(.system(size: 9))
-                    .foregroundStyle(MW.idle)
+                    .foregroundStyle(MW.ok)
                 Text("Recommended for your Mac")
-                    .font(MW.monoSm).foregroundStyle(MW.idle)
+                    .font(MW.monoSm).foregroundStyle(MW.ok)
             case .slow(let reason):
                 Image(systemName: "exclamationmark.triangle.fill").font(.system(size: 9))
                     .foregroundStyle(MW.processing)
@@ -2385,8 +2352,8 @@ struct MainSettingsView: View {
             .buttonStyle(.plain)
             .font(MW.label).tracking(0.6)
             .padding(.horizontal, 8).padding(.vertical, 3)
-            .foregroundStyle((isActive && isReady) ? .black : MW.textPrimary)
-            .background((isActive && isReady) ? MW.idle :
+            .foregroundStyle((isActive && isReady) ? MW.onAccent : MW.textPrimary)
+            .background((isActive && isReady) ? MW.ok :
                         (isActive ? MW.processing.opacity(0.18) : Color.clear))
             .overlay(RoundedRectangle(cornerRadius: MW.rSmall, style: .continuous)
                         .stroke(MW.border, lineWidth: 0.5))
@@ -2490,8 +2457,8 @@ struct MainSettingsView: View {
                 .buttonStyle(.plain)
                 .font(MW.label).tracking(0.6)
                 .padding(.horizontal, 8).padding(.vertical, 3)
-                .foregroundStyle((isActive && isReady) ? .black : MW.textPrimary)
-                .background((isActive && isReady) ? MW.idle :
+                .foregroundStyle((isActive && isReady) ? MW.onAccent : MW.textPrimary)
+                .background((isActive && isReady) ? MW.ok :
                             (isActive ? MW.processing.opacity(0.18) : Color.clear))
                 .overlay(RoundedRectangle(cornerRadius: MW.rSmall, style: .continuous)
                             .stroke(MW.border, lineWidth: 0.5))
@@ -2730,7 +2697,7 @@ struct MainSettingsView: View {
                 toggleRow("Coach mode", isOn: $settings.adviceCoachMode)
                 Text(settings.adviceCoachMode
                      ? "Direct accountability nudges based on stated commitments and patterns. Still NOT generic wellness or therapy."
-                     : "Default: pure insight only — no nudges. Turn ON for accountability push (when you slip a stated commitment, distract for too long, miss goal pace).")
+                     : "Default: pure insight only — no nudges. Turn on for accountability push (when you slip a stated commitment, distract for too long, miss goal pace).")
                     .font(MW.monoSm).foregroundStyle(MW.textMuted)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -2852,7 +2819,7 @@ struct MainSettingsView: View {
         let isPro = LicenseService.shared.isPro
         return VStack(alignment: .leading, spacing: MW.sp4) {
             HStack {
-                Text("CLOUD VOICE (PRO)").font(MW.monoSm).foregroundStyle(MW.textMuted)
+                Text("Cloud voice (Pro)").mwBadge()
                 Spacer()
                 Toggle("", isOn: $settings.ttsCloudEnabled)
                     .labelsHidden()
@@ -2878,9 +2845,9 @@ struct MainSettingsView: View {
     private var voicePicker: some View {
         VStack(alignment: .leading, spacing: MW.sp4) {
             Text(settings.ttsCloudEnabled && LicenseService.shared.isPro
-                 ? "SYSTEM VOICE (FALLBACK)"
-                 : "VOICE")
-                .font(MW.monoSm).foregroundStyle(MW.textMuted)
+                 ? "System voice (fallback)"
+                 : "Voice")
+                .mwBadge()
             Picker("", selection: $settings.ttsVoice) {
                 Text("System default").tag("")
                 ForEach(TTSService.availableVoices(), id: \.identifier) { v in
@@ -2903,7 +2870,7 @@ struct MainSettingsView: View {
     private var speedPicker: some View {
         VStack(alignment: .leading, spacing: MW.sp4) {
             HStack {
-                Text("SPEED").font(MW.monoSm).foregroundStyle(MW.textMuted)
+                Text("Speed").mwBadge()
                 Spacer()
                 Text(String(format: "%.1fx", settings.ttsSpeed)).font(MW.monoSm).foregroundStyle(MW.textSecondary)
             }
@@ -2915,12 +2882,12 @@ struct MainSettingsView: View {
 
     private var fileIndexingFolderList: some View {
         VStack(alignment: .leading, spacing: MW.sp4) {
-            Text("SCANNED FOLDERS")
-                .font(MW.monoSm).foregroundStyle(MW.textMuted)
+            Text("Scanned folders")
+                .mwBadge()
 
             let folders = settings.indexedFolders
             if folders.isEmpty {
-                Text("No folders yet. Click ADD FOLDER and pick your Obsidian vault or notes directory.")
+                Text("No folders yet. Click Add folder and pick your Obsidian vault or notes directory.")
                     .font(MW.monoSm).foregroundStyle(MW.textMuted).italic()
                     .padding(.vertical, MW.sp4)
             } else {
@@ -2951,7 +2918,7 @@ struct MainSettingsView: View {
                 Button(action: pickFolder) {
                     HStack(spacing: 4) {
                         Image(systemName: "plus").font(.system(size: 10))
-                        Text("ADD FOLDER").font(MW.label).tracking(0.6)
+                        Text("Add folder").font(.system(size: 11.5, weight: .medium))
                     }
                     .foregroundStyle(MW.textSecondary)
                     .padding(.horizontal, 8).padding(.vertical, 4)
@@ -3006,8 +2973,8 @@ struct MainSettingsView: View {
     private var screenContextAppList: some View {
         VStack(alignment: .leading, spacing: MW.sp4) {
             // Label changes based on mode
-            Text(settings.screenContextMode == "whitelist" ? "INCLUDED APPS" : "EXCLUDED APPS")
-                .font(MW.monoSm).foregroundStyle(MW.textMuted)
+            Text(settings.screenContextMode == "whitelist" ? "Included apps" : "Excluded apps")
+                .mwBadge()
 
             // Selected apps as rows
             if selectedBundleIDs.isEmpty {
@@ -3032,7 +2999,7 @@ struct MainSettingsView: View {
             } label: {
                 HStack(spacing: 4) {
                     Image(systemName: "plus").font(.system(size: 9))
-                    Text("ADD APP").font(MW.label).tracking(0.5)
+                    Text("Add app").font(.system(size: 11.5, weight: .medium))
                 }
                 .foregroundStyle(MW.textSecondary)
                 .padding(.horizontal, MW.sp8).padding(.vertical, MW.sp4)
@@ -3107,8 +3074,7 @@ struct MainSettingsView: View {
             .foregroundStyle(isSelected ? MW.textPrimary : MW.textMuted)
             .padding(.horizontal, MW.sp8)
             .padding(.vertical, 2)
-            .background(isSelected ? MW.elevated : .clear)
-            .overlay(RoundedRectangle(cornerRadius: MW.rSmall, style: .continuous).stroke(MW.border, lineWidth: 0.5))
+            .mwSelectable(isSelected, radius: 999, resting: .none)
             .onTapGesture { settings.screenContextMode = value }
     }
 
@@ -3198,7 +3164,7 @@ private struct WrappingHStack<Item, Content: View>: View {
 
 // MARK: - File Indexing status / button (observers for reactive UI)
 
-/// SCAN NOW button that reflects running state. Disabled + "SCANNING…" label
+/// Scan now button that reflects running state. Disabled + "Scanning…" label
 /// while either the file indexer or the memory extractor pass is in flight.
 private struct FileIndexingScanButton: View {
     @ObservedObject var indexer: FileIndexerService
@@ -3219,10 +3185,10 @@ private struct FileIndexingScanButton: View {
             HStack(spacing: 4) {
                 if isRunning {
                     ProgressView().controlSize(.mini).scaleEffect(0.7)
-                    Text("SCANNING…").font(MW.label).tracking(0.6)
+                    Text("Scanning…").font(.system(size: 11.5, weight: .medium))
                 } else {
                     Image(systemName: "arrow.clockwise").font(.system(size: 10))
-                    Text("SCAN NOW").font(MW.label).tracking(0.6)
+                    Text("Scan now").font(.system(size: 11.5, weight: .medium))
                 }
             }
             .foregroundStyle(isRunning ? MW.textMuted : MW.textSecondary)
@@ -3273,7 +3239,7 @@ private struct FileIndexingStatusLine: View {
         if extractor.isRunning { return "Extracting memories from files…" }
         if let err = extractor.lastError { return "Extraction error: \(err)" }
         guard let run = indexer.lastRun else {
-            return "Not scanned yet. Click SCAN NOW to index."
+            return "Not scanned yet. Click Scan now to index."
         }
         // Parse "Added 287, updated 0 across 1 folder(s)" → "287 files"
         // Parse "Processed 15 files, added 8 memories" → "8 memories"

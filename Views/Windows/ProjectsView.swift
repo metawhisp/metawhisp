@@ -41,12 +41,11 @@ struct ProjectsView: View {
                 settings.projectShowSingletons.toggle()
                 Task { await refresh() }
             } label: {
-                Text(settings.projectShowSingletons ? "ALL" : "≥2")
-                    .font(MW.label).tracking(0.6)
+                Text(settings.projectShowSingletons ? "All" : "≥2")
+                    .font(.system(size: 11.5, weight: .medium))
                     .foregroundStyle(settings.projectShowSingletons ? MW.textPrimary : MW.textSecondary)
                     .padding(.horizontal, 8).padding(.vertical, 4)
-                    .background(settings.projectShowSingletons ? MW.elevated : .clear)
-                    .overlay(RoundedRectangle(cornerRadius: MW.rSmall, style: .continuous).stroke(MW.border, lineWidth: 0.5))
+                    .mwSelectable(settings.projectShowSingletons, radius: MW.rTiny)
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
@@ -62,7 +61,7 @@ struct ProjectsView: View {
                     } else {
                         Image(systemName: "arrow.clockwise").font(.system(size: 10))
                     }
-                    Text("REFRESH").font(MW.label).tracking(0.6)
+                    Text("Refresh").font(.system(size: 11.5, weight: .medium))
                 }
                 .foregroundStyle(MW.textSecondary)
                 .padding(.horizontal, 8).padding(.vertical, 4)
@@ -218,7 +217,7 @@ private struct ProjectDetailView: View {
                 Button(action: onBack) {
                     HStack(spacing: 4) {
                         Image(systemName: "chevron.left").font(.system(size: 11))
-                        Text("BACK").font(MW.label).tracking(0.6)
+                        Text("Back").font(.system(size: 11.5, weight: .medium))
                     }
                     .foregroundStyle(MW.textSecondary)
                     .padding(.horizontal, 8).padding(.vertical, 4)
@@ -235,7 +234,7 @@ private struct ProjectDetailView: View {
                 } label: {
                     HStack(spacing: 4) {
                         Image(systemName: "trash").font(.system(size: 10))
-                        Text("DELETE").font(MW.label).tracking(0.6)
+                        Text("Delete").font(.system(size: 11.5, weight: .medium))
                     }
                     .foregroundStyle(.red.opacity(0.85))
                     .padding(.horizontal, 8).padding(.vertical, 4)
@@ -302,7 +301,7 @@ private struct ProjectDetailView: View {
                                     .font(MW.mono)
                                     .padding(.horizontal, 8).padding(.vertical, 6)
                                     .overlay(RoundedRectangle(cornerRadius: MW.rSmall, style: .continuous).stroke(MW.border, lineWidth: 0.5))
-                                Button("RENAME") {
+                                Button("Rename") {
                                     let trimmed = renameText.trimmingCharacters(in: .whitespacesAndNewlines)
                                     guard !trimmed.isEmpty else { return }
                                     if projectAggregator.renameCanonical(currentCanonical: currentCanonical, newName: trimmed) {
@@ -355,8 +354,7 @@ private struct ProjectDetailView: View {
     private func section<Content: View>(_ title: String, @ViewBuilder content: () -> Content) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             Text(title)
-                .font(MW.label).tracking(0.6)
-                .foregroundStyle(MW.textMuted)
+                .mwBadge()
             content()
         }
     }
@@ -430,13 +428,12 @@ private struct ProjectDetailView: View {
                 .foregroundStyle(isCurrentCanonical ? MW.textPrimary : MW.textSecondary)
             Spacer()
             if isCurrentCanonical {
-                Text("CANONICAL")
-                    .font(MW.label).tracking(0.6)
-                    .foregroundStyle(MW.textMuted)
+                Text("Canonical")
+                    .mwBadge()
                     .padding(.horizontal, 6).padding(.vertical, 2)
                     .overlay(RoundedRectangle(cornerRadius: MW.rSmall, style: .continuous).stroke(MW.border, lineWidth: 0.5))
             } else {
-                Button("MAKE CANONICAL") {
+                Button("Make canonical") {
                     if projectAggregator.setCanonical(currentCanonical: currentCanonical, newCanonical: variant) {
                         currentCanonical = variant
                         aliases = projectAggregator.aliasVariants(for: variant)
@@ -447,7 +444,7 @@ private struct ProjectDetailView: View {
                 .overlay(RoundedRectangle(cornerRadius: MW.rSmall, style: .continuous).stroke(MW.border, lineWidth: 0.5))
                 .buttonStyle(.plain)
             }
-            Button("SPLIT OUT") {
+            Button("Split out") {
                 if projectAggregator.splitAlias(currentCanonical: currentCanonical, variantToSplit: variant) {
                     // After split, the alias's canonical may have changed if
                     // we split out the canonical itself. Refresh both states.

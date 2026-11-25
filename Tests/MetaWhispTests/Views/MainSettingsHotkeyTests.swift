@@ -39,8 +39,8 @@ final class MainSettingsHotkeyTests: XCTestCase {
     // The headless host publishes no SwiftUI accessibility tree, so the source guards remain.
     func testModePickerRemainsAvailableForVoiceQuestionsWhenDictationIsOff() throws {
         let hotkeys = try section(from: "static func hotkeyControls(", to: "private static func hotkeyRow(")
-        XCTAssertTrue(hotkeys.contains("modeButton(\"TOGGLE\", value: \"toggle\""))
-        XCTAssertTrue(hotkeys.contains("modeButton(\"PUSH-TO-TALK\", value: \"pushToTalk\""))
+        XCTAssertTrue(hotkeys.contains("modeButton(\"Toggle\", value: \"toggle\""))
+        XCTAssertTrue(hotkeys.contains("modeButton(\"Push-to-talk\", value: \"pushToTalk\""))
         XCTAssertFalse(hotkeys.contains(".disabled("), "the mode picker must remain usable with dictation off")
         let mode = try section(from: "private static func modeButton(", to: "private var optionsSection:")
         XCTAssertFalse(mode.contains(".disabled("), "the individual mode controls must remain enabled")

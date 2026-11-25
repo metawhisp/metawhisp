@@ -18,7 +18,7 @@ struct AppPickerView: View {
         VStack(spacing: 0) {
             // Header
             HStack {
-                Text("SELECT APP").font(MW.monoLg).tracking(1.5).foregroundStyle(MW.textPrimary)
+                Text("Select app").font(MW.monoLg).foregroundStyle(MW.textPrimary)
                 Spacer()
                 Button { onClose() } label: {
                     Image(systemName: "xmark").font(.system(size: 11)).foregroundStyle(MW.textMuted)
@@ -57,7 +57,7 @@ struct AppPickerView: View {
             .frame(maxHeight: .infinity)
         }
         .frame(width: 400, height: 500)
-        .background(MW.bg)
+        .background(PageWash())
         .onAppear { loadApps() }
     }
 

@@ -90,9 +90,8 @@ struct DashboardView: View {
                 .frame(width: 6, height: 6)
                 .shadow(color: MW.stateColor(coordinator.stage.rawValue).opacity(0.5), radius: 4)
 
-            Text(statusLabel.uppercased())
-                .font(MW.label).tracking(1.5)
-                .foregroundStyle(coordinator.stage == .idle ? MW.textSecondary : MW.textPrimary)
+            Text(statusLabel)
+                .mwBadge(color: coordinator.stage == .idle ? MW.textSecondary : MW.textPrimary)
 
             Spacer()
 
@@ -103,8 +102,8 @@ struct DashboardView: View {
                 HStack(spacing: 4) {
                     Image(systemName: coordinator.stage == .recording ? "stop.fill" : "mic.fill")
                         .font(.system(size: 9, weight: .medium))
-                    Text(coordinator.stage == .recording ? "STOP" : "RECORD")
-                        .font(MW.label).tracking(0.5)
+                    Text(coordinator.stage == .recording ? "Stop" : "Record")
+                        .font(.system(size: 11.5, weight: .medium))
                 }
                 .foregroundStyle(coordinator.stage == .recording ? (MW.isDark ? .white : .white) : MW.textSecondary)
                 .padding(.horizontal, MW.sp12).padding(.vertical, MW.sp8)
@@ -417,10 +416,8 @@ private struct ScreenAppTile: View {
                     Text("\(percent)%")
                         .font(MW.monoSm).foregroundStyle(MW.textMuted)
                 }
-                Text(appName.uppercased())
-                    .font(MW.label).tracking(1.0)
-                    .foregroundStyle(MW.textMuted)
-                    .lineLimit(1)
+                Text(appName)
+                    .mwBadge()
             }
             Spacer(minLength: 0)
         }
@@ -499,8 +496,8 @@ private struct DailySummaryCard: View {
                     } else {
                         Image(systemName: "sparkles").font(.system(size: 10))
                     }
-                    Text(isGenerating ? "GENERATING…" : "GENERATE NOW")
-                        .font(MW.label).tracking(0.6)
+                    Text(isGenerating ? "Generating…" : "Generate now")
+                        .font(.system(size: 11.5, weight: .medium))
                 }
                 .foregroundStyle(MW.textSecondary)
                 .glassChip(selected: false, radius: MW.rTiny)
@@ -551,9 +548,8 @@ private struct DailySummaryCard: View {
                     Image(systemName: icon)
                         .font(.system(size: 10, weight: .semibold))
                         .foregroundStyle(MW.textMuted)
-                    Text(label.uppercased())
-                        .font(MW.label).tracking(1.2)
-                        .foregroundStyle(MW.textMuted)
+                    Text(label)
+                        .mwBadge()
                 }
                 VStack(alignment: .leading, spacing: MW.sp6) {
                     ForEach(items, id: \.self) { item in
@@ -573,7 +569,7 @@ private struct DailySummaryCard: View {
 
     private var emptyPlaceholder: some View {
         Text(settings.dailySummaryEnabled
-             ? "Recap will generate at \(scheduledTimeLabel) (or click GENERATE NOW)."
+             ? "Recap will generate at \(scheduledTimeLabel) (or click Generate now)."
              : "Daily summary is off. Enable in Settings → AI.")
             .font(MW.mono).foregroundStyle(MW.textMuted)
     }
@@ -797,10 +793,8 @@ private struct StatCell: View {
                 .foregroundStyle(MW.textPrimary)
                 .lineLimit(1)
                 .minimumScaleFactor(0.7)
-            Text(label.uppercased())
-                .font(MW.label).tracking(1.0)
-                .foregroundStyle(MW.textMuted)
-                .lineLimit(1)
+            Text(label)
+                .mwBadge()
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.vertical, MW.sp4)
@@ -822,9 +816,8 @@ private struct StatPopover: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text("TODAY · \(label.uppercased())")
-                .font(MW.label).tracking(1.0)
-                .foregroundStyle(MW.textMuted)
+            Text("Today · \(label)")
+                .mwBadge()
             ForEach(Array(items.prefix(maxRows).enumerated()), id: \.offset) { _, line in
                 HStack(alignment: .top, spacing: 6) {
                     Text("•")
@@ -972,9 +965,8 @@ private struct TodayCard: View {
                 Image(systemName: "calendar")
                     .font(.system(size: 10, weight: .semibold))
                     .foregroundStyle(MW.textMuted)
-                Text("CALENDAR")
-                    .font(MW.label).tracking(1.2)
-                    .foregroundStyle(MW.textMuted)
+                Text("Calendar")
+                    .mwBadge()
                 Spacer()
                 if !calendarEvents.isEmpty {
                     Text("\(calendarEvents.count) event\(calendarEvents.count == 1 ? "" : "s")")
@@ -1151,9 +1143,11 @@ private struct TodayCard: View {
                     Image(systemName: todaysSummary == nil ? "sparkles" : "arrow.clockwise")
                         .font(.system(size: 10))
                 }
-                Text(isGenerating ? "GENERATING…"
-                     : (todaysSummary == nil ? "GENERATE" : "REGENERATE"))
-                    .font(MW.label).tracking(0.6)
+                Text(isGenerating ? "Generating…"
+                     : (todaysSummary == nil ? "Generate" : "Regenerate"))
+                    .font(.system(size: 11.5, weight: .medium))
+                    .lineLimit(1)
+                    .fixedSize()
             }
             .foregroundStyle(MW.textSecondary)
             .glassChip(selected: false, radius: MW.rTiny)
@@ -1235,9 +1229,8 @@ private struct TodayCard: View {
                     Image(systemName: icon)
                         .font(.system(size: 10, weight: .semibold))
                         .foregroundStyle(MW.textMuted)
-                    Text(label.uppercased())
-                        .font(MW.label).tracking(1.2)
-                        .foregroundStyle(MW.textMuted)
+                    Text(label)
+                        .mwBadge()
                 }
                 VStack(alignment: .leading, spacing: MW.sp4) {
                     ForEach(items, id: \.self) { item in
@@ -1259,9 +1252,9 @@ private struct TodayCard: View {
         let isToday = cal.isDateInToday(selectedDate)
         return Text(isToday
              ? (settings.dailySummaryEnabled
-                ? "Recap will generate at \(scheduledTimeLabel) — or tap GENERATE."
+                ? "Recap will generate at \(scheduledTimeLabel) — or tap Generate."
                 : "Daily summary is off. Enable in Settings → AI.")
-             : "No summary recorded for this day. Tap GENERATE to build one from saved data.")
+             : "No summary recorded for this day. Tap Generate to build one from saved data.")
             .font(MW.mono).foregroundStyle(MW.textMuted)
             .fixedSize(horizontal: false, vertical: true)
             .padding(.vertical, 16)
@@ -1478,13 +1471,11 @@ private struct TomorrowCard: View {
                 Image(systemName: "calendar")
                     .font(.system(size: 10, weight: .semibold))
                     .foregroundStyle(MW.textMuted)
-                Text("CALENDAR")
-                    .font(MW.label).tracking(1.2)
-                    .foregroundStyle(MW.textMuted)
+                Text("Calendar")
+                    .mwBadge()
                 if showsConnectPrompt {
-                    Text("· NOT CONNECTED")
-                        .font(MW.label).tracking(0.6)
-                        .foregroundStyle(MW.textDim)
+                    Text("· Not connected")
+                        .mwBadge(color: MW.textDim)
                 }
             }
 
@@ -1538,19 +1529,12 @@ private struct TomorrowCard: View {
                 HStack(spacing: 6) {
                     Image(systemName: denied ? "gear" : "calendar.badge.plus")
                         .font(.system(size: 12, weight: .semibold))
-                    Text(denied ? "OPEN SETTINGS" : "CONNECT CALENDAR")
-                        .font(MW.label).tracking(1.0)
+                    Text(denied ? "Open Settings" : "Connect calendar")
+                        .font(.system(size: 11.5, weight: .medium))
                 }
                 .foregroundStyle(MW.textPrimary)
                 .padding(.horizontal, 14).padding(.vertical, 8)
-                .background(
-                    RoundedRectangle(cornerRadius: MW.rTiny, style: .continuous)
-                        .fill(.ultraThinMaterial)
-                )
-                .overlay(
-                    RoundedRectangle(cornerRadius: MW.rTiny, style: .continuous)
-                        .stroke(MW.border, lineWidth: 0.5)
-                )
+                .mwSelectable(false, radius: MW.rTiny, resting: .surface)
                 .contentShape(Rectangle())  // ensure hit-test covers full padded area
             }
             .buttonStyle(.plain)
@@ -1565,9 +1549,8 @@ private struct TomorrowCard: View {
                 Image(systemName: "clock")
                     .font(.system(size: 10, weight: .semibold))
                     .foregroundStyle(MW.textMuted)
-                Text("DUE TOMORROW")
-                    .font(MW.label).tracking(1.2)
-                    .foregroundStyle(MW.textMuted)
+                Text("Due tomorrow")
+                    .mwBadge()
             }
             VStack(alignment: .leading, spacing: 4) {
                 ForEach(visibleDue) { task in
@@ -1596,9 +1579,8 @@ private struct TomorrowCard: View {
                 Image(systemName: "tray")
                     .font(.system(size: 10, weight: .semibold))
                     .foregroundStyle(MW.textMuted)
-                Text("PENDING")
-                    .font(MW.label).tracking(1.2)
-                    .foregroundStyle(MW.textMuted)
+                Text("Pending")
+                    .mwBadge()
                 Text("· no due date")
                     .font(MW.label).tracking(0.6)
                     .foregroundStyle(MW.textDim)

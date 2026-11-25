@@ -329,7 +329,7 @@ struct TargetFilm: View {
         .padding(.top, 12)
         .padding(.bottom, 14)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(RoundedRectangle(cornerRadius: 18, style: .continuous).fill(MW.surface))
+        .background(RoundedRectangle(cornerRadius: 18, style: .continuous).fill(OnboardingStyle.box))
         .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous).strokeBorder(Color.primary.opacity(0.1), lineWidth: 0.5))
     }
 

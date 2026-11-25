@@ -65,16 +65,18 @@ struct MainWindowView: View {
 
     var body: some View {
         ZStack {
-            // Liquid Glass page wash — radial warm + cool stops on a vertical
-            // gradient. Mirrors `--bg-grad` in tokens.css. Hero materials
-            // (sidebar / cards) refract through this. See PageWash component.
+            // The wall — the window's one ground (ITER-087). See PageWash.
             PageWash()
 
             HStack(spacing: 0) {
+                // The title bar is transparent and has no text (ITER-087): the window buttons sit on the wall, and the
+                // sidebar starts just under them — its rounded corner ran through them when it reached the top (owner,
+                // 2026-11-25). Both columns keep the title bar's safe area, so nothing lies under its drag region.
                 sidebar
                     .frame(width: 220)
                     .padding(.leading, 12)
-                    .padding(.vertical, 12)
+                    .padding(.top, 4)
+                    .padding(.bottom, 12)
 
                 detailContent
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -82,6 +84,8 @@ struct MainWindowView: View {
             }
         }
         .modelContainer(historyService.modelContainer)
+        // System controls (switches, progress) take the user's accent, not macOS's (ITER-087).
+        .tint(MW.controlTint)
         .overlay {
             // AUD-007 / ITER-049 A1 — blocking recovery surface when the
             // persistent store couldn't be opened (temporary in-memory session).
@@ -228,27 +232,17 @@ struct MainWindowView: View {
         return "on-device"
     }
 
-    /// Color follows the label's "leaning":
-    ///   - all-local labels → green (idle) — no network roundtrips
-    ///   - all-cloud → light blue (postProcess) — networked, semantically remote
-    ///   - hybrid (mix) → orange (processing) — intermediate
-    private var processingModeColor: Color {
-        switch processingModeLabel {
-        case "cloud":                       return MW.postProcess
-        case "on-device+cloud",
-             "local+cloud",
-             "on-device+local+cloud":       return MW.processing
-        default:                            return MW.idle   // "on-device" / "local" / "on-device+local"
-        }
-    }
+    /// The dot is the user's accent whatever the mode (owner, 2026-11-25: no green but in Mint, no blue); the label
+    /// says the mode.
+    private var processingModeColor: Color { MW.ok }
 
     private var tierLabel: String {
         license.isPro ? "pro" : "free"
     }
 
     private var tierColor: Color {
-        // Pro = green (active subscription); free = dim grey (no accent steal).
-        license.isPro ? MW.idle : MW.textDim
+        // Pro = the accent (active subscription); free = dim grey.
+        license.isPro ? MW.ok : MW.textDim
     }
 
     @ViewBuilder

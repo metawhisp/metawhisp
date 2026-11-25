@@ -42,18 +42,21 @@ struct LibraryView: View {
     }
 
     /// Liquid Glass design — pill-shaped chips per spec § 7 mapping table.
-    /// Active chip = `selectFill` background + `selectRim` border + primary text.
-    /// Inactive = ultraThin material + border + muted text. Radius 999 (pill).
+    /// The chips are drawn by `mwSelectable` (ITER-087). Radius 999 (pill).
     private var picker: some View {
         HStack(spacing: 8) {
-            ForEach(Section.allCases, id: \.self) { s in
-                GlassChipButton(
-                    label: s.rawValue,
-                    isActive: section == s,
-                    radius: 999,
-                    action: { section = s }
-                )
+            HStack(spacing: 2) {
+                ForEach(Section.allCases, id: \.self) { s in
+                    GlassChipButton(
+                        label: s.rawValue,
+                        isActive: section == s,
+                        radius: 999,
+                        grouped: true,
+                        action: { section = s }
+                    )
+                }
             }
+            .mwSegmentTrack()
             Spacer()
         }
         .padding(.horizontal, 20)

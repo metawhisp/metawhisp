@@ -31,7 +31,7 @@ struct AboutMeView: View {
             }
         }
         .frame(width: 560, height: 640)
-        .background(MW.bg)
+        .background(PageWash())
         .onAppear { reload() }
     }
 
@@ -91,10 +91,8 @@ struct AboutMeView: View {
     private func sectionView(_ section: UserProfileService.Section) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 6) {
-                Text(section.title.uppercased())
-                    .font(.system(size: 9, weight: .bold))
-                    .tracking(1.4)
-                    .foregroundStyle(MW.textMuted)
+                Text(section.title)
+                    .mwBadge()
                 Text("(\(section.entries.count))")
                     .font(.system(size: 9, weight: .medium))
                     .foregroundStyle(MW.textDim)

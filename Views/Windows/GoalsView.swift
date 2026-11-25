@@ -53,7 +53,7 @@ struct GoalsView: View {
             } label: {
                 HStack(spacing: 4) {
                     Image(systemName: "plus").font(.system(size: 10))
-                    Text("NEW GOAL").font(MW.label).tracking(0.6)
+                    Text("New goal").font(.system(size: 11.5, weight: .medium))
                 }
                 .foregroundStyle(MW.textSecondary)
                 .padding(.horizontal, 8).padding(.vertical, 4)
@@ -81,9 +81,8 @@ struct GoalsView: View {
                         goalCard(goal)
                     }
                     if !archivedGoals.isEmpty {
-                        Text("ARCHIVED")
-                            .font(MW.label).tracking(0.8)
-                            .foregroundStyle(MW.textMuted)
+                        Text("Archived")
+                            .mwBadge()
                             .frame(maxWidth: .infinity, alignment: .leading)
                             .padding(.top, 12)
                         ForEach(archivedGoals) { goal in
@@ -271,7 +270,7 @@ struct GoalsView: View {
             Button {
                 showNewSheet = true
             } label: {
-                Text("CREATE FIRST GOAL").font(MW.label).tracking(0.6)
+                Text("Create first goal").font(.system(size: 11.5, weight: .medium))
                     .padding(.horizontal, 14).padding(.vertical, 6)
                     .overlay(RoundedRectangle(cornerRadius: MW.rSmall, style: .continuous).stroke(MW.border, lineWidth: 0.5))
             }
@@ -319,19 +318,19 @@ private struct GoalEditorSheet: View {
                 .foregroundStyle(MW.textPrimary)
 
             VStack(alignment: .leading, spacing: 6) {
-                Text("TITLE").font(MW.label).tracking(0.6).foregroundStyle(MW.textMuted)
+                Text("Title").mwBadge()
                 TextField("e.g. Write 1000 words", text: $title)
                     .textFieldStyle(.roundedBorder)
             }
 
             VStack(alignment: .leading, spacing: 6) {
-                Text("DESCRIPTION (optional)").font(MW.label).tracking(0.6).foregroundStyle(MW.textMuted)
+                Text("Description (optional)").mwBadge()
                 TextField("Why this goal matters", text: $description)
                     .textFieldStyle(.roundedBorder)
             }
 
             VStack(alignment: .leading, spacing: 6) {
-                Text("TYPE").font(MW.label).tracking(0.6).foregroundStyle(MW.textMuted)
+                Text("Type").mwBadge()
                 Picker("", selection: $goalType) {
                     Text("Daily checkbox").tag("boolean")
                     Text("Rating 1-N").tag("scale")
@@ -352,7 +351,7 @@ private struct GoalEditorSheet: View {
                 HStack {
                     field("TARGET", $targetValue, width: 100)
                     VStack(alignment: .leading, spacing: 6) {
-                        Text("UNIT").font(MW.label).tracking(0.6).foregroundStyle(MW.textMuted)
+                        Text("Unit").mwBadge()
                         TextField("words / push-ups / min", text: $unit)
                             .textFieldStyle(.roundedBorder)
                     }
@@ -375,11 +374,12 @@ private struct GoalEditorSheet: View {
         }
         .padding(20)
         .frame(width: 440, height: 360)
+        .background(PageWash())
     }
 
     private func field(_ label: String, _ binding: Binding<String>, width: CGFloat) -> some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text(label).font(MW.label).tracking(0.6).foregroundStyle(MW.textMuted)
+            Text(label).mwBadge()
             TextField("", text: binding)
                 .textFieldStyle(.roundedBorder)
                 .frame(width: width)

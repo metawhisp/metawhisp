@@ -93,10 +93,9 @@ struct MemoriesView: View {
     private var header: some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack {
-                Text("MEMORIES")
+                Text("Memories")
                     .font(MW.monoLg)
                     .foregroundStyle(MW.textPrimary)
-                    .tracking(2)
                 Spacer()
                 if settings.memoriesEnabled {
                     Button(action: extractNow) {
@@ -106,8 +105,8 @@ struct MemoriesView: View {
                             } else {
                                 Image(systemName: "sparkles").font(.system(size: 10))
                             }
-                            Text(isExtracting ? "EXTRACTING…" : "EXTRACT NOW")
-                                .font(MW.label).tracking(0.6)
+                            Text(isExtracting ? "Extracting…" : "Extract now")
+                                .font(.system(size: 11.5, weight: .medium))
                         }
                         .foregroundStyle(MW.textSecondary)
                         .padding(.horizontal, 8).padding(.vertical, 4)
@@ -118,8 +117,8 @@ struct MemoriesView: View {
                     .disabled(isExtracting)
                 }
                 Toggle(isOn: $settings.memoriesEnabled) {
-                    Text("COLLECT")
-                        .font(MW.label).tracking(1)
+                    Text("Collect")
+                        .font(.system(size: 11.5, weight: .medium))
                         .foregroundStyle(settings.memoriesEnabled ? MW.textPrimary : MW.textMuted)
                 }
                 .toggleStyle(.switch)
@@ -160,18 +159,19 @@ struct MemoriesView: View {
 
     private var filterBar: some View {
         HStack(spacing: 8) {
-            ForEach(Filter.allCases, id: \.self) { filter in
-                let isActive = selectedFilter == filter
-                Text(filter.rawValue.uppercased())
-                    .font(MW.label)
-                    .tracking(0.8)
-                    .foregroundStyle(isActive ? MW.textPrimary : MW.textMuted)
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 4)
-                    .background(isActive ? MW.elevated : .clear)
-                    .overlay(Rectangle().stroke(isActive ? MW.borderLight : MW.border, lineWidth: MW.hairline))
-                    .onTapGesture { selectedFilter = filter }
+            HStack(spacing: 2) {
+                ForEach(Filter.allCases, id: \.self) { filter in
+                    let isActive = selectedFilter == filter
+                    Text(filter.rawValue.sentenceCased)
+                        .font(.system(size: 11.5, weight: .medium))
+                        .foregroundStyle(isActive ? MW.textPrimary : MW.textMuted)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 4)
+                        .mwSelectable(isActive, radius: 999, resting: .none)
+                        .onTapGesture { selectedFilter = filter }
+                }
             }
+            .mwSegmentTrack()
             Spacer()
             Text("\(filteredMemories.count) memories")
                 .font(MW.monoSm)
@@ -233,7 +233,7 @@ struct MemoriesView: View {
             Text("Memory collection is off")
                 .font(MW.monoLg)
                 .foregroundStyle(MW.textSecondary)
-            Text("Turn on COLLECT above to let MetaWhisp learn facts about you for personalized advice.")
+            Text("Turn on Collect above to let MetaWhisp learn facts about you for personalized advice.")
                 .font(MW.mono)
                 .foregroundStyle(MW.textMuted)
                 .multilineTextAlignment(.center)
@@ -269,8 +269,8 @@ private struct MemoryRowView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             HStack(spacing: 6) {
-                Text(memory.category.uppercased())
-                    .font(MW.label).tracking(0.6)
+                Text(memory.category.sentenceCased)
+                    .font(.system(size: 10.5, weight: .medium))
                     .foregroundStyle(MW.textSecondary)
                     .padding(.horizontal, 5).padding(.vertical, 2)
                     .background(MW.elevated)
@@ -320,7 +320,7 @@ private struct MemoryEditSheet: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack {
-                Text("EDIT MEMORY").font(MW.monoLg).tracking(1.5).foregroundStyle(MW.textPrimary)
+                Text("Edit memory").font(MW.monoLg).foregroundStyle(MW.textPrimary)
                 Spacer()
                 Button(action: onDismiss) {
                     Image(systemName: "xmark").font(.system(size: 11)).foregroundStyle(MW.textMuted)
@@ -329,8 +329,8 @@ private struct MemoryEditSheet: View {
             }
 
             HStack(spacing: 6) {
-                Text(memory.category.uppercased())
-                    .font(MW.label).tracking(0.6)
+                Text(memory.category.sentenceCased)
+                    .font(.system(size: 10.5, weight: .medium))
                     .foregroundStyle(MW.textSecondary)
                     .padding(.horizontal, 6).padding(.vertical, 2)
                     .background(MW.elevated)
@@ -372,6 +372,7 @@ private struct MemoryEditSheet: View {
         }
         .padding(16)
         .frame(width: 480)
+        .background(PageWash())
         .onAppear { editedContent = memory.content }
     }
 }
