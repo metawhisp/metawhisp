@@ -33,14 +33,12 @@ final class ExtractorParseOutcomeTests: XCTestCase {
 
     func testTaskGarbageResponseIsNilNotEmpty() {
         let ex = TaskExtractor()
-        XCTAssertNil(ex.parseResponse("[not json at all",
-                                      sourceTranscriptId: nil, sourceApp: "t", conversationId: nil))
+        XCTAssertNil(ex.parseCandidates("[not json at all"))
     }
 
     func testTaskValidEmptyIsEmptyNotNil() {
         let ex = TaskExtractor()
-        let out = ex.parseResponse("{\"tasks\": []}",
-                                   sourceTranscriptId: nil, sourceApp: "t", conversationId: nil)
+        let out = ex.parseCandidates("{\"tasks\": []}")
         XCTAssertNotNil(out)
         XCTAssertEqual(out?.count, 0)
     }

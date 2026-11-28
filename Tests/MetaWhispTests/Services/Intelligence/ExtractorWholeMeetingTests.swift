@@ -20,10 +20,9 @@ final class ExtractorWholeMeetingTests: XCTestCase {
     }
 
     private func taskPrompt(_ fragments: [String], route: ExtractionRoute,
-                            existing: [TaskItem] = [],
-                            calendar: TaskExtractor.CalendarMeetingContext? = nil) -> String {
+                            existing: [TaskItem] = []) -> String {
         TaskExtractor().buildPrompt(fragments: fragments, existing: existing, startedAt: started,
-                                    calendarContext: calendar, route: route, now: started)
+                                    source: .call, route: route, now: started)
     }
 
     private func memoryPrompt(_ fragments: [String], route: ExtractionRoute, existing: [UserMemory] = []) -> String {
@@ -70,21 +69,17 @@ final class ExtractorWholeMeetingTests: XCTestCase {
     }
 
     /// The largest header anything can produce still leaves the transcript room.
+    /// (FEAT-0005: the calendar block that also went into the header is gone.)
     func testAHugeCalendarAndTaskListCannotCrowdOutTheMeeting() {
-        let calendar = TaskExtractor.CalendarMeetingContext(
-            title: String(repeating: "Quarterly planning ", count: 600),
-            startDate: started, endDate: started.addingTimeInterval(3_600),
-            attendees: (1...300).map { "Attendee number \($0) of the company" })
         let existing = (1...200).map { TaskItem(taskDescription: "Task \($0) " + String(repeating: "x", count: 400)) }
         for route in [pro, ExtractionRoute.byok] {
-            let prompt = taskPrompt(meeting(count: 40, each: 1_125), route: route, existing: existing, calendar: calendar)
+            let prompt = taskPrompt(meeting(count: 40, each: 1_125), route: route, existing: existing)
             XCTAssertLessThanOrEqual(prompt.utf16.count, route.unitLimit, "\(route)")
             XCTAssertTrue(prompt.contains("Conversation fragments to analyze"), "\(route)")
             XCTAssertTrue(prompt.contains("--- fragment 1 ---"), "\(route)")
             XCTAssertTrue(prompt.hasSuffix(endMarker), "\(route)")
             XCTAssertTrue(prompt.contains("more omitted)"), "\(route)")
-            XCTAssertTrue(prompt.contains("…\n- Scheduled:"), "\(route): the title is cut and says so")
-            XCTAssertTrue(prompt.contains("more)\n"), "\(route): the attendee list says how many are left out")
+            XCTAssertFalse(prompt.contains("CALENDAR"), "\(route)")
         }
     }
 
@@ -92,12 +87,9 @@ final class ExtractorWholeMeetingTests: XCTestCase {
     /// measured in units, so it cannot push the meeting out of the prompt.
     func testOversizedCharactersInTheHeaderCannotPushTheMeetingOut() {
         let heavy = "a" + String(repeating: "\u{0301}", count: 150_000)   // one Character, 150,001 units
-        let calendar = TaskExtractor.CalendarMeetingContext(title: heavy, startDate: started,
-                                                            endDate: started.addingTimeInterval(3_600),
-                                                            attendees: [heavy, "Sam"])
         let existing = [TaskItem(taskDescription: heavy), TaskItem(taskDescription: "Call the dentist")]
         for route in [pro, ExtractionRoute.byok] {
-            let prompt = taskPrompt(meeting(count: 40, each: 1_125), route: route, existing: existing, calendar: calendar)
+            let prompt = taskPrompt(meeting(count: 40, each: 1_125), route: route, existing: existing)
             XCTAssertLessThanOrEqual(prompt.utf16.count, route.unitLimit, "\(route)")
             XCTAssertTrue(prompt.contains("Conversation fragments to analyze"), "\(route)")
             XCTAssertTrue(prompt.contains("--- fragment 1 ---"), "\(route)")
@@ -105,14 +97,11 @@ final class ExtractorWholeMeetingTests: XCTestCase {
         }
     }
 
-    /// The bounded calendar text is visible on a short meeting too: an overlong
-    /// title is cut and says so; the transcript stays whole.
+    /// A short meeting keeps its transcript whole. (FEAT-0005: the calendar title it was sent with is gone.)
     func testAShortMeetingWithAnOverlongTitleKeepsItsTranscriptWhole() {
-        let calendar = TaskExtractor.CalendarMeetingContext(title: String(repeating: "t", count: 700), startDate: started,
-                                                            endDate: started.addingTimeInterval(3_600), attendees: ["Sam"])
         let fragments = ["Sam asked me to book the venue."]
-        let prompt = taskPrompt(fragments, route: pro, calendar: calendar)
-        XCTAssertTrue(prompt.contains("- Title: " + String(repeating: "t", count: 600) + "…\n"))
+        let prompt = taskPrompt(fragments, route: pro)
+        XCTAssertFalse(prompt.contains("- Title:"))
         XCTAssertTrue(prompt.hasSuffix("--- fragment 1 ---\nSam asked me to book the venue."))
     }
 

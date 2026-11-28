@@ -7,13 +7,20 @@ struct ActivityChartView: View {
     let items: [HistoryItem]
     let scale: String       // "DAYS", "WEEKS", "MONTHS"
     let metric: String      // "WORDS", "TRANSCRIPTIONS", "TRANSLATIONS", "WPM", "SAVED TIME", "RECORDED"
+    /// A narrow chart names every second (third…) bar, so the dates under it never run into each other.
+    @State private var labelEvery = 1
+    /// The room one date under a bar needs.
+    private static let labelWidth: CGFloat = 52
 
     var body: some View {
         if items.isEmpty {
             Text("No data yet").font(MW.monoSm).foregroundStyle(MW.textMuted)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else {
-            Chart(chartData, id: \.label) { point in
+            let data = chartData
+            // Counted from the newest bar, so today's is always named and the first one is the one left out.
+            let named = data.enumerated().filter { (data.count - 1 - $0.offset) % labelEvery == 0 }.map(\.element.label)
+            Chart(data, id: \.label) { point in
                 BarMark(
                     x: .value("Time", point.label),
                     y: .value("Value", point.value)
@@ -33,11 +40,16 @@ struct ActivityChartView: View {
                 }
             }
             .chartXAxis {
-                AxisMarks { _ in
+                AxisMarks(values: named) { _ in
                     AxisValueLabel()
                         .foregroundStyle(MW.textMuted)
                         .font(MW.monoSm)
                 }
+            }
+            .onGeometryChange(for: Int.self) { proxy in
+                max(1, Int((CGFloat(data.count) * Self.labelWidth / max(proxy.size.width, 1)).rounded(.up)))
+            } action: { every in
+                if every != labelEvery { labelEvery = every }
             }
         }
     }

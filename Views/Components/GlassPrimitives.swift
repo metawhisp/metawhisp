@@ -16,6 +16,8 @@ struct SidebarItem: View {
     let title: String
     let icon: String
     let isActive: Bool
+    /// The folded sidebar of a narrow window: the icon alone, the title as its tooltip and spoken name.
+    var compact: Bool = false
     let action: () -> Void
 
     var body: some View {
@@ -25,18 +27,22 @@ struct SidebarItem: View {
                     .font(.system(size: 13, weight: .medium))
                     .frame(width: 14)
                     .foregroundStyle(isActive ? MW.accent : MW.textSecondary)
-                Text(title)
-                    .font(.system(size: 13, weight: .medium))
-                    .foregroundStyle(isActive ? MW.textPrimary : MW.textSecondary)
-                Spacer(minLength: 0)
+                if !compact {
+                    Text(title)
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundStyle(isActive ? MW.textPrimary : MW.textSecondary)
+                    Spacer(minLength: 0)
+                }
             }
-            .padding(.horizontal, 12)
+            .padding(.horizontal, compact ? 0 : 12)
             .padding(.vertical, 9)
-            .frame(maxWidth: .infinity, alignment: .leading)
+            .frame(maxWidth: .infinity, alignment: compact ? .center : .leading)
             .mwSelectable(isActive, radius: MW.rSmall, resting: .none)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .help(compact ? title : "")
+        .accessibilityLabel(title)
     }
 }
 
@@ -63,8 +69,11 @@ struct GlassChipButton: View {
                     Image(systemName: icon)
                         .font(.system(size: 10, weight: .semibold))
                 }
+                // A chip's words never break: it keeps its one line, and its row decides what to do when narrow.
                 Text(label)
                     .font(.system(size: 11.5, weight: .medium))
+                    .lineLimit(1)
+                    .fixedSize()
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 6)
@@ -85,6 +94,64 @@ struct GlassChipButton: View {
     private var foreground: Color {
         if accent { return MW.accent }
         return isActive ? MW.textPrimary : MW.textSecondary
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// SegmentStrip — a segmented row of chips (Library, Conversations, Workspace).
+// While the row fits it is the row; in a narrower window it becomes one chip
+// that opens a menu of the options, so no option is cut at the window's edge.
+// ─────────────────────────────────────────────────────────────────────────
+
+struct SegmentStrip<Option: Hashable>: View {
+    let options: [Option]
+    @Binding var selection: Option
+    let title: (Option) -> String
+
+    var body: some View {
+        ViewThatFits(in: .horizontal) {
+            HStack(spacing: 2) {
+                ForEach(options, id: \.self) { option in
+                    GlassChipButton(label: title(option), isActive: selection == option, radius: 999, grouped: true) {
+                        selection = option
+                    }
+                }
+            }
+            .mwSegmentTrack()
+
+            SegmentMenu(options: options, selection: $selection, title: title)
+        }
+    }
+}
+
+/// The narrow form of a segmented row: one chip naming the chosen option, opening a menu of all of them.
+struct SegmentMenu<Option: Hashable>: View {
+    let options: [Option]
+    @Binding var selection: Option
+    let title: (Option) -> String
+
+    var body: some View {
+        Menu {
+            ForEach(options, id: \.self) { option in
+                Button(title(option)) { selection = option }
+            }
+        } label: {
+            HStack(spacing: 6) {
+                Text(title(selection))
+                    .font(.system(size: 11.5, weight: .medium))
+                    .lineLimit(1)
+                    .fixedSize()
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 9, weight: .semibold))
+            }
+            .foregroundStyle(MW.textPrimary)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 6)
+            .mwSelectable(true, radius: 999)
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .fixedSize()
     }
 }
 

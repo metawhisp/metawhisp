@@ -16,14 +16,20 @@ final class ExistingProjectCatalogTests: XCTestCase {
         XCTAssertEqual(ExistingProjectCatalog.promptHint(from: []), "")
     }
 
-    /// Singletons (convCount < 2) are excluded — they're noise candidates,
-    /// not established projects.
-    func test_singletonsExcluded() {
+    /// T4 (2026-11-26): calls no longer create projects, so every project is the user's own and none is left out —
+    /// a project with one conversation, or none yet (an agent's), is still one the model may pick.
+    func test_everyProjectIsListed() {
         let hint = ExistingProjectCatalog.promptHint(from: [
-            ("HallucinatedName", 1),
-            ("OneOff Idea", 1)
+            ("Side Idea", 1),
+            ("Agent Repo", 0)
         ])
-        XCTAssertEqual(hint, "")
+        XCTAssertTrue(hint.contains("- Side Idea (1 conversations)"))
+        XCTAssertTrue(hint.contains("- Agent Repo (0 conversations)"))
+    }
+
+    /// A caller may still ask for a floor.
+    func test_aFloorStillFilters() {
+        XCTAssertEqual(ExistingProjectCatalog.promptHint(from: [("Side Idea", 1)], minCount: 2), "")
     }
 
     /// Single qualifying project formats correctly.

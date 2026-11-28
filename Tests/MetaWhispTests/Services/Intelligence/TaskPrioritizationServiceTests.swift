@@ -1,3 +1,4 @@
+import SwiftData
 import XCTest
 @testable import MetaWhisp
 
@@ -134,5 +135,24 @@ final class TaskPrioritizationServiceTests: XCTestCase {
         XCTAssertFalse(prompt.contains("RECENTLY COMPLETED"))
         XCTAssertFalse(prompt.contains("RECENTLY DISMISSED"))
         XCTAssertTrue(prompt.contains("STAGED CANDIDATES"))
+    }
+
+    // MARK: - FEAT-0005 voice drafts
+
+    /// I2 — the hourly re-rank orders screen candidates only: voice drafts never start a paid call nobody sees.
+    func test_candidates_areScreenCandidatesOnly() throws {
+        let container = try ModelContainer(for: TaskItem.self,
+                                           configurations: ModelConfiguration(isStoredInMemoryOnly: true))
+        let ctx = ModelContext(container)
+        ctx.insert(TaskItem(taskDescription: "Screen candidate", screenContextId: UUID(), status: "staged"))
+        ctx.insert(TaskItem(taskDescription: "Voice draft one", sourceApp: "microphone", status: "staged"))
+        ctx.insert(TaskItem(taskDescription: "Voice draft two", sourceApp: "meeting", status: "staged"))
+        ctx.insert(TaskItem(taskDescription: "A task", screenContextId: UUID(), status: "committed"))
+        try ctx.save()
+
+        let found = try ctx.fetch(TaskPrioritizationService.candidatesDescriptor(limit: 30))
+        XCTAssertEqual(found.map(\.taskDescription), ["Screen candidate"])
+        XCTAssertFalse(TaskPrioritizationService.shouldRerank(lastRerankAt: nil, stagedCount: found.count, now: Date()),
+                       "two voice drafts and one screen candidate are not enough to re-rank")
     }
 }

@@ -34,4 +34,9 @@ enum TaskHygiene {
         let cutoff = now.addingTimeInterval(-Double(windowDays) * 86_400)
         return createdAt < cutoff
     }
+
+    /// FEAT-0005 K9 — when a candidate's review window ends: the moment `isStaleUnreviewedCandidate` turns true.
+    static func reviewWindowEnd(createdAt: Date, windowDays: Int = stagedReviewWindowDays) -> Date {
+        createdAt.addingTimeInterval(Double(windowDays) * 86_400)
+    }
 }

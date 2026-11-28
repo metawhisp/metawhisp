@@ -1,5 +1,9 @@
 # Connect MetaWhisp to Claude Desktop via MCP
 
+> **Superseded (2026-11-26, spec://tracker/FEAT-0006):** `metawhisp-mcp` and its snapshot are gone. Claude Code and
+> Codex connect with Settings → Integrations → Connect; the server is `metawhisp-cli mcp start` inside the app
+> (`Contents/Helpers`). Claude Desktop / Cursor buttons are a later step. The text below describes the old tool.
+
 Once set up, Claude Desktop gets direct access to your MetaWhisp memory — it can search your meeting notes, tasks, and facts about people and projects, and use them in any conversation.
 
 ## What Claude can do with MetaWhisp connected

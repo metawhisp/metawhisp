@@ -6,9 +6,9 @@ let package = Package(
     platforms: [.macOS(.v14)],
     products: [
         .executable(name: "MetaWhisp", targets: ["MetaWhisp"]),
-        // ITER-037 — standalone MCP server CLI. Claude Desktop / Cursor /
-        // any MCP client launches this as a child process via stdio.
-        .executable(name: "metawhisp-mcp", targets: ["MetaWhispMCP"]),
+        // FEAT-0006 — the agents' way in: `metawhisp-cli mcp start` is the MCP server Claude Code / Codex launch
+        // over stdio; `metawhisp-cli task …` is the command line. Both talk to the running app (the only writer).
+        .executable(name: "metawhisp-cli", targets: ["MetaWhispCLI"]),
     ],
     dependencies: [
         .package(url: "https://github.com/argmaxinc/WhisperKit.git", from: "0.9.0"),
@@ -27,6 +27,7 @@ let package = Package(
             name: "MetaWhisp",
             dependencies: [
                 "ObjCExceptionCatcher",
+                "MetaWhispTrackerKit",
                 "WhisperKit",
                 "Sparkle",
                 .product(name: "MLX", package: "mlx-swift"),
@@ -39,9 +40,8 @@ let package = Package(
             path: ".",
             // `Tests/` excluded so a normal `swift build` does not pull unit
             // tests into the main app target. They live in `MetaWhispTests`.
-            // `Sources/MetaWhispMCP/` is a separate `.executableTarget` —
-            // exclude it so the main MetaWhisp target doesn't ingest its
-            // `main.swift` (which would clash with the SwiftUI @main).
+            // `Sources/` holds the other targets (the CLI's `main.swift` would
+            // clash with the SwiftUI @main) — excluded from the app target.
             exclude: ["Package.swift", "Resources", "mockup-liquid-glass", "Tests", "Sources"],
             resources: [
                 .copy("Resources/Sounds"),
@@ -59,21 +59,25 @@ let package = Package(
             name: "ObjCExceptionCatcher",
             path: "Sources/ObjCExceptionCatcher"
         ),
+        // FEAT-0006 — the task tracker's shared rules, value types, wire protocol and texts. Foundation only: the app
+        // and the command-line tool (`metawhisp-cli`) both link it, so the two can never disagree on a rule.
+        .target(
+            name: "MetaWhispTrackerKit",
+            path: "Sources/MetaWhispTrackerKit"
+        ),
         // TDD test target (spec://specs/TDD.md). `swift test` runs this.
         // Uses `@testable import MetaWhisp` to reach internal symbols.
         .testTarget(
             name: "MetaWhispTests",
-            dependencies: ["MetaWhisp"],
+            dependencies: ["MetaWhisp", "MetaWhispTrackerKit"],
             path: "Tests/MetaWhispTests"
         ),
-        // ITER-037 — MCP server. Standalone CLI binary. Reads the
-        // `mcp-snapshot.json` that the main MetaWhisp app dumps every
-        // 5 min, serves it over JSON-RPC stdio to Claude Desktop / Cursor.
-        // No SwiftData / no Foundation dependencies beyond stdlib —
-        // intentionally lightweight so Claude can spawn it instantly.
+        // FEAT-0006 — `metawhisp-cli`: Foundation + the tracker kit only, so an agent can spawn it instantly. It never
+        // opens the store; it sends each request to the app over the local socket and starts the app if needed.
         .executableTarget(
-            name: "MetaWhispMCP",
-            path: "Sources/MetaWhispMCP"
+            name: "MetaWhispCLI",
+            dependencies: ["MetaWhispTrackerKit"],
+            path: "Sources/MetaWhispCLI"
         ),
     ]
 )

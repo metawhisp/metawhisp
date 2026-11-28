@@ -18,7 +18,8 @@ enum ExistingProjectCatalog {
     /// "established" enough to surface in the hint. Singletons (=1) are
     /// excluded — they're often the noise candidates we want the LLM to
     /// REPLACE with a real existing canonical, not reinforce.
-    static let defaultMinConversations: Int = 2
+    /// T4 (2026-11-26): every project is the user's own now, so none is left out by default.
+    static let defaultMinConversations: Int = 0
     /// Default cap on rows to include — keeps prompt token cost bounded
     /// for users with many projects.
     static let defaultMaxRows: Int = 30
@@ -44,13 +45,13 @@ enum ExistingProjectCatalog {
         guard !qualified.isEmpty else { return "" }
 
         var lines: [String] = [
-            "EXISTING PROJECTS (use these EXACT names if the conversation matches one — do NOT invent variants like 'HallucinatedName' when 'Example Project' already exists):"
+            "EXISTING PROJECTS (the user's projects — use one of these EXACT names if the conversation is about it):"
         ]
         for r in qualified {
             lines.append("- \(r.canonical) (\(r.convCount) conversations)")
         }
         lines.append(
-            "Only invent a NEW project name when the conversation is genuinely about something NONE of these cover."
+            "If none of these is what the conversation is about, the project is null. Never answer a name that is not in this list."
         )
         return lines.joined(separator: "\n")
     }

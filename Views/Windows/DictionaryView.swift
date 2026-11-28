@@ -25,7 +25,9 @@ struct DictionaryView: View {
             tabBar
             Rectangle().fill(MW.border).frame(height: MW.hairline)
 
-            HStack(spacing: 0) {
+            // The add / search panel beside the list while both fit; above it in a narrow window.
+            let layout = panelBeside ? AnyLayout(HStackLayout(spacing: 0)) : AnyLayout(VStackLayout(spacing: 0))
+            layout {
                 // Left sidebar
                 VStack(spacing: 0) {
                     addSection
@@ -33,11 +35,13 @@ struct DictionaryView: View {
                     searchSection
                     Rectangle().fill(MW.border).frame(height: MW.hairline)
                     statsSection
-                    Spacer()
+                    if panelBeside { Spacer() }
                 }
-                .frame(width: 280)
+                .frame(width: panelBeside ? 280 : nil)
+                .frame(maxWidth: panelBeside ? nil : .infinity)
 
-                Rectangle().fill(MW.border).frame(width: MW.hairline)
+                Rectangle().fill(MW.border)
+                    .frame(width: panelBeside ? MW.hairline : nil, height: panelBeside ? nil : MW.hairline)
 
                 // Right panel
                 if currentItems.isEmpty && searchText.isEmpty {
@@ -48,7 +52,14 @@ struct DictionaryView: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .onGeometryChange(for: Bool.self) { $0.size.width >= Self.panelBesideFrom } action: { beside in
+            if beside != panelBeside { panelBeside = beside }
+        }
     }
+
+    @State private var panelBeside = true
+    /// From this width the panel stands beside the list (280 pt panel + a usable list).
+    private static let panelBesideFrom: CGFloat = 600
 
     // MARK: - Current Data
 
@@ -79,16 +90,33 @@ struct DictionaryView: View {
 
     // MARK: - Header
 
+    /// One row while it fits; narrower, the count and the buttons go under the title. The title never breaks.
     private var headerBar: some View {
-        HStack {
-            Text("Dictionary").font(MW.monoTitle).foregroundStyle(MW.textPrimary)
-            Spacer()
-            Text("\(totalCount) total")
-                .font(MW.monoSm).foregroundStyle(MW.textMuted)
-            BlocksButton(label: "Export", icon: "square.and.arrow.up") { exportCurrent() }
-            BlocksButton(label: "Import", icon: "square.and.arrow.down") { importCurrent() }
+        ViewThatFits(in: .horizontal) {
+            HStack {
+                headerTitle
+                Spacer()
+                headerActions
+            }
+            VStack(alignment: .leading, spacing: MW.sp8) {
+                headerTitle
+                HStack { headerActions }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
         .padding(MW.sp16)
+    }
+
+    private var headerTitle: some View {
+        Text("Dictionary").font(MW.monoTitle).foregroundStyle(MW.textPrimary).lineLimit(1).fixedSize()
+    }
+
+    @ViewBuilder private var headerActions: some View {
+        Text("\(totalCount) total")
+            .font(MW.monoSm).foregroundStyle(MW.textMuted)
+            .lineLimit(1).fixedSize()
+        BlocksButton(label: "Export", icon: "square.and.arrow.up") { exportCurrent() }
+        BlocksButton(label: "Import", icon: "square.and.arrow.down") { importCurrent() }
     }
 
     // MARK: - Tab Bar
@@ -119,8 +147,8 @@ struct DictionaryView: View {
             }
         } label: {
             HStack(spacing: 6) {
-                Text(label).font(.system(size: 11.5, weight: .medium))
-                Text("\(count)").font(MW.monoSm)
+                Text(label).font(.system(size: 11.5, weight: .medium)).lineLimit(1).fixedSize()
+                Text("\(count)").font(MW.monoSm).lineLimit(1).fixedSize()
             }
             .foregroundStyle(isActive ? MW.textPrimary : MW.textMuted)
             .padding(.horizontal, 14)

@@ -8,7 +8,11 @@ import SwiftUI
 ///
 /// spec://BACKLOG#sidebar-reorg
 struct LibraryView: View {
-    @State private var section: Section = .conversations
+    @State private var section: Section
+
+    init(initialSection: Section = .conversations) {
+        _section = State(initialValue: initialSection)
+    }
 
     /// Liquid Glass design — TitleCase pill labels, not the legacy UPPERCASE.
     /// Mirrors mockup §02 Library top section picker.
@@ -45,19 +49,8 @@ struct LibraryView: View {
     /// The chips are drawn by `mwSelectable` (ITER-087). Radius 999 (pill).
     private var picker: some View {
         HStack(spacing: 8) {
-            HStack(spacing: 2) {
-                ForEach(Section.allCases, id: \.self) { s in
-                    GlassChipButton(
-                        label: s.rawValue,
-                        isActive: section == s,
-                        radius: 999,
-                        grouped: true,
-                        action: { section = s }
-                    )
-                }
-            }
-            .mwSegmentTrack()
-            Spacer()
+            SegmentStrip(options: Section.allCases, selection: $section) { $0.rawValue }
+            Spacer(minLength: 0)
         }
         .padding(.horizontal, 20)
         .padding(.top, 14)

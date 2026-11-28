@@ -223,7 +223,7 @@ final class MainWindowController: NSObject, NSWindowDelegate {
         window.styleMask.insert(.fullSizeContentView)
         window.titleVisibility = .hidden
         window.titlebarAppearsTransparent = true
-        window.minSize = NSSize(width: 900, height: 600)
+        window.minSize = MainWindowView.minimumSize
         window.contentView = content
         window.center()
         // Released by `windowWillClose`, which drops this controller's reference.

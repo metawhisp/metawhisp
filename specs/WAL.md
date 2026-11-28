@@ -1,4 +1,90 @@
+## Session 2026-11-26 — ITER-089: the task tracker agents use (branch `claude/inspiring-mirzakhani-1ccbe3`)
 
+**What:** `specs/modules/tracker/FEAT-0006.md`. Claude Code / Codex keep the tasks of the project in their working
+folder in MetaWhisp: Settings → Integrations → AI agents → Connect runs the agent's own `mcp add` for
+`MetaWhisp.app/Contents/Helpers/metawhisp-cli mcp start` and adds one marked rule to `~/.claude/CLAUDE.md` /
+`~/.codex/AGENTS.md`. The CLI/MCP server never opens the store: it sends each request over
+`~/Library/Application Support/MetaWhisp/tracker.sock` to the app (the only writer) and starts the app quietly when it
+is not running (≤30 s). Folder → project: remembered folder, else the project of the folder's name (canonical or
+alias, normalized; today's automatic projects included, D1), else a new one named after the folder; a worktree
+belongs to its repository. Columns To Do / In Progress / Done + Archive; drafts stay the user's; delete forever only
+for an archived task and only with the user's yes. Tracker data lives in its own `Tracker.store` (the main store stays
+V10, so test builds swap in and 1.4.8 can roll back). Tasks window: board / list per project, archive, task detail,
+new task. MetaChat puts a task into the named project and creates one only on the user's word. The snapshot toggle
+and `MCPSnapshotService` are gone (an old `mcp-snapshot.json` is deleted at launch).
+
+**Tests:** ~150 new (kit rules, service on on-disk stores with two contexts, socket, MCP session, CLI parsing, the
+real `metawhisp-cli` binary end to end, Connect, board actions, MetaChat tools); pins of MetaChat's released tools
+and rules now take exactly the project additions out and still match.
+
+**Reviews:** independent agent, round 1 FIX-THEN-SHIP (3 P1, 5 P2, 7 P3) → fixed (`7c6d150`); round 2 on the fix
+diff: 13 of 15 closed, N1 (P2) + 3 P3 fixed (`419ebea`). Wide non-screen run at `f893e22`: 4,924 tests, 0 failures.
+
+**Test build:** installed on the owner's Mac by `hot-swap.sh` (owner «делаем»); checked read-only against it.
+
+**Not done:** Connect + a real Claude Code session (owner's click), quiet launch with the app quit, full gate (owner's
+word), Codex review (quota back 2026-11-27 16:24). Not released. Earlier commits of the branch hold real project names
+in test fixtures (fixed in `7c6d150`): squash before it reaches the public repo.
+
+## Session 2026-11-26 — ITER-088: automatic tasks are suggestions the user accepts (branch `claude/fix-task-rules-a790c2`)
+
+**What:** `specs/modules/intelligence/FEAT-0005.md` (owner «Да, утверждаю», 2026-11-26). Every automatic voice/call
+result is a draft (`staged`) the user accepts or drops in Tasks → Suggested or on the after-call card; only the voice
+agent writes a task directly. The extractor says the source (dictation / call) and asks per item for kind, the
+spoken words, the promisor, two confidences, a concrete-deliverable and a real-world flag; pure rules
+(`TaskCandidateRules`, off the main actor) keep an item only when it passes K1 floors, R4 dictation, R2/K17 evidence
+(case/diacritics/punctuation folded, ellipsis pieces, one letter in twenty), K7 the user's own line, R2/K3 no
+placeholders/labels, K14 names only if spoken, R6 title filters, K13 one-day grace, R1/K8/K9 repeats by lifecycle.
+No calendar names, no "task added" notice, no vault file for a draft; promotion and re-rank take screen candidates
+only; conversation views, the vault, dashboard and project counts list tasks only.
+
+**Tests:** RED first (the target did not compile), then GREEN: TaskCandidateRulesTests, TaskDraftsTests (on-disk,
+two contexts), TaskExtractorSuggestionTests, MeetingRecapDraftsTests, TaskDraftsGuardTests, plus voice-draft tests in
+the promotion/re-rank suites. 28 mutations of the rules and fixes, every one caught. Wider non-screen run 570/570.
+
+**Replay** (store copy, Pro server, 40 conversations behind the 44 real tasks + 60 sampled junk ones): the owner's
+own tasks 10 of 17 suggested; 26 "waiting on" from his own requests (Q2) → 23 dropped on purpose, 3 leaked; 140 junk
+tasks → 6 drafts. A looser prompt was replayed and rejected. 303 paid calls (plan: ≈100). Summary in the session
+notes folder (`task-rules-replay/SUMMARY.md`).
+
+**Review:** Codex out of quota until 2026-11-27 16:24, Kimi out of its weekly quota → an independent read-only Claude
+agent: 1 P1 (R3 dropped a whole call: the mixed-script check is for short chunks), 2 P2 (titles in scripts without
+spaces always rejected; local answer budget too small), 6 P3; fixed with tests except two vault P3s parked in BACKLOG.
+Fix diff re-reviewed: ACCEPT; its 5 P3 fixed with tests (`0167554`). The key-field crash fix (other session's
+`fix/key-field-crash`) is on this branch too, by the owner's «Да, включить»: 7 tests red without it, green with it.
+
+**Not released (owner 2026-11-26: not today).** The owner's first goal was the task tracker that agents use over
+MCP (decisions T1–T11 in the planning session's `decisions.md`); that is not built: `metawhisp-mcp` still has four
+read-only tools over a snapshot (`search_memories`, `list_tasks`, `recent_conversations`, `search_conversations`).
+Open: the full gate on the owner's word, Codex review (quota back 2026-11-27 16:24), release 1.4.9.
+
+
+
+## Session 2026-11-25 — API key field crash (branch `fix/key-field-crash` off `feat/ui-look` 1703ae7, not built yet)
+
+**Cause:** the Groq and cloud LLM key fields saved every keystroke into the
+keychain-backed setting. The first character became the stored key, the field
+switched to its masked label, and the label repeated "•" `key.count - 4` times:
+negative under four characters, which traps. A key saved that way crashes
+Settings again at every open of that tab. Deepgram and Gemini already typed
+into a draft and clamped by hand: four copies of one field.
+
+**Fix:** one `Views/Components/APIKeyField.swift` used by all four keys (Groq,
+cloud LLM via `\.activeAPIKey`, Deepgram, Gemini). Draft in the view, saved on
+Return or Save; `masked` shows the last four only when as many stay hidden, so
+it never goes negative and never shows a short key. `AppSettings.activeAPIKey`
+gained a setter so the provider-to-key switch lives in one place.
+
+**Tests (written, NOT run — 1.4.8 release was in progress):**
+`APIKeyFieldTests` (mask for lengths 0-8 and a long key, draft commit rule),
+`APIKeyFieldGuardTests` (no hand-rolled mask, no key saved from a binding, no
+key text field outside the component). Next: `swift test --filter APIKeyField`,
+then the full gate, then a manual pass: type a key by hand in each of the four
+fields, paste one, clear one, switch OpenAI/Cerebras with a half-typed draft.
+
+**Visible changes:** Groq and cloud LLM keys now need Return or Save (pasting no
+longer saves by itself); the cloud LLM saved-key row takes the other three's
+look (square hairline edge, green dot inside the row).
 
 ## Session 2026-11-02 — per-action toggles for the four fixed hotkeys (branch `hotkey-per-action-toggles`, PR)
 

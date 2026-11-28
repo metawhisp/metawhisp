@@ -16,14 +16,16 @@ final class IdentityLiteralGuardTests: XCTestCase {
     }
 
     /// Every folder with app code (Package.swift: the app target is ".", minus
-    /// its excludes) and the MCP tool. A folder that disappears fails the
+    /// its excludes) and the command-line tool. A folder that disappears fails the
     /// guard instead of silently shrinking what it checks.
     private let folders = ["App", "Services", "Models", "Views", "Helpers", "Sources"]
 
     /// Files allowed to spell the production values out.
     private let allowed = [
         "/Services/System/AppIdentity.swift",   // the one owner of the values
-        "/Sources/MetaWhispMCP/main.swift",     // the MCP tool reads the owner's snapshot by design
+        // FEAT-0006 — metawhisp-cli is not the app: it reaches the installed (production) app's socket by design;
+        // METAWHISP_SOCKET points it anywhere else.
+        "/Sources/MetaWhispTrackerKit/TrackerSocket.swift",
     ]
 
     /// Matched across line breaks, so a call split over lines still counts.

@@ -2,13 +2,13 @@ import Foundation
 import SwiftData
 
 /// CC-1 — the single entry point for `TaskItem` / `UserMemory` mutations, so a DB
-/// save and its external side-effects (Obsidian vault, MCP snapshot) never diverge.
+/// save and its external side-effect (the Obsidian vault) never diverge.
 ///
 /// Fixes the `try? ctx.save(); ok = true` pattern (e.g. ChatToolExecutor) that
 /// reported success even when the commit failed. Contract:
 /// - `commit(...)` **propagates** a save failure (throws). Callers must handle it —
 ///   never paper over it with `ok = true`.
-/// - Post-commit hooks (Obsidian re-export / delete + MCP snapshot) run **only**
+/// - Post-commit hooks (Obsidian re-export / delete) run **only**
 ///   after a successful save. A hook is best-effort/logged and never flips a
 ///   failed mutation to success (nor a successful one to failure).
 ///
@@ -51,8 +51,7 @@ final class MutationService {
     if !StoreHealthSignal.shared.isHealthy { NSLog("[MutationService] refused %@ — store degraded (temporary in-memory session)", String(describing: mutation)) }
         // ITER-049 A2 — refuse mutations at the owner layer in a degraded (temporary
         // in-memory) session: neither the empty-store save NOR the post-commit hooks
-        // (Obsidian re-export, MCP snapshot) may fire, or the standalone MCP CLI's
-        // mcp-snapshot.json and the user's vault get rewritten from empty data.
+        // (Obsidian re-export) may fire, or the user's vault gets rewritten from empty data.
         // Reachable in degraded via the voice-question hotkey, which bypasses the
         // main-window recovery overlay.
         guard StoreHealthSignal.shared.isHealthy else { throw MutationError.storeDegraded }
@@ -91,8 +90,8 @@ final class MutationService {
     // MARK: - Production hooks
 
     /// Default post-commit side-effects: re-export the single item to the Obsidian
-    /// vault and refresh the MCP snapshot. Best-effort and async; failures here do
-    /// not affect the already-committed mutation.
+    /// vault. Best-effort and async; failures here do not affect the already-committed
+    /// mutation.
     static func productionHooks(_ mutation: Mutation) {
         let exporter = AppDelegate.shared?.obsidianExporter
         switch mutation {
@@ -112,8 +111,6 @@ final class MutationService {
         case .memoryDeleted(let id),
              .memoryDismissed(let id): Task { await exporter?.deleteMemoryFile(id) }
         }
-        // MCP snapshot refreshes on every committed mutation.
-        MCPSnapshotService.shared.snapshotNow()
     }
 }
 

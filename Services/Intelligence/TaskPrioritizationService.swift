@@ -48,6 +48,19 @@ final class TaskPrioritizationService: ObservableObject {
         }
     }
 
+    /// The live candidates the re-rank orders, newest first. FEAT-0005 I2 — screen candidates only: a voice draft
+    /// (no screen context) is never promoted, so ranking it would be a paid call nobody sees.
+    static func candidatesDescriptor(limit: Int?) -> FetchDescriptor<TaskItem> {
+        var desc = FetchDescriptor<TaskItem>(
+            predicate: #Predicate<TaskItem> {
+                $0.status == "staged" && $0.screenContextId != nil && !$0.isDismissed && !$0.completed
+            },
+            sortBy: [SortDescriptor(\.createdAt, order: .reverse)]
+        )
+        desc.fetchLimit = limit
+        return desc
+    }
+
     /// Pure guard, pinned by tests: rerank only when the interval elapsed and
     /// there's something to order.
     nonisolated static func shouldRerank(lastRerankAt: Date?, stagedCount: Int, now: Date) -> Bool {
@@ -65,14 +78,7 @@ final class TaskPrioritizationService: ObservableObject {
         defer { isRunning = false }
 
         let ctx = ModelContext(container)
-        var stagedDesc = FetchDescriptor<TaskItem>(
-            predicate: #Predicate<TaskItem> {
-                $0.status == "staged" && !$0.isDismissed && !$0.completed
-            },
-            sortBy: [SortDescriptor(\.createdAt, order: .reverse)]
-        )
-        stagedDesc.fetchLimit = Self.stagedLimit
-        let staged = (try? ctx.fetch(stagedDesc)) ?? []
+        let staged = (try? ctx.fetch(Self.candidatesDescriptor(limit: Self.stagedLimit))) ?? []
         guard Self.shouldRerank(lastRerankAt: lastRerankAt, stagedCount: staged.count, now: now) else { return }
         // Stamp the ATTEMPT, not only success: a persistently failing LLM/parse
         // must retry hourly, not on every 300s check tick — otherwise a flaky
@@ -120,11 +126,7 @@ final class TaskPrioritizationService: ObservableObject {
             // still live staged candidates.
             let stagedIds = Set(staged.map(\.id))
             let freshCtx = ModelContext(container)
-            let freshDesc = FetchDescriptor<TaskItem>(
-                predicate: #Predicate<TaskItem> {
-                    $0.status == "staged" && !$0.isDismissed && !$0.completed
-                })
-            let fresh = ((try? freshCtx.fetch(freshDesc)) ?? []).filter { stagedIds.contains($0.id) }
+            let fresh = ((try? freshCtx.fetch(Self.candidatesDescriptor(limit: nil))) ?? []).filter { stagedIds.contains($0.id) }
             let applied = Self.apply(positions: positions, to: fresh)
             guard applied > 0 else {
                 NSLog("[TaskPrioritization] ⚠️ No known ids in rerank response — keeping current order")
@@ -132,11 +134,10 @@ final class TaskPrioritizationService: ObservableObject {
             }
             do {
                 // Bulk internal annotation (ranking metadata, not user-facing
-                // content) — a single save + one snapshot instead of 30 per-item
-                // MutationService hook storms; Obsidian export doesn't carry
-                // relevanceScore, so there's nothing to re-export.
+                // content) — a single save instead of 30 per-item MutationService
+                // hook storms; Obsidian export doesn't carry relevanceScore, so
+                // there's nothing to re-export.
                 try freshCtx.save()
-                MCPSnapshotService.shared.snapshotNow()
                 NSLog("[TaskPrioritization] ✅ Re-ranked %d staged candidates", applied)
                 NSLog("[TaskPrioritization] Response %d chars → %d positions parsed, %d applied, %d live staged of %d sent", response.count, positions.count, applied, fresh.count, staged.count)
             } catch {

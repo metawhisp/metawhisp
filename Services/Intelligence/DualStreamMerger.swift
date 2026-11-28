@@ -20,6 +20,11 @@ struct StreamSegment: Equatable {
 }
 
 enum DualStreamMerger {
+    /// The labels a meeting transcript's lines start with (`Me: …` / `Them: …`). Readers that tell the user's
+    /// words from the others' (the task rules, FEAT-0005) take them from here.
+    static let meLabel = "Me"
+    static let themLabel = "Them"
+
     /// Merge two channel-labeled segment lists into a single time-sorted list.
     /// Equal starts put mic first, then preserve input order within a channel.
     static func mergeStreams(mic: [StreamSegment], system: [StreamSegment]) -> [StreamSegment] {
@@ -44,7 +49,7 @@ enum DualStreamMerger {
         var currentTexts: [String] = []
         func flush() {
             guard !currentTexts.isEmpty else { return }
-            let prefix = currentSpeaker == .me ? "Me" : "Them"
+            let prefix = currentSpeaker == .me ? meLabel : themLabel
             lines.append("\(prefix): \(currentTexts.joined(separator: " "))")
         }
         for seg in segments {

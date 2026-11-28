@@ -502,10 +502,11 @@ final class MeetingSettlingWiringTests: XCTestCase {
         XCTAssertLessThan(tasks.lowerBound, recap.lowerBound, "after the extractors have started")
     }
 
-    /// Kimi, I3 review — the MCP snapshot lists processed conversations only:
-    /// a settling meeting has an end but no summary yet.
+    /// Kimi, I3 review — what agents read lists processed conversations only:
+    /// a settling meeting has an end but no summary yet. (FEAT-0006: agents read
+    /// live through the tracker; the old snapshot file is gone.)
     func testTheMCPSnapshotSkipsSettlingMeetings() throws {
-        XCTAssertTrue(try source("Services/MCP/MCPSnapshotService.swift").contains(
+        XCTAssertTrue(try source("Services/Tracker/TrackerService.swift").contains(
             "!$0.discarded && $0.finishedAt != nil && $0.status == \"completed\""))
     }
 

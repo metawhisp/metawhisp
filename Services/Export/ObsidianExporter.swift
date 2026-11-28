@@ -153,7 +153,7 @@ final class ObsidianExporter: ObservableObject {
         var tDesc = FetchDescriptor<TaskItem>()
         tDesc.fetchLimit = 500
         let tasks = ((try? ctx.fetch(tDesc)) ?? [])
-            .filter { $0.conversationId == id && !$0.isDismissed }
+            .filter { $0.conversationId == id && $0.isTask }   // FEAT-0005: tasks, not drafts
         let actionItems = tasks.map { $0.taskDescription }
 
         // Memories tied to this conversation — inline bullets.
@@ -234,7 +234,7 @@ final class ObsidianExporter: ObservableObject {
         var tDesc = FetchDescriptor<TaskItem>()
         tDesc.fetchLimit = 500
         let actionItems = ((try? ctx.fetch(tDesc)) ?? [])
-            .filter { $0.conversationId == conv.id && !$0.isDismissed }
+            .filter { $0.conversationId == conv.id && $0.isTask }   // FEAT-0005: tasks, not drafts
             .map { $0.taskDescription }
 
         // Memories tied to this conversation.
@@ -325,7 +325,7 @@ final class ObsidianExporter: ObservableObject {
         var tDesc = FetchDescriptor<TaskItem>()
         tDesc.fetchLimit = 500
         let dayTasks = ((try? ctx.fetch(tDesc)) ?? [])
-            .filter { $0.createdAt >= dayStart && $0.createdAt < dayEnd && !$0.isDismissed }
+            .filter { $0.createdAt >= dayStart && $0.createdAt < dayEnd && $0.isTask }   // FEAT-0005: tasks, not drafts
             .sorted { $0.createdAt < $1.createdAt }
         let taskItems: [ObsidianMarkdownRenderer.DailySummaryInput.Item] = dayTasks.map { t in
             let input = toTaskInput(t)
@@ -376,8 +376,9 @@ final class ObsidianExporter: ObservableObject {
         guard let ctx = makeContext() else { return }
         let desc = FetchDescriptor<TaskItem>(predicate: #Predicate { $0.id == id })
         guard let task = (try? ctx.fetch(desc))?.first else { return }
-        // Dismissed → delete the file (two-way delete).
-        if task.isDismissed {
+        // Dismissed → delete the file (two-way delete). FEAT-0005 I5 — a draft is no task: it has no file, and
+        // a dropped one leaves nothing behind. The file is written when the draft is accepted.
+        guard task.isTask else {
             await deleteTaskFile(id)
             return
         }
@@ -514,7 +515,7 @@ final class ObsidianExporter: ObservableObject {
         var tDesc = FetchDescriptor<TaskItem>(sortBy: [SortDescriptor(\.createdAt, order: .forward)])
         tDesc.fetchLimit = 5_000
         let tasks = (try? ctx.fetch(tDesc)) ?? []
-        for t in tasks where !t.isDismissed {
+        for t in tasks where t.isTask {   // FEAT-0005: tasks, not drafts
             await exportTask(t.id)
             s.tasks += 1
         }

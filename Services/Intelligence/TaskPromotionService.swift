@@ -94,7 +94,8 @@ final class TaskPromotionService: ObservableObject {
         guard need > 0 else { return 0 }
 
         var stagedDesc = FetchDescriptor<TaskItem>(
-            predicate: #Predicate { $0.status == "staged" && !$0.isDismissed && !$0.completed },
+            // FEAT-0005 I2 — screen candidates only: a voice draft (no screen context) is the user's to accept.
+            predicate: #Predicate { $0.status == "staged" && $0.screenContextId != nil && !$0.isDismissed && !$0.completed },
             sortBy: [SortDescriptor(\.createdAt, order: .reverse)]
         )
         // Recency-capped pool: the re-ranker scores within this same window, and
@@ -134,7 +135,7 @@ final class TaskPromotionService: ObservableObject {
             kind: .task,
             title: "Task added",
             body: String(task.taskDescription.prefix(200)),
-            onTap: { AppDelegate.shared?.openMainWindow(tab: .workspace) },
+            onTap: { WorkspaceView.open(.tasks) },
             proactiveItems: nil
         )
         MWNotificationStack.shared.push(note)

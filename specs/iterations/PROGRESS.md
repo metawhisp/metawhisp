@@ -2,6 +2,99 @@
 
 ## Active specification
 
+## ITER-089 — the task tracker agents use (2026-11-26)
+
+`specs/modules/tracker/FEAT-0006.md`. Owner's decisions T1–T11 (planning session) and D1–D8 (this iteration's
+interview); plan approved «Да, начинай». Branch `claude/inspiring-mirzakhani-1ccbe3` on top of ITER-088
+(`claude/fix-task-rules-a790c2`, c58f896). Not released.
+- [x] 0 Interview + spec (`d3705f1`)
+- [x] 1 Kit rules, task text, `Tracker.store` (own schema; the main store stays V10 so test builds can be swapped in) — 32 tests (`3148c60`)
+- [x] 2 `TrackerService` (create/list/search/view/edit/archive/restore/delete, folder → project), project passes keep
+  tracked projects — 34 tests, 2 mutations caught (`bef676d`)
+- [x] 3 Socket server + `metawhisp-cli` (MCP over stdio with roots, CLI, quiet launch ≤30 s) replacing `metawhisp-mcp`;
+  the real binary tested end to end (`e3f9843`)
+- [x] 4 Connect Claude Code / Codex in Settings; snapshot toggle and `MCPSnapshotService` removed; `build.sh` ships
+  `Contents/Helpers/metawhisp-cli` (`700a5bf`)
+- [x] 5 Tasks window: board / list / archive / detail / new task, per project; headless renders checked (`acf2512`)
+- [x] 6 MetaChat: `addTask.project`, `findProject`, `createProject` on the user's word (`f893e22`)
+- [x] 7a Wide non-screen run at `f893e22`: 4,924 tests, 0 failures, 13 skipped by design (screen suites left out)
+- [x] 7b Independent review round 1: FIX-THEN-SHIP (3 P1, 5 P2, 7 P3) — all fixed with tests, 4 fixes mutated back
+  and caught; 176 tests of the touched suites green. Test fixtures had real project names — replaced (they remain in
+  this branch's earlier commits: squash before it reaches the public repo)
+- [x] 7c Re-review of the fix diff: 13 of 15 closed + N1 (P2, sheet reload) and 3 P3 → fixed with tests (181 green);
+  no P1 left, so no third review
+- [x] 8a Test build on the owner's Mac (owner «делаем»): `hot-swap.sh` at `419ebea`, installed; checked against it:
+  `tracker.sock` 0600, `Tracker.store` created, old `mcp-snapshot.json` gone, `metawhisp-cli` signed
+  (`com.metawhisp.cli`, team), `project` / `task list` from the repo and from a worktree → project MetaWhisp, an MCP
+  session (initialize, 12 tools, live task_list). Read-only: nothing written to his store
+- [x] 8b Owner «Connect it for me»: the app's own Connect code run once for Claude Code — `claude mcp get metawhisp` ✔
+  Connected, one block appended to `~/.claude/CLAUDE.md` (backup `~/Code/MetaWhisp-lanes/backup/claude-md-2026-11-26/`)
+- [x] 8c Owner «удали лишние проекты» → «Да, так»: app closed, store backed up
+  (`~/Code/MetaWhisp-lanes/backup/project-cleanup-2026-11-26/`; the backfill ledger was not in it), 166 projects with
+  fewer than two conversations removed through `deleteProject` (155 conversations lost only their label), 2 duplicates
+  merged; 23 left. Cause not fixed: new conversations still name projects freely (T4)
+- [x] 8d Owner: Workspace slow and broken when narrow → «Не уже 900»: the window keeps 900 pt (the hosting view had
+  lowered it to 637), the Tasks header takes two rows, the Projects list loads in ~62 ms instead of ~117 ms (`6fe12e1`);
+  test build installed again
+- [x] 8e T4 at its cause (owner «Yes, fix it»): calls and dictations only pick an existing project, never create one;
+  the manual "New project…" makes a real one; 6 tests + 1 mutation caught
+- [x] 8g Owner «разреши в два раза уже… чини все и проверяй»: window minimum 450 pt, sidebar folds to icons below 760,
+  every tab and inner tab one column there; MainWindowWidthTests reads every scroll area at 450 (mutation caught);
+  renders at 450/600/900/1280 both looks (`521d5f0`); test build installed
+- [x] 8h Owner: projects and tasks are one (grilled P1–P8): one rule for a task's project (`a075c20`); Workspace opens
+  on Projects, "+ Add project", a project's page Tasks / Conversations / Memories, "+ add project" on tasks
+  (`75b1a91`); no "waiting on" tasks, the 26 open ones archived once on his Mac (`95848fd`); test build installed
+- [x] 8i Owner «фиксь и перепроверяй все… сверяйся с референсами»: beads, Task Master, Plane, Linear compared and an
+  independent review (Kimi out of quota → Claude agent): agents see call tasks (live: another project folder lists its TASK-1), ready,
+  Done check, single deps/labels, revision guard, capped lists, brief writes; app fixes (`1dfb9dd`); gate PASS on
+  `1dfb9dd` (5,325 tests, 0 failures); test build installed. Parked for the owner: claim, history, links, reparent, editable sheet,
+  project archive, shortcuts
+- [x] 8j Owner «Да, все четыре» (grilled, «Да, делай»): edit title/date/priority in the task window (`8811045`);
+  In Progress is taken by one agent session (`e2fb067`, two test fixes after it: `dcf9039`, `d914e21`); move history
+  for agents only (`671afda`); archive a project, Tracker.store schema V2 (`b46972e`). Test build installed: the
+  owner's tracker store migrated to V2 (28 records kept; V1 backup in the session scratchpad); gate PASS on `96b0e11`
+  (5,339 tests, 0 failures); Codex review of the whole tracker branch running
+- [ ] 8k Codex review of the whole tracker branch (at `4cc6f66`): 2 P1 (`500ff7e`) and 13 P2 (`cce8b76` data/agent,
+  `a65eda0` app) fixed, each with a red test and a mutation (all caught; two tests that could not fail were fixed
+  or dropped, `ddaf56c`). Also fixed from its other answer: the definition-of-done order, Undo offered for a created
+  project. Found on the way: every tracker context autosaved, so a failed or refused write was saved later anyway →
+  `TrackerService.freshContext` (autosave off). Codex re-review of the fix diff (review 2 of 3): both P1 CLOSED, 0
+  new P1; 5 P2 still open and 1 new P2 from my due-day change → closed in `2a9a384` (due day fixed at the reader,
+  storage back to noon UTC), mutations caught; no third review (no P1). Owner «Yes, do it»: the command line carries
+  the agent's session (`8f7b35d`: CLAUDE_CODE_SESSION_ID / CODEX_SESSION_ID, Codex first; MCP stays main — inside
+  Codex's sandbox the CLI cannot reach the socket, checked live). Parked with a reason: the Dev-flavour socket (no
+  Dev build ships), the Dashboard and other non-tracker readers of a due day east of UTC+12 (they cannot see
+  `dueIsDay`). Gate PASS on `8f7b35d` (5,371 tests, 0 failures); test build installed, both paths answer live. Gate PASS on `2a9a384` (5,368
+  tests, 0 failures). Next: test build
+- [ ] 8f Owner: a real Claude Code session; quiet launch with the app quit
+  (not tried while he works); full gate on his word; Codex review (quota 2026-11-27 16:24); release only on his word
+
+## ITER-088 — automatic tasks are suggestions the user accepts (2026-11-26)
+
+`specs/modules/intelligence/FEAT-0005.md`. Approved by the owner on 2026-11-26 («Да, утверждаю»). Branch
+`claude/fix-task-rules-a790c2` from `feat/ui-look` 5327a6a (= 1.4.8). Target: release 1.4.9.
+- [x] 1 Spec in the branch (`d4af1a4`)
+- [x] 2 Tests first: rules (K1–K17), drafts on disk with two contexts, the extractor pass with the model replaced,
+  the after-call card, promotion and re-rank skip voice drafts, guards (extractor writes drafts only; vault takes
+  tasks only). Red: the test target did not compile (no `TaskCandidateRules`, `TaskDrafts`, `isTask`, …)
+- [x] 3 Code: `TaskCandidateRules`, `TaskDrafts`, `TaskExtractor` (prompt with SOURCE + kind/evidence/confidences,
+  no calendar names, R3 before sending, drafts only, no notice, no vault), promotion/re-rank screen-only,
+  `ObsidianExporter` and conversation views list tasks only, Tasks → Suggested and the card's ✓ / ✗. Green: 185 tests
+  of the touched suites
+- [x] 4 Mutations: 28 of the rules and fixes, every one caught (two survived at first → two tests added)
+- [x] 5 Replay through the Pro server, store copy, 40 conversations behind the 44 real tasks + 60 sampled junk ones.
+  Final code: the owner's own tasks 10 of 17 suggested (7 not proposed by the model); 26 "waiting on" from his own
+  requests (Q2) → 23 dropped on purpose, 3 leaked; 140 junk tasks → 6 drafts (2 clearly junk). Found and fixed on
+  the way: R3 dropped a whole call; quotes with ASR typos "fixed"; ellipsis quotes. A looser prompt was replayed and
+  rejected (junk 7 → 12, Q2 leaks 6). 303 paid calls in all (plan: ≈100). Summary in the session notes folder
+- [x] 6 Review: Codex out of quota until 2026-11-27 16:24, Kimi out for the week → an independent read-only Claude
+  agent: round 1 NOT ACCEPT (1 P1, 2 P2, 6 P3); fix diff re-reviewed: ACCEPT (5 new P3, fixed with tests in `0167554`).
+  Two vault P3s parked in BACKLOG
+- [x] 7a The key-field crash fix in 1.4.9: owner «Да, включить» — cherry-picked (`d4aa827`, `7ac344a`); its 7 tests
+  red without the fix, green with it
+- [ ] 7b Owner's word: release without Codex or wait; the full gate
+- [ ] 8 Release 1.4.9, WAL
+
 ## ITER-087 — the new look on the 1.4.7 layout (2026-11-25)
 
 `ITER-087-ui-look.md`. Approved by the owner on 2026-11-25 («давай только аккуратно и по итерациям двигай и
@@ -12,7 +105,7 @@
 - [x] 4 Selection and controls: one `mwSelectable` (dark: accent tint + ring + faint glow; light: raised white pill) for the sidebar, segmented, chips, buttons, tiles, pickers, the inbox focus; ON/OFF box → accent switch (knob ringed for Mono); chip/keycap/button/status off system materials; task checkbox 22 pt and × 20 pt hit areas, due badge rounded; chart bars in the accent; `selectFill`/`selectRim` removed (orphaned). `SelectionLookGuardTests` red→green (twice: inverted white and green-square selections found on the renders, added to the guard first); 163 tests of the touched suites green; renders checked dark, light, dark Mono
 - [x] 5 Type: `mwBadge` = SF Mono caps micro-label that shrinks before it is cut; big numbers SF bold tabular; `StatFormatters.count` with a million tier ("2.35M", red first); sentence case for buttons/tabs/chips/rows across the window and popover (`sentenceCased`, tested); hotkey names and descriptions wrap; Dictionary fields no longer forced dark. `TypeLookGuardTests` (caught a reverted Dictionary). Renders of every window tab, dark and light
 - [x] 6 Accent default Mint: `AccentDefaultTests` red→green; a stored choice kept; Mono chosen on purpose stays Mono
-- [ ] 7 Check:
+- [x] 7 Check:
   - [x] renders of every window tab, dark, light, dark Mono (`LookRenderTests`, opt-in), checked by eye after each step
   - [x] review: Codex out of quota until 2026-11-27, Kimi out of its weekly quota → an independent read-only Claude
     agent: 1 P1 (existing users without a stored accent would move to Mint), 4 P2, 4 P3; all fixed in `1f3df53`
@@ -22,9 +115,16 @@
     selections (History row, popover cell) run edge to edge; the guards miss literals returned from functions,
     `.uppercased()`, `if isSelected { fill }` blocks and other colours — they catch the patterns this iteration
     removed. No third review (no P1).
-  - [ ] the full gate (`bash scripts/regression.sh`) — on the owner's word: it shows windows and types on screen
-  - [ ] test build over /Applications/MetaWhisp.app (`bash hot-swap.sh`), owner looks at both themes
-  - [ ] release 1.4.8 on the owner's word
+  - [x] the full gate on the owner's word: PASS twice (5ec2195, then 1703ae7), 5040 tests, 0 failures. Once in
+    between, the gate inside `release.sh` failed; its output is hidden and its log deleted, so the failing test is
+    unknown (the same tree passed before and after, with only the version and comments changed)
+  - [x] test builds over /Applications/MetaWhisp.app (`bash hot-swap.sh`); the owner approved both themes
+    («да стало лучше так ок»)
+  - [x] released 1.4.8 (build 51) on 2026-11-26: squash a672b50 on origin `architecture-phase-1-3`, tag v1.4.8,
+    GitHub release Latest, appcast flipped to 1.4.8, DMG sha256 d0960b67… equal to the local one, notarized and
+    stapled; installed on the owner's Mac from the DMG (the replaced test build kept in
+    ~/Code/MetaWhisp-lanes/backup/). Before the push, seven comment lines quoting the owner in Russian were put in
+    English (`1703ae7`): no Cyrillic in app code or tests
 - The popover is not drawn by `LookRenderTests` (its screen-context service may ask for screen access); it is
   checked on the test build.
 - Per step, while the owner is at the Mac: the step's own tests and the suites it touches; the full gate once, at

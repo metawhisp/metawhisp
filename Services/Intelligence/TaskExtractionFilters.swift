@@ -124,7 +124,8 @@ enum TaskExtractionFilters {
 
         // Reference floor: 6 words. We're slightly more permissive (4 words)
         // because RU verbs can pack more meaning per token ("Отправить контракт Майку" = 3 words).
-        if wordCount < 4 {
+        // FEAT-0005 — a script written without spaces has no words to count by spaces: the floor cannot judge it.
+        if wordCount < 4, !isWrittenWithoutSpaces(trimmed) {
             return .tooShort(wordCount: wordCount)
         }
 
@@ -144,6 +145,24 @@ enum TaskExtractionFilters {
         }
 
         return nil
+    }
+
+    /// FEAT-0005 — text mostly in a script that does not separate words with spaces (Han, Kana, Thai, Lao,
+    /// Myanmar, Khmer): counting words by spaces, or matching whole words, means nothing there. "Mostly" = at least
+    /// half of its letters, so one such character in a spaced title changes nothing.
+    static func isWrittenWithoutSpaces(_ s: String) -> Bool {
+        var letters = 0, spaceless = 0
+        for scalar in s.unicodeScalars where CharacterSet.letters.contains(scalar) {
+            letters += 1
+            switch scalar.value {
+            case 0x3040...0x30FF, 0x3400...0x4DBF, 0x4E00...0x9FFF, 0xF900...0xFAFF,   // Kana, Han
+                 0x0E00...0x0EFF, 0x1000...0x109F, 0x1780...0x17FF:                    // Thai, Lao, Myanmar, Khmer
+                spaceless += 1
+            default:
+                break
+            }
+        }
+        return spaceless > 0 && spaceless * 2 >= letters
     }
 
     enum TitleRejectionReason: CustomStringConvertible {

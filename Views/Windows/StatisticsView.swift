@@ -171,53 +171,22 @@ struct StatisticsView: View {
                 VStack(spacing: gap) {
                     periodSwitcher
 
-                    // Row 1: STREAK | WORDS | TRANSCRIPTIONS | TRANSLATIONS  +  RECORDS column
-                    HStack(alignment: .top, spacing: gap) {
+                    // Row 1: the tiles and the chart, with RECORDS beside them while there is room, under them below.
+                    let topLayout = statsWidth >= Self.recordsBesideFrom
+                        ? AnyLayout(HStackLayout(alignment: .top, spacing: gap))
+                        : AnyLayout(VStackLayout(spacing: gap))
+                    topLayout {
                         VStack(spacing: gap) {
-                            HStack(spacing: gap) {
-                                BigMetricTile(
-                                    label: "Streak", value: "\(streakDays)",
-                                    unit: "days"
-                                )
-
-                                BigMetricTile(
-                                    label: "Words", value: fmtNum(stats.words),
-                                    unit: "total", isSelected: selectedMetric == "WORDS"
-                                )
-                                .onTapGesture { withAnimation(.easeInOut(duration: 0.15)) { selectedMetric = "WORDS" } }
-
-                                BigMetricTile(
-                                    label: "Transcriptions", value: fmtNum(current.count),
-                                    unit: "total", isSelected: selectedMetric == "TRANSCRIPTIONS"
-                                )
-                                .onTapGesture { withAnimation(.easeInOut(duration: 0.15)) { selectedMetric = "TRANSCRIPTIONS" } }
-
-                                BigMetricTile(
-                                    label: "Translations", value: fmtNum(translationsCount),
-                                    unit: "total", isSelected: selectedMetric == "TRANSLATIONS"
-                                )
-                                .onTapGesture { withAnimation(.easeInOut(duration: 0.15)) { selectedMetric = "TRANSLATIONS" } }
-                            }
-
-                            // Row 2: WPM | SAVED TIME | RECORDED
-                            HStack(spacing: gap) {
-                                BigMetricTile(
-                                    label: "Words per minute", value: "\(wpm)",
-                                    unit: "avg", isSelected: selectedMetric == "WPM"
-                                )
-                                .onTapGesture { withAnimation(.easeInOut(duration: 0.15)) { selectedMetric = "WPM" } }
-
-                                BigMetricTile(
-                                    label: "Saved time", value: fmtDuration(stats.saved),
-                                    isSelected: selectedMetric == "SAVED TIME"
-                                )
-                                .onTapGesture { withAnimation(.easeInOut(duration: 0.15)) { selectedMetric = "SAVED TIME" } }
-
-                                BigMetricTile(
-                                    label: "Recorded", value: fmtDuration(stats.audio),
-                                    unit: "audio", isSelected: selectedMetric == "RECORDED"
-                                )
-                                .onTapGesture { withAnimation(.easeInOut(duration: 0.15)) { selectedMetric = "RECORDED" } }
+                            if statsWidth >= Self.tileRowsFrom {
+                                HStack(spacing: gap) { firstTiles }
+                                // Row 2: WPM | SAVED TIME | RECORDED
+                                HStack(spacing: gap) { secondTiles }
+                            } else {
+                                LazyVGrid(columns: [GridItem(.flexible(), spacing: gap), GridItem(.flexible(), spacing: gap)],
+                                          spacing: gap) {
+                                    firstTiles
+                                    secondTiles
+                                }
                             }
 
                             // Metric chart
@@ -225,14 +194,21 @@ struct StatisticsView: View {
                         }
 
                         // Records column on the right
-                        recordsSection.frame(width: 260)
+                        if statsWidth >= Self.recordsBesideFrom {
+                            recordsSection.frame(width: 260)
+                        } else {
+                            recordsSection
+                        }
                     }
 
                     // Hours Usage chart
                     hoursChart
 
-                    // Bottom sections: POPULAR WORDS + FILLER WORDS + AUTO-CORRECTIONS
-                    HStack(alignment: .top, spacing: gap) {
+                    // Bottom sections: POPULAR WORDS + FILLER WORDS + AUTO-CORRECTIONS, stacked when narrow.
+                    let bottomLayout = statsWidth >= Self.bottomBesideFrom
+                        ? AnyLayout(HStackLayout(alignment: .top, spacing: gap))
+                        : AnyLayout(VStackLayout(spacing: gap))
+                    bottomLayout {
                         topWordsSection
                         VStack(spacing: gap) {
                             fillerSection
@@ -241,10 +217,71 @@ struct StatisticsView: View {
                     }
                 }
                 .padding(gap)
-                .frame(minWidth: 700)
+            }
+            // Flips the layouts only when the width crosses a line, not on every pixel of a resize.
+            .onGeometryChange(for: CGFloat.self) { proxy in
+                proxy.size.width >= Self.recordsBesideFrom ? Self.recordsBesideFrom
+                    : proxy.size.width >= Self.bottomBesideFrom ? Self.bottomBesideFrom
+                    : proxy.size.width >= Self.tileRowsFrom ? Self.tileRowsFrom : 0
+            } action: { band in
+                if band != statsWidth { statsWidth = band }
             }
             // Share via context menu instead of toolbar button
         }
+    }
+
+    /// The width band the statistics are laid out for (one of the lines below, or 0 under the narrowest).
+    @State private var statsWidth: CGFloat = 720
+    /// RECORDS beside the tiles from this width; under them below it.
+    private static let recordsBesideFrom: CGFloat = 720
+    /// POPULAR WORDS beside FILLER WORDS from this width.
+    private static let bottomBesideFrom: CGFloat = 560
+    /// The tiles in their two rows (four, then three) from this width; two to a row below it.
+    private static let tileRowsFrom: CGFloat = 520
+
+    @ViewBuilder private var firstTiles: some View {
+        BigMetricTile(
+            label: "Streak", value: "\(streakDays)",
+            unit: "days"
+        )
+
+        BigMetricTile(
+            label: "Words", value: fmtNum(stats.words),
+            unit: "total", isSelected: selectedMetric == "WORDS"
+        )
+        .onTapGesture { withAnimation(.easeInOut(duration: 0.15)) { selectedMetric = "WORDS" } }
+
+        BigMetricTile(
+            label: "Transcriptions", value: fmtNum(current.count),
+            unit: "total", isSelected: selectedMetric == "TRANSCRIPTIONS"
+        )
+        .onTapGesture { withAnimation(.easeInOut(duration: 0.15)) { selectedMetric = "TRANSCRIPTIONS" } }
+
+        BigMetricTile(
+            label: "Translations", value: fmtNum(translationsCount),
+            unit: "total", isSelected: selectedMetric == "TRANSLATIONS"
+        )
+        .onTapGesture { withAnimation(.easeInOut(duration: 0.15)) { selectedMetric = "TRANSLATIONS" } }
+    }
+
+    @ViewBuilder private var secondTiles: some View {
+        BigMetricTile(
+            label: "Words per minute", value: "\(wpm)",
+            unit: "avg", isSelected: selectedMetric == "WPM"
+        )
+        .onTapGesture { withAnimation(.easeInOut(duration: 0.15)) { selectedMetric = "WPM" } }
+
+        BigMetricTile(
+            label: "Saved time", value: fmtDuration(stats.saved),
+            isSelected: selectedMetric == "SAVED TIME"
+        )
+        .onTapGesture { withAnimation(.easeInOut(duration: 0.15)) { selectedMetric = "SAVED TIME" } }
+
+        BigMetricTile(
+            label: "Recorded", value: fmtDuration(stats.audio),
+            unit: "audio", isSelected: selectedMetric == "RECORDED"
+        )
+        .onTapGesture { withAnimation(.easeInOut(duration: 0.15)) { selectedMetric = "RECORDED" } }
     }
 
     private var stats: PeriodStats { PeriodStats(current) }

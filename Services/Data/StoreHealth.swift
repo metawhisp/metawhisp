@@ -18,8 +18,8 @@ enum StoreHealth: Equatable {
 
 /// Process-wide store-health signal for components that can't reach the
 /// `HistoryService` instance directly — specifically the `MutationService.shared`
-/// and `MCPSnapshotService.shared` singletons, whose post-commit hooks write
-/// EXTERNAL files (Obsidian vault, `mcp-snapshot.json`). Set once by HistoryService
+/// singleton, whose post-commit hooks write EXTERNAL files (the Obsidian vault),
+/// and the tracker (FEAT-0006), which refuses writes. Set once by HistoryService
 /// at init; defaults healthy. Thread-safe so any actor can read it.
 final class StoreHealthSignal: @unchecked Sendable {
     static let shared = StoreHealthSignal()

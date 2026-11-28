@@ -2,6 +2,7 @@ import AppKit
 import Combine
 import EventKit
 import Foundation
+import MetaWhispTrackerKit
 import Sparkle
 import SwiftData
 import SwiftUI
@@ -85,6 +86,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     let structuredGenerator = StructuredGenerator()
     let embeddingService = EmbeddingService()
     let projectAggregator = ProjectAggregator()
+    /// FEAT-0006 — the local socket Claude Code / Codex reach the task tracker through (`metawhisp-cli`).
+    private var trackerSocket: TrackerSocketServer?
     let chatToolExecutor = ChatToolExecutor()
     let proactiveContextService = ProactiveContextService()
 
@@ -1399,24 +1402,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         // Grouper fires StructuredGenerator + extractors on conversation close.
         conversationGrouper.configure(modelContainer: historyService.modelContainer)
 
-        // ITER-037 — start MCP snapshot writer. Dumps memories / tasks /
-        // conversations to `~/Library/Application Support/MetaWhisp/mcp-snapshot.json`
-        // every 5 min so the standalone `metawhisp-mcp` CLI can answer
-        // Claude Desktop tool calls without sharing the SwiftData store.
-        // AUD-029 — applyEnabledState() honours the mcpEnabled opt-in: it starts
-        // the writer only if the user enabled MCP, otherwise it purges any stale
-        // snapshot so opted-out users keep no plaintext copy on disk.
+        // FEAT-0006 — agents read memories, conversations and tasks live through the tracker socket; the old
+        // read-only snapshot file (`mcp-snapshot.json`) is no longer written, and a copy an older version left on
+        // disk is deleted.
+        TrackerStore.removeLegacySnapshot()
         // AUD-007 / ITER-049 A2b — in a degraded (temporary in-memory) session the
-        // store is empty; background extractors/exporters would process nothing and
-        // writers like the MCP snapshot would overwrite the on-disk JSON with empty
-        // data. Keep degraded a read-only recovery shell: services are still
+        // store is empty; background extractors/exporters would process nothing.
+        // Keep degraded a read-only recovery shell: services are still
         // configured (so the UI doesn't crash) but their periodic timers / one-shot
         // writers never start. In a healthy session storeHealthy == true, so the
         // normal path is unchanged.
         let storeHealthy = historyService.health.isHealthy
-        MCPSnapshotService.shared.configure(container: historyService.modelContainer)
-        if storeHealthy { MCPSnapshotService.shared.applyEnabledState() }
-        if !storeHealthy { NSLog("[MCPSnapshot] ⚠️ writer not started — store degraded; on-disk snapshot left stale") }
         structuredGenerator.configure(modelContainer: historyService.modelContainer)
         // Wire embedding so StructuredGenerator embeds each closed conversation
         // right after title/overview populate (ITER-011).
@@ -1505,7 +1501,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         // ITER-014 — Project aggregator. Backfills primaryProject for legacy completed
         // conversations + runs an embedding-similarity merge pass after backfill so
         // "ChatApp"/"ЧатЭп"/"ChatAppAI" collapse to one canonical row.
-        projectAggregator.configure(modelContainer: historyService.modelContainer)
+        // FEAT-0006 — the task tracker agents use: its own store (`Tracker.store`), the service every caller goes
+        // through, and the socket the command-line tool talks to. Started before the project passes so they know
+        // which projects are real.
+        let trackerContainer = startTracker()
+        // The passes fail closed without it: they could not tell which projects are real (review P2-5).
+        projectAggregator.configure(modelContainer: historyService.modelContainer, trackerContainer: trackerContainer,
+                                    trackerRequired: true)
         Task { @MainActor [weak self] in
             // ITER-049 A2 — skip project backfill + the one-shot curative pass (which
             // sets a persistent @AppStorage flag) in a degraded session.
@@ -2028,13 +2030,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         convDesc.fetchLimit = 1
         let conv = (try? ctx.fetch(convDesc))?.first
 
-        // Tasks linked to this conversation — committed only.
-        let taskDesc = FetchDescriptor<TaskItem>(
-            predicate: #Predicate { $0.conversationId == conversationId && !$0.isDismissed }
-        )
-        let allTasks = (try? ctx.fetch(taskDesc)) ?? []
-        let activeTasks = allTasks.filter { $0.status != "staged" && $0.status != "dismissed" }
-        let taskCount = activeTasks.count
+        // Tasks linked to this conversation, and its drafts (FEAT-0005: suggestions the card offers with ✓ / ✗).
+        let split = MeetingRecapState.tasks(for: conversationId, in: ctx)
+        let taskCount = split.actionItems.count
 
         // Memories linked.
         let memDesc = FetchDescriptor<UserMemory>(
@@ -2089,12 +2087,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         // corner — dropped per ITER-026 unification. The Recap window itself
         // is the canonical surface for finished meetings.
         if AppSettings.shared.meetingRecapPopupEnabled, let conv {
-            let actionItems: [MeetingRecapState.ActionItem] = activeTasks.map { t in
-                MeetingRecapState.ActionItem(
-                    id: t.id, description: t.taskDescription,
-                    assignee: t.assignee, completed: t.completed
-                )
-            }
+            let actionItems = split.actionItems
             let memoryRows: [MeetingRecapState.MemoryRow] = memories.map { m in
                 MeetingRecapState.MemoryRow(
                     id: m.id, kind: m.kind, subject: m.subject,
@@ -2135,11 +2128,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
                 decisions: decisions,
                 nextSteps: nextSteps,
                 actionItems: actionItems,
+                drafts: split.drafts,
                 memories: memoryRows,
                 transcript: transcript
             )
             MeetingRecapState.shared.present(payload)
-            NSLog("[MeetingRecap] presented conv %@ — %.0fs meeting, title %d chars, overview %d chars, decisions=%d nextSteps=%d participants=%d tasks=%d memories=%d", conversationId.uuidString.prefix(8) as CVarArg, durationSec, title.count, overview.count, decisions.count, nextSteps.count, participants.count, taskCount, memoryCount)
+            NSLog("[MeetingRecap] presented conv %@ — %.0fs meeting, title %d chars, overview %d chars, decisions=%d nextSteps=%d participants=%d tasks=%d drafts=%d memories=%d", conversationId.uuidString.prefix(8) as CVarArg, durationSec, title.count, overview.count, decisions.count, nextSteps.count, participants.count, taskCount, split.drafts.count, memoryCount)
             NSLog("[MeetingRecap] presented — %.0fs meeting, %d action item(s), %d memory row(s), %d decision(s), %d next step(s)", durationSec, actionItems.count, memoryRows.count, decisions.count, nextSteps.count)
             NSLog("[MeetingRecap] recap shown: %.0fs meeting, %d transcript chars, %d task(s), %d memory row(s)", durationSec, transcript.count, actionItems.count, memoryRows.count)
         }
@@ -3105,7 +3099,45 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         return reply.answer
     }
 
+    /// FEAT-0006 — opens `Tracker.store`, makes `TrackerService.shared`, starts the socket. A store that cannot open
+    /// leaves the socket answering with that reason, never silence.
+    @discardableResult
+    private func startTracker() -> ModelContainer? {
+        var container: ModelContainer?
+        do {
+            container = try TrackerStore.makeContainer(url: TrackerStore.fileURL)
+        } catch {
+            NSLog("[Tracker] Tracker.store could not be opened: %@", error.localizedDescription)
+        }
+        if let container {
+            let service = TrackerService(main: historyService.modelContainer, tracker: container)
+            TrackerService.shared = service
+            // FEAT-0006 §9b P7 — once: the "waiting on" tasks of before go to Archive (restorable there).
+            do {
+                try WaitingOnCleanup.runOnce(service: service)
+            } catch {
+                NSLog("[Tracker] waiting-on cleanup not done, next launch tries again: %@", error.localizedDescription)
+            }
+        }
+        // Runs on the main queue (the server's default), so it is on the main actor.
+        let server = TrackerSocketServer(path: TrackerSocketServer.defaultPath) { request in
+            MainActor.assumeIsolated {
+                TrackerService.shared?.handle(request)
+                    ?? .failure(TrackerFailure(.internalError, "MetaWhisp's task store could not be opened."))
+            }
+        }
+        do {
+            try server.start()
+            trackerSocket = server
+        } catch {
+            NSLog("[Tracker] socket not started: %@", "\(error)")
+        }
+        return container
+    }
+
     func applicationWillTerminate(_ notification: Notification) {
+        // FEAT-0006 — the socket file goes with the app, so the tool sees "not running" and starts it again.
+        trackerSocket?.stop()
         layoutSwitchController.stop()
         leaseTracker.quitting()
 #if DEBUG

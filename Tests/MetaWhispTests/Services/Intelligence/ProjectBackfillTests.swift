@@ -108,8 +108,10 @@ final class ProjectBackfillTests: XCTestCase {
     func testADeletedProjectIsNotGivenBack() async throws {
         let row = legacy("Tagged", days: 2)
         row.primaryProject = "ProjectAlpha"
-        let (aggregator, _) = try store([row])
-        _ = aggregator.resolveCanonical("ProjectAlpha")
+        let (aggregator, container) = try store([row])
+        let ctx = ModelContext(container)
+        ctx.insert(ProjectAlias(canonicalName: "ProjectAlpha"))
+        try ctx.save()
         XCTAssertEqual(aggregator.deleteProject(canonicalName: "ProjectAlpha", ledgerURL: ledgerURL), 1)
         var asked: [UUID] = []
         await aggregator.backfillProjects(hasLLMAccess: true, ledgerURL: ledgerURL, pause: .zero) {

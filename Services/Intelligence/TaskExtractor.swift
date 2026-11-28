@@ -1,15 +1,15 @@
 import Foundation
 import SwiftData
 
-/// Extracts action items from a FULL closed Conversation — not per-transcript.
+/// Proposes task drafts from a FULL closed Conversation — not per transcript (FEAT-0005).
 ///
 /// Triggered on conversation close (10-min silence for dictation, stop-button for meetings).
-/// Runs once over the entire conversation (all HistoryItems concatenated) so the LLM can:
-/// - See tasks resolved later in the same conversation → don't extract ("надо ответить" + "ответил")
-/// - Apply USER-IS-SUBJECT filter across multi-fragment speech
-/// - Avoid duplicates from fragmented dictation of the same topic
+/// Runs once over the entire conversation so the model can see items resolved later in the same
+/// conversation, keep who must act straight across fragments, and propose repeated intent once.
+/// Every result is a draft the user accepts or drops (`TaskDrafts`); nothing is written to the
+/// task list here.
 ///
-/// spec://BACKLOG#B1
+/// spec://BACKLOG#B1, spec://intelligence/FEAT-0005
 @MainActor
 final class TaskExtractor: ObservableObject {
     /// ITER-041 — structured JSON action-item extraction on the cheapest tier.
@@ -19,6 +19,9 @@ final class TaskExtractor: ObservableObject {
     // selective criteria far better, matching the other extractors already on it.
     static let llmTier: LLMTier = .medium
     static let llmServiceId: String = "TaskExtractor"
+    /// The local route's answer budget. FEAT-0005 items carry nine fields and the spoken words (about a hundred
+    /// tokens each); the old three-field items fit in 384, five new ones do not.
+    static let localAnswerTokens = 768
 
     @Published var isRunning = false
     @Published var lastRun: Date?
@@ -98,129 +101,53 @@ final class TaskExtractor: ObservableObject {
         await drainQueue()
     }
 
-    /// Core extraction — collect all transcripts for the conversation, send as one block.
+    /// Core extraction — FEAT-0005: the whole conversation goes to the model once; every item that passes
+    /// `TaskCandidateRules` is saved as a draft (`staged`) the user accepts or drops. No notification and no vault
+    /// file for a draft (I1, I5).
     private func extractFromConversation(conversationId: UUID) async -> ExtractionOutcome {
         guard hasLLMAccess else { return .retryLater }
-
         guard let container = modelContainer else { return .retryLater }
-        let ctx = ModelContext(container)
 
-        // AUD-035 — fetch the WHOLE conversation (uncapped, oldest first) via the
-        // shared, AUD-016-tested helper. The old inline 100-row cap silently
-        // dropped late fragments — exactly where reversals/completions live — so
-        // extraction ran on a prefix while the doc above promised full context.
-        // (Cloud paths get the full block; the local route still caps at the
-        // model's input budget — see the completeBlocking call below.)
-        let items = StructuredGenerator.fetchHistoryItems(conversationId: conversationId, in: ctx)
-        let fragments = items
-            .map { $0.displayText.trimmingCharacters(in: .whitespacesAndNewlines) }
-            .filter { !$0.isEmpty }
-            if fragments.isEmpty || fragments.reduce(0, { $0 + $1.count }) < 20 { NSLog("[TaskExtractor] Skipping convo %@ — %d non-empty fragments, below the 20-char floor", conversationId.uuidString.prefix(8) as CVarArg, fragments.count) }
-
-        guard !fragments.isEmpty else { return .completed }
-        let totalChars = fragments.reduce(0) { $0 + $1.count }
-        guard totalChars >= 20 else { return .completed }
-
-        let existing = fetchExistingTasks(sinceDays: dedupWindowDays)
-        // ITER-025 — REFERENCE_TIME requires the conversation start so the LLM
-        // can decide whether to anchor due-date math at started_at (recent) or
-        // at current_time (>7d old, e.g. backfill / regenerate paths).
-        let startedAt = items.first?.createdAt ?? Date()
-        // ITER-026 — Calendar enrichment: when this conversation was linked to
-        // an EKEvent (by `CalendarReaderService.linkConversation`), we surface
-        // the event title + scheduled time + attendee names BEFORE the
-        // transcript so the LLM can name people correctly in extracted tasks
-        // ("Send draft to Maya" instead of "Send draft to him").
-        let calendarContext = fetchCalendarContext(conversationId: conversationId, in: ctx)
         // ITER-081 — the route is chosen once: the prompt is sized for it and
         // sent to it.
         let route = ExtractionRoute.current(localReady: LocalLLMService.shared.isReady,
                                             isPro: LicenseService.shared.isPro,
                                             licenseKey: LicenseService.shared.licenseKey)
-        let prompt = buildPrompt(
-            fragments: fragments,
-            existing: existing,
-            startedAt: startedAt,
-            calendarContext: calendarContext,
-            route: route
-        )
-
-        // Use the last fragment's source app if available (proxy for what app user was in most).
-        let sourceApp = items.last.flatMap { $0.source } ?? "conversation"
-        NSLog("[TaskExtractor] Start: convo %@, %d fragments, %d transcript chars, %d prompt chars, %d dedup refs, calendar=%@, route=%@", conversationId.uuidString.prefix(8) as CVarArg, fragments.count, totalChars, prompt.count, existing.count, calendarContext == nil ? "no" : "yes", route.name)
+        if route == .byok, settings.activeAPIKey.isEmpty {
+            NSLog("[TaskExtractor] No API key — skipping")
+            return .retryLater
+        }
 
         do {
-            let response: String
-            // ITER-039 — local LLM takes priority when loaded.
-            if route == .local {
-                NSLog("[TaskExtractor] Extracting via local Phi (convo %@, %d fragments)",
-                      conversationId.uuidString.prefix(8) as CVarArg, fragments.count)
-                response = try await LocalLLMService.shared.completeBlocking(
-                    system: Self.systemPrompt, user: prompt,
-                    maxUserChars: 6000, maxTokens: 384   // F1.2 — was default 2000: transcript got cut after dedup context
-                )
-            } else if case .pro(let licenseKey) = route {
-                NSLog("[TaskExtractor] Extracting via Pro proxy (convo %@, %d fragments, %d chars)",
-                      conversationId.uuidString.prefix(8) as CVarArg, fragments.count, totalChars)
-                response = try await callProProxy(system: Self.systemPrompt, user: prompt, licenseKey: licenseKey)
-            } else {
-                let apiKey = settings.activeAPIKey
-                guard !apiKey.isEmpty else {
-                    NSLog("[TaskExtractor] No API key — skipping")
-                    return .retryLater
-                }
-                let provider = LLMProvider(rawValue: settings.llmProvider) ?? .openai
-                response = try await llm.complete(
-                    system: Self.systemPrompt,
-                    user: prompt,
-                    apiKey: apiKey,
-                    provider: provider
-                )
+            let pass = try await suggest(conversationId: conversationId, in: ModelContext(container),
+                                         route: route, now: Date()) { system, user in
+                try await self.complete(system: system, user: user, route: route)
             }
-
-            // F1.7 — nil = garbage/truncated JSON (routine for local models):
-            // keep the conversation queued instead of dequeuing it forever.
-            guard let tasks = parseResponse(response,
-                                            sourceTranscriptId: items.last?.id,
-                                            sourceApp: sourceApp,
-                                            conversationId: conversationId) else {
+            switch pass {
+            case .nothingToSend:
+                return .completed
+            case .unparseable(let response):
+                // F1.7 — nil = garbage/truncated JSON (routine for local models):
+                // keep the conversation queued instead of dequeuing it forever.
                 lastError = "LLM returned unparseable JSON — will retry"
                 NSLog("[TaskExtractor] ⚠️ Unparseable response for convo %@ (%d chars) — counted as failed attempt", conversationId.uuidString.prefix(8) as CVarArg, response.count)
                 return .failedAttempt   // counted — capped at maxFailedAttempts
-            }
-            guard !tasks.isEmpty else {
-                NSLog("[TaskExtractor] No new tasks from conversation %@", conversationId.uuidString.prefix(8) as CVarArg)
+            case .done(let run):
+                let reasons = Dictionary(grouping: run.outcome.dropped, by: \.reason).map { "\($0.key.rawValue)=\($0.value.count)" }.sorted()
+                NSLog("[TaskExtractor] Convo %@ (%@): %d item(s) answered, %d kept as drafts, dropped: %@", conversationId.uuidString.prefix(8) as CVarArg, run.source == .call ? "call" : "dictation", run.outcome.kept.count + run.outcome.dropped.count, run.drafts.count, reasons.isEmpty ? "none" : reasons.joined(separator: " "))
+                guard !run.drafts.isEmpty else { return .completed }
+                // The model call took seconds: the drafts go into a context made now, so nothing read before it
+                // is written back (stale-save rule). SB-1: `try`, never `try?` — a lost save keeps it queued.
+                let save = ModelContext(container)
+                for draft in run.drafts { save.insert(draft) }
+                try save.save()
+                NSLog("[TaskExtractor] ✅ %d draft(s) saved from conversation %@, %d with due date, %d waiting on someone", run.drafts.count, conversationId.uuidString.prefix(8) as CVarArg, run.drafts.filter { $0.dueAt != nil }.count, run.drafts.filter { !$0.isMyTask }.count)
+                // Fire-and-forget embedding for semantic RAG (ITER-008).
+                AppDelegate.shared?.embeddingService.embedTasksInBackground(run.drafts, in: save)
+                // The after-call card may already be open: its drafts arrive now.
+                MeetingRecapState.shared.reloadDrafts(for: conversationId, in: container)
                 return .completed
             }
-
-            for task in tasks {
-                ctx.insert(task)
-            }
-            // SB-1: a swallowed save (try?) would return .completed and let the
-            // queue drop the conversation though nothing persisted — the exact
-            // silent loss this iteration fixes. `try` → throw → catch → .retryLater.
-            try ctx.save()
-            NSLog("[TaskExtractor] Response %d chars → %d task(s) saved, %d with due date, %d delegated", response.count, tasks.count, tasks.filter { $0.dueAt != nil }.count, tasks.filter { !$0.isMyTask }.count)
-            NSLog("[TaskExtractor] ✅ Extracted %d tasks from conversation %@",
-                  tasks.count, conversationId.uuidString.prefix(8) as CVarArg)
-
-            for task in tasks {
-                NotificationService.shared.postNewTask(task, source: "Voice")
-            }
-
-            // Fire-and-forget embedding for semantic RAG (ITER-008).
-            AppDelegate.shared?.embeddingService.embedTasksInBackground(tasks, in: ctx)
-
-            // ITER-035 v2 — export each new task as markdown in the user's vault.
-            if let exporter = AppDelegate.shared?.obsidianExporter {
-                let ids = tasks.map { $0.id }
-                Task { @MainActor in
-                    for id in ids {
-                        await exporter.exportTask(id)
-                    }
-                }
-            }
-            return .completed
         } catch {
             lastError = error.localizedDescription
             NSLog("[TaskExtractor] ❌ Failed: %@", error.localizedDescription)
@@ -228,198 +155,172 @@ final class TaskExtractor: ObservableObject {
         }
     }
 
+    /// One pass without the store write: what was sent, what came back, what the rules kept. The model call is
+    /// passed in, so the replay and the tests run the exact pipeline the app runs.
+    enum SuggestionPass {
+        /// Too little text to send (nothing, or under 20 characters after the phantom filter).
+        case nothingToSend
+        case unparseable(response: String)
+        case done(SuggestionRun)
+    }
+
+    struct SuggestionRun {
+        let source: TaskCandidateRules.Source
+        let prompt: String
+        let response: String
+        let outcome: TaskCandidateRules.Outcome
+        /// Not inserted anywhere yet; every one `staged`.
+        let drafts: [TaskItem]
+    }
+
+    func suggest(conversationId: UUID, in ctx: ModelContext, route: ExtractionRoute, now: Date,
+                 complete: (_ system: String, _ user: String) async throws -> String) async throws -> SuggestionPass {
+        // AUD-035 — the WHOLE conversation (uncapped, recording order) via the shared, AUD-016-tested helper.
+        let items = StructuredGenerator.fetchHistoryItems(conversationId: conversationId, in: ctx)
+        // R3 — phantom lines never reach the model, so nothing can cite them.
+        let sent: [(item: HistoryItem, text: String)] = items.compactMap { item in
+            TaskCandidateRules.sendable(item.displayText).map { (item, $0) }
+        }
+        let totalChars = sent.reduce(0) { $0 + $1.text.count }
+        guard !sent.isEmpty, totalChars >= 20 else {
+            NSLog("[TaskExtractor] Skipping convo %@ — %d non-empty fragments, below the 20-char floor", conversationId.uuidString.prefix(8) as CVarArg, sent.count)
+            return .nothingToSend
+        }
+
+        let source = Self.source(of: conversationId, items: items, in: ctx)
+        let existing = fetchExistingTasks(sinceDays: dedupWindowDays, in: ctx, now: now)
+        // ITER-025 — REFERENCE_TIME requires the conversation start so the LLM
+        // can decide whether to anchor due-date math at started_at (recent) or
+        // at current_time (>7d old, e.g. backfill / regenerate paths).
+        let startedAt = items.first?.createdAt ?? now
+        let prompt = buildPrompt(fragments: sent.map(\.text), existing: existing, startedAt: startedAt,
+                                 source: source, route: route, now: now)
+        NSLog("[TaskExtractor] Start: convo %@ (%@), %d fragments, %d transcript chars, %d prompt chars, %d dedup refs, route=%@", conversationId.uuidString.prefix(8) as CVarArg, source == .call ? "call" : "dictation", sent.count, totalChars, prompt.count, existing.count, route.name)
+
+        let response = try await complete(Self.systemPrompt, prompt)
+        guard let candidates = parseCandidates(response) else { return .unparseable(response: response) }
+
+        let fragments = sent.map { TaskCandidateRules.Fragment(text: $0.text, at: $0.item.recordedAt ?? $0.item.createdAt) }
+        // Read after the model call, in a context made now (the rows may have changed meanwhile).
+        let since = fragments.map(\.at).min() ?? now
+        let rows = Self.repeatRows(since: since, in: ModelContext(ctx.container))
+            .compactMap { TaskCandidateRules.existing(from: $0, now: now) }
+        // Off the main actor: on a long call the evidence scan takes real time.
+        let outcome = await Task.detached(priority: .utility) {
+            TaskCandidateRules.apply(candidates, source: source, fragments: fragments, existing: rows, now: now)
+        }.value
+        let drafts = outcome.kept.enumerated().map { i, kept -> TaskItem in
+            let part = sent[kept.fragmentIndex].item
+            let draft = TaskItem(taskDescription: kept.candidate.description,
+                                 dueAt: kept.candidate.dueAt,
+                                 sourceTranscriptId: part.id,
+                                 sourceApp: part.source ?? items.last?.source ?? "conversation",
+                                 conversationId: conversationId,
+                                 status: "staged",
+                                 assignee: kept.candidate.assignee)
+            // Suggestions show newest first: within one pass the model's first item is the newest (1 ms apart).
+            draft.createdAt = now.addingTimeInterval(-Double(i) / 1_000)
+            draft.updatedAt = draft.createdAt
+            return draft
+        }
+        return .done(SuggestionRun(source: source, prompt: prompt, response: response,
+                                   outcome: outcome, drafts: drafts))
+    }
+
+    /// A meeting is a call between people; everything else is one person dictating.
+    private static func source(of conversationId: UUID, items: [HistoryItem], in ctx: ModelContext) -> TaskCandidateRules.Source {
+        var desc = FetchDescriptor<Conversation>(predicate: #Predicate { $0.id == conversationId })
+        desc.fetchLimit = 1
+        if let conv = (try? ctx.fetch(desc))?.first { return conv.source == "meeting" ? .call : .dictation }
+        return items.contains { $0.source == "meeting" } ? .call : .dictation
+    }
+
+    /// R1 / K9 — every row that can absorb a repeat said since `since`: open work (tasks and drafts, any age, no
+    /// cap: an old open task must still absorb its repeat) and work that ended after it (done, dropped).
+    private static func repeatRows(since: Date, in ctx: ModelContext) -> [TaskItem] {
+        var open = FetchDescriptor<TaskItem>(predicate: #Predicate { !$0.completed && !$0.isDismissed })
+        var ended = FetchDescriptor<TaskItem>(predicate: #Predicate { ($0.completed || $0.isDismissed) && $0.updatedAt >= since })
+        // Only what the lifecycle reads — not the embedding every row carries.
+        let fields: [PartialKeyPath<TaskItem>] = [\.taskDescription, \.assignee, \.status, \.isDismissed, \.completed,
+                                                  \.completedAt, \.createdAt, \.updatedAt]
+        open.propertiesToFetch = fields
+        ended.propertiesToFetch = fields
+        return ((try? ctx.fetch(open)) ?? []) + ((try? ctx.fetch(ended)) ?? [])
+    }
+
+    /// The model call on the chosen route.
+    private func complete(system: String, user: String, route: ExtractionRoute) async throws -> String {
+        switch route {
+        case .local:
+            // ITER-039 — local LLM takes priority when loaded.
+            return try await LocalLLMService.shared.completeBlocking(
+                system: system, user: user,
+                maxUserChars: 6000, maxTokens: Self.localAnswerTokens   // F1.2: the input budget stays 6000
+            )
+        case .pro(let licenseKey):
+            return try await callProProxy(system: system, user: user, licenseKey: licenseKey)
+        case .byok:
+            let provider = LLMProvider(rawValue: settings.llmProvider) ?? .openai
+            return try await llm.complete(system: system, user: user, apiKey: settings.activeAPIKey, provider: provider)
+        }
+    }
+
     // MARK: - Prompt
 
-    /// Action item extraction prompt — on-conversation-close pattern.
-    /// Single-user desktop dictation: no speaker labels. Assignee filter done via
-    /// linguistic "USER IS SUBJECT" rule.
+    /// FEAT-0005 §3 — the model proposes; `TaskCandidateRules` decides. The prompt says where the text comes from
+    /// (a dictation is mostly instructions to AI tools, a call is people talking) and asks, per item, for the kind,
+    /// the spoken words it came from and how sure the model is.
     static let systemPrompt = """
-    You are an expert action item extractor. Your sole purpose is to identify and extract actionable tasks from a voice-dictation conversation.
+    You find follow-ups in one conversation and propose them. Every proposal is only a suggestion: the user decides which ones become tasks. Propose only what a busy person would thank you for. When unsure, propose nothing.
 
-    CALENDAR MEETING CONTEXT (when present, READ FIRST):
+    SOURCE — the first line of the input says which kind of conversation this is.
 
-    A `CALENDAR MEETING CONTEXT:` block may precede the transcript. When it appears it lists the meeting Title, Scheduled time range, and Participants pulled from the user's actual calendar event linked to this conversation. You MUST:
-    - Use participant names verbatim in extracted tasks. NEVER use "Speaker 0" / "Speaker 1" or vague pronouns ("him") when names are available.
-    - Recognise that the conversation involved exactly the listed participants — match transcript voices to those names by content cues. Example: if the meeting is "1-on-1 with Maya" and the user says "I'll send him the draft", extract "Send draft to Maya" — not "Send draft to him".
-    - Treat the meeting Title only as situational context — do NOT extract the title itself as a task. Action items must come from the SPEAKERS' words inside the transcript.
-    - When ambiguous which named participant a delegated action falls on (e.g. user says "we agreed they'll handle it" but multiple names listed), prefer SKIP over guessing.
+    SOURCE: dictation — one person, the user, speaking to the computer. Most dictation is the user instructing an AI assistant or a tool (write or fix code, change a website or a design, draft or translate text, research, review), or text dictated into another app (a message, an email, a prompt). That work is being done right now inside the computer: it is NOT a follow-up. From a dictation propose only:
+    (a) asked_by_user — the user explicitly asks to be reminded, or to add a task, for later ("remind me to…", "add a task to…", "don't let me forget…", in any language);
+    (b) mine — a real-world action the user must do later that involves a person, money or a date (call or meet someone, pay, sign, deliver something to someone) — never work for an AI tool or an app.
+    A dictated message to someone ("Sam, please send me the report") is the user's own request to that person: propose nothing for it.
 
-    CONVERSATION-WIDE CONTEXT (READ CAREFULLY):
+    SOURCE: call — a conversation between people. Each line starts with "Me:" (the user) or "Them:" (the other people; several people may share "Them:"). Propose:
+    - mine — something the user committed to do, or a request to the user that the user accepted;
+    - asked_by_user — the user (a "Me:" line) explicitly asks to be reminded or to add a task.
+    Never propose another person's chores, what another person promised or offered to do for the user, or work agreed between other people: only what the user must do.
 
-    You receive a FULL conversation composed of multiple dictation fragments, ordered by time. Treat the fragments as ONE thought stream from the same single user:
-    - If a task mentioned in an EARLIER fragment is reported as DONE in a LATER fragment → DO NOT EXTRACT.
-      Example: Fragment 1 "надо ответить Майку" + Fragment 3 "ответил Майку" → SKIP (resolved).
-    - If the user CHANGES THEIR MIND between fragments → honor the final decision.
-      Example: Fragment 1 "завтра позвоню клиенту" + Fragment 2 "не буду звонить" → SKIP.
-    - If the same intent is repeated in different words across fragments → extract AT MOST ONCE.
-    - Only extract tasks that survive the FULL conversation.
+    NEVER PROPOSE:
+    - a command to an AI assistant to act now ("investigate this", "explain how X works"), unless the user explicitly asks to be reminded later;
+    - quoted, read-aloud, hypothetical or example phrases; a "remind me" said by someone else, a TV or a video;
+    - status updates ("Sam is testing the build"), observations, ideas, wishes, advice, rhetorical questions, "we should discuss X";
+    - small talk ("let's grab coffee sometime") unless a named person and a concrete place or time are agreed;
+    - anything reported done, cancelled or changed later in the same conversation (honor the final decision);
+    - the same work twice (propose it once), or anything already in EXISTING ACTION ITEMS.
 
-    OWNERSHIP CLASSIFICATION (APPLY BEFORE EXTRACTION):
+    FIELDS — for every item:
+    - description: a self-contained action, 4 to 15 words, starting with a verb, naming the object and the person if there is one ("Send the signed contract to Sam"). Resolve "it" / "that" from the conversation. No time words (they go in due_at). Write it in the language of the conversation.
+    - kind: "mine" or "asked_by_user", as defined above.
+    - evidence: the exact words from ONE fragment that show this item, at least 3 words, copied character for character in the language they were spoken. Never translate, paraphrase or fix them. For a call, copy the words without the "Me:" / "Them:" label.
+    - due_at: ISO-8601 UTC with "Z", or null.
+    - capture_confidence: 0 to 1 — how sure you are this is a real follow-up the user would want.
+    - ownership_confidence: 0 to 1 — how sure you are that the user is the one who must act.
+    - concrete_deliverable: true only when the item names a concrete action and object ("Send the signed contract to Sam"); false for vague ones ("Handle the Sarah thing", "Look into it", "Follow up").
+    - real_world: true when the action happens outside this computer session — with a person, money or a date; false for work an AI tool or an app is being told to do.
 
-    This is a single-user dictation. The user is SPEAKING. Each action item belongs
-    to one of three classes — handle each differently:
+    DUE DATE:
+    - REFERENCE_TIME: if started_at is more than 7 days before the current time, anchor at the current time (a stale conversation being reprocessed); otherwise at started_at. "tomorrow" / "next Monday" resolve relative to REFERENCE_TIME.
+    - "today" → REFERENCE_TIME's date, "tomorrow" → the next day, a weekday → its next occurrence, "next week" → +7 days.
+    - "morning" → 9:00, "afternoon" → 14:00, "evening" → 18:00, "noon" → 12:00, "end of day" or no time → 23:59, "urgent" / "ASAP" → REFERENCE_TIME + 2 h.
+    - Resolve in the user's time zone, then convert to UTC with "Z". No timing words → null.
 
-    (A) MY TASK — the USER themselves will do it.
-        Examples: "Мне надо ответить Майку" / "I need to call Mike" / "I'll ship the deploy"
-        → EXTRACT with assignee = null
+    EXAMPLES:
+    - SOURCE: dictation, "Remind me to renew the car insurance on Monday" → {"description": "Renew the car insurance policy", "kind": "asked_by_user", "evidence": "Remind me to renew the car insurance on Monday", "due_at": "<Monday 23:59 in UTC>", "capture_confidence": 0.95, "ownership_confidence": 0.95, "concrete_deliverable": true, "real_world": true}
+    - SOURCE: dictation, "Make the header bigger and fix the pricing cards on mobile" → nothing (instructions to an AI tool).
+    - SOURCE: dictation, "Sam, send me the report by Friday please" → nothing (a message the user is sending).
+    - SOURCE: call, "Them: I'll send you the deck tonight, it's Priya by the way" → nothing (Priya's promise, not the user's task).
+    - SOURCE: call, "Them: Remind me to call the moving company" → nothing (someone else's reminder).
 
-    (B) WAITING-ON — the user explicitly DELEGATED to someone OR co-committed
-        with someone where the OTHER person is the executor.
-        Examples:
-        - "Я попросил Сэма задеплоить" / "I asked Sam to deploy" → assignee = "Sam"
-        - "Мы решили что Сэм подготовит отчёт" (user is in "мы" but Sam does it) → assignee = "Sam"
-        - "Сказал Майку прислать драфт" / "Told Mike to send draft" → assignee = "Mike"
-        → EXTRACT with assignee = <person name as spoken>
+    Propose at most five items, the most important first.
 
-    (C) UNRELATED THIRD PARTY — someone else's action with NO link to user.
-        Examples:
-        - "У Сэма созвон с Саней в среду" → SKIP (just a fact, not user's concern)
-        - "Mike has a meeting with his team" → SKIP
-        - "Sam is shipping v2 today" → SKIP (no delegation, no co-commitment)
-        → SKIP — do not extract
-
-    Critical rule for (B) vs (C): EXTRACT as waiting-on ONLY when the user's voice
-    explicitly delegated the work or the user is part of the deciding party. A bare
-    mention of someone else's activity = (C) = SKIP. When ambiguous, prefer SKIP.
-
-    Ambiguous cases — default to SKIP unless explicit:
-    - "Созвон с Сэмуй в понедельник" → who calls? SKIP unless "у меня / I have / поставил".
-    - "Сэм прислал документы, нужно посмотреть" → who looks is ambiguous → SKIP unless clearly user said "посмотрю / I'll review".
-    - "У меня созвон с Сэмуй в понедельник" → "у меня" = user → MY task.
-    - "Просил Сэма прислать к среде" → explicit delegation → WAITING-ON, assignee = "Сэм".
-
-    Assignee field formatting:
-    - Use the name AS SPOKEN in the transcript (don't normalize "Bob" → "Robert").
-    - Capitalize first letter ("Sam" not "sam").
-    - Multi-person: pick the primary executor (the one who actually does it). If truly
-      shared between two people, pick the first named.
-    - Generic terms ("the team", "кто-то", "someone") → use "Team" or skip if vague.
-
-    EXPLICIT TASK/REMINDER REQUESTS (HIGHEST PRIORITY — BYPASSES USER-IS-SUBJECT):
-
-    When the user uses these patterns, ALWAYS extract (even for third parties — the user is asking to be reminded):
-    - "Remind me to X" / "Remember to X" → EXTRACT "X"
-    - "Don't forget to X" / "Don't let me forget X" → EXTRACT "X"
-    - "Add task X" / "Create task X" / "Make a task for X" → EXTRACT "X"
-    - "Note to self: X" / "Mental note: X" → EXTRACT "X"
-    - "Task: X" / "Todo: X" / "To do: X" → EXTRACT "X"
-    - "I need to remember to X" → EXTRACT "X"
-    - "Put X on my list" / "Add X to my tasks" → EXTRACT "X"
-    - "Set a reminder for X" / "Can you remind me X" → EXTRACT "X"
-
-    Russian equivalents (same priority):
-    - "Напомни мне X" / "Не забудь X" / "Запиши задачу X" / "Добавь в список X" / "Мне нужно не забыть X"
-
-    But still honor the resolution rule: if the explicit request is resolved later in the same conversation, SKIP.
-
-    Examples:
-    - "Remind me to buy milk" → Extract "Buy milk"
-    - "Don't forget to call your mom" → Extract "Call mom"
-    - "Напомни мне проверить трафик ChatApp" → Extract "Проверить трафик ChatApp"
-
-    CRITICAL DEDUPLICATION RULES (Check BEFORE extracting):
-    • DO NOT extract action items that are >95% similar to existing ones shown below
-    • Check both the description AND the due date/timeframe
-    • Consider semantic similarity, not just exact word matches
-    • Examples of DUPLICATES (DO NOT extract):
-      - "Call John" vs "Phone John" → DUPLICATE
-      - "Finish report by Friday" vs "Complete report by end of week" → DUPLICATE
-      - "Buy milk" vs "Get milk from store" → DUPLICATE
-    • NOT duplicate (OK to extract):
-      - "Buy groceries" vs "Buy milk" → NOT duplicate (different scope)
-      - "Call dentist" vs "Call plumber" → NOT duplicate (different person/service)
-      - "Submit report by March 1st" vs "Submit report by March 15th" → NOT duplicate (different deadlines)
-    • If unsure, err on the side of DUPLICATE (don't extract).
-    • SINGLE-TOPIC LIMIT: ≥1 action item per topic, not one per variation or detail.
-
-    WORKFLOW:
-    1. Read the ENTIRE conversation (all fragments) carefully.
-    2. Check resolution: are any mentioned actions already reported as done later? Strike them.
-    3. Classify each candidate by OWNERSHIP (A/B/C above). Drop class C entirely.
-    4. For class A — assignee = null. For class B — assignee = <name>.
-    5. Check for EXPLICIT task requests in what remains — ALWAYS extract those (always class A).
-    6. For IMPLICIT tasks, default to extracting NOTHING:
-       - Is the user already doing this or about to? SKIP.
-       - Would a busy person genuinely forget this? If not OBVIOUS, SKIP.
-       - NEVER extract multiple items about the same topic.
-       - When in doubt, extract 0 items.
-    7. Extract timing information separately into due_at (ISO-8601 UTC with 'Z').
-    8. Clean description — remove ALL time references and vague words.
-    9. Final check — description must be timeless and specific.
-
-    BALANCE QUALITY AND USER INTENT:
-    - EXPLICIT requests ("remind me", "add task", "don't forget") → ALWAYS extract, even if trivial.
-    - IMPLICIT tasks → very selective, better 0 than noise.
-
-    STRICT FILTERING — IMPLICIT tasks meet ALL criteria:
-
-    1. **Concrete action** — specific actionable next step, not vague intention.
-    2. **Timing signal** — explicit date, relative timing ("tomorrow", "next week", "by Friday"), urgency marker. NOT required for explicit requests.
-    3. **Real importance** — financial, health/safety, hard deadline, commitment. NOT required for explicit requests.
-    4. **NOT already being done** — skip if user is currently doing it or handling in real-time:
-       - "I'm going to X" → SKIP
-       - "Let me X" → SKIP
-       - "I want to X" → SKIP unless paired with concrete deadline
-
-    EXCLUDE (be aggressive):
-    - Things user is ALREADY doing / "I'm working on X" / "currently doing Y"
-    - Vague suggestions ("we should grab coffee sometime")
-    - General goals without specific next steps ("I need to exercise more")
-    - Past actions being discussed
-    - Hypothetical scenarios
-    - Trivial tasks with no consequences
-    - Routine daily activities user already knows about
-    - Updates/status reports about ongoing work
-    - Conversations where the action is being completed in real-time between participants
-    - Back-and-forth clarification or decision-making about something happening right now
-    - Requests and responses between people who are together and handling the matter on the spot
-    - If the entire conversation is a brief in-person exchange that will be resolved within minutes, extract 0 items
-    - **WORK COMMANDS DICTATED TO AN AI / DEVELOPER / TOOL — the #1 noise source, SKIP ALL.**
-      This user dictates to DIRECT an AI assistant or developer to build / fix / change / check /
-      improve / review software, websites, designs, code, or content. Those imperative commands are
-      work being EXECUTED right now by the AI or tool — they are NOT the user's personal to-do list.
-      SKIP every such command. Examples to SKIP:
-        "make the text larger", "check the website metadata", "read claude.md", "find more tools",
-        "fix the layout", "create a plan and show the architecture", "increase the card size",
-        "write CLAUDE instead of OPUS", "review and improve the website", "structure the text",
-        "make elements more neutral", "transcribe the videos".
-      Heuristic: if the action is about producing/modifying software, a website, a design, content,
-      or code, and the user is plainly instructing it to be done now, it is a COMMAND, not a task → SKIP.
-      Extract one of these ONLY if the user EXPLICITLY frames it as their own reminder/task
-      ("remind me", "add task", "don't forget", "напомни", "запиши задачу", "не забудь").
-
-    FORMAT REQUIREMENTS:
-    - ≤15 words per description (strict)
-    - Start with a verb when possible ("Call", "Send", "Review", "Pay", "Submit")
-    - Resolve ALL vague references ("it", "that") using transcript context.
-      Example: "planning Jordan's birthday party" + "buy decorations for it" → "Buy decorations for Jordan's birthday party"
-    - Remove time refs from description — they go in due_at:
-      "buy groceries by tomorrow" → description "Buy groceries", due_at tomorrow 23:59 UTC
-
-    DUE DATE EXTRACTION:
-    - All due_at must be FUTURE UTC timestamps with 'Z' suffix. NEVER past.
-    - REFERENCE_TIME: If `started_at` is >7 days before `current_time`, use `current_time` as the anchor (we're reprocessing a stale conversation). Otherwise use `started_at`. Phrases like "tomorrow" / "next Monday" resolve relative to REFERENCE_TIME, NOT to whenever the LLM thinks "now" is.
-    - Date resolution: "today" → REFERENCE_TIME date, "tomorrow" → next day, weekday → next occurrence, "next week" → +7 days.
-    - Time resolution: "morning" → 9AM, "afternoon" → 2PM, "evening" → 6PM, "noon" → 12PM, "end of day" → 23:59, no time → 23:59. "urgent"/"ASAP" → +2h from REFERENCE_TIME.
-    - Resolve in user timezone, convert to UTC with 'Z' suffix.
-    - If resolved date ends up in the past relative to `current_time`, omit due_at.
-    - If no timing clues present, omit due_at entirely.
-
-    Conversation started_at: {started_at}
-    Current time: {current_time}
-    User timezone: {tz}
-
-    Return JSON:
-    {"tasks": [{"description": "...", "due_at": "2026-04-20T20:59:00Z" or null, "assignee": "Sam" or null}]}
-
-    Where:
-    - "assignee" = null  → MY TASK (user does it). Class A.
-    - "assignee" = "<Name>" → WAITING-ON (named person owes the user). Class B.
-    - Class C items must NOT appear in the array at all.
-
-    If nothing meets the criteria: {"tasks": []}
-
-    CRITICAL OUTPUT RULE: Respond with ONLY the JSON object. No translation. No explanation. No preamble. No markdown fences.
+    Return JSON only, no prose, no markdown fences:
+    {"tasks": [{"description": "...", "kind": "mine", "evidence": "...", "due_at": null, "capture_confidence": 0.9, "ownership_confidence": 0.9, "concrete_deliverable": true, "real_world": true}]}
+    If nothing qualifies: {"tasks": []}
     """
 
     /// Internal, with the clock and time zone injectable, so
@@ -428,7 +329,7 @@ final class TaskExtractor: ObservableObject {
         fragments: [String],
         existing: [TaskItem],
         startedAt: Date,
-        calendarContext: CalendarMeetingContext?,
+        source: TaskCandidateRules.Source,
         route: ExtractionRoute,
         now: Date = Date(),
         timeZone: TimeZone = .current
@@ -447,36 +348,13 @@ final class TaskExtractor: ObservableObject {
             ? "REFERENCE_TIME = current_time (conversation is \(Int(ageDays))d old, treat as reprocess)"
             : "REFERENCE_TIME = started_at (recent conversation, anchor due-dates here)"
 
+        // FEAT-0005 — the source first: the rules differ for a dictation and a call.
+        parts.append(source == .call ? "SOURCE: call" : "SOURCE: dictation")
         parts.append("Conversation started_at: \(startedISO)")
         parts.append("Current time: \(nowISO)")
         parts.append("Timezone: \(tz)")
         parts.append(referenceHint)
         parts.append("")
-
-        // ITER-026 — calendar enrichment block. Lets the LLM ground assignees
-        // in real names instead of "Speaker 0" / "him".
-        if let cal = calendarContext {
-            parts.append("CALENDAR MEETING CONTEXT:")
-            // ITER-081 — the calendar's own text is bounded, so it can never
-            // take the room the transcript needs.
-            let title = PromptFit.prefix(cal.title, units: 600)
-            parts.append("- Title: \(title)\(title.utf16.count < cal.title.utf16.count ? "…" : "")")
-            let df = DateFormatter()
-            df.locale = Locale(identifier: "en_US_POSIX")
-            df.timeZone = timeZone
-            df.dateFormat = "yyyy-MM-dd HH:mm zzz"
-            parts.append("- Scheduled: \(df.string(from: cal.startDate)) → \(df.string(from: cal.endDate))")
-            if !cal.attendees.isEmpty {
-                var shown: [String] = []
-                for name in cal.attendees {
-                    if (shown + [name]).joined(separator: ", ").utf16.count > 2_000 { break }
-                    shown.append(name)
-                }
-                let more = cal.attendees.count - shown.count
-                parts.append("- Participants: \(shown.joined(separator: ", "))\(more > 0 ? " (+\(more) more)" : "")")
-            }
-            parts.append("")
-        }
 
         if !existing.isEmpty {
             parts.append("EXISTING ACTION ITEMS FROM PAST \(dedupWindowDays) DAYS (do NOT duplicate):")
@@ -497,7 +375,9 @@ final class TaskExtractor: ObservableObject {
             parts.append("")
         }
 
-        parts.append("Conversation fragments to analyze (ordered by time, all from the same user):")
+        parts.append(source == .call
+            ? "Conversation fragments to analyze (ordered by time; Me: lines are the user, Them: lines are the other people):"
+            : "Conversation fragments to analyze (ordered by time, all from the same user):")
         var fragLines: [String] = []
         for (i, frag) in fragments.enumerated() {
             fragLines.append("--- fragment \(i + 1) ---")
@@ -526,41 +406,11 @@ final class TaskExtractor: ObservableObject {
         return combined
     }
 
-    /// Linked-event metadata pulled from `Conversation.calendarEvent*` fields.
-    /// Only present when `CalendarReaderService.linkConversation` matched the
-    /// conversation to an EKEvent during ITER-018.
-    struct CalendarMeetingContext {
-        let title: String
-        let startDate: Date
-        let endDate: Date
-        let attendees: [String]
-    }
-
-    private func fetchCalendarContext(conversationId: UUID, in ctx: ModelContext) -> CalendarMeetingContext? {
-        var desc = FetchDescriptor<Conversation>(predicate: #Predicate { $0.id == conversationId })
-        desc.fetchLimit = 1
-        guard let conv = (try? ctx.fetch(desc))?.first else { return nil }
-        guard let title = conv.calendarEventTitle?.trimmingCharacters(in: .whitespaces),
-              !title.isEmpty,
-              let start = conv.calendarEventStartDate,
-              let end = conv.calendarEventEndDate else {
-            return nil
-        }
-        let attendees: [String] = {
-            guard let raw = conv.calendarAttendeesJSON,
-                  let data = raw.data(using: .utf8),
-                  let names = try? JSONDecoder().decode([String].self, from: data) else { return [] }
-            return names.filter { !$0.trimmingCharacters(in: .whitespaces).isEmpty }
-        }()
-        return CalendarMeetingContext(title: title, startDate: start, endDate: end, attendees: attendees)
-    }
-
     // MARK: - Fetch helpers
 
-    private func fetchExistingTasks(sinceDays: Int) -> [TaskItem] {
-        guard let container = modelContainer else { return [] }
-        let ctx = ModelContext(container)
-        let cutoff = Date().addingTimeInterval(-Double(sinceDays) * 86400)
+    /// The prompt's dedup list: what was proposed or added in the last days (the rules check repeats on their own).
+    private func fetchExistingTasks(sinceDays: Int, in ctx: ModelContext, now: Date) -> [TaskItem] {
+        let cutoff = now.addingTimeInterval(-Double(sinceDays) * 86400)
         var desc = FetchDescriptor<TaskItem>(
             predicate: #Predicate { !$0.isDismissed && $0.createdAt >= cutoff },
             sortBy: [SortDescriptor(\.createdAt, order: .reverse)]
@@ -571,19 +421,66 @@ final class TaskExtractor: ObservableObject {
 
     // MARK: - Response parsing
 
-    private struct TaskJSON: Decodable {
+    /// One item of the answer. Lenient on types (a local model may quote numbers and booleans); strict on the
+    /// description, as before. Fields a model leaves out stay nil — `TaskCandidateRules` decides what that means.
+    private struct ItemJSON: Decodable {
         let description: String
-        let due_at: String?
+        let kind: String?
+        let evidence: String?
+        let dueAt: String?
         let assignee: String?
+        let captureConfidence: Double?
+        let ownershipConfidence: Double?
+        let concreteDeliverable: Bool?
+        let realWorld: Bool?
+
+        enum CodingKeys: String, CodingKey {
+            case description, kind, evidence, assignee
+            case dueAt = "due_at"
+            case captureConfidence = "capture_confidence"
+            case ownershipConfidence = "ownership_confidence"
+            case concreteDeliverable = "concrete_deliverable"
+            case realWorld = "real_world"
+        }
+
+        init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            description = try c.decode(String.self, forKey: .description)
+            kind = Self.string(c, .kind)
+            evidence = Self.string(c, .evidence)
+            dueAt = Self.string(c, .dueAt)
+            assignee = Self.string(c, .assignee)
+            captureConfidence = Self.number(c, .captureConfidence)
+            ownershipConfidence = Self.number(c, .ownershipConfidence)
+            concreteDeliverable = Self.flag(c, .concreteDeliverable)
+            realWorld = Self.flag(c, .realWorld)
+        }
+
+        private static func string(_ c: KeyedDecodingContainer<CodingKeys>, _ key: CodingKeys) -> String? {
+            (try? c.decodeIfPresent(String.self, forKey: key)) ?? nil
+        }
+        private static func number(_ c: KeyedDecodingContainer<CodingKeys>, _ key: CodingKeys) -> Double? {
+            if let d = (try? c.decodeIfPresent(Double.self, forKey: key)) ?? nil { return d }
+            return string(c, key).flatMap { Double($0.trimmingCharacters(in: .whitespaces)) }
+        }
+        private static func flag(_ c: KeyedDecodingContainer<CodingKeys>, _ key: CodingKeys) -> Bool? {
+            if let b = (try? c.decodeIfPresent(Bool.self, forKey: key)) ?? nil { return b }
+            switch string(c, key)?.trimmingCharacters(in: .whitespaces).lowercased() {
+            case "true": return true
+            case "false": return false
+            default: return nil
+            }
+        }
     }
     private struct ExtractionResult: Decodable {
-        let tasks: [TaskJSON]
+        let tasks: [ItemJSON]
     }
 
     /// ITER-051 F1.7 — `nil` = unparseable LLM output (the caller keeps the
-    /// conversation queued); `[]` = valid JSON with nothing to extract.
+    /// conversation queued); `[]` = valid JSON with nothing to extract. An answer in the old shape (description,
+    /// due date, assignee only) still parses; its items carry no kind and the rules drop them.
     /// Internal (not private) so `ExtractorParseOutcomeTests` pins the contract.
-    func parseResponse(_ response: String, sourceTranscriptId: UUID?, sourceApp: String, conversationId: UUID?) -> [TaskItem]? {
+    func parseCandidates(_ response: String) -> [TaskCandidateRules.Candidate]? {
         let extracted = extractJSONObject(from: response)
         guard let data = extracted.data(using: .utf8) else { return nil }
         guard let parsed = try? JSONDecoder().decode(ExtractionResult.self, from: data) else {
@@ -596,37 +493,26 @@ final class TaskExtractor: ObservableObject {
         let dfFrac = ISO8601DateFormatter()
         dfFrac.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
 
-        return parsed.tasks.compactMap { json -> TaskItem? in
-            let wordCount = json.description.split(separator: " ").count
-            guard wordCount <= 15 else {
-                NSLog("[TaskExtractor] ⚠️ rejected task (>15 words, %d chars)", json.description.count)
-                return nil
-            }
+        return parsed.tasks.map { json in
             var due: Date? = nil
-            if let raw = json.due_at, !raw.isEmpty, raw != "null" {
+            if let raw = json.dueAt, !raw.isEmpty, raw != "null" {
                 due = df.date(from: raw) ?? dfFrac.date(from: raw)
-                if let d = due, d < Date() {
-                    NSLog("[TaskExtractor] ⚠️ Past due date rejected: %@", raw)
-                    due = nil
-                }
             }
             // ITER-013 — normalize assignee:
             // - empty/whitespace/"null" → nil (MY task)
             // - non-empty → trimmed + capitalized first letter, preserved as-is otherwise
-            //   (don't transliterate or translate — "Сэм" stays "Сэм", "Sam" stays "Sam")
+            //   (never transliterated or translated)
             let assignee: String? = {
                 guard let raw = json.assignee?.trimmingCharacters(in: .whitespacesAndNewlines),
                       !raw.isEmpty, raw.lowercased() != "null" else { return nil }
                 return raw.prefix(1).uppercased() + raw.dropFirst()
             }()
-            return TaskItem(
-                taskDescription: json.description,
-                dueAt: due,
-                sourceTranscriptId: sourceTranscriptId,
-                sourceApp: sourceApp,
-                conversationId: conversationId,
-                assignee: assignee
-            )
+            return TaskCandidateRules.Candidate(description: json.description, kind: json.kind,
+                                                evidence: json.evidence, dueAt: due, assignee: assignee,
+                                                captureConfidence: json.captureConfidence,
+                                                ownershipConfidence: json.ownershipConfidence,
+                                                concreteDeliverable: json.concreteDeliverable,
+                                                realWorld: json.realWorld)
         }
     }
 
@@ -659,7 +545,8 @@ final class TaskExtractor: ObservableObject {
 
     // MARK: - Pro proxy (reuses existing endpoint)
 
-    private func callProProxy(system: String, user: String, licenseKey: String) async throws -> String {
+    /// Internal (not private) so the opt-in replay (`TaskSuggestionReplayTests`) sends exactly what the app sends.
+    func callProProxy(system: String, user: String, licenseKey: String) async throws -> String {
         let request = try ExtractionRoute.proAdviceRequest(system: system, user: user, licenseKey: licenseKey,
                                                            tier: Self.llmTier, serviceId: Self.llmServiceId)
         let (data, response) = try await URLSession.shared.data(for: request)

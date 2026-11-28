@@ -822,8 +822,15 @@ final class ChatService: ObservableObject {
         → scale goals (1-10): delta clamps to [1,10].
         → numeric goals: delta is the counter change (+5 = push-ups done, -1 = undo).
 
-    addTask            {"description": "<≤15 words>", "dueAt": "<ISO8601Z>"|null, "assignee": "<name>"|null}
-        → creates a new task. `assignee` non-null = waiting-on that person.
+    addTask            {"description": "<≤15 words>", "dueAt": "<ISO8601Z>"|null, "project": "<name>"|null}
+        → creates a new task for the user to do. `project` = one of the user's projects
+          (<active_projects>) picked from the user's words and the conversation; null when none fits; never a name
+          of your own.
+
+    createProject      {"name": "<name the user said>", "newAnyway"?: true}
+        → ONLY when the user explicitly says to create a project with that name. Call findProject first: exact
+          match → don't create, use it; similar names → ask "add to <similar> or create a new one?" in plain text,
+          and pass newAnyway: true only if they choose new.
 
     addMemory          {"content": "<fact>", "category": "system"|"interesting"}
         → stores a durable fact about the user. "system" = about the user themselves;
@@ -846,6 +853,9 @@ final class ChatService: ObservableObject {
     searchConversations {"query": "<text>", "limit"?: <int>}
         → returns {items: [{id, title, overview, startedAt, project?}]}. Use when
           user references a past meeting without quoting its title verbatim.
+
+    findProject        {"name": "<text>"}
+        → returns {exact: name|null, similar: [names]} among the user's projects.
 
     searchScreenHistory {"query": "<text>", "days"?: <int>, "limit"?: <int>}
         → searches what was ON THE USER'S SCREEN: {activities: [{when, app,
@@ -1063,7 +1073,7 @@ final class ChatService: ObservableObject {
         let result = executor.execute(call, chatMessageId: messageId)
         msg.toolResultSummary = (result.ok ? "✓ " : "✗ ") + result.summary
         msg.pendingToolCallJSON = nil  // resolved — bubble flips to result mode
-        msg.toolExecutedAt = Date()    // start the 60s undo window
+        msg.toolExecutedAt = ChatToolExecutor.undoWindowStart(tool: call.tool)   // the 60s undo window, if it can be undone
         NSLog("[ChatService] tool confirmed by user: %@ ok=%@ followup=%@", call.tool, result.ok ? "yes" : "no", (call.id != nil && msg.originatingUserPrompt != nil && result.ok) ? "yes" : "no")
         try? ctx.save()
         NSLog("[ChatService] 🔧 tool executed: %@ → summary %d chars (audit=%@)",

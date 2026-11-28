@@ -333,6 +333,11 @@ DESIGN_SKIPS=(
     MeetingCoachRenderTests.testRenderMeetingCardStates
     # the window screens in both looks, drawn to PNG, opt-in through METAWHISP_RENDER_DIR (ITER-087)
     LookRenderTests.testRenderTheWindowScreens
+    # the Tasks window (board, list, a task) on made-up tasks, drawn to PNG, opt-in through METAWHISP_RENDER_DIR
+    # (FEAT-0006)
+    TasksRenderTests.testRenderTheTasksWindow
+    # every tab of the main window at four widths in both looks, drawn to PNG, opt-in through METAWHISP_RENDER_DIR
+    MainWindowWidthTests.testRenderEveryTabAtEveryWidth
     # the live bench: real errands on real sites, only with METAWHISP_BENCH=1 (ITER-076 stage 3C)
     AgentLiveBenchTests.testTheTrialErrandsOnTheTestChrome
     # how MetaChat's model calls an errand, live, only with METAWHISP_CHAT_PROBE=1 (2026-10-06)
@@ -351,6 +356,9 @@ DESIGN_SKIPS=(
     # one real step call on the product's arm through the live Pro server, only with METAWHISP_LIVE_SERVER=1 and
     # the owner's licence (2026-10-20): the gate must not depend on the network, the server or a licence
     ServerBrainLiveTests.testTheProductArmAnswersAStepWithTheAgentOutputTool
+    # the task-suggestion replay over a store copy through the live Pro server, only with METAWHISP_TASK_REPLAY=1
+    # and the owner's licence (FEAT-0005, 2026-11-26)
+    TaskSuggestionReplayTests.testReplayConversationsThroughTheProServer
 )
 
 # Tests that need a screen that is awake and unlocked: they skip on a locked

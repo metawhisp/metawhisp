@@ -534,6 +534,10 @@ final class StructuredGenerator: ObservableObject {
             // what it saves, and while the model was answering a meeting may
             // have been completed, starred or linked to its calendar event
             // (2026-11-24: completed meetings reopened, then rewritten for hours).
+            // T4: the model's project name is kept only when it is one of the user's projects; a call or a dictation
+            // never creates one (166 of 191 projects were names used once). Looked up before the fresh fetch below,
+            // so nothing awaits between that fetch and its save.
+            let project: String? = parsed.project.flatMap { projectAggregator?.existingCanonical(for: $0) }
             guard case let (target, out)? = try Self.current(conversationId, in: container) else { return .unchanged }
             let resolvedTitle = ConversationTitleResolver.resolve(
                 calendarEventTitle: target.calendarEventTitle,
@@ -550,14 +554,10 @@ final class StructuredGenerator: ObservableObject {
             target.overview = parsed.overview
             target.category = parsed.category
             target.emoji = validateSFSymbol(parsed.icon)
-            // ITER-014 — write project + topics (canonical name resolved later
-            // by ProjectAggregator; we store the raw LLM value for audit trail).
-            if let rawProject = parsed.project?.trimmingCharacters(in: .whitespacesAndNewlines),
-               !rawProject.isEmpty, rawProject.lowercased() != "null" {
-                target.primaryProject = rawProject
-            } else {
-                target.primaryProject = nil
-            }
+            // ITER-014 — write project + topics. The project is an existing one or none (T4); a conversation in a
+            // project the user archived keeps it (Q4, Codex review P2-9).
+            target.primaryProject = projectAggregator?.projectAfterGeneration(proposed: project,
+                                                                              current: target.primaryProject)
             if let topics = parsed.topics, !topics.isEmpty {
                 let cleaned = topics
                     .map { $0.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() }
@@ -597,14 +597,6 @@ final class StructuredGenerator: ObservableObject {
                 if !source.isEmpty {
                     embeddingService.embedConversationInBackground(conversationId, sourceText: source, in: container)
                 }
-            }
-
-            // ITER-014 — eagerly seed the ProjectAlias row so this conversation's
-            // project shows up in the Projects view immediately (rather than only
-            // after the next listProjects() call would lazily resolve it).
-            if let raw = target.primaryProject?.trimmingCharacters(in: .whitespacesAndNewlines),
-               !raw.isEmpty, let projectAggregator {
-                _ = projectAggregator.resolveCanonical(raw)
             }
 
             // ITER-018 calendar link MOVED to the start of `generate()` (before
@@ -737,7 +729,8 @@ final class StructuredGenerator: ObservableObject {
     For the CATEGORY: Classify the content into EXACTLY ONE of these categories:
     personal, education, health, finance, legal, philosophy, spiritual, science, entrepreneurship, parenting, romantic, travel, inspiration, technology, business, social, work, sports, politics, literature, history, architecture, music, weather, news, entertainment, psychology, real, design, family, economics, environment, other
 
-    For the PROJECT: Extract the PRIMARY product/project/codename this conversation is about.
+    For the PROJECT: the user's project (from EXISTING PROJECTS) this conversation is about —
+    its exact name, or null. Never a name that is not in that list.
     - GOOD: "ChatApp", "MetaWhisp", "Example Project", "Q2 Roadmap", "Migration to Postgres"
     - BAD: "work" (too generic — that's category), "discussion", "the team", "my company"
     - This is the most CONCRETE recurring entity — a specific product or initiative the user
@@ -846,14 +839,13 @@ final class StructuredGenerator: ObservableObject {
         let isoFormatter = ISO8601DateFormatter()
         let started = isoFormatter.string(from: startedAt)
 
-        // ITER-032.1 (2026-05-08) — supply existing project canonicals so
-        // the LLM reuses established names instead of inventing variants.
-        // `ProjectAggregator.listProjects(includeSingletons: false)` already
-        // filters convCount ≥ 2, which is exactly the qualifying threshold
-        // for the catalog hint. Empty hint when no established projects.
+        // ITER-032.1 (2026-05-08) — supply the user's projects so the LLM picks
+        // one of them. T4 (2026-11-26): every project is real now (made by an
+        // agent or the user, or kept by the owner), so all are listed, the ones
+        // without conversations yet included; the answer is one of them or null.
         var projectHint = ""
         if let pa = projectAggregator {
-            let rows = pa.listProjects(includeSingletons: false)
+            let rows = pa.listProjects(includeSingletons: true)
                 .map { (canonical: $0.canonicalName, convCount: $0.conversationCount) }
             projectHint = ExistingProjectCatalog.promptHint(from: rows)
         }

@@ -22,6 +22,9 @@ struct MainWindowView: View {
     @ObservedObject private var license = LicenseService.shared
 
     @State var selectedTab: SidebarTab
+    /// Below `railBelow` the sidebar folds to its icons, so a narrow window keeps its width for the screen.
+    @State private var railOnly = false
+    static let railBelow: CGFloat = 760
 
     init(
         coordinator: TranscriptionCoordinator,
@@ -63,6 +66,11 @@ struct MainWindowView: View {
         }
     }
 
+    /// The smallest the window may be: about half the old 900 pt, every tab one column there (owner, 2026-11-26:
+    /// allow it twice as narrow, one column left). Declared here, by the content, because the hosting view sets the
+    /// window's minimum from its content; every tab must fit it (MainWindowWidthTests).
+    static let minimumSize = NSSize(width: 450, height: 600)
+
     var body: some View {
         ZStack {
             // The wall — the window's one ground (ITER-087). See PageWash.
@@ -73,7 +81,7 @@ struct MainWindowView: View {
                 // sidebar starts just under them — its rounded corner ran through them when it reached the top (owner,
                 // 2026-11-25). Both columns keep the title bar's safe area, so nothing lies under its drag region.
                 sidebar
-                    .frame(width: 220)
+                    .frame(width: railOnly ? 52 : 220)
                     .padding(.leading, 12)
                     .padding(.top, 4)
                     .padding(.bottom, 12)
@@ -98,6 +106,12 @@ struct MainWindowView: View {
                 selectedTab = tab
             }
         }
+        // The window's minimum, said by the content the hosting view sizes the window from.
+        .frame(minWidth: Self.minimumSize.width, minHeight: Self.minimumSize.height)
+        // Flips only when the window crosses the line, not on every pixel of a resize.
+        .onGeometryChange(for: Bool.self) { $0.size.width < Self.railBelow } action: { folded in
+            if folded != railOnly { railOnly = folded }
+        }
     }
 
     // MARK: - Custom Sidebar (glass-hero)
@@ -111,12 +125,15 @@ struct MainWindowView: View {
                     .interpolation(.high)
                     .aspectRatio(contentMode: .fit)
                     .frame(width: 30, height: 30)
-                Text("MetaWhisp")
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(MW.textPrimary)
-                Spacer()
+                if !railOnly {
+                    Text("MetaWhisp")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(MW.textPrimary)
+                    Spacer()
+                }
             }
-            .padding(.horizontal, 12)
+            .frame(maxWidth: .infinity, alignment: railOnly ? .center : .leading)
+            .padding(.horizontal, railOnly ? 0 : 12)
             .padding(.vertical, 12)
 
             GlassDivider().padding(.horizontal, 8).padding(.bottom, 6)
@@ -128,6 +145,7 @@ struct MainWindowView: View {
                         title: tab.rawValue,
                         icon: tab.icon,
                         isActive: selectedTab == tab,
+                        compact: railOnly,
                         action: { selectedTab = tab }
                     )
                 }
@@ -141,16 +159,19 @@ struct MainWindowView: View {
             // misleading for users on Cloud Whisper / Pro proxy paths.
             // Both pips derive from settings + license live, so flipping
             // a Cloud-feature toggle in Settings instantly updates the footer.
-            HStack(spacing: 8) {
-                Text("v\(Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "?")")
-                    .font(MW.monoSm)
-                    .foregroundStyle(MW.textDim)
-                Spacer()
-                statusPip(label: processingModeLabel, color: processingModeColor)
-                statusPip(label: tierLabel, color: tierColor)
+            // The folded rail has no room for them; they come back with the full sidebar.
+            if !railOnly {
+                HStack(spacing: 8) {
+                    Text("v\(Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "?")")
+                        .font(MW.monoSm)
+                        .foregroundStyle(MW.textDim)
+                    Spacer()
+                    statusPip(label: processingModeLabel, color: processingModeColor)
+                    statusPip(label: tierLabel, color: tierColor)
+                }
+                .padding(.horizontal, 14)
+                .padding(.vertical, 10)
             }
-            .padding(.horizontal, 14)
-            .padding(.vertical, 10)
         }
         .mwCard(radius: MW.rLarge, elevation: .hero)
     }

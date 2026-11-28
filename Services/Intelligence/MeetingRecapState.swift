@@ -35,6 +35,9 @@ final class MeetingRecapState: ObservableObject {
         let decisions: [String]
         let nextSteps: [String]
         var actionItems: [ActionItem]
+        /// FEAT-0005 — the call's drafts: suggestions the user adds (✓) or drops (✗). `var`: an accepted row moves
+        /// to `actionItems`, a dropped one leaves, and drafts that land after the card opened arrive here.
+        var drafts: [ActionItem] = []
         let memories: [MemoryRow]
         let transcript: String
     }
@@ -74,6 +77,51 @@ final class MeetingRecapState: ObservableObject {
             try? await Task.sleep(for: .milliseconds(400))
             self?.payload = nil
         }
+    }
+
+    /// The call's tasks and its drafts, as the card shows them: tasks the user has (`TaskItem.isTask`) and the
+    /// drafts `TaskDrafts.visible` would show for this conversation (not dropped, not expired, at most five).
+    static func tasks(for conversationId: UUID, in ctx: ModelContext, now: Date = Date())
+        -> (actionItems: [ActionItem], drafts: [ActionItem]) {
+        let desc = FetchDescriptor<TaskItem>(
+            predicate: #Predicate { $0.conversationId == conversationId && !$0.isDismissed },
+            sortBy: [SortDescriptor(\.createdAt, order: .forward)]
+        )
+        let rows = (try? ctx.fetch(desc)) ?? []
+        func item(_ t: TaskItem) -> ActionItem {
+            ActionItem(id: t.id, description: t.taskDescription, assignee: t.assignee, completed: t.completed)
+        }
+        return (rows.filter(\.isTask).map(item), TaskDrafts.visible(rows, now: now).map(item))
+    }
+
+    /// ✓ on a draft. The card then shows what the store holds: the row among the action items if it is a task
+    /// now (added here, or already in Tasks), gone if it was dropped or expired, and the next draft in its place.
+    func acceptDraft(_ id: UUID, in container: ModelContainer, now: Date = Date(),
+                     mutations: MutationService = .shared) {
+        _ = TaskDrafts.accept(id, in: container, now: now, mutations: mutations)
+        refresh(in: container, now: now)
+    }
+
+    /// ✗ on a draft. A draft already added elsewhere is not dropped: it shows among the action items instead.
+    func dropDraft(_ id: UUID, in container: ModelContainer, now: Date = Date(),
+                   mutations: MutationService = .shared) {
+        _ = TaskDrafts.drop(id, in: container, now: now, mutations: mutations)
+        refresh(in: container, now: now)
+    }
+
+    /// The extraction can finish after the card opened: an open card of that conversation gets its drafts.
+    func reloadDrafts(for conversationId: UUID, in container: ModelContainer, now: Date = Date()) {
+        guard payload?.conversationId == conversationId else { return }
+        refresh(in: container, now: now)
+    }
+
+    /// Both lists from the store, read now: what another place did meanwhile (Tasks, a new extraction) shows here.
+    private func refresh(in container: ModelContainer, now: Date) {
+        guard var p = payload else { return }
+        let split = Self.tasks(for: p.conversationId, in: ModelContext(container), now: now)
+        p.actionItems = split.actionItems
+        p.drafts = split.drafts
+        payload = p
     }
 
     /// Toggle a task's completed flag from the popup. Persists immediately

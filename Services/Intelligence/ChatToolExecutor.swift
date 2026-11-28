@@ -9,7 +9,8 @@ import SwiftData
 /// confirmation bubble, and — on user approval — calls `execute(_:in:)` here.
 ///
 /// v1 scope (what's live):
-/// - 6 tools: dismissTask, completeTask, dismissMemory, updateGoalProgress, addTask, addMemory.
+/// - 6 tools: dismissTask, completeTask, dismissMemory, updateGoalProgress, addTask, addMemory; FEAT-0006 adds
+///   createProject (mutation) and findProject (read-only).
 /// - Validation before mutation (existence + state sanity).
 /// - Human-readable result message used to compose the assistant's final text reply.
 ///
@@ -97,6 +98,18 @@ final class ChatToolExecutor: ObservableObject {
     /// success. Injectable so tests can substitute no-op hooks.
     var mutationService: MutationService = .shared
 
+    /// FEAT-0006 §5.3 (D7) — projects for addTask / createProject / findProject go through the tracker.
+    /// Injectable for tests.
+    var tracker: () -> TrackerService? = { TrackerService.shared }
+
+    /// D7 — the user's project a name points to, or why none: the exact (normalized) one is used; a name of no
+    /// project is never made up.
+    private func projectFor(_ raw: String?) -> (match: (id: UUID, name: String)?, asked: String?) {
+        guard let raw = raw?.trimmingCharacters(in: .whitespacesAndNewlines), !raw.isEmpty,
+              raw.lowercased() != "null" else { return (nil, nil) }
+        return (tracker()?.projectMatch(name: raw).exact, raw)
+    }
+
     func configure(modelContainer: ModelContainer, embeddingService: EmbeddingService? = nil) {
         self.modelContainer = modelContainer
         self.embeddingService = embeddingService
@@ -166,8 +179,26 @@ final class ChatToolExecutor: ObservableObject {
                 return .failure(.invalidArgs("description too long (>15 words) — rephrase"))
             }
             var preview = "Create task \"\(desc)\""
-            if let a = call.args["assignee"], !a.isEmpty, a != "null" { preview += " (waiting on \(a))" }
+            let project = projectFor(call.args["project"])
+            if let match = project.match {
+                preview += " in \(match.name)"
+            } else if let asked = project.asked {
+                preview += " (no project «\(asked)» — without a project)"
+            }
             return .success(preview)
+
+        case "createProject":
+            guard let name = call.args["name"]?.trimmingCharacters(in: .whitespacesAndNewlines), !name.isEmpty else {
+                return .failure(.invalidArgs("name required"))
+            }
+            guard let tracker = tracker() else { return .failure(.invalidArgs("tasks are still starting")) }
+            let found = tracker.projectMatch(name: name)
+            if let exact = found.exact { return .success("Project \"\(exact.name)\" already exists — use it") }
+            if let similar = found.similar.first, call.args["newAnyway"]?.lowercased() != "true" {
+                return .failure(.invalidArgs("a similar project «\(similar)» exists — ask the user: add to «\(similar)» "
+                                             + "or create «\(name)» as a new project (then newAnyway: true)"))
+            }
+            return .success("Create project \"\(name)\"")
 
         case "addMemory":
             guard let content = call.args["content"]?.trimmingCharacters(in: .whitespacesAndNewlines),
@@ -356,11 +387,7 @@ final class ChatToolExecutor: ObservableObject {
                                success: false, snapshotJSON: nil, chatMessageId: chatMessageId)
                 return r
             }
-            let assignee: String? = {
-                guard let raw = call.args["assignee"]?.trimmingCharacters(in: .whitespacesAndNewlines),
-                      !raw.isEmpty, raw.lowercased() != "null" else { return nil }
-                return raw
-            }()
+            // FEAT-0006 §9b P7 — the user's own task: no "waiting on" anyone.
             var dueAt: Date? = nil
             if let raw = call.args["dueAt"], !raw.isEmpty, raw.lowercased() != "null" {
                 let df = ISO8601DateFormatter()
@@ -370,16 +397,26 @@ final class ChatToolExecutor: ObservableObject {
             let task = TaskItem(
                 taskDescription: desc,
                 dueAt: dueAt,
-                sourceApp: "MetaChat",
-                assignee: assignee
+                sourceApp: "MetaChat"
             )
             do {
                 try mutationService.insert(task, in: ctx)
                 // Snapshot AFTER insert — undo = soft-delete the row we just created.
                 snapshotJSON = encodeSnapshot(["createdTaskId": task.id.uuidString])
                 ok = true
-                let tag = assignee.map { " (waiting on \($0))" } ?? ""
-                summary = "Added task: \(desc)\(tag)"
+                summary = "Added task: \(desc)"
+                // FEAT-0006 D7 — into the user's project of that name, never one made up.
+                let project = projectFor(call.args["project"])
+                if let match = project.match, let tracker = tracker() {
+                    do {
+                        try tracker.setProject(taskId: task.id, projectId: match.id)
+                        summary += " in \(match.name)"
+                    } catch {
+                        summary += " (not put in \(match.name): \(error.localizedDescription))"
+                    }
+                } else if let asked = project.asked {
+                    summary += " — no project «\(asked)», so without a project"
+                }
             } catch {
                 summary = "Couldn't save the new task (\(error.localizedDescription))"
             }
@@ -406,6 +443,24 @@ final class ChatToolExecutor: ObservableObject {
                 summary = "Stored memory: \(content.prefix(80))"
             } catch {
                 summary = "Couldn't save the new memory (\(error.localizedDescription))"
+            }
+
+        case "createProject":
+            // FEAT-0006 D7 — only on the user's explicit word; validate() already asked about a similar name.
+            let name = call.args["name"]?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            if let tracker = tracker(), !name.isEmpty {
+                let existing = tracker.projectMatch(name: name).exact
+                do {
+                    let id = try tracker.createProject(name: name, origin: .chat)
+                    ok = true
+                    summary = existing != nil ? "Project \(existing!.name) already exists — using it"
+                        : "Created project \(name)"
+                    snapshotJSON = encodeSnapshot(["projectId": id.uuidString])
+                } catch {
+                    summary = "Couldn't create the project (\(error.localizedDescription))"
+                }
+            } else {
+                summary = "Couldn't create the project — tasks are still starting"
             }
 
         default:
@@ -446,11 +501,24 @@ final class ChatToolExecutor: ObservableObject {
         case "searchMemories":    found = await searchMemories(call.args)
         case "searchConversations": found = await searchConversations(call.args)
         case "searchScreenHistory": found = await searchScreenHistory(call.args)
+        case "findProject":       found = findProject(call.args)
         default:
             return ExecResult(ok: false, summary: "Unknown read-only tool", auditId: nil)
         }
         // What a search found is data, never a call (Codex review round 1, P1-1).
         return ExecResult(ok: found.ok, summary: Self.neutralizingToolTags(found.summary), auditId: found.auditId)
+    }
+
+    /// FEAT-0006 D7 — {"exact": name|null, "similar": [names]} among the user's projects.
+    private func findProject(_ args: [String: String]) -> ExecResult {
+        let name = args["name"]?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        guard !name.isEmpty, let tracker = tracker() else {
+            return ExecResult(ok: false, summary: "Empty name", auditId: nil)
+        }
+        let found = tracker.projectMatch(name: name)
+        let object: [String: Any] = ["exact": found.exact?.name ?? NSNull(), "similar": found.similar]
+        let data = (try? JSONSerialization.data(withJSONObject: object, options: [.sortedKeys])) ?? Data("{}".utf8)
+        return ExecResult(ok: true, summary: String(decoding: data, as: UTF8.self), auditId: nil)
     }
 
     private func searchTasks(_ args: [String: String]) async -> ExecResult {
@@ -731,6 +799,17 @@ final class ChatToolExecutor: ObservableObject {
 
     // MARK: - Undo (ITER-016 v2)
 
+    /// The tools `undo` reverts: the switch below has a case for each. MetaChat offers Undo for these alone — a
+    /// created project was offered it and answered "unknown tool" (Codex review).
+    static let undoableTools: Set<String> = ["dismissTask", "completeTask", "dismissMemory", "updateGoalProgress",
+                                             "addTask", "addMemory"]
+
+    /// When a confirmed tool's 60 s undo window starts (`ChatMessage.toolExecutedAt`); nil for a tool that cannot be
+    /// undone, so its bubble shows no Undo button.
+    static func undoWindowStart(tool: String, executedAt: Date = Date()) -> Date? {
+        undoableTools.contains(tool) ? executedAt : nil
+    }
+
     /// Revert a single audit entry. No-op if already undone, expired, or non-undoable.
     /// Returns a short status string for chat display ("Reverted: …" or error reason).
     func undo(auditId: UUID) -> String {
@@ -956,9 +1035,36 @@ final class ChatToolExecutor: ObservableObject {
                     "properties": [
                         "description": ["type": "string", "description": "≤15 words, starts with verb, no time references (those go in dueAt)."],
                         "dueAt": ["type": "string", "description": "ISO-8601 UTC with Z suffix. Omit or null when no deadline."],
-                        "assignee": ["type": "string", "description": "Person owing the user the result (waiting-on). Null for the user's own task."],
+                        "project": ["type": "string", "description": "One of the user's projects (<active_projects>), picked from the user's words and the conversation; null when none fits. Never a name of your own."],
                     ],
                     "required": ["description"],
+                ],
+            ],
+        ],
+        [
+            "type": "function",
+            "function": [
+                "name": "createProject",
+                "description": "Create a project — ONLY when the user explicitly says to create a project with a name. Call findProject first: an exact match means use that project (no new one); a similar name means ask the user \"add to <similar> or create a new one?\" and pass newAnyway: true only if they choose new.",
+                "parameters": [
+                    "type": "object",
+                    "properties": [
+                        "name": ["type": "string", "description": "The name the user said."],
+                        "newAnyway": ["type": "boolean", "description": "true only after the user chose a new project over a similar one."],
+                    ],
+                    "required": ["name"],
+                ],
+            ],
+        ],
+        [
+            "type": "function",
+            "function": [
+                "name": "findProject",
+                "description": "Look up the user's project by name: returns {exact, similar}. Use before createProject, and when unsure which project a task belongs to.",
+                "parameters": [
+                    "type": "object",
+                    "properties": ["name": ["type": "string", "description": "A project name."]],
+                    "required": ["name"],
                 ],
             ],
         ],
@@ -1100,7 +1206,7 @@ final class ChatToolExecutor: ObservableObject {
     /// to undo — they only read). Keep this list narrow — when in doubt, treat
     /// as mutation.
     static let readOnlyTools: Set<String> = [
-        "searchTasks", "searchMemories", "searchConversations", "searchScreenHistory",
+        "searchTasks", "searchMemories", "searchConversations", "searchScreenHistory", "findProject",
     ]
 
     static func isReadOnly(_ tool: String) -> Bool {

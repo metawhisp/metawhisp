@@ -229,48 +229,78 @@ struct ReadyCardBody: View {
     let openAccessibility: () -> Void
     let tryAgain: () -> Void
 
+    /// Narrower than this the card stacks: key and title, then the words, then the button.
+    static let besideFrom: CGFloat = 520
+    @State private var beside = true
+
     var body: some View {
         VStack(alignment: .leading, spacing: MW.sp12) {
-            HStack(spacing: MW.sp24) {
-                CommandKeyView()
-                VStack(alignment: .leading, spacing: 6) {
-                    HStack(spacing: MW.sp10) {
-                        Text(content.title)
-                            .font(.system(size: 22, weight: .semibold))
-                            .foregroundStyle(MW.textPrimary)
-                        if content.showsPro {
-                            Text("PRO")
-                                .font(.system(size: 10, weight: .bold)).tracking(0.6)
-                                .foregroundStyle(MW.textPrimary)
-                                .padding(.horizontal, 7)
-                                .frame(height: 18)
-                                .background(Capsule().fill(Color.primary.opacity(0.16)))
+            Group {
+                if beside {
+                    HStack(spacing: MW.sp24) {
+                        CommandKeyView()
+                        words
+                        Spacer(minLength: 0)
+                        buttons
+                    }
+                    .padding(30)
+                } else {
+                    VStack(alignment: .leading, spacing: MW.sp16) {
+                        HStack(spacing: MW.sp16) {
+                            CommandKeyView()
+                            Spacer(minLength: 0)
                         }
+                        words
+                        HStack(spacing: MW.sp8) { buttons }
                     }
-                    if let detail = content.detail {
-                        KeyedText(text: detail, font: .system(size: 15))
-                            .foregroundStyle(MW.textSecondary)
-                    }
-                }
-                Spacer(minLength: 0)
-                if content.opensAccessibility {
-                    Button(DashboardReadyCard.openAccessibility, action: openAccessibility)
-                        .buttonStyle(RowButtonStyle())
-                }
-                if content.retriesModel {
-                    Button(DashboardReadyCard.tryAgain, action: tryAgain)
-                        .buttonStyle(RowButtonStyle())
+                    .padding(MW.sp20)
                 }
             }
-            .padding(30)
             .frame(maxWidth: .infinity, alignment: .leading)
             .mwCard(radius: 24, elevation: .raised)
+            .onGeometryChange(for: Bool.self) { $0.size.width >= Self.besideFrom } action: { fits in
+                if fits != beside { beside = fits }
+            }
             if let footnote = content.footnote {
                 Text(footnote)
                     .font(.system(size: 13))
                     .foregroundStyle(MW.textMuted)
                     .padding(.horizontal, 2)
             }
+        }
+    }
+
+    private var words: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: MW.sp10) {
+                Text(content.title)
+                    .font(.system(size: 22, weight: .semibold))
+                    .foregroundStyle(MW.textPrimary)
+                    .fixedSize(horizontal: false, vertical: true)
+                if content.showsPro {
+                    Text("PRO")
+                        .font(.system(size: 10, weight: .bold)).tracking(0.6)
+                        .foregroundStyle(MW.textPrimary)
+                        .padding(.horizontal, 7)
+                        .frame(height: 18)
+                        .background(Capsule().fill(Color.primary.opacity(0.16)))
+                }
+            }
+            if let detail = content.detail {
+                KeyedText(text: detail, font: .system(size: 15))
+                    .foregroundStyle(MW.textSecondary)
+            }
+        }
+    }
+
+    @ViewBuilder private var buttons: some View {
+        if content.opensAccessibility {
+            Button(DashboardReadyCard.openAccessibility, action: openAccessibility)
+                .buttonStyle(RowButtonStyle())
+        }
+        if content.retriesModel {
+            Button(DashboardReadyCard.tryAgain, action: tryAgain)
+                .buttonStyle(RowButtonStyle())
         }
     }
 }
@@ -652,7 +682,7 @@ private struct TodayStatsCard: View {
     }
     private var newTasksTodayItems: [String] {
         allTasks
-            .filter { $0.createdAt >= todayStart && ($0.status ?? "committed") != "dismissed" }
+            .filter { $0.createdAt >= todayStart && $0.isTask }   // FEAT-0005: tasks, not drafts
             .sorted { $0.createdAt > $1.createdAt }
             .map { $0.taskDescription }
     }
@@ -680,7 +710,7 @@ private struct TodayStatsCard: View {
                 return when >= day && when < next
             }.count
             let n = allTasks.filter {
-                $0.createdAt >= day && $0.createdAt < next && ($0.status ?? "committed") != "dismissed"
+                $0.createdAt >= day && $0.createdAt < next && $0.isTask   // FEAT-0005: tasks, not drafts
             }.count
             return (day, c + m + d + n)
         }
@@ -856,19 +886,58 @@ private struct TodayTomorrowSection: View {
     let isFullscreen: Bool
 
     var body: some View {
-        Grid(alignment: .topLeading, horizontalSpacing: MW.sp12, verticalSpacing: MW.sp12) {
-            GridRow {
-                TodayCard(isFullscreen: isFullscreen)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-                TomorrowCard()
-                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        // One layout whose column count changes: the cards keep their identity (and state — the day the user went
+        // back to, a running Generate) when the window crosses the line (review 2026-11-27, #6).
+        CardColumns(columns: isWide ? 2 : 1, spacing: MW.sp12) {
+            TodayCard(isFullscreen: isFullscreen)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            TomorrowCard()
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            TodayStatsCard(isFullscreen: isFullscreen)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            ScreenActivityCard()
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        }
+    }
+}
+
+/// Cards in rows of `columns`, equal widths, each row as tall as its tallest card (the cards fill it).
+private struct CardColumns: Layout {
+    var columns: Int
+    var spacing: CGFloat
+
+    private func rows(_ count: Int) -> [Range<Int>] {
+        stride(from: 0, to: count, by: max(columns, 1)).map { $0..<min($0 + max(columns, 1), count) }
+    }
+
+    private func columnWidth(_ width: CGFloat) -> CGFloat {
+        let n = CGFloat(max(columns, 1))
+        return max(0, (width - spacing * (n - 1)) / n)
+    }
+
+    private func rowHeights(_ subviews: Subviews, width: CGFloat) -> [CGFloat] {
+        let w = columnWidth(width)
+        return rows(subviews.count).map { range in
+            range.map { subviews[$0].sizeThatFits(ProposedViewSize(width: w, height: nil)).height }.max() ?? 0
+        }
+    }
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        let width = proposal.width ?? 600
+        let heights = rowHeights(subviews, width: width)
+        return CGSize(width: width, height: heights.reduce(0, +) + spacing * CGFloat(max(heights.count - 1, 0)))
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        let w = columnWidth(bounds.width)
+        let heights = rowHeights(subviews, width: bounds.width)
+        var y = bounds.minY
+        for (row, range) in rows(subviews.count).enumerated() {
+            for (column, index) in range.enumerated() {
+                subviews[index].place(at: CGPoint(x: bounds.minX + CGFloat(column) * (w + spacing), y: y),
+                                      proposal: ProposedViewSize(width: w, height: heights[row]))
             }
-            GridRow {
-                TodayStatsCard(isFullscreen: isFullscreen)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-                ScreenActivityCard()
-                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-            }
+            y += heights[row] + spacing
         }
     }
 }

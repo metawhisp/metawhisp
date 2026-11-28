@@ -37,6 +37,58 @@ final class ChatErrandOfferTests: XCTestCase {
         "searchTasks", "searchMemories", "searchConversations", "searchScreenHistory",
     ]
 
+    // FEAT-0006 (D7, 2026-11-26): MetaChat puts a task into one of the user's projects (`addTask.project`) and
+    // creates a project only on the user's word (`createProject`, after `findProject`). The pins below take
+    // exactly those additions out again, so they still prove that nothing else moved. FEAT-0006 §9b P7 (2026-11-26):
+    // `addTask` lost `assignee` (no "waiting on" tasks); the pins put the released field back the same way.
+    private static let toolNames = [
+        "dismissTask", "completeTask", "dismissMemory", "updateGoalProgress", "addTask", "createProject",
+        "findProject", "addMemory", "searchTasks", "searchMemories", "searchConversations", "searchScreenHistory",
+    ]
+
+    private static func withoutProjectTools(_ tools: [[String: Any]]) -> [[String: Any]] {
+        tools.filter { !["createProject", "findProject"].contains(names([$0]).first ?? "") }.map { tool in
+            guard names([tool]) == ["addTask"], var fn = tool["function"] as? [String: Any],
+                  var params = fn["parameters"] as? [String: Any],
+                  var props = params["properties"] as? [String: Any] else { return tool }
+            props["project"] = nil
+            props["assignee"] = ["type": "string",
+                                 "description": "Person owing the user the result (waiting-on). Null for the user's own task."]
+            params["properties"] = props
+            fn["parameters"] = params
+            var out = tool
+            out["function"] = fn
+            return out
+        }
+    }
+
+    private static func withoutProjectRules(_ rules: String) -> String {
+        // The rules' lines, as the prompt holds them (a continuation 4 spaces in).
+        func block(_ lines: [String]) -> String { lines.joined(separator: "\n") + "\n" }
+        let projectLines = block([
+            #"addTask            {"description": "<≤15 words>", "dueAt": "<ISO8601Z>"|null, "project": "<name>"|null}"#,
+            "    → creates a new task for the user to do. `project` = one of the user's projects",
+            "      (<active_projects>) picked from the user's words and the conversation; null when none fits; never a name",
+            "      of your own.",
+            "",
+            #"createProject      {"name": "<name the user said>", "newAnyway"?: true}"#,
+            "    → ONLY when the user explicitly says to create a project with that name. Call findProject first: exact",
+            #"      match → don't create, use it; similar names → ask "add to <similar> or create a new one?" in plain text,"#,
+            "      and pass newAnyway: true only if they choose new.",
+        ])
+        let releasedLines = block([
+            #"addTask            {"description": "<≤15 words>", "dueAt": "<ISO8601Z>"|null, "assignee": "<name>"|null}"#,
+            "    → creates a new task. `assignee` non-null = waiting-on that person.",
+        ])
+        let findLines = block([
+            #"findProject        {"name": "<text>"}"#,
+            "    → returns {exact: name|null, similar: [names]} among the user's projects.",
+            "",
+        ]) // ends in the blank line after the tool
+        return rules.replacingOccurrences(of: projectLines, with: releasedLines)
+            .replacingOccurrences(of: findLines, with: "")
+    }
+
     /// The `<capabilities>` block as released at 00f9528.
     private static let releasedCapabilities = """
     <capabilities>
@@ -142,14 +194,16 @@ final class ChatErrandOfferTests: XCTestCase {
     func testWithoutARunTheRulesAreThoseReleased() throws {
         let rules = ChatService.systemPrompt(canRunErrands: false)
         XCTAssertEqual(try capabilities(of: rules), Self.releasedCapabilities)
-        XCTAssertEqual(sha256(Data(rules.utf8)), Self.releasedRules, "the whole rules, byte for byte")
+        XCTAssertEqual(sha256(Data(Self.withoutProjectRules(rules).utf8)), Self.releasedRules,
+                       "the whole rules, byte for byte, but the project lines")
         XCTAssertFalse(rules.contains("runErrand"))
     }
 
     func testWithoutARunNoErrandIsOfferedAndEveryOtherToolIsAsReleased() throws {
         let tools = ChatToolExecutor.toolSchemas(canRunErrands: false)
-        XCTAssertEqual(Self.names(tools), Self.releasedToolNames)
-        XCTAssertEqual(try sha256(tools: tools), Self.releasedTools, "every tool, byte for byte")
+        XCTAssertEqual(Self.names(tools), Self.toolNames)
+        XCTAssertEqual(try sha256(tools: Self.withoutProjectTools(tools)), Self.releasedTools,
+                       "every tool, byte for byte, but the project ones")
         let json = String(decoding: try JSONSerialization.data(withJSONObject: tools), as: UTF8.self)
         XCTAssertFalse(json.contains("runErrand"))
     }
@@ -159,7 +213,8 @@ final class ChatErrandOfferTests: XCTestCase {
     func testWithARunTheRulesAreTheApprovedOnes() throws {
         let rules = ChatService.systemPrompt(canRunErrands: true)
         XCTAssertEqual(try capabilities(of: rules), Self.approvedCapabilities)
-        XCTAssertEqual(sha256(Data(rules.utf8)), Self.approvedRules, "the whole rules, byte for byte")
+        XCTAssertEqual(sha256(Data(Self.withoutProjectRules(rules).utf8)), Self.approvedRules,
+                       "the whole rules, byte for byte, but the project lines")
     }
 
     /// ITER-076 I-06 (M2): with a run the rules are the released ones with
@@ -213,7 +268,8 @@ final class ChatErrandOfferTests: XCTestCase {
 
     func testWithoutARunTheProProxysRulesAreThoseReleased() {
         let native = ChatService.nativeSystemPrompt(canRunErrands: false)
-        XCTAssertEqual(sha256(Data(native.utf8)), Self.releasedRules, "the whole rules, byte for byte")
+        XCTAssertEqual(sha256(Data(Self.withoutProjectRules(native).utf8)), Self.releasedRules,
+                       "the whole rules, byte for byte, but the project lines")
     }
 
     /// ITER-076 I-06 (M3): the on-device model's rules without a run are
@@ -235,10 +291,10 @@ final class ChatErrandOfferTests: XCTestCase {
     /// the five words its description lost with his approval of the same day (stage 8b, 8b-36).
     func testWithARunTheErrandIsOfferedAfterEveryOtherTool() throws {
         let tools = ChatToolExecutor.toolSchemas(canRunErrands: true)
-        XCTAssertEqual(Self.names(tools), Self.releasedToolNames + ["runErrand", "doHere"])
+        XCTAssertEqual(Self.names(tools), Self.toolNames + ["runErrand", "doHere"])
         // ITER-076 stage 11: `doHere`, in the brief's words pending the owner's approval (its words:
         // `ChatHereToolTests`), is offered after the errand; every other tool is as before.
-        let (approved, output) = Self.withoutOutput(tools.filter { Self.names([$0]) != ["doHere"] })
+        let (approved, output) = Self.withoutOutput(Self.withoutProjectTools(tools.filter { Self.names([$0]) != ["doHere"] }))
         XCTAssertNotNil(output, "the Sheet's output is offered")
         let description = try XCTUnwrap(Self.errandDescription(in: approved))
         XCTAssertFalse(description.contains("the user's own browser"), "the five words are gone (8b-36)")
@@ -307,7 +363,7 @@ final class ChatErrandOfferTests: XCTestCase {
         XCTAssertEqual(outcome.text, "Sunny.")
         XCTAssertEqual(sent().count, 1)
         XCTAssertEqual(sent().first?.rules, ChatService.nativeSystemPrompt(canRunErrands: false))
-        XCTAssertEqual(sent().first?.tools, Self.releasedToolNames)
+        XCTAssertEqual(sent().first?.tools, Self.toolNames)
         withExtendedLifetime(executor) {}
     }
 
@@ -318,7 +374,7 @@ final class ChatErrandOfferTests: XCTestCase {
         _ = try await chat.runAgenticLoop(userPrompt: "what's the weather tomorrow", licenseKey: "LICENSE-1",
                                           origin: .chat(messageID: UUID()), maxRounds: 2)
         XCTAssertEqual(sent().first?.rules, ChatService.nativeSystemPrompt(canRunErrands: true))
-        XCTAssertEqual(sent().first?.tools, Self.releasedToolNames + ["runErrand", "doHere"])
+        XCTAssertEqual(sent().first?.tools, Self.toolNames + ["runErrand", "doHere"])
         withExtendedLifetime(executor) {}
     }
 
@@ -344,7 +400,7 @@ final class ChatErrandOfferTests: XCTestCase {
             let named = "pro=\(pro) on=\(on)"
             XCTAssertEqual(sent().count, 1, named)
             XCTAssertEqual(sent().first?.rules, ChatService.nativeSystemPrompt(canRunErrands: on), named)
-            XCTAssertEqual(sent().first?.tools, on ? Self.releasedToolNames + ["runErrand", "doHere"] : Self.releasedToolNames,
+            XCTAssertEqual(sent().first?.tools, on ? Self.toolNames + ["runErrand", "doHere"] : Self.toolNames,
                            named)
             withExtendedLifetime(executor) {}
             h.cleanUp()
@@ -439,7 +495,7 @@ final class ChatErrandOfferTests: XCTestCase {
                                           origin: .chat(messageID: UUID()), maxRounds: 3)
         XCTAssertEqual(sent.map(\.rules), [ChatService.nativeSystemPrompt(canRunErrands: true),
                                            ChatService.nativeSystemPrompt(canRunErrands: false)])
-        XCTAssertEqual(sent.map(\.tools), [Self.releasedToolNames + ["runErrand", "doHere"], Self.releasedToolNames])
+        XCTAssertEqual(sent.map(\.tools), [Self.toolNames + ["runErrand", "doHere"], Self.toolNames])
         XCTAssertTrue(h.runners.isEmpty, "the call already made started nothing")
         XCTAssertEqual(h.updates, [])
         withExtendedLifetime(executor) {}
@@ -487,7 +543,7 @@ final class ChatErrandOfferTests: XCTestCase {
         _ = try await chat.runAgenticLoop(userPrompt: "what's the weather tomorrow", licenseKey: "LICENSE-1",
                                           origin: .chat(messageID: UUID()), maxRounds: 2)
         XCTAssertEqual(sent().first?.rules, ChatService.nativeSystemPrompt(canRunErrands: false))
-        XCTAssertEqual(sent().first?.tools, Self.releasedToolNames)
+        XCTAssertEqual(sent().first?.tools, Self.toolNames)
     }
 
     /// The follow-up after a confirmed change reads the same rules; it is
@@ -516,7 +572,7 @@ final class ChatErrandOfferTests: XCTestCase {
 
             XCTAssertEqual(sent().count, 1, "canRun=\(canRun)")
             XCTAssertEqual(sent().first?.rules, ChatService.nativeSystemPrompt(canRunErrands: canRun), "canRun=\(canRun)")
-            XCTAssertEqual(sent().first?.tools, Self.releasedToolNames, "canRun=\(canRun)")
+            XCTAssertEqual(sent().first?.tools, Self.toolNames, "canRun=\(canRun)")
             withExtendedLifetime(executor) {}
         }
     }

@@ -166,4 +166,30 @@ final class TaskPromotionServiceTests: XCTestCase {
 
         XCTAssertEqual(svc.promoteIfNeeded(notify: false), 0)
     }
+
+    // MARK: - FEAT-0005 voice drafts
+
+    /// I2 — a voice draft (no screen context) is the user's to accept; the loop never promotes it, even with
+    /// every slot free.
+    func test_promote_neverTouchesVoiceDrafts() throws {
+        let (svc, ctx) = try makeService()
+        let voice = TaskItem(taskDescription: "Renew the car insurance policy", sourceApp: "microphone", status: "staged")
+        ctx.insert(voice)
+        try ctx.save()
+
+        XCTAssertEqual(svc.promoteIfNeeded(notify: false), 0)
+        XCTAssertEqual(voice.status, "staged")
+    }
+
+    /// …and the user's ✓ is what ends that: the same draft becomes a task on accept.
+    func test_voiceDraft_becomesATaskOnTheUsersAccept() throws {
+        let (_, ctx) = try makeService()
+        let voice = TaskItem(taskDescription: "Renew the car insurance policy", sourceApp: "microphone", status: "staged")
+        ctx.insert(voice)
+        try ctx.save()
+
+        XCTAssertEqual(TaskDrafts.accept(voice.id, in: ctx.container, mutations: MutationService(runHooks: { _ in })), .added)
+        let row = try XCTUnwrap(ModelContext(ctx.container).fetch(FetchDescriptor<TaskItem>()).first)
+        XCTAssertEqual(row.status, "committed")
+    }
 }

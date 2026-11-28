@@ -20,20 +20,24 @@ struct MainSettingsView: View {
     // ITER-053.1 — delete-screen-history confirm + inline result
     @State private var confirmDeleteScreenHistory = false
     @State private var screenHistoryDeleteResult: String?
-    // ITER-054 — Deepgram key draft (commit on ⏎/Save, not per keystroke)
-    @State private var deepgramKeyDraft = ""
-    @State private var geminiKeyDraft = ""
     /// The browser did not open the account page: the link is shown, with Copy.
     @State private var accountLinkShown = false
     /// ITER-076 P5 — the shortcut recorder. It owns the key monitor while it
     /// records, and gives the monitor back when it is done.
     @StateObject private var helpShortcutRecorder = MeetingHelpShortcutRecorder()
+    /// FEAT-0006 §8 — Connect Claude Code / Codex.
+    @StateObject private var agentConnector = AgentConnector()
     /// The Carbon shortcut — the row shows why it could not be registered.
     @ObservedObject private var meetingHelpHotkey = MeetingHelpHotkey.shared
 
     // Tab selection — single column scroll per tab beats the previous two-column wall
     // (1500-line settings was hard to scan).
-    @State private var selectedTab: SettingsTab = .general
+    @State private var selectedTab: SettingsTab
+
+    init(modelManager: ModelManagerService, initialTab: SettingsTab = .general) {
+        self.modelManager = modelManager
+        _selectedTab = State(initialValue: initialTab)
+    }
 
     /// ITER-056 — 5 tabs, one product vertical each (founder-approved mockup
     /// 2026-07-15): a key lives next to the feature it powers; Integrations
@@ -77,22 +81,33 @@ struct MainSettingsView: View {
                 }
                 .padding(.horizontal, MW.sp16)
             }
+            // Paired sections sit side by side only while each keeps a usable width.
+            .onGeometryChange(for: Bool.self) { $0.size.width >= Self.pairsBesideFrom } action: { beside in
+                if beside != pairsBeside { pairsBeside = beside }
+            }
         }
-        // Sane minimum — below this tab labels / section headers start to clip.
-        .frame(minWidth: 520, maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
+
+    @State private var pairsBeside = true
+    /// The settings area's width from which `twoColumn` pairs stand side by side; one under the other below it.
+    private static let pairsBesideFrom: CGFloat = 560
 
     // MARK: - Tab picker
 
     private var tabPicker: some View {
         HStack(spacing: 0) {
             Spacer(minLength: 0)
-            HStack(spacing: 2) {
-                ForEach(SettingsTab.shown(ultra: UltraFeatures.isOn())) { tab in
-                    tabButton(tab)
+            // The row while it fits; a narrower window gets one chip with a menu of the tabs.
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 2) {
+                    ForEach(SettingsTab.shown(ultra: UltraFeatures.isOn())) { tab in
+                        tabButton(tab)
+                    }
                 }
+                .mwSegmentTrack()
+                SegmentMenu(options: SettingsTab.shown(ultra: UltraFeatures.isOn()), selection: $selectedTab) { $0.rawValue }
             }
-            .mwSegmentTrack()
             .frame(maxWidth: contentMaxWidth, alignment: .leading)
             Spacer(minLength: 0)
         }
@@ -163,7 +178,7 @@ struct MainSettingsView: View {
                 twoColumn(fileIndexingSection, appleNotesSection)
                 calendarSection
                 obsidianSyncSection
-                mcpSection
+                agentConnectSection
             }
         case .agent:
             VStack(spacing: MW.sp12) {
@@ -176,9 +191,27 @@ struct MainSettingsView: View {
     /// whole 640-pt content column. Equal widths, glass gap between.
     @ViewBuilder
     private func twoColumn<L: View, R: View>(_ left: L, _ right: R) -> some View {
-        HStack(alignment: .top, spacing: MW.sp12) {
+        let layout = pairsBeside ? AnyLayout(HStackLayout(alignment: .top, spacing: MW.sp12))
+                                 : AnyLayout(VStackLayout(spacing: MW.sp12))
+        layout {
             left.frame(maxWidth: .infinity, alignment: .topLeading)
             right.frame(maxWidth: .infinity, alignment: .topLeading)
+        }
+    }
+
+    /// A setting's name with its control at the right; in a narrow window the control goes under the name.
+    private func labeledRow<Control: View>(_ label: String, @ViewBuilder control: () -> Control) -> some View {
+        let control = control()
+        return ViewThatFits(in: .horizontal) {
+            HStack(alignment: .center) {
+                Text(label).font(MW.mono).foregroundStyle(MW.textSecondary).lineLimit(1).fixedSize()
+                Spacer()
+                control
+            }
+            VStack(alignment: .leading, spacing: MW.sp8) {
+                Text(label).font(MW.mono).foregroundStyle(MW.textSecondary)
+                control
+            }
         }
     }
 
@@ -325,38 +358,7 @@ struct MainSettingsView: View {
 
     @ViewBuilder
     private var groqKeyField: some View {
-        let key = settings.groqKey
-        HStack(spacing: MW.sp8) {
-            if key.isEmpty {
-                TextField("", text: Binding(
-                    get: { settings.groqKey },
-                    set: { settings.groqKey = $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-                ), prompt: Text("Groq API Key").foregroundStyle(MW.textMuted))
-                    .font(MW.mono)
-                    .textFieldStyle(.plain)
-                    .foregroundStyle(MW.textPrimary)
-                    .padding(.horizontal, MW.sp8)
-                    .padding(.vertical, MW.sp4)
-                    .overlay(RoundedRectangle(cornerRadius: MW.rSmall, style: .continuous).stroke(MW.border, lineWidth: 0.5))
-            } else {
-                HStack(spacing: MW.sp8) {
-                    let masked = String(repeating: "\u{2022}", count: min(20, key.count - 4)) + String(key.suffix(4))
-                    Text(masked)
-                        .font(MW.mono)
-                        .foregroundStyle(MW.textSecondary)
-                    Spacer()
-                    Circle().fill(MW.ok).frame(width: 6, height: 6)
-                    Button { settings.groqKey = "" } label: {
-                        Image(systemName: "xmark.circle.fill")
-                            .foregroundStyle(MW.textMuted)
-                    }
-                    .buttonStyle(.plain)
-                }
-                .padding(.horizontal, MW.sp8)
-                .padding(.vertical, MW.sp4)
-                .overlay(Rectangle().stroke(MW.borderLight, lineWidth: MW.hairline))
-            }
-        }
+        APIKeyField("Groq API Key", key: \.groqKey)
         Text("Get a free key at console.groq.com")
             .font(MW.monoSm).foregroundStyle(MW.textMuted)
     }
@@ -366,53 +368,10 @@ struct MainSettingsView: View {
     /// user's own Deepgram account (real speaker labels); dictations unaffected.
     @ViewBuilder
     private var deepgramKeyField: some View {
-        let key = settings.deepgramKey
         GlassDivider()
         Text("Meeting diarization (optional)")
             .font(MW.mono).foregroundStyle(MW.textSecondary)
-        HStack(spacing: MW.sp8) {
-            if key.isEmpty {
-                // Codex review — a live binding saved the FIRST keystroke,
-                // key.isEmpty flipped, and the field collapsed to the masked
-                // view with a 1-char «key». Type/paste into a DRAFT, commit on
-                // ⏎ or Save.
-                TextField("", text: $deepgramKeyDraft,
-                          prompt: Text("Deepgram API Key").foregroundStyle(MW.textMuted))
-                    .font(MW.mono)
-                    .textFieldStyle(.plain)
-                    .foregroundStyle(MW.textPrimary)
-                    .padding(.horizontal, MW.sp8)
-                    .padding(.vertical, MW.sp4)
-                    .overlay(RoundedRectangle(cornerRadius: MW.rSmall, style: .continuous).stroke(MW.border, lineWidth: 0.5))
-                    .onSubmit { commitDeepgramKeyDraft() }
-                if !deepgramKeyDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                    Button("Save") { commitDeepgramKeyDraft() }
-                        .buttonStyle(.plain)
-                        .font(MW.label).tracking(0.6)
-                        .foregroundStyle(MW.ok)
-                        .padding(.horizontal, 8).padding(.vertical, 3)
-                        .overlay(RoundedRectangle(cornerRadius: MW.rSmall, style: .continuous)
-                                    .stroke(MW.ok.opacity(0.4), lineWidth: 0.5))
-                }
-            } else {
-                HStack(spacing: MW.sp8) {
-                    let masked = String(repeating: "\u{2022}", count: min(20, max(0, key.count - 4))) + String(key.suffix(4))
-                    Text(masked)
-                        .font(MW.mono)
-                        .foregroundStyle(MW.textSecondary)
-                    Spacer()
-                    Circle().fill(MW.ok).frame(width: 6, height: 6)
-                    Button { settings.deepgramKey = "" } label: {
-                        Image(systemName: "xmark.circle.fill")
-                            .foregroundStyle(MW.textMuted)
-                    }
-                    .buttonStyle(.plain)
-                }
-                .padding(.horizontal, MW.sp8)
-                .padding(.vertical, MW.sp4)
-                .overlay(Rectangle().stroke(MW.borderLight, lineWidth: MW.hairline))
-            }
-        }
+        APIKeyField("Deepgram API Key", key: \.deepgramKey)
         Text("With a key set, meetings are transcribed on YOUR Deepgram account with real speaker labels (who said what) in one pass. Voice dictations are unaffected. console.deepgram.com")
             .font(MW.monoSm).foregroundStyle(MW.textMuted)
             .fixedSize(horizontal: false, vertical: true)
@@ -423,64 +382,10 @@ struct MainSettingsView: View {
     /// preview model is what took the vision path down this month.
     @ViewBuilder
     private var geminiKeyField: some View {
-        let key = settings.geminiKey
-        HStack(spacing: MW.sp8) {
-            if key.isEmpty {
-                TextField("", text: $geminiKeyDraft,
-                          prompt: Text("Gemini API Key").foregroundStyle(MW.textMuted))
-                    .font(MW.mono)
-                    .textFieldStyle(.plain)
-                    .foregroundStyle(MW.textPrimary)
-                    .padding(.horizontal, MW.sp8)
-                    .padding(.vertical, MW.sp4)
-                    .overlay(RoundedRectangle(cornerRadius: MW.rSmall, style: .continuous).stroke(MW.border, lineWidth: 0.5))
-                    .onSubmit { commitGeminiKeyDraft() }
-                if !geminiKeyDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                    Button("Save") { commitGeminiKeyDraft() }
-                        .buttonStyle(.plain)
-                        .font(MW.label).tracking(0.6)
-                        .foregroundStyle(MW.ok)
-                        .padding(.horizontal, 8).padding(.vertical, 3)
-                        .overlay(RoundedRectangle(cornerRadius: MW.rSmall, style: .continuous)
-                                    .stroke(MW.ok.opacity(0.4), lineWidth: 0.5))
-                }
-            } else {
-                HStack(spacing: MW.sp8) {
-                    let masked = String(repeating: "\u{2022}", count: min(20, max(0, key.count - 4))) + String(key.suffix(4))
-                    Text(masked)
-                        .font(MW.mono)
-                        .foregroundStyle(MW.textSecondary)
-                    Spacer()
-                    Circle().fill(MW.ok).frame(width: 6, height: 6)
-                    Button { settings.geminiKey = "" } label: {
-                        Image(systemName: "xmark.circle.fill")
-                            .foregroundStyle(MW.textMuted)
-                    }
-                    .buttonStyle(.plain)
-                }
-                .padding(.horizontal, MW.sp8)
-                .padding(.vertical, MW.sp4)
-                .overlay(Rectangle().stroke(MW.borderLight, lineWidth: MW.hairline))
-            }
-        }
+        APIKeyField("Gemini API Key", key: \.geminiKey)
         Text("Alternative to the above, on YOUR Google account. Speaker labels for up to 8 voices; long meetings are sent in 25-minute pieces because diarization is capped at 30 minutes per request. Used only if the Deepgram field is empty or fails. aistudio.google.com")
             .font(MW.monoSm).foregroundStyle(MW.textMuted)
             .fixedSize(horizontal: false, vertical: true)
-    }
-
-    private func commitGeminiKeyDraft() {
-        let trimmed = geminiKeyDraft.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return }
-        settings.geminiKey = trimmed
-        geminiKeyDraft = ""
-    }
-
-    /// ITER-054 — commit the Deepgram key draft into the keychain-backed setting.
-    private func commitDeepgramKeyDraft() {
-        let trimmed = deepgramKeyDraft.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return }
-        settings.deepgramKey = trimmed
-        deepgramKeyDraft = ""
     }
 
     private func modelRow(_ info: ModelInfo) -> some View {
@@ -1094,9 +999,7 @@ struct MainSettingsView: View {
             Text("OPTIONS").blocksLabel()
 
             // Theme
-            HStack {
-                Text("Theme").font(MW.mono).foregroundStyle(MW.textSecondary)
-                Spacer()
+            labeledRow("Theme") {
                 HStack(spacing: 2) {
                     themeButton("Dark", value: "dark")
                     themeButton("Light", value: "light")
@@ -1111,9 +1014,7 @@ struct MainSettingsView: View {
             // Each swatch wraps a fixed-width slot so circles + labels of
             // different lengths ("Mono" vs "Electric" vs "Warm Orange") stay
             // visually equidistant.
-            HStack(alignment: .center) {
-                Text("Accent").font(MW.mono).foregroundStyle(MW.textSecondary)
-                Spacer()
+            labeledRow("Accent") {
                 HStack(spacing: 0) {
                     ForEach(MW.accentPresets, id: \.id) { preset in
                         AccentSwatch(
@@ -1122,7 +1023,7 @@ struct MainSettingsView: View {
                             isSelected: settings.accentColor == preset.id,
                             onTap: { settings.accentColor = preset.id }
                         )
-                        .frame(width: 64)
+                        .frame(width: 56)
                     }
                 }
             }
@@ -1143,9 +1044,7 @@ struct MainSettingsView: View {
                 .font(MW.monoSm)
                 .foregroundStyle(MW.textMuted)
 
-            HStack {
-                Text("Week starts").font(MW.mono).foregroundStyle(MW.textSecondary)
-                Spacer()
+            labeledRow("Week starts") {
                 HStack(spacing: 2) {
                     weekDayButton("Mon", value: 2)
                     weekDayButton("Sun", value: 1)
@@ -1154,9 +1053,7 @@ struct MainSettingsView: View {
             }
 
             if settings.soundEnabled {
-                HStack {
-                    Text("Sound style").font(MW.mono).foregroundStyle(MW.textSecondary)
-                    Spacer()
+                labeledRow("Sound style") {
                     HStack(spacing: 2) {
                         soundPresetButton("Default", value: "default")
                         soundPresetButton("Bass", value: "bass")
@@ -1392,8 +1289,9 @@ struct MainSettingsView: View {
                 }
             }
 
-            // API key field for active provider
-            apiKeyField
+            // API key field for active provider; switching provider starts a fresh draft.
+            APIKeyField("\(activeProviderName) API Key", key: \.activeAPIKey)
+                .id(settings.llmProvider)
 
             Text(cloudFooter)
                 .font(MW.monoSm).foregroundStyle(MW.textMuted)
@@ -1422,64 +1320,8 @@ struct MainSettingsView: View {
         .onTapGesture { settings.llmProvider = prov.rawValue }
     }
 
-    private var activeKeyBinding: Binding<String> {
-        switch settings.llmProvider {
-        case "cerebras":
-            return Binding(
-                get: { settings.cerebrasKey },
-                set: { settings.cerebrasKey = $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-            )
-        default:
-            return Binding(
-                get: { settings.openaiKey },
-                set: { settings.openaiKey = $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-            )
-        }
-    }
-
-    private var activeKey: String { settings.activeAPIKey }
-
     private var activeProviderName: String {
         (LLMProvider(rawValue: settings.llmProvider) ?? .openai).displayName
-    }
-
-    @ViewBuilder
-    private var apiKeyField: some View {
-        HStack(spacing: MW.sp8) {
-            if activeKey.isEmpty {
-                TextField("", text: activeKeyBinding,
-                          prompt: Text("\(activeProviderName) API Key").foregroundStyle(MW.textMuted))
-                    .font(MW.mono)
-                    .textFieldStyle(.plain)
-                    .foregroundStyle(MW.textPrimary)
-                    .padding(.horizontal, MW.sp8)
-                    .padding(.vertical, MW.sp4)
-                    .overlay(RoundedRectangle(cornerRadius: MW.rSmall, style: .continuous).stroke(MW.border, lineWidth: 0.5))
-            } else {
-                HStack(spacing: MW.sp8) {
-                    let masked = String(repeating: "•", count: min(20, activeKey.count - 4)) + String(activeKey.suffix(4))
-                    Text(masked)
-                        .font(MW.mono)
-                        .foregroundStyle(MW.textSecondary)
-                    Spacer()
-                    Button {
-                        activeKeyBinding.wrappedValue = ""
-                    } label: {
-                        Image(systemName: "xmark.circle.fill")
-                            .font(.system(size: 12))
-                            .foregroundStyle(MW.textMuted)
-                    }
-                    .buttonStyle(.plain)
-                }
-                .padding(.horizontal, MW.sp8)
-                .padding(.vertical, MW.sp4)
-                .overlay(RoundedRectangle(cornerRadius: MW.rSmall, style: .continuous).stroke(MW.border, lineWidth: 0.5))
-            }
-
-            if !activeKey.isEmpty {
-                Text("●").font(.system(size: 8)).foregroundStyle(MW.ok)
-            }
-        }
     }
 
     private var cloudFooter: String {
@@ -1831,13 +1673,13 @@ struct MainSettingsView: View {
             AppDelegate.shared?.realtimeScreenReactor.invalidatePendingWork()
             AppDelegate.shared?.proactiveContextService.invalidatePendingWork()
             let ctx = ModelContext(container)
-            let deleted = try ScreenRetention.deleteAll(in: ctx)
+            let deleted = try ScreenRetention.deleteAll(in: ctx, keeping: TrackerService.shared?.recordedTaskIds())
             // The destructive privacy action covers the in-session buffers
             // too — otherwise Advice keeps quoting "deleted" OCR for a while.
             AppDelegate.shared?.screenContext.clearInMemory()
             // External copies (Codex review): a batch delete bypasses the
             // MutationService hooks, so remove the Obsidian vault files for
-            // the deleted artifacts and refresh the MCP snapshot explicitly.
+            // the deleted artifacts explicitly.
             // Best-effort, like all post-commit hooks.
             let taskIds = deleted.taskIds
             let memoryIds = deleted.memoryIds
@@ -1846,7 +1688,6 @@ struct MainSettingsView: View {
                     for id in taskIds { await exporter.deleteTaskFile(id) }
                     for id in memoryIds { await exporter.deleteMemoryFile(id) }
                 }
-                MCPSnapshotService.shared.snapshotNow()
             }
             screenHistoryDeleteResult = "Deleted \(deleted.contexts) captures, \(deleted.observations) timeline entries, \(deleted.tasks) unconfirmed tasks, \(deleted.memories) screen memories."
             NSLog("[ScreenRetention] ✅ delete-all: %d contexts, %d observations, %d tasks, %d memories",
@@ -1937,75 +1778,66 @@ struct MainSettingsView: View {
                     .glassChip(selected: false, radius: MW.rTiny)
                 }
                 .buttonStyle(.plain)
+            }
+        }
+        .padding(MW.sp16)
+        .frame(maxWidth: .infinity, alignment: .topLeading)
+        .mwCard(radius: MW.rMedium, elevation: .raised)
+    }
 
-                // ITER-037 Option A (2026-05-12) — external LLM access docs.
-                // After bulk export, the user can wire Claude Desktop / Cursor /
-                // ChatGPT to read the vault as «second memory». No custom code —
-                // just MCP filesystem server pointed at the vault path.
-                Divider().padding(.vertical, 4)
-                Text("External LLM access")
-                    .mwBadge()
-                Text("Once vault is filled, point Claude Desktop / Cursor / ChatGPT at it. They'll read your voices, meetings, tasks and memories as «second memory».")
-                    .font(MW.monoSm).foregroundStyle(MW.textMuted)
-                    .fixedSize(horizontal: false, vertical: true)
-                HStack(spacing: 6) {
-                    integrationDocButton(label: "Setup Claude Desktop", file: "CLAUDE-DESKTOP-SETUP.md")
-                    integrationDocButton(label: "Setup Cursor", file: "CURSOR-SETUP.md")
-                    integrationDocButton(label: "Setup ChatGPT", file: "CHATGPT-SETUP.md")
+    /// FEAT-0006 §8 (D3) — Claude Code and Codex keep the tasks of the folder they work in inside MetaWhisp.
+    /// Connect registers MetaWhisp's MCP server with the agent and adds one rule to its global instructions;
+    /// Disconnect removes both. Replaces the snapshot toggle and the setup-doc buttons.
+    private var agentConnectSection: some View {
+        VStack(alignment: .leading, spacing: MW.sp10) {
+            Text("AI agents").mwBadge()
+            Text("Claude Code and Codex keep the tasks of the project you work in here.")
+                .font(MW.monoSm).foregroundStyle(MW.textMuted)
+                .fixedSize(horizontal: false, vertical: true)
+            ForEach(ConnectableAgent.allCases) { agent in
+                agentRow(agent)
+            }
+        }
+        .padding(MW.sp16)
+        .frame(maxWidth: .infinity, alignment: .topLeading)
+        .mwCard(radius: MW.rMedium, elevation: .raised)
+        .onAppear { agentConnector.refresh() }
+    }
+
+    private func agentRow(_ agent: ConnectableAgent) -> some View {
+        let state = agentConnector.state(agent)
+        return VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 8) {
+                Text(agent.displayName).font(MW.mono).foregroundStyle(MW.textSecondary)
+                if state == .connected {
+                    Text("Connected").font(MW.monoSm).foregroundStyle(MW.textMuted)
+                }
+                Spacer()
+                if state == .working {
+                    ProgressView().controlSize(.mini)
+                } else {
+                    Button {
+                        Task {
+                            if state == .connected {
+                                await agentConnector.disconnect(agent)
+                            } else {
+                                await agentConnector.connect(agent)
+                            }
+                        }
+                    } label: {
+                        Text(state == .connected ? "Disconnect" : "Connect")
+                            .font(MW.label).tracking(0.6)
+                            .foregroundStyle(MW.textPrimary)
+                            .glassChip(selected: false, radius: MW.rTiny)
+                    }
+                    .buttonStyle(.plain)
                 }
             }
-        }
-        .padding(MW.sp16)
-        .frame(maxWidth: .infinity, alignment: .topLeading)
-        .mwCard(radius: MW.rMedium, elevation: .raised)
-    }
-
-    /// AUD-029 — MCP snapshot opt-in. Default OFF: no snapshot of memories/tasks/
-    /// conversations is written unless the user enables it here; turning it off
-    /// purges the on-disk file via applyEnabledState().
-    private var mcpSection: some View {
-        VStack(alignment: .leading, spacing: MW.sp10) {
-            toggleRow("MCP Server", isOn: $settings.mcpEnabled)
-            if settings.mcpEnabled {
-                Text("Writes a local snapshot of your memories, tasks and conversation summaries to ~/Library/Application Support/\(AppIdentity.current.supportFolderName)/mcp-snapshot.json so the standalone metawhisp-mcp tool can answer Claude Desktop / Cursor calls. The file stays on this Mac, owner-only, and is deleted when you turn this off.")
-                    .font(MW.monoSm).foregroundStyle(MW.textMuted)
+            if case .failed(let why) = state {
+                Text(why).font(MW.monoSm).foregroundStyle(MW.textMuted)
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
-        .padding(MW.sp16)
-        .frame(maxWidth: .infinity, alignment: .topLeading)
-        .mwCard(radius: MW.rMedium, elevation: .raised)
-        .onChange(of: settings.mcpEnabled) { _, _ in
-            MCPSnapshotService.shared.applyEnabledState()
-        }
-    }
-
-    /// ITER-037 Option A — opens the relevant setup doc from `specs/integrations/`
-    /// in the user's preferred Markdown viewer (Finder fallback). Bundled into
-    /// the .app at `Contents/Resources/integrations/<file>` by build.sh; here
-    /// we resolve via Bundle.main + NSWorkspace.open.
-    private func integrationDocButton(label: String, file: String) -> some View {
-        Button {
-            // Prefer bundled doc; if not present (debug builds skip resource
-            // copy), open the source spec via filesystem path.
-            let bundledURL = Bundle.main.url(forResource: file.replacingOccurrences(of: ".md", with: ""), withExtension: "md", subdirectory: "integrations")
-            let fallbackURL = URL(fileURLWithPath: "/Users/\(NSUserName())/Code/MetaWhisp/specs/integrations/\(file)")
-            let url = bundledURL ?? (FileManager.default.fileExists(atPath: fallbackURL.path) ? fallbackURL : nil)
-            if let url {
-                NSWorkspace.shared.open(url)
-            } else {
-                NSLog("[Settings] Integration doc not found: %@", file)
-            }
-        } label: {
-            HStack(spacing: 4) {
-                Image(systemName: "book")
-                    .font(.system(size: 10))
-                Text(label).font(MW.label).tracking(0.6)
-            }
-            .foregroundStyle(MW.textSecondary)
-            .glassChip(selected: false, radius: MW.rTiny)
-        }
-        .buttonStyle(.plain)
     }
 
     // MARK: - AI Models (ITER-039 local LLM catalog)

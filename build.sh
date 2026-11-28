@@ -82,6 +82,12 @@ mkdir -p "$MACOS" "$RESOURCES" "$FRAMEWORKS"
 # Copy executable
 cp "$EXECUTABLE" "$MACOS/$EXEC_NAME"
 
+# FEAT-0006 — the agents' tool (`metawhisp-cli`: the MCP server Claude Code / Codex launch, and the command line).
+# Contents/Helpers is the place for a helper tool; the Connect button in Settings registers this path.
+HELPERS="$CONTENTS/Helpers"
+mkdir -p "$HELPERS"
+cp "$BUILD_DIR/metawhisp-cli" "$HELPERS/metawhisp-cli"
+
 # Copy Info.plist
 cp "Resources/Info.plist" "$CONTENTS/Info.plist"
 
@@ -292,6 +298,15 @@ if [ -f "$MACOS/mlx.metallib" ]; then
     else
         codesign --force --sign "$SIGN_IDENTITY" --options runtime --timestamp "$MACOS/mlx.metallib"
     fi
+fi
+
+# FEAT-0006 — sign the agents' tool before the outer bundle (every nested binary is signed first), with the
+# hardened runtime and, for a release, a timestamp — the notary rejects an unsigned or untimestamped helper.
+if [ "$SWAP" = true ]; then
+    codesign --force --sign "$SIGN_IDENTITY" --options runtime --timestamp=none \
+        --identifier "com.metawhisp.cli" "$HELPERS/metawhisp-cli"
+else
+    sign_target "$HELPERS/metawhisp-cli" "com.metawhisp.cli" || exit 1
 fi
 
 # Sign outer bundle with our app identifier — macOS uses Identifier as app identity

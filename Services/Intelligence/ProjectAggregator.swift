@@ -5,8 +5,9 @@ import SwiftData
 /// via `ProjectAlias`, then surfaces summaries + details for the Projects view + MetaChat.
 ///
 /// Two paths feed canonicalization:
-/// 1. **Cheap path** (`resolveCanonical`) — case-insensitive exact match against any
-///    alias of an existing `ProjectAlias`. Hit → reuse canonical. Miss → create new row.
+/// 1. **Cheap path** (`existingCanonical`) — case-insensitive exact match against any
+///    alias of an existing `ProjectAlias`. Hit → reuse canonical. Miss → no project (T4: calls and
+///    dictations never create one; agents and the user do, through TrackerService).
 /// 2. **Quality path** (`mergeAliases`) — periodic embedding-similarity pass across
 ///    `ProjectAlias.centroidEmbedding` pairs. Pairs with cosine > 0.88 collapse:
 ///    smaller (fewer aliases) merges INTO larger.
@@ -23,14 +24,50 @@ final class ProjectAggregator: ObservableObject {
     @Published var lastMergeCount: Int = 0
 
     private var modelContainer: ModelContainer?
+    /// FEAT-0006 — `Tracker.store`. A project in it (`TrackedProject`) is real: never pruned, merged away or
+    /// renamed by the automatic passes below, always listed (I6).
+    private var trackerContainer: ModelContainer?
+    /// The app runs with a tracker; when its store failed to open, the passes that delete, merge or rename
+    /// projects stop rather than treat every agent's project as automatic (review P2-5: fail closed).
+    private var trackerRequired = false
+    private var trackerMissing: Bool { trackerRequired && trackerContainer == nil }
     /// Cosine threshold for merging two project centroids. 0.88 calibrated to
     /// catch "ChatApp" vs "ChatAppAI" while not collapsing "ChatApp" vs "Overmind".
     /// Same family of thresholds as `EmbeddingService.dedupThreshold` (0.92) but
     /// looser because project names are short and contextual variation is wider.
     private let mergeThreshold: Float = 0.88
 
-    func configure(modelContainer: ModelContainer) {
+    func configure(modelContainer: ModelContainer, trackerContainer: ModelContainer? = nil,
+                   trackerRequired: Bool = false) {
         self.modelContainer = modelContainer
+        self.trackerContainer = trackerContainer
+        self.trackerRequired = trackerRequired
+        if trackerMissing { NSLog("[ProjectAggregator] no tracker store — prune, merge and renaming are off") }
+    }
+
+    /// FEAT-0006 §5.4 — ids of the projects agents or the user made real.
+    func trackedProjectIds() -> Set<UUID> {
+        guard let trackerContainer else { return [] }
+        let rows = (try? ModelContext(trackerContainer).fetch(FetchDescriptor<TrackedProject>())) ?? []
+        return Set(rows.map(\.projectId))
+    }
+
+    /// Projects the prune and recanonicalize passes never delete or rename: the ones agents or the user made real, and
+    /// the ones the user put away — an archived project must still be there, as it was, to restore (Codex review
+    /// P2-5). The merge pass skips archived projects altogether (`mergeAliases`).
+    func protectedProjectIds() -> Set<UUID> {
+        trackedProjectIds().union(archivedProjectIds())
+    }
+
+    /// FEAT-0006 §5.4 — which of two similar projects absorbs the other. A tracked project always survives; two
+    /// tracked projects are never merged; otherwise the bigger (more aliases) wins, as before.
+    static func mergeWinner(_ a: ProjectAlias, _ b: ProjectAlias,
+                            tracked: Set<UUID>) -> (winner: ProjectAlias, loser: ProjectAlias)? {
+        let ta = tracked.contains(a.id), tb = tracked.contains(b.id)
+        if ta && tb { return nil }
+        if ta { return (a, b) }
+        if tb { return (b, a) }
+        return a.aliases.count >= b.aliases.count ? (a, b) : (b, a)
     }
 
     // MARK: - Public API used by Projects view + MetaChat + backfill
@@ -42,8 +79,16 @@ final class ProjectAggregator: ObservableObject {
     /// keep the Projects view free of singleton noise (LLM-hallucinated
     /// one-off names). Pass `includeSingletons: true` to disable the gate
     /// (Settings → "Show all projects" toggle).
-    func listProjects(includeSingletons: Bool = false) -> [ProjectSummary] {
+    /// Owner 2026-11-27 (Q4) — projects the user put away.
+    func archivedProjectIds() -> Set<UUID> {
+        guard let trackerContainer else { return [] }
+        return Set(((try? ModelContext(trackerContainer).fetch(FetchDescriptor<ArchivedProject>())) ?? []).map(\.projectId))
+    }
+
+    /// `archived`: the projects the user put away instead of the others (the "Archived · N" card, Q4).
+    func listProjects(includeSingletons: Bool = false, archived: Bool = false) -> [ProjectSummary] {
         guard let ctx = ctx() else { return [] }
+        let putAway = archivedProjectIds()
 
         // 1. Pull all aliases. Empty → no projects yet.
         let aliasDesc = FetchDescriptor<ProjectAlias>(
@@ -52,27 +97,28 @@ final class ProjectAggregator: ObservableObject {
         let allAliases = (try? ctx.fetch(aliasDesc)) ?? []
         guard !allAliases.isEmpty else { return [] }
 
-        // 2. Build raw → canonical map for fast lookup against Conversation.primaryProject.
-        var rawToCanonical: [String: String] = [:]
-        for alias in allAliases {
-            for raw in alias.aliases {
-                rawToCanonical[raw.lowercased()] = alias.canonicalName
-            }
-        }
+        // 2. Raw name → project, the same index the board reads (FEAT-0006 §9b).
+        let rawToCanonical = TaskProjects.nameIndex(allAliases).mapValues(\.canonicalName)
 
         // 3. Pull all completed conversations with a project tag. We do counts in-memory
         //    rather than per-canonical fetches because predicate-side OR-of-aliases is
         //    awkward in SwiftData.
-        let convDesc = FetchDescriptor<Conversation>(
+        // Only the fields the counts need (2026-11-26, Workspace load): a conversation row carries embeddings and
+        // long JSON the list never reads.
+        var convDesc = FetchDescriptor<Conversation>(
             predicate: #Predicate { !$0.discarded && $0.primaryProject != nil }
         )
+        convDesc.propertiesToFetch = [\.id, \.primaryProject, \.startedAt]
         let allConvs = (try? ctx.fetch(convDesc)) ?? []
 
         // 4. Aggregate per-canonical.
         var bucket: [String: BucketState] = [:]
+        // Conversation → its project, looked up once per task and memory instead of a scan of every conversation.
+        var canonicalByConv: [UUID: String] = [:]
         for conv in allConvs {
             guard let raw = conv.primaryProject?.lowercased(),
                   let canonical = rawToCanonical[raw] else { continue }
+            canonicalByConv[conv.id] = canonical
             var state = bucket[canonical] ?? BucketState()
             state.conversationCount += 1
             state.conversationIds.append(conv.id)
@@ -84,22 +130,17 @@ final class ProjectAggregator: ObservableObject {
             bucket[canonical] = state
         }
 
-        // 5. Pull tasks + memories linked through conversation IDs we collected.
-        // Task counts: split MY (assignee==nil) from waiting-on (anyone else).
-        if !bucket.isEmpty {
-            let allConvIds = Set(bucket.values.flatMap { $0.conversationIds })
-            let taskDesc = FetchDescriptor<TaskItem>(
-                predicate: #Predicate<TaskItem> {
-                    !$0.isDismissed && $0.conversationId != nil
-                }
-            )
+        // 5. Tasks by the one rule the board shows them by (FEAT-0006 §9b): the record's project, else the
+        //    conversation's. Memories through the conversations collected above.
+        let nameOfProject = Dictionary(allAliases.map { ($0.id, $0.canonicalName) }, uniquingKeysWith: { a, _ in a })
+        let projectOfTask = TaskProjects.map(main: ctx, tracker: trackerContainer.map(ModelContext.init))
+        if !projectOfTask.isEmpty {
+            var taskDesc = FetchDescriptor<TaskItem>(predicate: #Predicate<TaskItem> { !$0.isDismissed })
+            taskDesc.propertiesToFetch = [\.id, \.completed, \.status, \.assignee]
             for t in (try? ctx.fetch(taskDesc)) ?? [] {
-                guard let cid = t.conversationId, allConvIds.contains(cid) else { continue }
-                // Find canonical for this conversation.
-                guard let conv = allConvs.first(where: { $0.id == cid }),
-                      let raw = conv.primaryProject?.lowercased(),
-                      let canonical = rawToCanonical[raw],
-                      var state = bucket[canonical] else { continue }
+                guard let pid = projectOfTask[t.id], let canonical = nameOfProject[pid] else { continue }
+                var state = bucket[canonical] ?? BucketState()
+                state.taskIds.insert(t.id)
                 if t.completed {
                     state.completedTaskCount += 1
                 } else if t.effectiveStatus == "committed" {
@@ -111,19 +152,43 @@ final class ProjectAggregator: ObservableObject {
                 }
                 bucket[canonical] = state
             }
-            let memDesc = FetchDescriptor<UserMemory>(
+        }
+        if !bucket.isEmpty {
+            var memDesc = FetchDescriptor<UserMemory>(
                 predicate: #Predicate<UserMemory> {
                     !$0.isDismissed && $0.conversationId != nil
                 }
             )
+            memDesc.propertiesToFetch = [\.conversationId]
             for m in (try? ctx.fetch(memDesc)) ?? [] {
-                guard let cid = m.conversationId, allConvIds.contains(cid) else { continue }
-                guard let conv = allConvs.first(where: { $0.id == cid }),
-                      let raw = conv.primaryProject?.lowercased(),
-                      let canonical = rawToCanonical[raw],
+                guard let cid = m.conversationId, let canonical = canonicalByConv[cid],
                       var state = bucket[canonical] else { continue }
                 state.memoryCount += 1
                 bucket[canonical] = state
+            }
+        }
+
+        // FEAT-0006 §5.4 — tracked projects are listed whatever their conversation count, with their tracker tasks.
+        let tracked = trackedProjectIds()
+        var trackedNames = Set<String>()
+        if !tracked.isEmpty, let trackerContainer {
+            let trackedRows = (try? ModelContext(trackerContainer).fetch(FetchDescriptor<TrackedProject>())) ?? []
+            for alias in allAliases where tracked.contains(alias.id) {
+                trackedNames.insert(alias.canonicalName)
+                var state = bucket[alias.canonicalName] ?? BucketState()
+                let since = trackedRows.first { $0.projectId == alias.id }?.updatedAt ?? alias.updatedAt
+                state.lastActivity = max(state.lastActivity ?? since, since)
+                bucket[alias.canonicalName] = state
+            }
+        }
+
+        // Every project the user has is listed (the "+ add project" menu offers exactly these), a project with no
+        // conversation left included (review 2026-11-27, #8).
+        if includeSingletons {
+            for alias in allAliases where bucket[alias.canonicalName] == nil {
+                var state = BucketState()
+                state.lastActivity = alias.updatedAt
+                bucket[alias.canonicalName] = state
             }
         }
 
@@ -131,12 +196,15 @@ final class ProjectAggregator: ObservableObject {
         // ITER-032 display threshold — projects with only 1 conversation
         // are noise (typos, LLM hallucinations, one-off mentions). Filter
         // unless caller explicitly asked to include singletons.
+        let idOf = Dictionary(allAliases.map { ($0.canonicalName, $0.id) }, uniquingKeysWith: { a, _ in a })
         return bucket
             .compactMap { (canonical, state) -> ProjectSummary? in
                 guard let last = state.lastActivity else { return nil }
-                if !includeSingletons && state.conversationCount < 2 { return nil }
+                if putAway.contains(idOf[canonical] ?? UUID()) != archived { return nil }
+                if !includeSingletons && state.conversationCount < 2 && !trackedNames.contains(canonical) { return nil }
                 return ProjectSummary(
                     canonicalName: canonical,
+                    projectId: allAliases.first { $0.canonicalName == canonical }?.id,
                     conversationCount: state.conversationCount,
                     memoryCount: state.memoryCount,
                     pendingTaskCount: state.pendingTaskCount,
@@ -158,7 +226,9 @@ final class ProjectAggregator: ObservableObject {
             return ProjectDetails(canonicalName: canonicalName, conversations: [],
                                    memories: [], tasks: [])
         }
-        let aliasesLower = Set(alias.aliases.map { $0.lowercased() })
+        // A conversation is this project's when the shared name index points its project name here (§9b).
+        let index = TaskProjects.nameIndex((try? ctx.fetch(FetchDescriptor<ProjectAlias>())) ?? [])
+        let aliasesLower = Set(index.filter { $0.value.id == alias.id }.map(\.key))
 
         // Pull completed conversations whose primaryProject matches any alias.
         let convDesc = FetchDescriptor<Conversation>(
@@ -169,12 +239,14 @@ final class ProjectAggregator: ObservableObject {
             .filter { aliasesLower.contains(($0.primaryProject ?? "").lowercased()) }
         let convIds = Set(convs.map { $0.id })
 
+        // FEAT-0006 §9b — the project's tasks by the one rule the board shows them by.
+        let projectOfTask = TaskProjects.map(main: ctx, tracker: trackerContainer.map(ModelContext.init))
+        let ids = projectOfTask.filter { $0.value == alias.id }.map(\.key)
         let taskDesc = FetchDescriptor<TaskItem>(
-            predicate: #Predicate { !$0.isDismissed && $0.conversationId != nil },
+            predicate: #Predicate { !$0.isDismissed && ids.contains($0.id) },
             sortBy: [SortDescriptor(\.createdAt, order: .reverse)]
         )
-        let tasks = ((try? ctx.fetch(taskDesc)) ?? [])
-            .filter { $0.conversationId.map { convIds.contains($0) } ?? false }
+        let tasks = ((try? ctx.fetch(taskDesc)) ?? []).filter { $0.effectiveStatus != "dismissed" }
 
         let memDesc = FetchDescriptor<UserMemory>(
             predicate: #Predicate { !$0.isDismissed && $0.conversationId != nil },
@@ -243,6 +315,22 @@ final class ProjectAggregator: ObservableObject {
             NSLog("[ProjectAggregator] deleteProject: the checked list was not saved — %@", error.localizedDescription)
         }
 
+        // FEAT-0006 §5.4 — the project is no longer tracked; its tracker tasks stay, with no project and no key.
+        if let trackerContainer {
+            let tctx = ModelContext(trackerContainer)
+            let pid: UUID? = alias.id
+            for t in (try? tctx.fetch(FetchDescriptor<TrackedProject>())) ?? [] where t.projectId == alias.id {
+                tctx.delete(t)
+            }
+            for r in (try? tctx.fetch(FetchDescriptor<TaskTrackerRecord>(predicate: #Predicate { $0.projectId == pid }))) ?? [] {
+                r.projectId = nil
+                r.key = nil
+                r.parentTaskId = nil
+                r.updatedAt = Date()
+            }
+            try? tctx.save()
+        }
+
         // Step 2 — delete the alias row. After save, listProjects() no longer
         // surfaces this cluster.
         ctx.delete(alias)
@@ -255,6 +343,15 @@ final class ProjectAggregator: ObservableObject {
     /// Returns the list of all known variant strings for the alias whose
     /// canonical matches `canonicalName` (case-insensitive). Empty if not
     /// found. Used by ProjectDetailView to render the ALIASES section.
+    /// The name a project goes by now, from its id: a project's page follows the project, not a name that a rename or
+    /// a split moved to another row (review 2026-11-27, #2).
+    func canonicalName(of projectId: UUID) -> String? {
+        guard let ctx = ctx() else { return nil }
+        var d = FetchDescriptor<ProjectAlias>(predicate: #Predicate { $0.id == projectId })
+        d.fetchLimit = 1
+        return (try? ctx.fetch(d))?.first?.canonicalName
+    }
+
     func aliasVariants(for canonicalName: String) -> [String] {
         guard let ctx = ctx() else { return [] }
         guard let alias = aliasRow(named: canonicalName, ctx: ctx) else { return [] }
@@ -323,16 +420,8 @@ final class ProjectAggregator: ObservableObject {
             // is asked for outright, and the old fields stand until a result
             // replaces them (a quit between clearing and restoring left a
             // conversation blank for good).
+            // The generator writes only an existing project (T4); nothing to seed here.
             await generator.generate(conversationId: convId, preferCloud: true, isRegeneration: true)
-            // resolveCanonical seeds the alias for whatever raw value the LLM
-            // produced; read it through a fresh context, since generate()
-            // writes through its own.
-            if let freshCtx = self.ctx(),
-               let fresh = try? freshCtx.fetch(FetchDescriptor<Conversation>(
-                   predicate: #Predicate { $0.id == convId })).first,
-               let raw = fresh.primaryProject {
-                _ = resolveCanonical(raw)
-            }
             done += 1
             try? await Task.sleep(for: .milliseconds(300))
         }
@@ -343,8 +432,8 @@ final class ProjectAggregator: ObservableObject {
     /// promote the highest-count variant to canonical. Deterministic
     /// alphabetical tie-break. Skips aliases with only 1 variant (already
     /// canonical-as-only-variant).
-    private func recanonicalizeAll() -> Int {
-        guard let ctx = ctx() else { return 0 }
+    func recanonicalizeAll() -> Int {
+        guard !trackerMissing, let ctx = ctx() else { return 0 }
         let allAliases = (try? ctx.fetch(FetchDescriptor<ProjectAlias>())) ?? []
         guard !allAliases.isEmpty else { return 0 }
         // Tally Conversation.primaryProject (case-insensitive).
@@ -357,7 +446,9 @@ final class ProjectAggregator: ObservableObject {
             globalCounts[raw, default: 0] += 1
         }
         var changed = 0
-        for alias in allAliases where alias.aliases.count >= 2 {
+        let tracked = protectedProjectIds()
+        // FEAT-0006 §5.4 — a tracked project's name is the user's or its folder's; only the user renames it.
+        for alias in allAliases where alias.aliases.count >= 2 && !tracked.contains(alias.id) {
             // Build counts dict scoped to THIS alias's variants only.
             var counts: [String: Int] = [:]
             for v in alias.aliases { counts[v.lowercased()] = globalCounts[v.lowercased()] ?? 0 }
@@ -380,8 +471,8 @@ final class ProjectAggregator: ObservableObject {
     /// Delete aliases whose every variant has ZERO conversation references.
     /// These are leftover hallucination clusters after `reclassifySuspicious`
     /// migrated all the conversations away.
-    private func pruneOrphanAliases() -> Int {
-        guard let ctx = ctx() else { return 0 }
+    func pruneOrphanAliases() -> Int {
+        guard !trackerMissing, let ctx = ctx() else { return 0 }
         let allAliases = (try? ctx.fetch(FetchDescriptor<ProjectAlias>())) ?? []
         guard !allAliases.isEmpty else { return 0 }
         let convs = (try? ctx.fetch(FetchDescriptor<Conversation>(
@@ -389,7 +480,9 @@ final class ProjectAggregator: ObservableObject {
         ))) ?? []
         let referencedLowercased = Set(convs.compactMap { $0.primaryProject?.lowercased() })
         var deleted = 0
-        for alias in allAliases {
+        let tracked = protectedProjectIds()
+        // FEAT-0006 §5.4 — an agent's project usually has no conversations; it is real anyway.
+        for alias in allAliases where !tracked.contains(alias.id) {
             let aliasesLower = alias.aliases.map { $0.lowercased() }
             let anyReferenced = aliasesLower.contains { referencedLowercased.contains($0) }
             if !anyReferenced {
@@ -413,6 +506,13 @@ final class ProjectAggregator: ObservableObject {
         guard !trimmed.isEmpty, let ctx = ctx() else { return false }
         guard let alias = aliasRow(named: currentCanonical, ctx: ctx) else {
             NSLog("[ProjectAggregator] renameCanonical: '%@' not found", currentCanonical)
+            return false
+        }
+        // Not to a name another project goes by: two projects of one name would show as one card (review #9).
+        let others = ((try? ctx.fetch(FetchDescriptor<ProjectAlias>())) ?? []).filter { $0.id != alias.id }
+        if others.contains(where: { o in o.aliases.contains { $0.localizedCaseInsensitiveCompare(trimmed) == .orderedSame }
+                                      || o.canonicalName.localizedCaseInsensitiveCompare(trimmed) == .orderedSame }) {
+            NSLog("[ProjectAggregator] renameCanonical: '%@' is another project's name — refused", trimmed)
             return false
         }
         // Add as variant if not already present.
@@ -497,49 +597,45 @@ final class ProjectAggregator: ObservableObject {
         return true
     }
 
-    /// Take a raw project name (from `Conversation.primaryProject`), find or create
-    /// its canonical alias. Always returns a canonical name.
-    /// Side effect: inserts a new `ProjectAlias` row if no match, OR adds the
-    /// new variant to an existing alias's `aliases` list when ITER-032
-    /// `ProjectClusterDecision.canMerge` says they're the same project.
-    @discardableResult
-    func resolveCanonical(_ raw: String) -> String {
+    /// T4 (owner 2026-11-25; cause fixed 2026-11-26): the user's project a name from a call or a dictation points
+    /// to, or nil. Never creates a project — only an agent or the user makes one (TrackerService). A spelling of an
+    /// existing project (`ProjectClusterDecision.canMerge`) joins it as a variant.
+    func existingCanonical(for raw: String) -> String? {
         let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty, let ctx = ctx() else { return trimmed }
-
-        let allDesc = FetchDescriptor<ProjectAlias>()
-        let existing = (try? ctx.fetch(allDesc)) ?? []
-
-        // Phase A — fast path: exact (case-insensitive) match against any
-        // already-stored variant. Avoids canonical recomputation when the
-        // LLM just gave us back a string we already saw.
-        for alias in existing {
-            if alias.aliases.contains(where: { $0.localizedCaseInsensitiveCompare(trimmed) == .orderedSame }) {
-                return alias.canonicalName
-            }
+        guard !trimmed.isEmpty, trimmed.lowercased() != "null", let ctx = ctx() else { return nil }
+        // A project the user put away gets no new conversations (Q4).
+        let putAway = archivedProjectIds()
+        let existing = ((try? ctx.fetch(FetchDescriptor<ProjectAlias>())) ?? []).filter { !putAway.contains($0.id) }
+        // Exact (case-insensitive) match against any stored variant.
+        if let hit = existing.first(where: { a in
+            a.aliases.contains { $0.localizedCaseInsensitiveCompare(trimmed) == .orderedSame }
+        }) {
+            return hit.canonicalName
         }
-
-        // Phase B — ITER-032: try to merge into an existing alias before
-        // inserting a new row. `canMerge` handles transliteration, case,
-        // emoji, punctuation, and Levenshtein-≤-2 typo tolerance with
-        // length + digit-token guards. The first existing alias with ANY
-        // variant that canMerges absorbs the new variant.
-        for alias in existing {
-            if alias.aliases.contains(where: { ProjectClusterDecision.canMerge($0, trimmed) }) {
-                alias.addAlias(trimmed)
-                alias.updatedAt = Date()
-                try? ctx.save()
-                NSLog("[ProjectAggregator] dedup: '%@' → '%@'", trimmed, alias.canonicalName)
-                return alias.canonicalName
-            }
+        // A spelling of an existing project (transliteration, case, emoji, punctuation).
+        for alias in existing where alias.aliases.contains(where: { ProjectClusterDecision.canMerge($0, trimmed) }) {
+            alias.addAlias(trimmed)
+            alias.updatedAt = Date()
+            try? ctx.save()
+            NSLog("[ProjectAggregator] dedup: '%@' → '%@'", trimmed, alias.canonicalName)
+            return alias.canonicalName
         }
+        return nil
+    }
 
-        // Miss → new row. Canonical = first observed variant (we don't try to "prettify").
-        let new = ProjectAlias(canonicalName: trimmed)
-        ctx.insert(new)
-        try? ctx.save()
-        NSLog("[ProjectAggregator] +new project alias (%d chars)", trimmed.count)
-        return new.canonicalName
+    /// The project a conversation is written with after its summary step: `proposed` (the model's name, already
+    /// looked up by `existingCanonical`, so an active project or none, T4) — unless the conversation is in a project
+    /// the user archived. That project gets no new conversations and loses none of its own (Q4): a regeneration
+    /// used to write the lookup's nil over it, and its tasks left the project with it (Codex review P2-9).
+    func projectAfterGeneration(proposed: String?, current: String?) -> String? {
+        guard let current, let ctx = ctx() else { return proposed }
+        let putAway = archivedProjectIds()
+        guard !putAway.isEmpty else { return proposed }
+        let projects = (try? ctx.fetch(FetchDescriptor<ProjectAlias>())) ?? []
+        guard let hit = TaskProjects.nameIndex(projects)[current.lowercased()], putAway.contains(hit.id) else {
+            return proposed
+        }
+        return current
     }
 
     /// When PROJECT joined the structuring prompt (ITER-014, 2026-04-25). A
@@ -609,14 +705,6 @@ final class ProjectAggregator: ObservableObject {
                 NSLog("[ProjectAggregator] backfill: the checked list was not saved — %@", error.localizedDescription)
             }
             if outcome == .written { classified += 1 }
-            // generate() writes through its own ModelContext; read what landed
-            // through a fresh one, then seed the alias for the new project.
-            if let freshCtx = self.ctx(),
-               let fresh = try? freshCtx.fetch(FetchDescriptor<Conversation>(
-                   predicate: #Predicate { $0.id == convId })).first,
-               let raw = fresh.primaryProject {
-                _ = resolveCanonical(raw)
-            }
             // Tiny pause so we don't hammer the proxy.
             try? await Task.sleep(for: pause)
         }
@@ -642,12 +730,17 @@ final class ProjectAggregator: ObservableObject {
     /// Merge rule: smaller cluster (fewer aliases) merges INTO larger;
     /// larger keeps its canonical name. Ties broken by older `createdAt`.
     func mergeAliases() async {
-        guard let ctx = ctx() else { return }
+        guard !trackerMissing, let ctx = ctx() else { return }
         let allDesc = FetchDescriptor<ProjectAlias>()
-        var aliases = (try? ctx.fetch(allDesc)) ?? []
+        // An archived project is put away as it is: it neither absorbs nor is merged into another, so it is there to
+        // restore with what it had (Codex review P2-5).
+        let archived = archivedProjectIds()
+        func mergeable() -> [ProjectAlias] { ((try? ctx.fetch(allDesc)) ?? []).filter { !archived.contains($0.id) } }
+        var aliases = mergeable()
         guard aliases.count >= 2 else { return }
         NSLog("[ProjectAggregator] merge pass start — %d aliases", aliases.count)
 
+        let tracked = trackedProjectIds()
         // STAGE 1 — Deterministic canonical+Lev pass (ITER-032).
         var deterministicMerges = 0
         var killed = Set<UUID>()
@@ -655,14 +748,16 @@ final class ProjectAggregator: ObservableObject {
             let a = aliases[i]
             if killed.contains(a.id) { continue }
             for j in (i + 1)..<aliases.count {
+                // A row that was merged away absorbs nothing more (it can lose to a tracked row).
+                if killed.contains(a.id) { break }
                 let b = aliases[j]
                 if killed.contains(b.id) { continue }
                 // Match if ANY pair of variants across the two aliases canMerge.
                 let crossMatch = a.aliases.contains { variantA in
                     b.aliases.contains { ProjectClusterDecision.canMerge(variantA, $0) }
                 }
-                if crossMatch {
-                    let (winner, loser) = a.aliases.count >= b.aliases.count ? (a, b) : (b, a)
+                if crossMatch, let pair = Self.mergeWinner(a, b, tracked: tracked) {
+                    let (winner, loser) = pair
                     for v in loser.aliases { winner.addAlias(v) }
                     winner.updatedAt = Date()
                     killed.insert(loser.id)
@@ -676,7 +771,7 @@ final class ProjectAggregator: ObservableObject {
         try? ctx.save()
         if deterministicMerges > 0 {
             // Refetch — deletions invalidated some pointers above.
-            aliases = (try? ctx.fetch(allDesc)) ?? []
+            aliases = mergeable()
         }
         guard aliases.count >= 2 else {
             lastMergeCount = deterministicMerges
@@ -709,7 +804,7 @@ final class ProjectAggregator: ObservableObject {
 
         // 2. Compare pairs. Greedy merge: bigger absorbs smaller.
         // Re-fetch (centroids updated above).
-        aliases = (try? ctx.fetch(allDesc)) ?? []
+        aliases = mergeable()
         var merges = 0
         var dead = Set<UUID>()
         let withCentroid = aliases.filter { $0.centroidEmbedding != nil }
@@ -717,6 +812,7 @@ final class ProjectAggregator: ObservableObject {
             let a = withCentroid[i]
             if dead.contains(a.id) { continue }
             for j in (i + 1)..<withCentroid.count {
+                if dead.contains(a.id) { break }
                 let b = withCentroid[j]
                 if dead.contains(b.id) { continue }
                 guard let aData = a.centroidEmbedding, let bData = b.centroidEmbedding else { continue }
@@ -724,8 +820,9 @@ final class ProjectAggregator: ObservableObject {
                 let bVec = EmbeddingService.decode(bData)
                 let sim = EmbeddingService.cosineSimilarity(aVec, bVec)
                 guard sim >= mergeThreshold else { continue }
-                // Merge smaller into larger.
-                let (winner, loser) = a.aliases.count >= b.aliases.count ? (a, b) : (b, a)
+                // Merge smaller into larger; a tracked project always survives (FEAT-0006 §5.4).
+                guard let pair = Self.mergeWinner(a, b, tracked: tracked) else { continue }
+                let (winner, loser) = pair
                 for alias in loser.aliases { winner.addAlias(alias) }
                 dead.insert(loser.id)
                 ctx.delete(loser)
@@ -761,6 +858,8 @@ final class ProjectAggregator: ObservableObject {
         var lastActivity: Date?
         var conversationIds: [UUID] = []
         var members: Set<String> = []
+        /// Tasks counted already (a tracker task of a call is counted once).
+        var taskIds: Set<UUID> = []
     }
 }
 
@@ -768,6 +867,8 @@ final class ProjectAggregator: ObservableObject {
 
 struct ProjectSummary: Identifiable {
     let canonicalName: String
+    /// `ProjectAlias.id` — what a project's Tasks page filters by.
+    let projectId: UUID?
     let conversationCount: Int
     let memoryCount: Int
     let pendingTaskCount: Int

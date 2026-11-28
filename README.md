@@ -70,7 +70,7 @@ That's it. Works in any app that accepts paste: editors, browsers, terminals, me
 - Floating recording pill overlay (5 styles)
 - Sound presets (Default, Bass, Signature) or your own sounds
 - Toggle (the default) or Push-to-Talk mode
-- An MCP server (metawhisp-mcp, built from source, not in the DMG; turn on MCP Server in Settings) lets Claude Desktop, Cursor and other MCP clients search your memories, tasks and conversations
+- A task tracker for AI agents: Settings → Integrations → Connect Claude Code / Codex, and the agent keeps the tasks of the project in its working folder in MetaWhisp (MCP server and command line in `MetaWhisp.app/Contents/Helpers/metawhisp-cli`); it can also search your memories and conversations
 - Obsidian export; indexing of Apple Notes, Calendar and folders you pick
 - Auto-updates via Sparkle
 
@@ -118,14 +118,15 @@ Services/
   Intelligence/         # MetaChat, tasks, memories, summaries, meeting recaps
   License/              # Pro subscription management
   LLM/                  # Local models (MLX, Apple Foundation Models)
-  MCP/                  # Data snapshot for the MCP server
   Processing/           # Text processing, corrections, filler removal
   Screen/               # Screen context
   System/               # Hotkeys, text insertion, sounds, coordinator
   TTS/                  # Read-aloud
+  Tracker/              # Task tracker for agents: service, local socket, Connect buttons
   Transcription/        # WhisperKit engine, cloud engine, model manager
   UI/                   # Shared UI state
-Sources/MetaWhispMCP/   # The MCP server binary
+Sources/MetaWhispCLI/   # metawhisp-cli: MCP server + command line for agents
+Sources/MetaWhispTrackerKit/ # Tracker rules, wire protocol and texts shared by the app and the CLI
 Views/
   Components/           # Charts, recording overlay, reusable UI
   FloatingVoice/        # Voice-question overlay

@@ -124,8 +124,10 @@ enum ScreenRetention {
     /// memory retrieval. What the user CONFIRMED stays: promoted tasks
     /// (status = committed) live their own life (I3/I4), matching the confirm
     /// dialog's wording.
+    /// `keeping`: tasks that are the user's although screen-made — on the tracker (FEAT-0006), archived or not.
+    /// nil = the tracker cannot say (its store did not open): no dismissed task is deleted (fail closed).
     @discardableResult
-    static func deleteAll(in ctx: ModelContext) throws -> DeleteAllResult {
+    static func deleteAll(in ctx: ModelContext, keeping: Set<UUID>? = []) throws -> DeleteAllResult {
         // OCR tables: count cheaply, batch-delete by model type — never
         // materialize (months of ocrText rows). The artifact sets below are
         // small (capped per extraction), so fetching THEM for IDs is fine.
@@ -150,7 +152,10 @@ enum ScreenRetention {
             memory.screenContextId != nil
                 || (memory.tagsCSV?.contains(insightTag) ?? false)
         }
-        let doomedTasks = try ctx.fetch(FetchDescriptor<TaskItem>(predicate: taskPred))
+        let doomedTasks = try ctx.fetch(FetchDescriptor<TaskItem>(predicate: taskPred)).filter { task in
+            guard let keeping else { return task.status == "staged" && !task.isDismissed }
+            return !keeping.contains(task.id)
+        }
         let doomedMemories = try ctx.fetch(FetchDescriptor<UserMemory>(predicate: memoryPred))
         let taskIds = doomedTasks.map(\.id)
         let memoryIds = doomedMemories.map(\.id)

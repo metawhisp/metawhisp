@@ -8,6 +8,17 @@
 
 ## ⏸ Parked — вернёмся позже
 
+- **Task drafts and the Obsidian vault (FEAT-0005 review, 2026-11-26).** Two P3s left open on purpose:
+  - A meeting's note (exported at recap time) and a dictation's hub (exported only by the full export or the
+    conversation view's export button) list the conversation's tasks as they were then.
+    A draft accepted later gets its own task file (`exportTask` on `.taskSaved`) but the note's list is not
+    re-rendered until the next full export. Before 1.4.9 the extracted tasks were tasks at once, so they were in the
+    note whenever extraction finished first. Needs: re-render the conversation note when one of its tasks changes,
+    tested with a temporary vault (the exporter has no test harness yet).
+  - The full export now skips drafts but does not delete the files older versions wrote for staged screen
+    candidates; only a single `exportTask` removes a non-task's file. Needs a one-time sweep that removes vault files
+    of rows that are not tasks, off the main actor (it walks the day folders).
+
 - **Obsidian meeting notes (found in ITER-083, 2026-11-08).** Three gaps, none caused by ITER-083:
   - A meeting's note is named after its title and its start's day. When the title changes (the summary's first
     title, the user's "regenerate", a re-summarised stuck meeting), a second note is written beside the first. An

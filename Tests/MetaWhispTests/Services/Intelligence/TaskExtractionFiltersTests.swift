@@ -235,4 +235,22 @@ final class TaskExtractionFiltersTests: XCTestCase {
         XCTAssertEqual(TaskExtractionFilters.minRelevanceScore, 75)
         XCTAssertEqual(TaskExtractionFilters.minEvidenceChars, 20)
     }
+
+    // MARK: - FEAT-0005: languages written without spaces
+
+    /// A title in a script without spaces is one "word" by spaces: the word floor cannot judge it, so it does not
+    /// reject it (it used to reject every such title).
+    func test_validateTitle_scriptWithoutSpaces_notTooShort() {
+        XCTAssertNil(TaskExtractionFilters.validateTaskTitle("把修改后的预算发给王伟"))
+        XCTAssertNil(TaskExtractionFilters.validateTaskTitle("ส่งงบประมาณให้สมชาย"))
+        XCTAssertNotNil(TaskExtractionFilters.validateTaskTitle("Send budget"), "spaced scripts keep the floor")
+    }
+
+
+    /// One character of such a script in a spaced title does not lift the floor.
+    func test_validateTitle_oneForeignCharacter_keepsTheFloor() {
+        XCTAssertNotNil(TaskExtractionFilters.validateTaskTitle("Call 王伟"))
+        XCTAssertFalse(TaskExtractionFilters.isWrittenWithoutSpaces("Send the deck・tonight"))
+        XCTAssertTrue(TaskExtractionFilters.isWrittenWithoutSpaces("把预算发给 Nina"))
+    }
 }

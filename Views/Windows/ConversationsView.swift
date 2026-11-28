@@ -135,22 +135,13 @@ struct ConversationsView: View {
     /// "N shown" counter stays right-aligned.
     private var filterBar: some View {
         HStack(spacing: 8) {
-            HStack(spacing: 2) {
-                ForEach(Filter.allCases, id: \.self) { f in
-                    GlassChipButton(
-                        label: f.rawValue,
-                        isActive: selectedFilter == f,
-                        radius: 999,
-                        grouped: true,
-                        action: { selectedFilter = f }
-                    )
-                }
-            }
-            .mwSegmentTrack()
-            Spacer()
+            SegmentStrip(options: Filter.allCases, selection: $selectedFilter) { $0.rawValue }
+            Spacer(minLength: 0)
             Text("\(filtered.count) shown")
                 .font(MW.dataSmall)
                 .foregroundStyle(MW.textMuted)
+                .lineLimit(1)
+                .fixedSize()
         }
         .padding(.horizontal, 20)
         .padding(.vertical, 10)
@@ -434,7 +425,9 @@ struct ConversationsView: View {
 
     private func fetchTasks(conversationId: UUID) -> [TaskItem] {
         var descriptor = FetchDescriptor<TaskItem>(
-            predicate: #Predicate { $0.conversationId == conversationId && !$0.isDismissed },
+            // FEAT-0005 — tasks, not drafts (`TaskItem.isTask`, in the predicate so the limit counts tasks only).
+            predicate: #Predicate { $0.conversationId == conversationId && !$0.isDismissed
+                && ($0.status == nil || $0.status == "committed") },
             sortBy: [SortDescriptor(\.createdAt, order: .forward)]
         )
         descriptor.fetchLimit = 20

@@ -296,18 +296,6 @@ final class AppSettings: ObservableObject {
     /// appended must have createdAt > this). Empty on first run.
     @AppStorage("obsidianLastSyncedAt") var obsidianLastSyncedAt: String = ""
 
-    /// AUD-029 — opt-in for the MCP snapshot writer (default OFF). When OFF,
-    /// MetaWhisp writes NO snapshot of memories/tasks/conversations to disk and
-    /// purges any existing file; when ON it exposes a local-only snapshot for
-    /// the standalone `metawhisp-mcp` tool. Honoured by MCPSnapshotService.
-    @AppStorage("mcpEnabled") var mcpEnabled: Bool = false
-
-    /// ITER-032 — show one-conversation projects in the Projects view.
-    /// Default off so the grid stays clean (LLM hallucinations + typo
-    /// duplicates are usually one-offs). Toggle in ProjectsView header
-    /// flips it on for "show me everything I've ever generated".
-    @AppStorage("projectShowSingletons") var projectShowSingletons: Bool = false
-
     /// ITER-032.2 — one-shot migration flag. The curative pass
     /// (reclassify suspect conversations → recanonicalize aliases by
     /// conversation count → prune orphans) runs ONCE per upgrade. Future
@@ -489,11 +477,20 @@ final class AppSettings: ObservableObject {
         if firstTime { TargetIntro.markSeen(defaults) }
     }
 
-    /// The active API key for the selected provider.
+    /// The active API key for the selected provider. Settings' key field writes through it, so the provider-to-key
+    /// choice lives here once.
     var activeAPIKey: String {
-        switch llmProvider {
-        case "cerebras": return cerebrasKey
-        default: return openaiKey
+        get {
+            switch llmProvider {
+            case "cerebras": return cerebrasKey
+            default: return openaiKey
+            }
+        }
+        set {
+            switch llmProvider {
+            case "cerebras": cerebrasKey = newValue
+            default: openaiKey = newValue
+            }
         }
     }
 

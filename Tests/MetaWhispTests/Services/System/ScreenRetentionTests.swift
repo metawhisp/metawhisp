@@ -130,6 +130,35 @@ final class ScreenRetentionTests: XCTestCase {
         XCTAssertEqual(after.observations, 0)
     }
 
+    /// FEAT-0006 review P3-14: a screen task the user took onto the tracker and archived is the user's, not
+    /// screen history; the delete keeps the tasks it is told to keep.
+    func test_deleteAll_keepsTrackerTasks() throws {
+        let ctx = try makeContext()
+        let archived = TaskItem(taskDescription: "Archived tracker task", screenContextId: UUID(), status: "dismissed")
+        archived.isDismissed = true
+        let junk = TaskItem(taskDescription: "Dropped candidate", screenContextId: UUID(), status: "dismissed")
+        junk.isDismissed = true
+        ctx.insert(archived)
+        ctx.insert(junk)
+        try ctx.save()
+        let deleted = try ScreenRetention.deleteAll(in: ctx, keeping: [archived.id])
+        XCTAssertEqual(deleted.taskIds, [junk.id])
+        XCTAssertEqual(try ctx.fetch(FetchDescriptor<TaskItem>()).map(\.id), [archived.id])
+    }
+
+    /// Round 2: when the tracker cannot say which tasks are its own, dismissed screen tasks stay (fail closed).
+    func test_deleteAll_withoutTheTrackerKeepsDismissedTasks() throws {
+        let ctx = try makeContext()
+        let dismissed = TaskItem(taskDescription: "Maybe archived", screenContextId: UUID(), status: "dismissed")
+        dismissed.isDismissed = true
+        let staged = TaskItem(taskDescription: "Unreviewed", screenContextId: UUID(), status: "staged")
+        ctx.insert(dismissed)
+        ctx.insert(staged)
+        try ctx.save()
+        let deleted = try ScreenRetention.deleteAll(in: ctx, keeping: nil)
+        XCTAssertEqual(deleted.taskIds, [staged.id])
+    }
+
     func test_deleteAll_emptyStore_noop() throws {
         let ctx = try makeContext()
         let deleted = try ScreenRetention.deleteAll(in: ctx)

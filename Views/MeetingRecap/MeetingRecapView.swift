@@ -16,6 +16,9 @@ struct MeetingRecapView: View {
     var onDismiss: () -> Void
     /// Called when user toggles a task's checkbox — controller persists.
     var onToggleTask: (UUID) -> Void
+    /// FEAT-0005 — ✓ / ✗ on a suggested task (a draft) — controller persists through `TaskDrafts`.
+    var onAcceptDraft: (UUID) -> Void
+    var onDropDraft: (UUID) -> Void
 
     var body: some View {
         // ITER-050 B2.2 — the card window is sized exactly to the pill
@@ -63,6 +66,15 @@ struct MeetingRecapView: View {
                                 VStack(alignment: .leading, spacing: 6) {
                                     ForEach(p.actionItems) { item in
                                         actionRow(item)
+                                    }
+                                }
+                            }
+                        }
+                        if !p.drafts.isEmpty {
+                            section("SUGGESTED (\(p.drafts.count))") {
+                                VStack(alignment: .leading, spacing: 6) {
+                                    ForEach(p.drafts) { item in
+                                        draftRow(item)
                                     }
                                 }
                             }
@@ -176,6 +188,46 @@ struct MeetingRecapView: View {
                 }
             }
             Spacer()
+        }
+    }
+
+    /// FEAT-0005 — a suggestion from the call: nothing is a task until ✓; ✗ drops it.
+    private func draftRow(_ item: MeetingRecapState.ActionItem) -> some View {
+        HStack(alignment: .top, spacing: 8) {
+            VStack(alignment: .leading, spacing: 1) {
+                Text(item.description)
+                    .font(.system(size: 12.5))
+                    .foregroundStyle(MW.textPrimary)
+                    .fixedSize(horizontal: false, vertical: true)
+                if let a = item.assignee, !a.isEmpty {
+                    Text("waiting on \(a)")
+                        .font(.system(size: 9))
+                        .foregroundStyle(MW.textDim)
+                }
+            }
+            Spacer()
+            Button {
+                onAcceptDraft(item.id)
+            } label: {
+                Image(systemName: "checkmark")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(MW.textPrimary)
+                    .frame(width: 22, height: 22)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .help("Add to tasks")
+            Button {
+                onDropDraft(item.id)
+            } label: {
+                Image(systemName: "xmark")
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundStyle(MW.textMuted)
+                    .frame(width: 22, height: 22)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .help("Not a task")
         }
     }
 

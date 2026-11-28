@@ -88,6 +88,11 @@ final class TaskItem {
     /// Staged Tasks migration).
     var effectiveStatus: String { status ?? "committed" }
 
+    /// FEAT-0005 — a row the user has as a task: accepted (committed, or a legacy row without a status) and not
+    /// dismissed. A draft (`staged`) is a suggestion, shown only where it can be accepted or dropped; lists of
+    /// tasks elsewhere (a conversation, the vault) take this.
+    var isTask: Bool { !isDismissed && effectiveStatus == "committed" }
+
     /// True if this task belongs to the user themselves (no third-party owner).
     /// Existing rows from before ITER-013 have `assignee == nil` → naturally MY.
     /// spec://iterations/ITER-013-action-items-owners

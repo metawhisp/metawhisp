@@ -1,4 +1,5 @@
 import AppKit
+import Combine
 import SwiftData
 import SwiftUI
 
@@ -34,12 +35,18 @@ struct ConversationDetailView: View {
     @State private var selectedTab: Tab = .summary
     @State private var isRegenerating = false
     @State private var lastError: String?
-    /// ITER-037-followup (2026-05-12) — interactive project assign.
-    /// `existingProjects` populated once on appear from distinct values
-    /// across all Conversations + UserMemories, so the picker shows
-    /// what's already in use as one-click options. `showingNewProjectAlert`
-    /// gates the «+ New project» modal.
-    @State private var existingProjects: [String] = []
+    /// ITER-037-followup (2026-05-12) — interactive project assign. `existingProjects` is the user's active projects
+    /// (`TrackerService.projectChoices`, the list every other picker shows): a project made in Tasks is in it, an
+    /// archived one is not (Codex review P2-14: raw names from old rows). `showingNewProjectAlert` gates the
+    /// «+ New project» modal.
+    @State private var existingProjects: [(id: UUID, name: String)] = []
+    /// Which project a stored name is, by its name or a spelling (`TaskProjects.nameIndex`): the picker's tick.
+    @State private var projectOfName: [String: UUID] = [:]
+    /// The tracker's changes (a project made by an agent or in Tasks, one archived): the picker follows them while the
+    /// conversation is open (Codex re-review of P2-14). Made once and without the current value, as in ProjectsView.
+    @State private var trackerChanges: AnyPublisher<Void, Never> =
+        TrackerService.shared?.$revision.dropFirst().map { _ in () }.eraseToAnyPublisher()
+            ?? Empty().eraseToAnyPublisher()
     @State private var showingNewProjectAlert = false
     @State private var newProjectName: String = ""
     /// 2026-05-29 — one-click copy feedback + on-demand action-plan generation.
@@ -93,6 +100,7 @@ struct ConversationDetailView: View {
             await reload()
             loadExistingProjects()  // ITER-037-followup — populate project picker
         }
+        .onReceive(trackerChanges) { loadExistingProjects() }
     }
 
     // MARK: - Header
@@ -531,14 +539,15 @@ struct ConversationDetailView: View {
     private func projectMenu(_ conv: Conversation) -> some View {
         let label = conv.primaryProject?.isEmpty == false ? "📁 \(conv.primaryProject!)" : "📁 No project"
         Menu {
-            ForEach(existingProjects, id: \.self) { proj in
+            let current = conv.primaryProject.flatMap { projectOfName[$0.lowercased()] }
+            ForEach(existingProjects, id: \.id) { proj in
                 Button {
-                    setProject(conv, proj.isEmpty ? nil : proj)
+                    setProject(conv, proj.name)
                 } label: {
-                    if conv.primaryProject == proj {
-                        Label(proj, systemImage: "checkmark")
+                    if current == proj.id {
+                        Label(proj.name, systemImage: "checkmark")
                     } else {
-                        Text(proj)
+                        Text(proj.name)
                     }
                 }
             }
@@ -566,11 +575,13 @@ struct ConversationDetailView: View {
             Button("Save") {
                 let trimmed = newProjectName.trimmingCharacters(in: .whitespacesAndNewlines)
                 if !trimmed.isEmpty {
-                    setProject(conv, trimmed)
-                    if !existingProjects.contains(trimmed) {
-                        existingProjects.append(trimmed)
-                        existingProjects.sort()
-                    }
+                    // T4: the user makes a project by hand — a real one, so it shows in Projects (a name alone
+                    // never did); a project of the same name is reused.
+                    let tracker = TrackerService.shared
+                    _ = try? tracker?.createProject(name: trimmed)
+                    let name = tracker?.projectMatch(name: trimmed).exact?.name ?? trimmed
+                    setProject(conv, name)
+                    loadExistingProjects()
                 }
             }
         }
@@ -599,27 +610,11 @@ struct ConversationDetailView: View {
         }
     }
 
-    /// Populate `existingProjects` from distinct values across Conversations
-    /// and UserMemories. Sorted, deduped, empty/nil filtered.
+    /// The user's active projects, as every other picker lists them.
     private func loadExistingProjects() {
-        var seen = Set<String>()
-        let convDesc = FetchDescriptor<Conversation>()
-        if let convs = try? modelContext.fetch(convDesc) {
-            for c in convs {
-                if let p = c.primaryProject?.trimmingCharacters(in: .whitespacesAndNewlines), !p.isEmpty {
-                    seen.insert(p)
-                }
-            }
-        }
-        let memDesc = FetchDescriptor<UserMemory>()
-        if let mems = try? modelContext.fetch(memDesc) {
-            for m in mems {
-                if let p = m.project?.trimmingCharacters(in: .whitespacesAndNewlines), !p.isEmpty {
-                    seen.insert(p)
-                }
-            }
-        }
-        existingProjects = Array(seen).sorted { $0.lowercased() < $1.lowercased() }
+        existingProjects = TrackerService.shared?.projectChoices() ?? []
+        let rows = (try? modelContext.fetch(FetchDescriptor<ProjectAlias>())) ?? []
+        projectOfName = TaskProjects.nameIndex(rows).mapValues(\.id)
     }
 
     // MARK: - Data
@@ -641,7 +636,8 @@ struct ConversationDetailView: View {
             predicate: #Predicate { !$0.isDismissed && $0.conversationId == id },
             sortBy: [SortDescriptor(\.createdAt, order: .reverse)]
         )
-        linkedTasks = (try? modelContext.fetch(taskDesc)) ?? []
+        // FEAT-0005 — the conversation's tasks; its drafts are offered in Tasks → Suggested and on the call's card.
+        linkedTasks = ((try? modelContext.fetch(taskDesc)) ?? []).filter(\.isTask)
         let memDesc = FetchDescriptor<UserMemory>(
             predicate: #Predicate { !$0.isDismissed && $0.conversationId == id },
             sortBy: [SortDescriptor(\.createdAt, order: .reverse)]

@@ -25,23 +25,13 @@ final class ExtractorPromptCharacterizationTests: XCTestCase {
         return [first, second]
     }
 
-    private var calendar: TaskExtractor.CalendarMeetingContext {
-        TaskExtractor.CalendarMeetingContext(title: "Weekly sync",
-                                             startDate: Date(timeIntervalSince1970: 1_793_523_600),
-                                             endDate: Date(timeIntervalSince1970: 1_793_527_200),
-                                             attendees: ["Sam", "Alex"])
-    }
-
+    /// FEAT-0005 — the source comes first; the calendar block is gone (K14: no names from a roster).
     private let expectedTaskPrompt = """
+    SOURCE: dictation
     Conversation started_at: 2026-11-01T09:00:00Z
     Current time: 2026-11-01T10:00:00Z
     Timezone: GMT
     REFERENCE_TIME = started_at (recent conversation, anchor due-dates here)
-
-    CALENDAR MEETING CONTEXT:
-    - Title: Weekly sync
-    - Scheduled: 2026-11-01 09:00 GMT → 2026-11-01 10:00 GMT
-    - Participants: Sam, Alex
 
     EXISTING ACTION ITEMS FROM PAST 2 DAYS (do NOT duplicate):
     - Call the dentist (due: no due) [pending]
@@ -59,7 +49,7 @@ final class ExtractorPromptCharacterizationTests: XCTestCase {
     func testTaskPromptOnTheCloudRoutesIsUnchanged() {
         for route in [ExtractionRoute.pro(licenseKey: "k"), .byok] {
             let prompt = TaskExtractor().buildPrompt(fragments: fragments, existing: existingTasks(),
-                                                     startedAt: started, calendarContext: calendar,
+                                                     startedAt: started, source: .dictation,
                                                      route: route, now: now, timeZone: utc)
             XCTAssertEqual(prompt, expectedTaskPrompt, "\(route)")
         }
@@ -67,9 +57,28 @@ final class ExtractorPromptCharacterizationTests: XCTestCase {
 
     func testTaskPromptOnTheLocalRouteIsUnchangedWhenItFits() {
         let prompt = TaskExtractor().buildPrompt(fragments: fragments, existing: existingTasks(),
-                                                 startedAt: started, calendarContext: calendar,
+                                                 startedAt: started, source: .dictation,
                                                  route: .local, now: now, timeZone: utc)
         XCTAssertEqual(prompt, expectedTaskPrompt)
+    }
+
+    /// A call says so, and names the two sides of its lines.
+    func testTaskPromptForACallSaysItIsACall() {
+        let prompt = TaskExtractor().buildPrompt(fragments: ["Me: Hi.\nThem: I'll send the deck."], existing: [],
+                                                 startedAt: started, source: .call,
+                                                 route: .byok, now: now, timeZone: utc)
+        XCTAssertEqual(prompt, """
+        SOURCE: call
+        Conversation started_at: 2026-11-01T09:00:00Z
+        Current time: 2026-11-01T10:00:00Z
+        Timezone: GMT
+        REFERENCE_TIME = started_at (recent conversation, anchor due-dates here)
+
+        Conversation fragments to analyze (ordered by time; Me: lines are the user, Them: lines are the other people):
+        --- fragment 1 ---
+        Me: Hi.
+        Them: I'll send the deck.
+        """)
     }
 
     private let expectedMemoryPrompt = """

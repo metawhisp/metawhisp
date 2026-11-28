@@ -64,7 +64,9 @@ final class MeetingRecapWindowController {
             onCopy: { [weak self] in self?.handleCopy() },
             onOpenInLibrary: { [weak self] in self?.handleOpenInLibrary() },
             onDismiss: { MeetingRecapState.shared.dismiss() },
-            onToggleTask: { [weak self] id in self?.handleToggleTask(id) }
+            onToggleTask: { [weak self] id in self?.handleToggleTask(id) },
+            onAcceptDraft: { [weak self] id in self?.handleDraft(id, accept: true) },
+            onDropDraft: { [weak self] id in self?.handleDraft(id, accept: false) }
         )
         let hosting = SelfSizingHostingView(rootView: view)
         hosting.onContentSizeChange = { [weak self] size in
@@ -222,5 +224,17 @@ final class MeetingRecapWindowController {
     private func handleToggleTask(_ id: UUID) {
         guard let app = AppDelegate.shared else { return }
         MeetingRecapState.shared.toggleTask(id, in: app.historyService.modelContainer)
+    }
+
+    /// FEAT-0005 — ✓ / ✗ on a suggestion; the user is engaged, so the card's timer starts again.
+    private func handleDraft(_ id: UUID, accept: Bool) {
+        guard let app = AppDelegate.shared else { return }
+        let container = app.historyService.modelContainer
+        if accept {
+            MeetingRecapState.shared.acceptDraft(id, in: container)
+        } else {
+            MeetingRecapState.shared.dropDraft(id, in: container)
+        }
+        armAutoDismiss()
     }
 }
